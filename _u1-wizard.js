@@ -5,34 +5,7 @@
   const api = {
     ajax_url: U1_WIZARD.ajax_url,
     nonce: U1_WIZARD.nonce,
-  };
 
-  // State
-  const state = {
-    step: 0,
-    cfg: JSON.parse(JSON.stringify(U1_WIZARD.config || {})),
-    pick: null,
-  };
-
-  const PRESETS = [
-    { key: 'button', title: 'Button', icon: '🖱️', primary: 'element', tags:['button','input'], fields: [
-      { key: 'element', label: 'Selector', desc: 'The button element', required: true, pick: true },
-    ], template: (v)=>`window.u1?.fix.button('${v.element}', { selectors:{ element:'${v.element}' } })` },
-
-    { key: 'link', title: 'Link', icon: '🔗', primary: 'element', tags:['a'], fields: [
-      { key: 'element', label: 'Selector', desc: 'The link element', required: true, pick: true },
-    ], template: (v)=>`window.u1?.fix.link('${v.element}', { selectors:{ element:'${v.element}' } })` },
-
-    { key: 'menu', title: 'Menu', icon: '☰', primary: 'menu', tags:['nav','ul','ol'], fields: [
-      { key: 'menu', label: 'Container', desc: 'Nav wrapper', required: true, pick: true },
-      { key: 'items', label: 'Items (li)', desc: 'Menu items', required: false, pick: true, multi: true },
-      { key: 'triggers', label: 'Triggers (a)', desc: 'Clickable links inside', required: false, pick: true, multi: true },
-      { key: 'submenus', label: 'Submenus', desc: 'Dropdown containers', required: false, pick: true, multi: true },
-      { key: 'menuDescription', label: 'Desc', desc: 'Name of menu', required: false },
-    ], template: (v)=>`window.u1?.fix.menu('${v.menu}', { selectors:{ menu:'${v.menu}', submenus:'${v.submenus||''}', items:'${v.items||''}', triggers:'${v.triggers||''}' }, menuDescription:'${v.menuDescription||''}' })` },
-
-    { key: 'form', title: 'Form', icon: '📝', primary: 'form', tags:['form'], fields: [
-      { key: 'form', label: 'Container', desc: 'Form wrapper', required: true, pick: true },
       { key: 'submitButton', label: 'Submit', desc: 'Submit button', required: false, pick: true },
       { key: 'inputField', label: 'Inputs', desc: 'Input fields', required: false, pick: false, multi: true },
       { key: 'errorMsg', label: 'Errors', desc: 'Error messages', required: false, pick: true, multi: true },
