@@ -10,12 +10,13 @@
 
 <div class="header">
   <h1>U1 Helper</h1>
-  <span class="version">v1.0</span>
+  <span class="version">v2.0</span>
 </div>
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="setup">Setup</button>
   <button class="tab-btn" data-tab="config">Config</button>
+  <button class="tab-btn" data-tab="scan">Scan</button>
   <button class="tab-btn" data-tab="picker">Picker</button>
   <button class="tab-btn" data-tab="docs">Docs</button>
   <button class="tab-btn" data-tab="export">Export</button>
@@ -48,7 +49,20 @@
   <div id="configStatus" style="margin-top:8px;font-size:11px;color:#22c55e;display:none;">Config executed successfully.</div>
 </div>
 
-<!-- ===== TAB 3: ELEMENT PICKER ===== -->
+<!-- ===== TAB 3: SCAN ===== -->
+<div class="tab-content" id="tab-scan">
+  <div class="btn-row" style="margin-bottom:12px;">
+    <button class="btn-primary" id="scanBtn">Scan Page</button>
+  </div>
+  <div id="scanSpinner" style="display:none;">
+    <span class="spinner"></span>
+    <span style="font-size:12px;color:#888;margin-left:8px;">Scanning...</span>
+  </div>
+  <div id="scanSummary" class="scan-summary" style="display:none;"></div>
+  <div id="scanResults"></div>
+</div>
+
+<!-- ===== TAB 4: ELEMENT PICKER ===== -->
 <div class="tab-content" id="tab-picker">
   <div class="btn-row" style="margin-bottom:12px;">
     <button class="btn-primary" id="pickBtn">Pick Element</button>
@@ -56,7 +70,7 @@
   </div>
 
   <div id="pickerStatus" class="picker-status info" style="display:none;">
-    Click an element on the page. The popup may close — reopen it to see the result.
+    Picker active — click an element on the page.
   </div>
 
   <div id="pickerResult" style="display:none;">
@@ -104,19 +118,19 @@
   </div>
 </div>
 
-<!-- ===== TAB 4: DOCUMENTATION ===== -->
+<!-- ===== TAB 5: DOCUMENTATION ===== -->
 <div class="tab-content" id="tab-docs">
   <div class="section-label">
     Site Notes <span class="hostname-badge" id="docsHostname"></span>
   </div>
   <div class="field-group">
-    <textarea id="notesArea" rows="12" style="min-height:240px;" placeholder="Write notes, observations, or implementation details for this site..."></textarea>
+    <textarea id="notesArea" rows="12" style="min-height:300px;" placeholder="Write notes, observations, or implementation details for this site..."></textarea>
   </div>
   <button class="btn-primary" id="saveNotesBtn">Save Notes</button>
   <div id="notesSaved" style="margin-top:8px;font-size:11px;color:#22c55e;display:none;">Notes saved.</div>
 </div>
 
-<!-- ===== TAB 5: EXPORT ===== -->
+<!-- ===== TAB 6: EXPORT ===== -->
 <div class="tab-content" id="tab-export">
   <div class="export-info">
     Generates a <strong>Word document (.docx)</strong> with a complete implementation guide for the current site, including:<br><br>
@@ -130,10 +144,10 @@
   </div>
   <div id="exportMappingsCount" style="font-size:12px;color:#aaa;margin-bottom:16px;"></div>
   <button class="btn-primary" id="exportBtn">Export Implementation Guide</button>
-  <div id="exportStatus" style="margin-top:8px;font-size:11px;color:#22c55e;display:none;"></div>
+  <div id="exportStatus" style="margin-top:8px;font-size:11px;display:none;"></div>
 </div>
 
 <script src="docx-gen.js"></script>
-<script src="popup.js"></script>
+<script src="panel.js"></script>
 </body>
 </html>

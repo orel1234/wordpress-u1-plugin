@@ -87,10 +87,11 @@ function onClick(e) {
 
   deactivatePicker();
 
-  chrome.storage.local.set({
-    pickerActive: false,
-    pickedSelector: selector
-  });
+  // Storage fallback (for when side panel reopens later)
+  chrome.storage.local.set({ pickerActive: false, pickedSelector: selector });
+
+  // Direct message to side panel (which stays open)
+  try { chrome.runtime.sendMessage({ action: 'elementPicked', selector }); } catch {}
 }
 
 function activatePicker() {
