@@ -1,0 +1,387 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 480px;
+  min-height: 420px;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.header {
+  background: #16213e;
+  padding: 10px 16px;
+  border-bottom: 2px solid #0f3460;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header h1 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e94560;
+  letter-spacing: 1px;
+}
+
+.header .version {
+  font-size: 11px;
+  color: #666;
+  margin-left: auto;
+}
+
+/* Tabs */
+.tabs {
+  display: flex;
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-btn:hover {
+  color: #e0e0e0;
+  background: #0f1f3d;
+}
+
+.tab-btn.active {
+  color: #e94560;
+  border-bottom-color: #e94560;
+  background: #0f1f3d;
+}
+
+/* Tab Content */
+.tab-content {
+  display: none;
+  padding: 16px;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Form Elements */
+label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+input[type="text"],
+input[type="url"],
+textarea,
+select {
+  width: 100%;
+  background: #0f1f3d;
+  border: 1px solid #2a3f6f;
+  border-radius: 4px;
+  color: #e0e0e0;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+  outline: none;
+}
+
+input[type="text"]:focus,
+input[type="url"]:focus,
+textarea:focus,
+select:focus {
+  border-color: #e94560;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 100px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+textarea.readonly-code {
+  background: #0a1628;
+  color: #7dd3fc;
+  min-height: 120px;
+  cursor: text;
+}
+
+select {
+  cursor: pointer;
+}
+
+select option {
+  background: #0f1f3d;
+}
+
+.field-group {
+  margin-bottom: 12px;
+}
+
+/* Buttons */
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: #e94560;
+  color: #fff;
+  padding: 8px 16px;
+  width: 100%;
+}
+
+.btn-primary:hover {
+  background: #c73652;
+}
+
+.btn-primary:active {
+  transform: translateY(1px);
+}
+
+.btn-secondary {
+  background: #2a3f6f;
+  color: #e0e0e0;
+  padding: 6px 12px;
+}
+
+.btn-secondary:hover {
+  background: #3a5490;
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btn-row button {
+  flex: 1;
+}
+
+/* Status indicator */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #0f1f3d;
+  border-radius: 6px;
+  border: 1px solid #2a3f6f;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.active {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e;
+}
+
+.status-dot.inactive {
+  background: #ef4444;
+}
+
+.status-dot.unknown {
+  background: #888;
+}
+
+.status-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #aaa;
+}
+
+#statusText {
+  font-weight: 700;
+}
+
+/* Picker Tab */
+.picker-status {
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 12px;
+  display: none;
+}
+
+.picker-status.info {
+  display: block;
+  background: #1a3a5c;
+  border: 1px solid #2a5f9f;
+  color: #7dd3fc;
+}
+
+.picker-status.success {
+  display: block;
+  background: #14532d;
+  border: 1px solid #22c55e;
+  color: #86efac;
+}
+
+.selector-box {
+  background: #0a1628;
+  border: 1px solid #2a3f6f;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: #f59e0b;
+  word-break: break-all;
+  margin-bottom: 12px;
+  min-height: 32px;
+}
+
+/* Mappings list */
+.mappings-section {
+  margin-top: 16px;
+  border-top: 1px solid #2a3f6f;
+  padding-top: 12px;
+}
+
+.mappings-section h3 {
+  font-size: 11px;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.mapping-item {
+  background: #0a1628;
+  border: 1px solid #2a3f6f;
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.mapping-item pre {
+  flex: 1;
+  font-size: 10px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: #7dd3fc;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.mapping-item .del-btn {
+  background: #3f1f2e;
+  color: #e94560;
+  border: 1px solid #e94560;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.mapping-item .del-btn:hover {
+  background: #e94560;
+  color: #fff;
+}
+
+.empty-state {
+  color: #555;
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  padding: 12px;
+}
+
+/* Export tab */
+.export-info {
+  background: #0f1f3d;
+  border: 1px solid #2a3f6f;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: #aaa;
+  line-height: 1.6;
+}
+
+.export-info strong {
+  color: #e0e0e0;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f1f3d;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3f6f;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a5490;
+}
+
+/* Divider */
+.divider {
+  height: 1px;
+  background: #2a3f6f;
+  margin: 12px 0;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #e94560;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+/* Hostname badge */
+.hostname-badge {
+  display: inline-block;
+  background: #0f3460;
+  color: #7dd3fc;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-family: monospace;
+  margin-left: 6px;
+}
