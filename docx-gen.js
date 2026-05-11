@@ -279,10 +279,26 @@ function buildStylesXml() {
 
 // ── Document body builder ─────────────────────────────────────────────────────
 
-function buildDocumentXml(hostname, cssLink, jsLink, mappings) {
+function buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+  const safeSkipLinks = Array.isArray(skipLinks) ? skipLinks : [];
+  const safeConfig    = config || {
+    visualFocus: { style: { color: 'white', secondaryColor: 'black', doubleBorder: true } },
+    skipLinks: safeSkipLinks,
+    language: 'en',
+    direction: 'ltr',
+  };
+
   const mappingLines = (mappings && mappings.length > 0)
     ? mappings.join('\n\n')
     : '// No mappings saved yet.';
+
+  const skipLinksHtml = safeSkipLinks.length > 0
+    ? safeSkipLinks.map(s => `<a href="${s.target}" class="skip-link">${s.label}</a>`).join('\n')
+    : '<!-- No skip links configured. -->';
+
+  // Pretty-print the config object as JS source for embedding
+  const configJsSource = `window.u1.config = ${JSON.stringify(safeConfig, null, 4)
+    .replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:')};`;
 
   const phpConfig = `function u1_config_and_mapping() {
 ?>
@@ -291,12 +307,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.u1 = window.u1 || {};
 
-    // Configuration: Visual Focus Border
-    window.u1.config = {
-        visualFocus: {
-            style: { color: 'white', secondaryColor: 'black', doubleBorder: true }
-        }
-    };
+    ${configJsSource.split('\n').join('\n    ')}
 
     // Mappings
     ${mappingLines.split('\n').join('\n    ')}
@@ -316,6 +327,20 @@ add_action('wp_footer', 'add_u1_js');`;
 
   const htmlCss = `<link id="u1Css" rel="stylesheet" href="${cssLink}">`;
 
+  const step2BulletsExtra = safeSkipLinks.length > 0
+    ? [
+        bullet('Then, immediately after the opening <body> tag, paste the following Skip Links so keyboard users can jump straight to key sections:'),
+      ]
+    : [];
+
+  const skipLinksBlock = safeSkipLinks.length > 0
+    ? [
+        emptyPara(),
+        para('Skip Links HTML', 'CodeLabel'),
+        codeBlock(skipLinksHtml),
+      ]
+    : [];
+
   const bodyParts = [
     // Title
     para(`A Simple Guide to Implementing User1st (${hostname}) in WordPress`, 'Title'),
@@ -329,8 +354,8 @@ add_action('wp_footer', 'add_u1_js');`;
     bullet('From the admin panel left menu, navigate to Appearance and then click on Theme File Editor.'),
     emptyPara(),
 
-    // Step 2
-    heading('Step 2: Add the CSS File', 1),
+    // Step 2 — CSS + Skip Links
+    heading('Step 2: Add the CSS File and Skip Links', 1),
     para('The CSS file is responsible for styling the accessibility components. It should be placed in the site\'s Header.', 'Normal'),
     bullet('In the file list, find and open the header.php file.'),
     bullet('Look for the closing head tag: </head>.'),
@@ -338,6 +363,8 @@ add_action('wp_footer', 'add_u1_js');`;
     emptyPara(),
     para('HTML', 'CodeLabel'),
     codeBlock(htmlCss),
+    ...step2BulletsExtra,
+    ...skipLinksBlock,
     emptyPara(),
 
     // Step 3
@@ -352,7 +379,7 @@ add_action('wp_footer', 'add_u1_js');`;
 
     // Step 4
     heading('Step 4: Configuration and Site Mapping', 1),
-    para('In the final step, we will add all the visual settings and the specific accessibility mappings for the site.', 'Normal'),
+    para('In the final step, we will add the visual settings, language/direction, skip links registration and the specific accessibility mappings for the site.', 'Normal'),
     bullet('Stay in the functions.php file.'),
     bullet('Paste the following code block below the code you added in the previous step:'),
     emptyPara(),
@@ -383,7 +410,7 @@ ${bodyParts.join('\n')}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings) {
+function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings, skipLinks, config) {
   const zip = new ZipWriter();
 
   zip.add('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -411,7 +438,7 @@ function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings) {
 </Relationships>`);
 
   zip.add('word/styles.xml', buildStylesXml());
-  zip.add('word/document.xml', buildDocumentXml(hostname, cssLink, jsLink, mappings));
+  zip.add('word/document.xml', buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config));
 
   const bytes = zip.toUint8Array();
   const blob  = new Blob([bytes], {
