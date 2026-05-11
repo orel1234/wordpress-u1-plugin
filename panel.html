@@ -274,8 +274,10 @@
     <div class="code-preview" id="templatePreview"></div>
     <div class="btn-row">
       <button class="btn-outline" id="copyTemplateBtn">Copy</button>
+      <button class="btn-outline" id="applyTemplateBtn">Apply</button>
       <button class="btn-primary" id="addMappingBtn">Add to Mapping</button>
     </div>
+    <div class="notice" id="applyStatus"></div>
   </div>
 
   <!-- Saved mappings -->
@@ -285,6 +287,10 @@
       <span class="hostname-badge" id="mappingsHostname"></span>
     </div>
     <div id="mappingsList"><div class="empty-state">No mappings yet.</div></div>
+    <div class="btn-row" id="applyAllRow" style="display:none;">
+      <button class="btn-outline" id="applyAllBtn">Apply All Mappings on Page</button>
+    </div>
+    <div class="notice" id="applyAllStatus"></div>
   </div>
 </div>
 

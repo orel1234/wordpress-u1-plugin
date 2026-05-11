@@ -687,17 +687,30 @@ button {
   word-break: break-all;
 }
 
+.mapping-item .mapping-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mapping-item .apply-btn,
 .mapping-item .del-btn {
   background: transparent;
   color: var(--u1-text-dim);
   border: 1px solid var(--u1-border-strong);
   border-radius: var(--u1-radius-pill);
-  width: 22px;
-  height: 22px;
-  font-size: 11px;
+  width: 24px;
+  height: 24px;
+  font-size: 10px;
   padding: 0;
-  flex-shrink: 0;
   line-height: 1;
+  cursor: pointer;
+}
+
+.mapping-item .apply-btn:hover {
+  color: var(--u1-success);
+  border-color: var(--u1-success);
 }
 
 .mapping-item .del-btn:hover {

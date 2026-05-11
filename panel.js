@@ -175,6 +175,41 @@ function isInjectable(tab) {
          !tab.url.startsWith('about:');
 }
 
+// Execute JS source code in the active tab's page context.
+// Returns { ok, err, u1Missing } so callers can show helpful messages.
+async function applyCodeToPage(code) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (c) => {
+        const hasU1 = typeof window.u1 !== 'undefined' && window.u1 !== null;
+        try {
+          (0, eval)(c);
+          return { ok: true, hasU1 };
+        } catch (e) {
+          return { ok: false, err: String(e?.message || e), hasU1 };
+        }
+      },
+      args: [code],
+    });
+    const r = results?.[0]?.result || { ok: false, err: 'No result' };
+    if (r.ok && !r.hasU1) r.u1Missing = true;
+    return r;
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
+function showNotice(el, text, kind = 'success', duration = 3500) {
+  if (!el) return;
+  el.className = `notice ${kind}`;
+  el.textContent = text;
+  el.style.display = 'block';
+  if (duration > 0) setTimeout(() => { el.style.display = 'none'; }, duration);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Tab switching
 // ─────────────────────────────────────────────────────────────────────────────
@@ -510,18 +545,17 @@ document.getElementById('copyConfigBtn').addEventListener('click', () => {
 });
 
 document.getElementById('runConfigBtn').addEventListener('click', async () => {
-  const tab = await getTab();
-  if (!isInjectable(tab)) { alert('Cannot run on this page.'); return; }
   const code = document.getElementById('configPreview').textContent;
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (c) => { (0, eval)(c); },
-      args: [code],
-    });
-    flashMessage(document.getElementById('configRan'));
-  } catch (err) {
-    alert('Error: ' + err.message);
+  const status = document.getElementById('configRan');
+  const result = await applyCodeToPage(code);
+  if (result.ok) {
+    if (result.u1Missing) {
+      showNotice(status, 'Config set, but U1 library is not loaded yet. Inject U1 in Setup first.', 'error', 4500);
+    } else {
+      showNotice(status, 'Config executed on page.', 'success');
+    }
+  } else {
+    showNotice(status, 'Error: ' + result.err, 'error', 4500);
   }
 });
 
@@ -719,6 +753,20 @@ document.getElementById('copyTemplateBtn').addEventListener('click', () => {
   });
 });
 
+document.getElementById('applyTemplateBtn').addEventListener('click', async () => {
+  const code = $templatePreview.textContent.trim();
+  if (!code) return;
+  const status = document.getElementById('applyStatus');
+  const result = await applyCodeToPage(code);
+  if (result.ok && !result.u1Missing) {
+    showNotice(status, 'Applied on page.', 'success');
+  } else if (result.ok && result.u1Missing) {
+    showNotice(status, 'Code ran but U1 library is not loaded — call had no effect. Inject U1 in Setup first.', 'error', 4500);
+  } else {
+    showNotice(status, 'Error: ' + result.err, 'error', 4500);
+  }
+});
+
 document.getElementById('addMappingBtn').addEventListener('click', async () => {
   const code = $templatePreview.textContent.trim();
   if (!code) return;
@@ -736,23 +784,49 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   setTimeout(() => { btn.textContent = 'Add to Mapping'; }, 1500);
 });
 
+document.getElementById('applyAllBtn').addEventListener('click', async () => {
+  const key = storageKey('mappings', currentHostname);
+  const stored = await chrome.storage.local.get([key]);
+  const list = stored[key] || [];
+  const status = document.getElementById('applyAllStatus');
+  if (list.length === 0) {
+    showNotice(status, 'No mappings to apply.', 'error');
+    return;
+  }
+  const result = await applyCodeToPage(list.join('\n\n'));
+  if (result.ok && !result.u1Missing) {
+    showNotice(status, `Applied ${list.length} mapping${list.length !== 1 ? 's' : ''} on page.`, 'success');
+  } else if (result.ok && result.u1Missing) {
+    showNotice(status, 'U1 library is not loaded — calls had no effect. Inject U1 in Setup first.', 'error', 4500);
+  } else {
+    showNotice(status, 'Error: ' + result.err, 'error', 4500);
+  }
+});
+
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);
   const stored = await chrome.storage.local.get([key]);
   const list = stored[key] || [];
   const container = document.getElementById('mappingsList');
+  const applyAllRow = document.getElementById('applyAllRow');
 
   if (list.length === 0) {
     container.innerHTML = '<div class="empty-state">No mappings yet.</div>';
+    if (applyAllRow) applyAllRow.style.display = 'none';
     return;
   }
 
   container.innerHTML = list.map((code, idx) => `
     <div class="mapping-item">
       <pre>${escapeHtml(code)}</pre>
-      <button class="del-btn" data-idx="${idx}" title="Remove">✕</button>
+      <div class="mapping-actions">
+        <button class="apply-btn" data-idx="${idx}" title="Apply on page">▶</button>
+        <button class="del-btn" data-idx="${idx}" title="Remove">✕</button>
+      </div>
     </div>
   `).join('');
+
+  if (applyAllRow) applyAllRow.style.display = 'flex';
 
   container.querySelectorAll('.del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -761,6 +835,23 @@ async function loadMappingsList() {
       await chrome.storage.local.set({ [key]: list });
       loadMappingsList();
       refreshExportInfo();
+    });
+  });
+
+  container.querySelectorAll('.apply-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = parseInt(btn.dataset.idx, 10);
+      const code = list[i];
+      if (!code) return;
+      const status = document.getElementById('applyAllStatus');
+      const result = await applyCodeToPage(code);
+      if (result.ok && !result.u1Missing) {
+        showNotice(status, 'Applied on page.', 'success', 2200);
+      } else if (result.ok && result.u1Missing) {
+        showNotice(status, 'U1 library is not loaded — call had no effect.', 'error', 3500);
+      } else {
+        showNotice(status, 'Error: ' + result.err, 'error', 4000);
+      }
     });
   });
 }
