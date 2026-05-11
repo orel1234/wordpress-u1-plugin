@@ -713,6 +713,16 @@ button {
   border-color: var(--u1-success);
 }
 
+.mapping-item .apply-btn[disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.mapping-item.legacy {
+  border-color: rgba(239, 68, 68, 0.3);
+  border-style: dashed;
+}
+
 .mapping-item .del-btn:hover {
   color: var(--u1-danger);
   border-color: var(--u1-danger);

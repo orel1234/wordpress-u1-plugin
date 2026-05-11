@@ -104,10 +104,36 @@ function setDeep(obj, dottedKey, value) {
 
 function deepClone(o) { return JSON.parse(JSON.stringify(o)); }
 
-// Build u1.fix.<type>("PRIMARY", { ... }) source string from schema + values.
+function isValidIdent(s) {
+  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(s);
+}
+
+// Serialize an object as JS source with unquoted identifier keys.
+function formatJsObject(obj, indent = 0) {
+  const pad = '  '.repeat(indent);
+  const padInner = '  '.repeat(indent + 1);
+  if (obj === null) return 'null';
+  if (typeof obj === 'string') return JSON.stringify(obj);
+  if (typeof obj === 'number' || typeof obj === 'boolean') return String(obj);
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return '[]';
+    return '[\n' + obj.map(v => padInner + formatJsObject(v, indent + 1)).join(',\n') + '\n' + pad + ']';
+  }
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return '{}';
+    return '{\n' + keys.map(k =>
+      padInner + (isValidIdent(k) ? k : JSON.stringify(k)) + ': ' + formatJsObject(obj[k], indent + 1)
+    ).join(',\n') + '\n' + pad + '}';
+  }
+  return String(obj);
+}
+
+// Builds a structured mapping AND the equivalent source code from a schema.
+// Returns { type, primary, config, code }.
 function buildTemplate(type, primary, fieldValues, rootValues) {
   const schema = COMPONENT_SCHEMAS[type];
-  if (!schema) return '';
+  if (!schema) return null;
 
   // 1) selectors object with PRIMARY substituted
   const selectors = deepClone(schema.selectors);
@@ -132,10 +158,73 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
     }
   }
 
-  // 4) serialize. Use a custom JSON serialization with double-quoted keys and
-  //    2-space indentation, then prepend the call.
-  const body = JSON.stringify(config, null, 2);
-  return `window.u1?.fix.${type}(${JSON.stringify(primary)}, ${body});`;
+  const code = `window.u1?.fix.${type}(${JSON.stringify(primary)}, ${formatJsObject(config)});`;
+  return { type, primary, config, code };
+}
+
+// Auto-detect the most likely component type from the picked element's
+// metadata. Returns one of the COMPONENT_SCHEMAS keys, or ''.
+function detectComponentType(info) {
+  if (!info) return '';
+  const tag = (info.tag || '').toLowerCase();
+  const role = (info.role || '').toLowerCase();
+  const inputType = (info.inputType || '').toLowerCase();
+  const classes = (info.classes || []).map(c => c.toLowerCase()).join(' ');
+  const dataToggle = (info.dataToggle || '').toLowerCase();
+
+  // High-confidence: ARIA roles
+  if (role === 'menu' || role === 'menubar') return 'menu';
+  if (role === 'dialog' || role === 'alertdialog') return 'dialog';
+  if (role === 'tablist' || role === 'tab') return 'tabs';
+  if (role === 'tooltip') return 'tooltip';
+  if (role === 'combobox') return 'combobox';
+  if (role === 'listbox') return 'listbox';
+  if (role === 'grid') return 'grid';
+  if (role === 'checkbox') return 'checkbox';
+  if (role === 'radio' || role === 'radiogroup') return 'radio';
+  if (role === 'button') return 'button';
+
+  // Native semantic tags
+  if (tag === 'dialog' || info.ariaModal === 'true') return 'dialog';
+  if (tag === 'details') return 'accordion';
+  if (tag === 'form') return 'form';
+  if (tag === 'table') return 'table';
+  if (tag === 'select') return 'listbox';
+  if (tag === 'input') {
+    if (inputType === 'checkbox') return 'checkbox';
+    if (inputType === 'radio') return 'radio';
+    if (inputType === 'date' || inputType === 'datetime-local') return 'datepicker';
+    if (info.ariaHaspopup === 'listbox' || info.ariaHaspopup === 'true') return 'combobox';
+  }
+  if (tag === 'button') return 'button';
+  if (tag === 'nav') return 'menu';
+
+  // Bootstrap data-toggle hints
+  if (dataToggle === 'modal') return 'dialog';
+  if (dataToggle === 'collapse') return 'accordion';
+  if (dataToggle === 'tooltip') return 'tooltip';
+  if (dataToggle === 'dropdown') return 'menu';
+  if (dataToggle === 'tab' || dataToggle === 'pill') return 'tabs';
+
+  // Class-name keyword sniff
+  if (/(^|\s)(accordion|collapsible|toggle-header|elementor-accordion|et_pb_accordion)/i.test(classes)) return 'accordion';
+  if (/(carousel|slick|swiper|owl-carousel|flexslider|elementor-carousel)/i.test(classes)) return 'carousel';
+  if (/(datepicker|flatpickr|pikaday|date-picker|air-datepicker)/i.test(classes)) return 'datepicker';
+  if (/(modal|dialog|popup|lightbox|fancybox|mfp-content|remodal)/i.test(classes)) return 'dialog';
+  if (/(menu|navigation|navbar|nav-menu|elementor-nav-menu)/i.test(classes)) return 'menu';
+  if (/(\btabs\b|nav-tabs|ui-tabs|tab-list|elementor-tabs|et_pb_tabs)/i.test(classes)) return 'tabs';
+  if (/(tooltip|tippy)/i.test(classes)) return 'tooltip';
+  if (/(combobox|autocomplete|select2|chosen|selectize|typeahead)/i.test(classes)) return 'combobox';
+  if (/(listbox)/i.test(classes)) return 'listbox';
+  if (/(\bgrid\b|ag-grid|datatables|ag-root)/i.test(classes)) return 'grid';
+  if (/(checkbox)/i.test(classes)) return 'checkbox';
+  if (/(\bradio\b|radio-group)/i.test(classes)) return 'radio';
+  if (/(\bbtn\b|button|elementor-button)/i.test(classes)) return 'button';
+
+  // Generic anchor → link
+  if (tag === 'a' && info.hasHref) return 'link';
+
+  return '';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,31 +264,123 @@ function isInjectable(tab) {
          !tab.url.startsWith('about:');
 }
 
-// Execute JS source code in the active tab's page context.
-// Returns { ok, err, u1Missing } so callers can show helpful messages.
-async function applyCodeToPage(code) {
+// ── Apply functions (no eval — CSP-safe) ──────────────────────────────────
+// These set window.u1.* directly via executeScript args, so they work even
+// on pages with strict Content-Security-Policy that disallow eval/new Function.
+
+async function applyConfig(config) {
   const tab = await getTab();
   if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (c) => {
-        const hasU1 = typeof window.u1 !== 'undefined' && window.u1 !== null;
+      func: (cfg) => {
+        const hadU1 = typeof window.u1 !== 'undefined' && window.u1 !== null;
         try {
-          (0, eval)(c);
-          return { ok: true, hasU1 };
+          window.u1 = window.u1 || {};
+          window.u1.config = cfg;
+          return { ok: true, hasU1: hadU1 };
         } catch (e) {
-          return { ok: false, err: String(e?.message || e), hasU1 };
+          return { ok: false, err: String(e && e.message ? e.message : e), hasU1: hadU1 };
         }
       },
-      args: [code],
+      args: [config],
     });
-    const r = results?.[0]?.result || { ok: false, err: 'No result' };
+    const r = results && results[0] && results[0].result ? results[0].result : { ok: false, err: 'No result' };
     if (r.ok && !r.hasU1) r.u1Missing = true;
     return r;
   } catch (err) {
     return { ok: false, err: err.message };
   }
+}
+
+async function applyFix(type, primary, config) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (t, p, c) => {
+        const u1 = window.u1;
+        if (!u1 || typeof u1 !== 'object') {
+          return { ok: false, err: 'window.u1 is not loaded', u1Missing: true };
+        }
+        if (!u1.fix || typeof u1.fix[t] !== 'function') {
+          return { ok: false, err: 'u1.fix.' + t + ' is not available' };
+        }
+        try {
+          u1.fix[t](p, c);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, err: String(e && e.message ? e.message : e) };
+        }
+      },
+      args: [type, primary, config],
+    });
+    return results && results[0] && results[0].result ? results[0].result : { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
+async function applyMappingsBatch(items) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  // Filter to only structured items (skip legacy strings)
+  const structured = items.filter(x => x && typeof x === 'object' && x.type && x.primary);
+  if (structured.length === 0) {
+    return { ok: false, err: 'No applicable mappings (legacy string mappings cannot be auto-applied — re-add them).' };
+  }
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (list) => {
+        const u1 = window.u1;
+        if (!u1 || typeof u1 !== 'object') {
+          return { ok: false, err: 'window.u1 is not loaded', u1Missing: true };
+        }
+        let applied = 0, failed = 0, errs = [];
+        for (const it of list) {
+          try {
+            if (u1.fix && typeof u1.fix[it.type] === 'function') {
+              u1.fix[it.type](it.primary, it.config);
+              applied++;
+            } else {
+              failed++;
+              errs.push('u1.fix.' + it.type + ' missing');
+            }
+          } catch (e) {
+            failed++;
+            errs.push(String(e && e.message ? e.message : e));
+          }
+        }
+        return { ok: true, applied, failed, errs };
+      },
+      args: [structured],
+    });
+    return results && results[0] && results[0].result ? results[0].result : { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
+// ── Mapping helpers ───────────────────────────────────────────────────────
+// Mappings may be old-format strings (legacy) or new-format objects {type, primary, config, code}.
+function mappingToCode(m) {
+  if (typeof m === 'string') return m;
+  if (m && typeof m === 'object') {
+    if (m.code) return m.code;
+    if (m.type && m.primary && m.config) {
+      return `window.u1?.fix.${m.type}(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
+    }
+  }
+  return '';
+}
+
+function mappingKey(m) {
+  if (typeof m === 'string') return m;
+  if (m && m.type && m.primary) return m.type + '::' + m.primary;
+  return JSON.stringify(m);
 }
 
 function showNotice(el, text, kind = 'success', duration = 3500) {
@@ -545,14 +726,16 @@ document.getElementById('copyConfigBtn').addEventListener('click', () => {
 });
 
 document.getElementById('runConfigBtn').addEventListener('click', async () => {
-  const code = document.getElementById('configPreview').textContent;
+  const skipKey = storageKey('skipLinks', currentHostname);
+  const stored = await chrome.storage.local.get([skipKey]);
+  const cfg = buildConfigObject(stored[skipKey] || []);
   const status = document.getElementById('configRan');
-  const result = await applyCodeToPage(code);
+  const result = await applyConfig(cfg);
   if (result.ok) {
     if (result.u1Missing) {
       showNotice(status, 'Config set, but U1 library is not loaded yet. Inject U1 in Setup first.', 'error', 4500);
     } else {
-      showNotice(status, 'Config executed on page.', 'success');
+      showNotice(status, 'Config applied on page.', 'success');
     }
   } else {
     showNotice(status, 'Error: ' + result.err, 'error', 4500);
@@ -578,6 +761,9 @@ const $subSelArea      = document.getElementById('subSelectorsArea');
 const $previewSection  = document.getElementById('previewSection');
 const $templatePreview = document.getElementById('templatePreview');
 
+// Currently built template (set by Generate, consumed by Apply / Add to Mapping)
+let currentTemplate = null;
+
 function setPickerBanner(text, type = 'info') {
   $pickerBanner.textContent = text;
   $pickerBanner.className = `picker-banner ${type}`;
@@ -592,51 +778,61 @@ function showPickerActive() {
   $cancelPickBtn.style.display = 'inline-block';
 }
 
-function showPickerResult(selector) {
-  setPickerBanner('Element captured. Choose a component type.', 'success');
+function showPickerResult(selector, info) {
   $pickBtn.style.display       = 'inline-block';
   $cancelPickBtn.style.display = 'none';
   $pickerResult.style.display  = 'block';
   $selectorDisplay.textContent = selector;
-  $componentType.value         = '';
-  $subSelSection.style.display = 'none';
+
+  // Auto-detect type from element metadata
+  const detected = detectComponentType(info);
+  if (detected) {
+    $componentType.value = detected;
+    setPickerBanner(`Element captured. Detected type: ${detected} — adjust if needed.`, 'success');
+    renderSubSelectorInputs(detected);
+  } else {
+    $componentType.value = '';
+    setPickerBanner('Element captured. Choose a component type below.', 'success');
+    $subSelSection.style.display = 'none';
+  }
   $previewSection.style.display = 'none';
+  currentTemplate = null;
 }
 
 async function loadPickerState() {
-  const { pickedSelector, pickerActive } = await chrome.storage.local.get(['pickedSelector', 'pickerActive']);
+  const { pickedSelector, pickedInfo, pickerActive } = await chrome.storage.local.get(['pickedSelector', 'pickedInfo', 'pickerActive']);
   if (pickerActive) {
     showPickerActive();
   } else if (pickedSelector) {
-    showPickerResult(pickedSelector);
+    showPickerResult(pickedSelector, pickedInfo);
   }
 }
 
 // Direct message from content.js
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.action === 'elementPicked') {
-    showPickerResult(msg.selector);
+    showPickerResult(msg.selector, msg.info);
   }
 });
 
 // Storage fallback
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.pickedSelector?.newValue) {
-    showPickerResult(changes.pickedSelector.newValue);
+    showPickerResult(changes.pickedSelector.newValue, changes.pickedInfo?.newValue);
   }
 });
 
 $pickBtn.addEventListener('click', async () => {
   const tab = await getTab();
   if (!isInjectable(tab)) { alert('Cannot activate picker on this page.'); return; }
-  await chrome.storage.local.set({ pickerActive: true, pickedSelector: null });
+  await chrome.storage.local.set({ pickerActive: true, pickedSelector: null, pickedInfo: null });
   showPickerActive();
   try { await chrome.tabs.sendMessage(tab.id, { action: 'startPicker' }); } catch {}
 });
 
 $cancelPickBtn.addEventListener('click', async () => {
   const tab = await getTab();
-  await chrome.storage.local.set({ pickerActive: false, pickedSelector: null });
+  await chrome.storage.local.set({ pickerActive: false, pickedSelector: null, pickedInfo: null });
   try { await chrome.tabs.sendMessage(tab.id, { action: 'cancelPicker' }); } catch {}
   hidePickerBanner();
   $pickerResult.style.display = 'none';
@@ -644,6 +840,7 @@ $cancelPickBtn.addEventListener('click', async () => {
   $previewSection.style.display = 'none';
   $pickBtn.style.display       = 'inline-block';
   $cancelPickBtn.style.display = 'none';
+  currentTemplate = null;
 });
 
 $componentType.addEventListener('change', () => {
@@ -739,8 +936,9 @@ document.getElementById('generateBtn').addEventListener('click', () => {
     else rootValues[inp.dataset.root] = inp.value.trim();
   });
 
-  const code = buildTemplate(type, primary, fieldValues, rootValues);
-  $templatePreview.textContent = code;
+  currentTemplate = buildTemplate(type, primary, fieldValues, rootValues);
+  if (!currentTemplate) return;
+  $templatePreview.textContent = currentTemplate.code;
   $previewSection.style.display = 'block';
 });
 
@@ -754,27 +952,32 @@ document.getElementById('copyTemplateBtn').addEventListener('click', () => {
 });
 
 document.getElementById('applyTemplateBtn').addEventListener('click', async () => {
-  const code = $templatePreview.textContent.trim();
-  if (!code) return;
+  if (!currentTemplate) return;
   const status = document.getElementById('applyStatus');
-  const result = await applyCodeToPage(code);
-  if (result.ok && !result.u1Missing) {
+  const result = await applyFix(currentTemplate.type, currentTemplate.primary, currentTemplate.config);
+  if (result.ok) {
     showNotice(status, 'Applied on page.', 'success');
-  } else if (result.ok && result.u1Missing) {
-    showNotice(status, 'Code ran but U1 library is not loaded — call had no effect. Inject U1 in Setup first.', 'error', 4500);
+  } else if (result.u1Missing) {
+    showNotice(status, 'U1 library is not loaded — inject U1 in Setup first.', 'error', 4500);
   } else {
     showNotice(status, 'Error: ' + result.err, 'error', 4500);
   }
 });
 
 document.getElementById('addMappingBtn').addEventListener('click', async () => {
-  const code = $templatePreview.textContent.trim();
-  if (!code) return;
+  if (!currentTemplate) return;
   const key = storageKey('mappings', currentHostname);
   const stored = await chrome.storage.local.get([key]);
   const list = stored[key] || [];
-  if (!list.includes(code)) {
-    list.push(code);
+  const newKey = mappingKey(currentTemplate);
+  const exists = list.some(m => mappingKey(m) === newKey);
+  if (!exists) {
+    list.push({
+      type: currentTemplate.type,
+      primary: currentTemplate.primary,
+      config: currentTemplate.config,
+      code: currentTemplate.code,
+    });
     await chrome.storage.local.set({ [key]: list });
   }
   loadMappingsList();
@@ -793,11 +996,13 @@ document.getElementById('applyAllBtn').addEventListener('click', async () => {
     showNotice(status, 'No mappings to apply.', 'error');
     return;
   }
-  const result = await applyCodeToPage(list.join('\n\n'));
-  if (result.ok && !result.u1Missing) {
-    showNotice(status, `Applied ${list.length} mapping${list.length !== 1 ? 's' : ''} on page.`, 'success');
-  } else if (result.ok && result.u1Missing) {
-    showNotice(status, 'U1 library is not loaded — calls had no effect. Inject U1 in Setup first.', 'error', 4500);
+  const result = await applyMappingsBatch(list);
+  if (result.ok) {
+    const msg = `Applied ${result.applied} mapping${result.applied !== 1 ? 's' : ''}` +
+                (result.failed ? ` (${result.failed} failed)` : '') + '.';
+    showNotice(status, msg, result.failed ? 'error' : 'success', 4000);
+  } else if (result.u1Missing) {
+    showNotice(status, 'U1 library is not loaded — inject U1 in Setup first.', 'error', 4500);
   } else {
     showNotice(status, 'Error: ' + result.err, 'error', 4500);
   }
@@ -816,15 +1021,19 @@ async function loadMappingsList() {
     return;
   }
 
-  container.innerHTML = list.map((code, idx) => `
-    <div class="mapping-item">
-      <pre>${escapeHtml(code)}</pre>
-      <div class="mapping-actions">
-        <button class="apply-btn" data-idx="${idx}" title="Apply on page">▶</button>
-        <button class="del-btn" data-idx="${idx}" title="Remove">✕</button>
+  container.innerHTML = list.map((m, idx) => {
+    const code = mappingToCode(m);
+    const legacy = typeof m === 'string';
+    return `
+      <div class="mapping-item${legacy ? ' legacy' : ''}">
+        <pre>${escapeHtml(code)}</pre>
+        <div class="mapping-actions">
+          <button class="apply-btn" data-idx="${idx}" title="${legacy ? 'Legacy string — cannot auto-apply, please re-add' : 'Apply on page'}"${legacy ? ' disabled' : ''}>▶</button>
+          <button class="del-btn" data-idx="${idx}" title="Remove">✕</button>
+        </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   if (applyAllRow) applyAllRow.style.display = 'flex';
 
@@ -838,17 +1047,17 @@ async function loadMappingsList() {
     });
   });
 
-  container.querySelectorAll('.apply-btn').forEach(btn => {
+  container.querySelectorAll('.apply-btn:not([disabled])').forEach(btn => {
     btn.addEventListener('click', async () => {
       const i = parseInt(btn.dataset.idx, 10);
-      const code = list[i];
-      if (!code) return;
+      const m = list[i];
+      if (!m || typeof m === 'string') return;
       const status = document.getElementById('applyAllStatus');
-      const result = await applyCodeToPage(code);
-      if (result.ok && !result.u1Missing) {
+      const result = await applyFix(m.type, m.primary, m.config);
+      if (result.ok) {
         showNotice(status, 'Applied on page.', 'success', 2200);
-      } else if (result.ok && result.u1Missing) {
-        showNotice(status, 'U1 library is not loaded — call had no effect.', 'error', 3500);
+      } else if (result.u1Missing) {
+        showNotice(status, 'U1 library is not loaded — inject U1 in Setup first.', 'error', 3500);
       } else {
         showNotice(status, 'Error: ' + result.err, 'error', 4000);
       }
@@ -876,7 +1085,8 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
   const stored = await chrome.storage.local.get([skipKey, cfgKey, mKey]);
   const skipLinks = stored[skipKey] || [];
   const config    = stored[cfgKey]  || buildConfigObject(skipLinks);
-  const mappings  = stored[mKey]    || [];
+  // DocX expects an array of code strings — convert structured mappings.
+  const mappings  = (stored[mKey] || []).map(mappingToCode).filter(Boolean);
 
   const statusEl = document.getElementById('exportStatus');
 
