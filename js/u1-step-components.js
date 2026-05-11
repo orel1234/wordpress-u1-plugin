@@ -125,45 +125,80 @@
       body.appendChild(U1W.ui.section('Step 2 — COMPONENTS'));
 
       const intro = document.createElement('div');
-      intro.style.cssText = 'font-size:13px; color:#9ca3af; margin-bottom:15px;';
-      intro.innerText = 'Map your UI components.';
+      intro.style.cssText = 'font-size:13px; color:#9ca3af; margin-bottom:10px;';
+      intro.innerText = 'Choose a component type, then fill in the CSS selectors manually.';
       body.appendChild(intro);
 
-      const grid = document.createElement('div');
-      grid.style.cssText = 'display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; margin-bottom:25px;';
-      
-      COMPONENT_TILES.forEach(tile => {
-          const btn = document.createElement('div');
-          btn.style.cssText = 'background:#1f2937; position:relative; padding:10px 5px; border-radius:6px; border:1px solid #374151; cursor:pointer; display:flex; flex-direction:column; align-items:center; text-align:center; min-height:85px; justify-content:center; transition:0.2s;';
-          btn.innerHTML = `<div style="font-size:20px; margin-bottom:4px;">${tile.icon}</div><div style="font-size:10px; font-weight:bold; color:#fff;">${tile.label}</div>`;
-          
-          const info = document.createElement('div');
-          info.innerHTML = 'ℹ';
-          info.style.cssText = 'position:absolute; top:2px; right:4px; font-size:12px; color:#60a5fa; cursor:help; opacity:0.7;';
-          info.onclick = (e) => { e.stopPropagation(); showComponentHelp(tile.core); };
-          btn.appendChild(info);
+      // --- Add New Component: Dropdown + Button ---
+      const addRow = document.createElement('div');
+      addRow.style.cssText = 'display:flex; gap:8px; margin-bottom:20px; align-items:center;';
 
-          btn.onmouseover = () => { btn.style.borderColor = '#2563eb'; btn.style.background = '#111827'; };
-          btn.onmouseout = () => { btn.style.borderColor = '#374151'; btn.style.background = '#1f2937'; };
-          btn.onclick = () => {
-              U1W.startPick(`Pick ${tile.label}`, (el) => {
-                  const data = scanElement(el, tile.core);
-                  showVisualZoom(CORE_DEFS[tile.core], data, tile.core, tile.label);
-              });
-          };
-          grid.appendChild(btn);
+      const select = document.createElement('select');
+      select.className = 'u1w-select';
+      select.style.cssText = 'flex:1; padding:8px; background:#1f2937; color:#fff; border:1px solid #374151; border-radius:6px; font-size:13px;';
+      COMPONENT_TILES.forEach(tile => {
+          const opt = document.createElement('option');
+          opt.value = tile.core;
+          opt.textContent = tile.icon + ' ' + tile.label;
+          select.appendChild(opt);
       });
-      body.appendChild(grid);
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'u1w-btn primary';
+      addBtn.textContent = '+ Add Component';
+      addBtn.onclick = () => {
+          const coreType = select.value;
+          const def = CORE_DEFS[coreType];
+          const tile = COMPONENT_TILES.find(t => t.core === coreType);
+          openEditor(coreType, def, {}, -1);
+      };
+
+      addRow.appendChild(select);
+      addRow.appendChild(addBtn);
+      body.appendChild(addRow);
 
       renderConfiguredList(body);
+
+      // Apply to page button
+      const applyBtn = document.createElement('button');
+      applyBtn.style.cssText = 'width:100%; margin-top:15px; padding:10px; background:rgba(16,185,129,0.15); border:1px solid #059669; color:#4ade80; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold;';
+      applyBtn.textContent = '▶ Apply Mapping to Page Now';
+      applyBtn.onclick = async () => {
+          await U1W.saveConfig();
+          applyMappingNow();
+      };
+      body.appendChild(applyBtn);
       
       const nav = document.createElement('div');
-      nav.style.marginTop = '20px';
+      nav.style.marginTop = '15px';
       nav.innerHTML = `<button class="u1w-btn" id="comp-back">Back</button> <button class="u1w-btn primary" id="comp-next">Next Step</button>`;
       body.appendChild(nav);
       body.querySelector('#comp-back').onclick = () => { U1W.state.step--; U1W.render(); };
       body.querySelector('#comp-next').onclick = () => { U1W.state.step++; U1W.render(); };
   };
+
+  // Apply all configured mappings to the live page via window.u1
+  function applyMappingNow() {
+      if (!window.u1 || !window.u1.fix) {
+          U1W.toast('U1 engine not loaded on this page.');
+          return;
+      }
+      const groups = Object.keys(CORE_DEFS);
+      let applied = 0;
+      groups.forEach(function(g) {
+          (U1W.state.cfg[g] || []).forEach(function(it) {
+              try {
+                  const def = CORE_DEFS[g];
+                  const mainKey = def.fields[0].key;
+                  const mainSel = it[mainKey];
+                  if (!mainSel) return;
+                  window.u1.fix[g](mainSel, { selectors: it });
+                  applied++;
+              } catch(e) {}
+          });
+      });
+      U1W.toast(applied > 0 ? `Applied ${applied} component(s) to page!` : 'No components configured yet.');
+  }
 
   // --- NEW: Render by Page Logic ---
   function renderConfiguredList(body) {

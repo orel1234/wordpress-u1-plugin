@@ -23,118 +23,69 @@
     return html;
   }
 
-  // --- 1. עדכון CSS גלובלי ---
-  function updateGlobalStyles(c1, c2) {
-    document.documentElement.style.setProperty('--u1-focus-color', c1);
-    document.documentElement.style.setProperty('--u1-focus-contrast-color', c2);
-
-    let styleEl = document.getElementById("u1w-live-styles");
-    if (!styleEl) {
-      styleEl = document.createElement("style");
-      styleEl.id = "u1w-live-styles";
-      document.head.appendChild(styleEl);
+  // --- 1. עדכון Preview בלבד (לא מחיל על האתר) ---
+  function updatePreviewStyles(c1, c2) {
+    // עדכון רק על כפתור הפריוויו בתוך ה-wizard, לא על האתר כולו
+    const previewBtn = document.querySelector('.u1w-preview-focus');
+    if (previewBtn) {
+      previewBtn.style.outline = `3px solid ${c1}`;
+      previewBtn.style.outlineOffset = '2px';
+      previewBtn.style.boxShadow = `inset 0 0 0 2px ${c2}`;
     }
-
-    styleEl.innerHTML = `
-      html body *:focus-visible, 
-      html body .u1w-preview-focus {
-        outline: 3px solid var(--u1-focus-color) !important;
-        outline-offset: 2px !important;
-        box-shadow: inset 0 0 0 2px var(--u1-focus-contrast-color) !important;
-        z-index: 2147483647 !important;
-      }
-      
-      /* סגנון כללי לקישור סקיפ */
-      .u1w-skip-link {
-        position: fixed;
-        top: -200px;
-        left: 20px;
-        z-index: 2147483648;
-        background: #000000;
-        color: #ffffff;
-        font-family: sans-serif;
-        font-weight: bold;
-        font-size: 16px;
-        padding: 12px 24px;
-        text-decoration: none; /* שלא יהיה קו תחתון */
-        border-radius: 4px;
-        transition: top 0.2s ease-out;
-        pointer-events: auto;
-      }
-
-      /* חשיפה בפוקוס */
-      .u1w-skip-link:focus {
-        top: 20px;
-        outline: none; /* שלא יהיה פס לבן של הדפדפן */
-      }
-    `;
   }
 
-  // --- 2. יצירת הקישורים (תיקון ה"פס הלבן" וסנכרון צבעים) ---
-  function renderLiveSkipLinks() {
-    const old = document.getElementById("u1w-skip-container");
+  // --- 2. הפעלת Skip Links על האתר (כמו ה-runtime) ---
+  function applySkipLinksNow() {
+    // מסיר wrapper קיים
+    const old = document.getElementById('u1-wizard-skiplinks-wrapper');
     if (old) old.remove();
 
-    if (U1W.state.internalStep !== 3) return;
-
     const links = U1W.state.cfg.skiplinks || [];
-    if (links.length === 0) return;
+    const validLinks = links.filter(l => l.target_selector && l.target_selector.trim());
+    if (!validLinks.length) { U1W.toast('No skip links with selectors defined.'); return; }
 
-    // *** תיקון קריטי: שליפת הצבעים ישירות מה-CSS המחושב ***
-    // זה מבטיח שאם שינית בשלב 2, זה יופיע כאן בוודאות, גם אם ה-State טרם התעדכן
-    const computedStyle = getComputedStyle(document.documentElement);
-    const pColor = computedStyle.getPropertyValue('--u1-focus-color').trim() || '#000000';
-    const sColor = computedStyle.getPropertyValue('--u1-focus-contrast-color').trim() || '#ffffff';
+    const wrapper = document.createElement('div');
+    wrapper.id = 'u1-wizard-skiplinks-wrapper';
+    wrapper.className = 'u1-skiplinks';
+    wrapper.setAttribute('role', 'navigation');
+    wrapper.setAttribute('aria-label', 'Accessibility Links');
+    wrapper.style.cssText = 'position:fixed; top:0; left:0; width:100%; z-index:2147483647; pointer-events:none;';
 
-    const container = document.createElement("div");
-    container.id = "u1w-skip-container";
-    container.style.cssText = "position:absolute; top:0; left:0; width:0; height:0;";
-    
-    links.forEach((link) => {
-      // יוצרים את הקישור בכל מקרה כדי שיהיה ב-DOM
-      // אבל אם אין סלקטור, הוא לא יעשה כלום
-      if (!link.target_selector) return;
+    const wpAdminBar = document.getElementById('wpadminbar');
+    const skipTopOffset = 16 + (wpAdminBar ? wpAdminBar.offsetHeight || 0 : 0);
 
-      const a = document.createElement("a");
-      a.href = link.target_selector;
-      a.className = "u1w-skip-link"; 
-      a.textContent = link.text || "Skip Link";
-      
-      // *** הזרקת הבורדר הנכון + ביטול קווים לבנים ***
-      a.style.cssText = `
-          border: 4px solid ${pColor} !important;
-          box-shadow: inset 0 0 0 2px ${sColor} !important;
-          outline: none !important; /* מוחק את הפס הלבן של הדפדפן */
-          text-decoration: none !important; /* מוחק קו תחתון אם יש */
-      `;
+    validLinks.forEach(function(cfg, index) {
+      let target;
+      try { target = document.querySelector(cfg.target_selector); } catch(e) { return; }
+      if (!target) return;
 
-      // בדיקה אם האלמנט קיים (רק כדי לדעת אם להקפיץ הודעה או לגלול)
-      const targetEl = document.querySelector(link.target_selector);
+      let id = target.id;
+      if (!id || /^u1-/.test(id)) { id = 'u1-skip-target-' + index; target.id = id; }
+      target.setAttribute('tabindex', '-1');
+      target.style.outline = 'none';
 
-      a.onclick = (e) => {
-        if (targetEl) {
-            e.preventDefault();
-            targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
-            targetEl.setAttribute("tabindex", "-1");
-            targetEl.focus({preventScroll:true});
-            
-            // אינדיקציה ויזואלית
-            const prevOutline = targetEl.style.outline;
-            targetEl.style.transition = "0.2s";
-            targetEl.style.outline = `5px solid ${pColor}`;
-            setTimeout(() => targetEl.style.outline = prevOutline, 1500);
-        }
-      };
-
-      container.appendChild(a);
+      const a = document.createElement('a');
+      a.href = '#' + id;
+      a.textContent = cfg.text || ('Skip to ' + (cfg.type || 'section'));
+      a.style.cssText = 'position:absolute; top:-999px; left:80px; pointer-events:auto; background:#000; color:#fff; padding:8px 16px; font-size:14px; font-weight:bold; text-decoration:none; border:2px solid transparent; box-shadow:0 4px 10px rgba(0,0,0,0.35); font-family:sans-serif; outline:none; transition:top 0.15s ease-out;';
+      a.addEventListener('focus', () => { a.style.top = skipTopOffset + 'px'; a.style.borderColor = '#fff'; });
+      a.addEventListener('blur', () => { a.style.top = '-999px'; a.style.borderColor = 'transparent'; });
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        try { target.focus({ preventScroll: true }); } catch(err) { target.focus(); }
+        try { target.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch(err2) {}
+      });
+      wrapper.appendChild(a);
     });
 
-    document.body.prepend(container);
-  }
-
-  function clearLivePreview() {
-    const el = document.getElementById("u1w-skip-container");
-    if (el) el.remove();
+    if (wrapper.hasChildNodes()) {
+      const host = document.getElementById('page') || document.querySelector('.hfeed.site') || document.body;
+      if (host.firstChild) host.insertBefore(wrapper, host.firstChild);
+      else host.appendChild(wrapper);
+      U1W.toast('Skip links applied to page!');
+    } else {
+      U1W.toast('No valid targets found on this page.');
+    }
   }
 
   // --- RENDER MAIN ---
@@ -148,12 +99,8 @@
     if (!init.focus_color) init.focus_color = "#8e250b";
     if (!init.focus_contrast_color) init.focus_contrast_color = "#ffffff";
 
-    // עדכון סגנונות
-    updateGlobalStyles(init.focus_color, init.focus_contrast_color);
-    
-    // ניהול הקישורים
-    if (U1W.state.internalStep === 3) renderLiveSkipLinks();
-    else clearLivePreview();
+    // עדכון preview בלבד (לא מחיל על האתר)
+    updatePreviewStyles(init.focus_color, init.focus_contrast_color);
 
     body.innerHTML = "";
 
@@ -208,57 +155,55 @@
 
     // Step 3: Skip Links
     else if (U1W.state.internalStep === 3) {
-      const tipHtml = `<div style="font-size:12px; color:#4ade80; background:rgba(74,222,128,0.1); padding:10px; border-radius:6px; margin-bottom:15px; border:1px solid rgba(74,222,128,0.2);">💡 Click page background & press <b>TAB</b> to test links.</div>`;
-
       body.innerHTML = `
         <div style="font-size:18px; font-weight:bold; color:white;">Skip Links</div>
         <div style="font-size:13px; color:#aaa; margin-bottom:10px;">Define shortcuts. Hidden until focused.</div>
-        ${tipHtml}
         
         <div style="background:#1f2937; padding:15px; border-radius:12px; border:1px solid #374151;">
           <div id="skip-list" class="u1w-list"></div>
           <button id="btn-add-custom" style="width:100%; margin-top:10px; padding:10px; background:none; border:1px dashed #4b5563; color:#9ca3af; border-radius:6px; cursor:pointer; font-size:12px;">+ Add Custom Link</button>
+          <button id="btn-apply-now" style="width:100%; margin-top:8px; padding:10px; background:rgba(16,185,129,0.15); border:1px solid #059669; color:#4ade80; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold;">▶ Apply Skip Links to Page Now</button>
           ${getNavHtml("Back", "Finish Setup")}
         </div>`;
 
       const list = body.querySelector("#skip-list");
       
-      // Presets
+      // Presets — הצג סטטוס קיים
       [{ type: 'content', label: 'Main Content' }, { type: 'nav', label: 'Main Navigation' }, { type: 'search', label: 'Search' }].forEach(p => {
         let ex = cfg.skiplinks.find(x => x.type === p.type);
-        renderRow(list, p.label, ex, (el) => {
-          const s = U1W.utils.selectorFor(el);
-          if (ex) ex.target_selector = s; else cfg.skiplinks.push({ type: p.type, text: 'Skip to ' + p.label, target_selector: s });
+        renderRow(list, p.label, ex, (updatedSelector) => {
+          if (ex) ex.target_selector = updatedSelector;
+          else cfg.skiplinks.push({ type: p.type, text: 'Skip to ' + p.label, target_selector: updatedSelector });
           U1W.renderInit(body);
-          renderLiveSkipLinks();
         });
       });
 
-      // Customs
+      // Customs — הצג קיימים
       cfg.skiplinks.filter(x => x.type === "custom").forEach(item => {
-        renderRow(list, item.text, item, (el) => { 
-            item.target_selector = U1W.utils.selectorFor(el); 
+        renderRow(list, item.text, item, (updatedSelector) => { 
+            item.target_selector = updatedSelector; 
             U1W.renderInit(body);
-            renderLiveSkipLinks();
         }, true);
       });
 
       body.querySelector("#btn-add-custom").onclick = () => {
         const name = prompt("Link Name (e.g. 'Skip to Footer'):");
         if (name) {
-          document.getElementById("u1w-panel").style.display = "none";
-          U1W.startPick(`Target for "${name}"`, (el) => {
-            cfg.skiplinks.push({ type: "custom", text: name, target_selector: U1W.utils.selectorFor(el) });
-            document.getElementById("u1w-panel").style.display = "flex";
+          const sel = prompt(`Enter CSS selector for "${name}" target (e.g. #main-content, .footer):`);
+          if (sel) {
+            cfg.skiplinks.push({ type: "custom", text: name, target_selector: sel.trim() });
             U1W.renderInit(body);
-            renderLiveSkipLinks();
-          });
+          }
         }
+      };
+
+      body.querySelector("#btn-apply-now").onclick = async () => {
+        await U1W.saveConfig();
+        applySkipLinksNow();
       };
 
       body.querySelector("#sub-back").onclick = () => { U1W.state.internalStep--; U1W.renderInit(body); };
       body.querySelector("#sub-next").onclick = async () => {
-        clearLivePreview();
         cfg.setup_complete = true;
         await U1W.saveConfig();
         U1W.state.step = 1; U1W.render();
@@ -266,44 +211,67 @@
     }
   };
 
-  function renderRow(container, label, dataObj, onPick, isCustom = false) {
+  function renderRow(container, label, dataObj, onSelectorChange, isCustom = false) {
     const isSet = dataObj && dataObj.target_selector;
-    // כאן אנחנו מציגים את הסטטוס ברשימה למשתמש, אבל הקישור עצמו נוצר בכל מקרה
-    const exists = isSet && document.querySelector(dataObj.target_selector);
+    let exists = false;
+    if (isSet) { try { exists = !!document.querySelector(dataObj.target_selector); } catch(e) {} }
 
     const row = document.createElement("div");
-    row.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #374151; font-size:13px;";
+    row.style.cssText = "padding:12px 0; border-bottom:1px solid #374151; font-size:13px;";
     
-    row.innerHTML = `
-      <div style="flex:1; overflow:hidden;">
+    // שורה עליונה: label + סטטוס
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;';
+    topRow.innerHTML = `
+      <div>
         <div style="font-weight:bold; color:white;">${label}</div>
-        ${isSet 
-            ? `<div style="font-size:10px; color:${exists ? '#4ade80' : '#fbbf24'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                ${exists ? 'Mapped' : 'Mapped (Not on page)'}: ${dataObj.target_selector}
-               </div>` 
-            : ""}
+        ${isSet
+          ? `<div style="font-size:10px; color:${exists ? '#4ade80' : '#fbbf24'}; margin-top:2px;">
+              ${exists ? '✅ Mapped & Found' : '⚠️ Mapped (element not on this page)'}
+             </div>`
+          : `<div style="font-size:10px; color:#6b7280; margin-top:2px;">Not configured</div>`}
       </div>
-      <div style="display:flex; gap:5px; margin-left:10px;">
-        <button class="u1w-btn small action ${isSet ? "" : "primary"}">${isSet ? "EDIT" : "PICK"}</button>
+      <div style="display:flex; gap:5px;">
         ${isCustom ? `<button class="u1w-btn small del" style="background:#ef4444; border-color:#ef4444;">×</button>` : ""}
       </div>`;
-    
-    row.querySelector(".action").onclick = () => {
-      document.getElementById("u1w-panel").style.display = "none";
-      U1W.startPick(`Target: ${label}`, el => {
-        onPick(el);
-        document.getElementById("u1w-panel").style.display = "flex";
+    row.appendChild(topRow);
+
+    // שדה סלקטור ידני
+    const inputRow = document.createElement('div');
+    inputRow.style.cssText = 'display:flex; gap:6px; align-items:center;';
+    const input = document.createElement('input');
+    input.className = 'u1w-input';
+    input.style.flex = '1';
+    input.placeholder = 'CSS selector, e.g. #main-content';
+    input.value = (dataObj && dataObj.target_selector) || '';
+    input.oninput = () => onSelectorChange(input.value.trim());
+
+    const pickBtn = document.createElement('button');
+    pickBtn.className = 'u1w-btn small';
+    pickBtn.textContent = '🎯 Pick';
+    pickBtn.onclick = () => {
+      document.getElementById('u1w-panel').style.display = 'none';
+      U1W.startPick(`Pick target: ${label}`, el => {
+        const sel = U1W.utils.selectorFor(el);
+        input.value = sel;
+        onSelectorChange(sel);
+        document.getElementById('u1w-panel').style.display = 'flex';
+        U1W.renderInit(document.getElementById('u1w-body'));
       });
     };
+    inputRow.appendChild(input);
+    inputRow.appendChild(pickBtn);
+    row.appendChild(inputRow);
 
-    if (isCustom) row.querySelector(".del").onclick = () => {
-      if (confirm("Remove this link?")) {
-        const idx = U1W.state.cfg.skiplinks.indexOf(dataObj);
-        if (idx > -1) U1W.state.cfg.skiplinks.splice(idx, 1);
-        U1W.renderInit(document.getElementById('u1w-body'));
-        renderLiveSkipLinks();
-      }
-    };
+    if (isCustom) {
+      row.querySelector(".del").onclick = () => {
+        if (confirm("Remove this link?")) {
+          const idx = U1W.state.cfg.skiplinks.indexOf(dataObj);
+          if (idx > -1) U1W.state.cfg.skiplinks.splice(idx, 1);
+          U1W.renderInit(document.getElementById('u1w-body'));
+        }
+      };
+    }
     container.appendChild(row);
   }
 })();
