@@ -788,6 +788,108 @@ button {
   font-weight: 600;
 }
 
+/* ── Scan tab ───────────────────────────────────────────────────────────── */
+
+.scan-desc {
+  font-size: 12px;
+  color: var(--u1-text-muted);
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+
+.scan-summary {
+  font-size: 10px;
+  color: var(--u1-text-muted);
+  font-weight: 500;
+  margin-left: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.scan-result-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  margin-bottom: 6px;
+  background: var(--u1-surface);
+  transition: background 0.15s;
+}
+
+.scan-result-item:last-child {
+  margin-bottom: 0;
+}
+
+.scan-result-item:hover {
+  background: var(--u1-surface-2);
+}
+
+.scan-type-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--u1-primary);
+  background: var(--u1-primary-dim);
+  border-radius: 3px;
+  padding: 3px 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 60px;
+  text-align: center;
+}
+
+.scan-result-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.scan-result-selector {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--u1-info);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-result-count {
+  font-size: 10px;
+  color: var(--u1-text-dim);
+  margin-top: 2px;
+}
+
+.scan-add-btn {
+  flex-shrink: 0;
+  background: var(--u1-primary-dim);
+  color: var(--u1-primary);
+  border: 1px solid var(--u1-primary);
+  border-radius: var(--u1-radius-sm);
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  font-family: inherit;
+}
+
+.scan-add-btn:hover:not([disabled]) {
+  background: var(--u1-primary);
+  color: #fff;
+}
+
+.scan-add-btn.added,
+.scan-add-btn[disabled] {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--u1-success);
+  border-color: var(--u1-success);
+  cursor: default;
+  opacity: 0.85;
+}
+
 /* ── Scrollbar ──────────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {

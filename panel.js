@@ -1066,6 +1066,157 @@ async function loadMappingsList() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  TAB 3 — SCAN
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Plain JSON-serializable heuristics — passed as args to executeScript.
+// Each test list is tried in priority order; first selector with matches wins.
+const SCAN_HEURISTICS = [
+  { type: 'menu',       tests: ['[role="menu"]', '[role="menubar"]', '#primary-menu', '#main-menu', '.main-navigation', '.nav-menu', 'nav'] },
+  { type: 'accordion',  tests: ['.accordion', '[data-bs-toggle="collapse"]', '[data-toggle="collapse"]', 'details'] },
+  { type: 'carousel',   tests: ['.carousel', '.slick-slider', '.swiper', '.owl-carousel', '[data-slick]', '[data-ride="carousel"]', '.flexslider'] },
+  { type: 'dialog',     tests: ['[role="dialog"]', '[aria-modal="true"]', '.modal', '.popup', '.mfp-content', '.fancybox-content', '.lightbox'] },
+  { type: 'tabs',       tests: ['[role="tablist"]', '.ui-tabs', '.nav-tabs', '[data-bs-toggle="tab"]', '[data-toggle="tab"]', '.et_pb_tabs'] },
+  { type: 'datepicker', tests: ['.datepicker', '.flatpickr-calendar', '[class*="datepicker"]', 'input[type="date"]', 'input[type="datetime-local"]'] },
+  { type: 'listbox',    tests: ['[role="listbox"]', '.select2-container', 'select[multiple]', 'select[size]'] },
+  { type: 'combobox',   tests: ['[role="combobox"]', '.select2', '[aria-haspopup="listbox"]', '.chosen-select'] },
+  { type: 'tooltip',    tests: ['[role="tooltip"]', '[data-bs-toggle="tooltip"]', '[data-toggle="tooltip"]', '[data-tooltip]', '[data-tip]', '.tippy-box'] },
+  { type: 'table',      tests: ['table'] },
+  { type: 'grid',       tests: ['[role="grid"]', '.ag-grid-root', '[class*="datatable"]'] },
+  { type: 'form',       tests: ['form'] },
+  { type: 'checkbox',   tests: ['[role="checkbox"]', 'input[type="checkbox"]'] },
+  { type: 'radio',      tests: ['[role="radio"]', 'input[type="radio"]'] },
+  { type: 'button',     tests: ['div[role="button"]', 'span[role="button"]', 'a[role="button"]'] },
+];
+
+// Tracks which scan results were added this session (reset on each scan)
+let addedScanKeys = new Set();
+
+document.getElementById('scanBtn').addEventListener('click', async () => {
+  const tab = await getTab();
+  const statusEl = document.getElementById('scanStatus');
+
+  if (!isInjectable(tab)) {
+    showNotice(statusEl, 'Cannot scan this page.', 'error', 3500);
+    return;
+  }
+
+  const btn = document.getElementById('scanBtn');
+  btn.textContent = 'Scanning…';
+  btn.disabled = true;
+  addedScanKeys = new Set();
+  document.getElementById('scanResultsSection').style.display = 'none';
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (heuristics) => {
+        const found = [];
+        for (const h of heuristics) {
+          let bestSel = null;
+          let totalCount = 0;
+          for (const sel of h.tests) {
+            try {
+              const els = document.querySelectorAll(sel);
+              if (els.length > 0) {
+                totalCount += els.length;
+                if (!bestSel) bestSel = sel;
+              }
+            } catch {}
+          }
+          if (totalCount > 0 && bestSel) {
+            found.push({ type: h.type, selector: bestSel, count: totalCount });
+          }
+        }
+        return found;
+      },
+      args: [SCAN_HEURISTICS],
+    });
+
+    const scanResults = results?.[0]?.result || [];
+    await renderScanResults(scanResults, statusEl);
+  } catch (err) {
+    showNotice(statusEl, 'Scan error: ' + err.message, 'error', 4500);
+  } finally {
+    btn.textContent = 'Scan Page';
+    btn.disabled = false;
+  }
+});
+
+async function renderScanResults(results, statusEl) {
+  const section = document.getElementById('scanResultsSection');
+  const list    = document.getElementById('scanResultsList');
+  const summary = document.getElementById('scanSummary');
+
+  if (!results.length) {
+    showNotice(statusEl, 'No recognizable components detected on this page.', 'error', 4000);
+    return;
+  }
+
+  // Check which types are already in this site's mappings
+  const mKey = storageKey('mappings', currentHostname);
+  const stored = await chrome.storage.local.get([mKey]);
+  const existingKeys = new Set(
+    (stored[mKey] || [])
+      .filter(m => m && typeof m === 'object' && m.type && m.primary)
+      .map(m => m.type + '::' + m.primary)
+  );
+
+  const total = results.reduce((s, r) => s + r.count, 0);
+  summary.textContent =
+    `${results.length} type${results.length !== 1 ? 's' : ''} · ${total} instance${total !== 1 ? 's' : ''}`;
+
+  list.innerHTML = results.map((r, idx) => {
+    const k         = r.type + '::' + r.selector;
+    const isAdded   = existingKeys.has(k) || addedScanKeys.has(k);
+    return `
+      <div class="scan-result-item">
+        <span class="scan-type-badge">${escapeHtml(r.type)}</span>
+        <div class="scan-result-info">
+          <div class="scan-result-selector" title="${escapeHtml(r.selector)}">${escapeHtml(r.selector)}</div>
+          <div class="scan-result-count">${r.count} instance${r.count !== 1 ? 's' : ''} found</div>
+        </div>
+        <button class="scan-add-btn${isAdded ? ' added' : ''}"
+                data-type="${escapeHtml(r.type)}"
+                data-selector="${escapeHtml(r.selector)}"
+                ${isAdded ? 'disabled' : ''}>
+          ${isAdded ? 'Added ✓' : 'Add Fix'}
+        </button>
+      </div>`;
+  }).join('');
+
+  section.style.display = 'block';
+  statusEl.style.display = 'none';
+
+  list.querySelectorAll('.scan-add-btn:not([disabled])').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const type     = btn.dataset.type;
+      const selector = btn.dataset.selector;
+      const template = buildTemplate(type, selector, {}, {});
+      if (!template) return;
+
+      const key = storageKey('mappings', currentHostname);
+      const s   = await chrome.storage.local.get([key]);
+      const arr = s[key] || [];
+      const k   = mappingKey(template);
+
+      if (!arr.some(m => mappingKey(m) === k)) {
+        arr.push({ type: template.type, primary: template.primary, config: template.config, code: template.code });
+        await chrome.storage.local.set({ [key]: arr });
+      }
+
+      addedScanKeys.add(type + '::' + selector);
+      btn.textContent = 'Added ✓';
+      btn.classList.add('added');
+      btn.disabled = true;
+
+      await loadMappingsList();
+      await refreshExportInfo();
+    });
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  TAB 4 — EXPORT
 // ─────────────────────────────────────────────────────────────────────────────
 

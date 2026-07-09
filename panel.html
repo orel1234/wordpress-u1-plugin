@@ -17,6 +17,7 @@
 <div class="tabs">
   <button class="tab-btn active" data-tab="setup">Setup</button>
   <button class="tab-btn" data-tab="config">Config</button>
+  <button class="tab-btn" data-tab="scan">Scan</button>
   <button class="tab-btn" data-tab="picker">Picker</button>
   <button class="tab-btn" data-tab="export">Export</button>
 </div>
@@ -211,7 +212,32 @@
   </div>
 </div>
 
-<!-- ═══ TAB 3: PICKER ═════════════════════════════════════════════════ -->
+<!-- ═══ TAB 3: SCAN ════════════════════════════════════════════════════ -->
+<div class="tab-content" id="tab-scan">
+  <div class="hero">
+    <span class="u1-gradient-text">Scan</span> for components<span class="dot">.</span>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Auto-Detect<span class="dot">.</span></div>
+    <p class="scan-desc">
+      Scans the current page DOM and detects which accessibility components are present.
+      Add fixes directly to your mapping list.
+    </p>
+    <button class="btn-primary" id="scanBtn">Scan Page</button>
+    <div class="notice" id="scanStatus"></div>
+  </div>
+
+  <div class="section" id="scanResultsSection" style="display:none;">
+    <div class="section-title">
+      Results<span class="dot">.</span>
+      <span class="scan-summary" id="scanSummary"></span>
+    </div>
+    <div id="scanResultsList"></div>
+  </div>
+</div>
+
+<!-- ═══ TAB 4: PICKER ═════════════════════════════════════════════════ -->
 <div class="tab-content" id="tab-picker">
   <div class="hero">
     <span class="u1-gradient-text">Pick</span> an element to fix<span class="dot">.</span>
