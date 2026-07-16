@@ -78,11 +78,13 @@ const COMPONENT_SCHEMAS = {
   table: {
     selectors:{table:'PRIMARY', row:'', cell:'', columnheader:''},
     fields:['row','cell','columnheader'],
+    defaults:{row:'tr', cell:'td', columnheader:'th'},
   },
 
   grid: {
     selectors:{grid:'PRIMARY', row:'', cell:'', columnheader:''},
     fields:['row','cell','columnheader'],
+    defaults:{row:'[role="row"]', cell:'[role="gridcell"]', columnheader:'[role="columnheader"]'},
   },
 
   tooltip: {
@@ -916,14 +918,15 @@ function renderSubSelectorInputs(type) {
     $subSelArea.appendChild(row);
   }
 
-  // Manual fields
+  // Manual fields (pre-filled with schema defaults when available)
   for (const f of schema.fields) {
+    const defaultVal = (schema.defaults && schema.defaults[f]) ? schema.defaults[f] : '';
     const row = document.createElement('div');
     row.className = 'sub-sel-row';
     row.innerHTML = `
       <div class="key">${escapeHtml(f)}</div>
-      <input type="text" data-field="${escapeHtml(f)}" placeholder="">
-      <span></span>
+      <input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(defaultVal)}" placeholder="${escapeHtml(defaultVal)}">
+      <span>${defaultVal ? '<span class="auto-tag">default</span>' : ''}</span>
     `;
     $subSelArea.appendChild(row);
   }
@@ -976,6 +979,21 @@ document.getElementById('generateBtn').addEventListener('click', () => {
   if (!currentTemplate) return;
   $templatePreview.textContent = currentTemplate.code;
   $previewSection.style.display = 'block';
+
+  // Warn if important sub-selectors are empty (fix will run but may do nothing)
+  const schema = COMPONENT_SCHEMAS[type];
+  const emptyFields = (schema.fields || []).filter(f => {
+    const v = fieldValues[f];
+    return (!v || v.trim() === '') && f !== 'horizontalMenu';
+  });
+  const applyStatus = document.getElementById('applyStatus');
+  if (emptyFields.length > 0) {
+    showNotice(applyStatus,
+      `Warning: ${emptyFields.join(', ')} ${emptyFields.length === 1 ? 'is' : 'are'} empty — the fix will run but may have no effect. Fill in the sub-selectors for this component.`,
+      'error', 8000);
+  } else {
+    applyStatus.style.display = 'none';
+  }
 });
 
 document.getElementById('copyTemplateBtn').addEventListener('click', () => {
