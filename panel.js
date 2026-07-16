@@ -593,16 +593,18 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
     target: { tabId: tab.id },
     func: (src, mappings, cfg) => {
       if (!document.getElementById('u1Js')) {
+        // Set config BEFORE the script loads — U1 reads window.u1.config during init
+        if (cfg) {
+          window.u1 = window.u1 || {};
+          window.u1.config = cfg;
+        }
         const s = document.createElement('script');
         s.id = 'u1Js'; s.src = src; s.type = 'text/javascript';
         s.onload = () => {
-          // Give U1 a tick to finish its own initialization
+          // Give U1 a tick to finish its own initialization before applying fixes
           setTimeout(() => {
             const u1 = window.u1;
             if (!u1 || typeof u1 !== 'object') return;
-            if (cfg) {
-              try { window.u1 = window.u1 || {}; window.u1.config = cfg; } catch (e) {}
-            }
             if (mappings && mappings.length && u1.fix) {
               mappings.forEach(m => {
                 try {
