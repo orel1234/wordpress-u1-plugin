@@ -11,13 +11,13 @@ const COMPONENT_SCHEMAS = {
   link:      { selectors:{element:'PRIMARY'}, fields:[] },
 
   menu: {
-    selectors:{menu:'PRIMARY', submenus:'', items:'', triggers:'', horizontalMenu:'PRIMARY'},
+    selectors:{menu:'PRIMARY', submenus:'', items:'', triggers:'', horizontalMenu:''},
     fields:['submenus','items','triggers','horizontalMenu'],
     rootFields:{menuDescription:''},
   },
 
   accordion: {
-    selectors:{headerSelector:'', contentSelector:''},
+    selectors:{accordion:'PRIMARY', headerSelector:'', contentSelector:''},
     fields:['headerSelector','contentSelector'],
   },
 
@@ -66,8 +66,8 @@ const COMPONENT_SCHEMAS = {
   },
 
   tabs: {
-    selectors:{tabList:'', tab:'', panel:''},
-    fields:['tabList','tab','panel'],
+    selectors:{tabList:'PRIMARY', tab:'', panel:''},
+    fields:['tab','panel'],
   },
 
   form: {
