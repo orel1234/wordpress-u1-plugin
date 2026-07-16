@@ -306,7 +306,11 @@ async function applyFix(type, primary, config) {
           return { ok: false, err: 'window.u1 is not loaded', u1Missing: true };
         }
         if (!u1.fix || typeof u1.fix[t] !== 'function') {
-          return { ok: false, err: 'u1.fix.' + t + ' is not available' };
+          return { ok: false, err: 'u1.fix.' + t + ' is not a function — this component type may not be supported by the loaded U1 version.' };
+        }
+        const el = document.querySelector(p);
+        if (!el) {
+          return { ok: false, err: 'Element not found: "' + p + '" — make sure the element is visible on the page before running the fix (e.g. open the modal first).' };
         }
         try {
           u1.fix[t](p, c);
@@ -558,6 +562,18 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
   const tab = await getTab();
   if (!isInjectable(tab)) { alert('Cannot inject on this page.'); return; }
 
+  // Read saved mappings and config so we can auto-apply them once U1 loads
+  const hostname = getHostname(tab);
+  const mapKey  = storageKey('mappings', hostname);
+  const cfgKey  = storageKey('config', hostname);
+  const skipKey = storageKey('skipLinks', hostname);
+  const stored  = await chrome.storage.local.get([mapKey, cfgKey, skipKey]);
+  const autoMappings = (stored[mapKey] || []).filter(
+    m => m && typeof m === 'object' && m.type && m.primary
+  );
+  // stored[cfgKey] is already the full config object saved by saveConfig()
+  const autoConfig = stored[cfgKey] || null;
+
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (href) => {
@@ -570,16 +586,36 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
     args: [cssLink],
   });
 
+  // Inject JS; on load, auto-apply all saved mappings and config for this hostname
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: (src) => {
+    func: (src, mappings, cfg) => {
       if (!document.getElementById('u1Js')) {
         const s = document.createElement('script');
         s.id = 'u1Js'; s.src = src; s.type = 'text/javascript';
+        s.onload = () => {
+          // Give U1 a tick to finish its own initialization
+          setTimeout(() => {
+            const u1 = window.u1;
+            if (!u1 || typeof u1 !== 'object') return;
+            if (cfg) {
+              try { window.u1 = window.u1 || {}; window.u1.config = cfg; } catch (e) {}
+            }
+            if (mappings && mappings.length && u1.fix) {
+              mappings.forEach(m => {
+                try {
+                  if (typeof u1.fix[m.type] === 'function') {
+                    u1.fix[m.type](m.primary, m.config);
+                  }
+                } catch (e) {}
+              });
+            }
+          }, 300);
+        };
         document.body.appendChild(s);
       }
     },
-    args: [jsLink],
+    args: [jsLink, autoMappings, autoConfig],
   });
 
   setTimeout(() => refreshSetupTab(tab), 2200);
