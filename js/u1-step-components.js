@@ -32,6 +32,9 @@
       tooltip: { label: 'Tooltip', desc: 'Hint popup.', fields: [{key:'trigger', label:'Trigger', type:'single'}, {key:'tooltip', label:'Content', type:'single'}] }
   };
 
+  // Exposed so js/u1-step-scan.js can reuse the same shape for static_fixes classification.
+  U1W.CORE_DEFS = CORE_DEFS;
+
   const COMPONENT_TILES = [
       { id: 'button', core: 'button', label: 'Button', icon: '🖱️' },
       { id: 'link', core: 'link', label: 'Link', icon: '🔗' },
@@ -119,6 +122,55 @@
 
   function sel(el) { return U1W.utils.selectorFor(el); }
 
+  // --- AUTO SCOPE CLASSIFICATION ---
+  // Auto-*promotes* an item to 'global' when the same element (same primary
+  // selector) has been mapped from 2+ distinct pages — a clear sign it's a
+  // shared element (header, footer, nav...). Deliberately one-directional:
+  // it never auto-*demotes* anything to page-only. Reasoning: everything
+  // already defaults to global (missing scope fails open to global at
+  // runtime), and an over-broad global mapping is harmless — u1.fix() is a
+  // no-op when the selector isn't found on a given page. An auto-narrowed
+  // mapping that guessed wrong would silently drop accessibility fixes on
+  // every other page, which is a far worse failure for an a11y tool. Narrowing
+  // to "this page only" is therefore always an explicit admin choice (the
+  // Scope dropdown in the editor), never inferred. Items the admin has
+  // manually set (scopeManual) are left untouched either way.
+  // Returns true if anything changed (so callers know whether to persist).
+  U1W.autoClassifyScope = function() {
+      let changed = false;
+
+      function classifyGroup(items, keyOf, getPage) {
+          const bySelector = {};
+          items.forEach(it => {
+              const key = keyOf(it);
+              if (!key || !getPage(it)) return;
+              (bySelector[key] = bySelector[key] || []).push(it);
+          });
+          Object.values(bySelector).forEach(group => {
+              const pages = new Set(group.map(getPage).filter(Boolean));
+              if (pages.size < 2) return; // no positive evidence -> leave as-is
+              group.forEach(it => {
+                  if (it.scopeManual) return;
+                  if (it.scope !== 'global') { it.scope = 'global'; changed = true; }
+              });
+          });
+      }
+
+      Object.keys(CORE_DEFS).forEach(type => {
+          const items = U1W.state.cfg[type];
+          if (!Array.isArray(items) || !items.length) return;
+          const mainKey = CORE_DEFS[type].fields[0].key;
+          classifyGroup(items, it => it[mainKey], it => it.originPage);
+      });
+
+      const fixes = U1W.state.cfg.static_fixes;
+      if (Array.isArray(fixes) && fixes.length) {
+          classifyGroup(fixes, f => f.selector, f => f.originPage);
+      }
+
+      return changed;
+  };
+
   // --- MAIN RENDER ---
   U1W.renderComponents = function(body) {
       body.innerHTML = '';
@@ -188,6 +240,7 @@
       groups.forEach(function(g) {
           (U1W.state.cfg[g] || []).forEach(function(it) {
               try {
+                  if (!U1W.utils.matchesScope(it)) return;
                   const def = CORE_DEFS[g];
                   const mainKey = def.fields[0].key;
                   const mainSel = it[mainKey];
@@ -206,13 +259,21 @@
       const pages = {};
       const currentPath = window.location.pathname;
 
+      const GLOBAL_KEY = '🌐 Global (All Pages)';
+
       Object.keys(CORE_DEFS).forEach(type => {
           if (U1W.state.cfg[type] && U1W.state.cfg[type].length > 0) {
               U1W.state.cfg[type].forEach((item, index) => {
-                  // אם לא קיים originPage, נקרא לו Unassigned
-                  let pageKey = item.originPage || 'Global / Unassigned';
-                  if (pageKey === '/') pageKey = 'Home (/)';
-                  
+                  // Explicit scope decides the bucket now — 'global'/unset both
+                  // mean "runs everywhere", separate from "no originPage recorded".
+                  let pageKey;
+                  if (!item.scope || item.scope === 'global') {
+                      pageKey = GLOBAL_KEY;
+                  } else {
+                      pageKey = item.originPage || 'Unassigned (legacy)';
+                      if (pageKey === '/') pageKey = 'Home (/)';
+                  }
+
                   if (!pages[pageKey]) pages[pageKey] = [];
                   pages[pageKey].push({ ...item, type, originalIndex: index });
               });
@@ -228,8 +289,10 @@
       listContainer.style.paddingTop = '15px';
       listContainer.innerHTML = '<div class="u1w-label">Components by Page</div>';
 
-      // 2. Sort pages: Current Page first
+      // 2. Sort pages: Global first, then Current Page
       pageKeys.sort((a, b) => {
+          if (a === GLOBAL_KEY) return -1;
+          if (b === GLOBAL_KEY) return 1;
           const isACurrent = (a === currentPath || a === 'Home (/)' && currentPath === '/');
           const isBCurrent = (b === currentPath || b === 'Home (/)' && currentPath === '/');
           if (isACurrent) return -1;
@@ -239,27 +302,29 @@
 
       // 3. Render Accordions
       pageKeys.forEach(pageUrl => {
-          const isCurrent = (pageUrl === currentPath || (pageUrl === 'Home (/)' && currentPath === '/'));
+          const isGlobal = pageUrl === GLOBAL_KEY;
+          const isCurrent = !isGlobal && (pageUrl === currentPath || (pageUrl === 'Home (/)' && currentPath === '/'));
           const items = pages[pageUrl];
-          
+
           const acc = document.createElement('div');
           acc.style.cssText = 'margin-bottom:10px; border:1px solid #374151; border-radius:6px; overflow:hidden;';
 
+          const accentColor = isGlobal ? '#60a5fa' : (isCurrent ? '#10b981' : '#6b7280');
           const header = document.createElement('div');
           header.style.cssText = `
               padding: 10px; cursor: pointer; display: flex; justify-content: space-between; align-items: center;
-              background: ${isCurrent ? 'rgba(16, 185, 129, 0.1)' : '#1f2937'};
-              border-left: 4px solid ${isCurrent ? '#10b981' : '#6b7280'};
+              background: ${isGlobal ? 'rgba(96, 165, 250, 0.1)' : (isCurrent ? 'rgba(16, 185, 129, 0.1)' : '#1f2937')};
+              border-left: 4px solid ${accentColor};
           `;
           header.innerHTML = `
-              <div style="font-size:13px; font-weight:bold; color:${isCurrent ? '#fff' : '#ccc'};">
+              <div style="font-size:13px; font-weight:bold; color:${(isCurrent || isGlobal) ? '#fff' : '#ccc'};">
                   ${pageUrl} ${isCurrent ? '<span style="font-size:10px; background:#10b981; color:black; padding:2px 4px; border-radius:4px; margin-left:5px;">CURRENT</span>' : ''}
               </div>
-              <div style="font-size:11px; color:#aaa;">${items.length} items ${isCurrent ? '▼' : '▲'}</div>
+              <div style="font-size:11px; color:#aaa;">${items.length} items ${(isCurrent || isGlobal) ? '▼' : '▲'}</div>
           `;
 
           const content = document.createElement('div');
-          content.style.display = isCurrent ? 'block' : 'none'; 
+          content.style.display = (isCurrent || isGlobal) ? 'block' : 'none';
           content.style.background = '#111827';
           content.style.padding = '5px';
 
@@ -273,14 +338,18 @@
               const existsOnPage = selector && document.querySelector(selector);
               const statusIcon = existsOnPage ? '🟢' : '🔴';
               const opacity = existsOnPage ? '1' : '0.6';
+              const isItemGlobal = !item.scope || item.scope === 'global';
+              const scopeBadge = isItemGlobal
+                  ? `<span style="font-size:9px; color:#60a5fa; border:1px solid #2563eb; border-radius:8px; padding:1px 6px; margin-left:5px;">🌐 Global${item.scopeManual ? '' : ' (auto)'}</span>`
+                  : `<span style="font-size:9px; color:#4ade80; border:1px solid #059669; border-radius:8px; padding:1px 6px; margin-left:5px;">📍 This page${item.scopeManual ? '' : ' (auto)'}</span>`;
 
               const row = document.createElement('div');
               row.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px; margin-bottom:4px; border-radius:4px; background:#1f2937; opacity:${opacity}; border-left: 2px solid ${existsOnPage ? '#10b981' : '#ef4444'};`;
-              
+
               row.innerHTML = `
                   <div style="flex:1;">
                       <div style="font-size:12px; font-weight:bold; color:white;">
-                          ${statusIcon} <span style="color:#60a5fa;">${item.type}</span> ${displayTitle}
+                          ${statusIcon} <span style="color:#60a5fa;">${item.type}</span> ${displayTitle} ${scopeBadge}
                       </div>
                       <div style="font-size:9px; color:#888; font-family:monospace; margin-top:2px;">
                           ${selector ? selector.substring(0,30)+'...' : 'No selector'}
@@ -418,8 +487,19 @@
                 <span style="font-size:12px; color:#aaa;">✢ Drag</span>
             </div>
             <div style="max-height:60vh; overflow-y:auto; padding-right:5px;">
-                <div class="u1w-field"><div class="u1w-label">Name</div><input class="u1w-input" id="ed-title" value="${draft.title||''}"></div>`;
-      
+                <div class="u1w-field"><div class="u1w-label">Name</div><input class="u1w-input" id="ed-title" value="${draft.title||''}"></div>
+                <div class="u1w-field" style="background:#111; padding:8px; border-radius:6px; border:1px solid #333;">
+                    <div class="u1w-label" style="margin:0;">Scope</div>
+                    <select class="u1w-select" id="ed-scope" style="width:100%; padding:6px; background:#1f2937; color:#fff; border:1px solid #374151; border-radius:6px; font-size:12px; margin-top:4px;">
+                        <option value="auto">🤖 Auto-detect (recommended)</option>
+                        <option value="global">🌐 Global — all pages</option>
+                        <option value="page">📍 This page only</option>
+                    </select>
+                    <div id="ed-scope-page-row" style="margin-top:6px; display:none;">
+                        <input class="u1w-input" id="ed-origin-page" placeholder="/path/to/page" value="${draft.originPage || window.location.pathname}">
+                    </div>
+                </div>`;
+
       def.fields.forEach(f => {
           form += `
             <div class="u1w-field" style="background:#111; padding:8px; border-radius:6px; border:1px solid #333;">
@@ -439,6 +519,12 @@
       const handle = overlay.querySelector('.u1w-drag-handle');
       makeElementDraggable(card, handle);
 
+      const scopeSelect = overlay.querySelector('#ed-scope');
+      const scopePageRow = overlay.querySelector('#ed-scope-page-row');
+      scopeSelect.value = draft.scopeManual ? (draft.scope || 'global') : 'auto';
+      scopePageRow.style.display = scopeSelect.value === 'page' ? 'block' : 'none';
+      scopeSelect.onchange = () => { scopePageRow.style.display = scopeSelect.value === 'page' ? 'block' : 'none'; };
+
       def.fields.forEach(f => {
           overlay.querySelector(`#pick-${f.key}`).onclick = () => {
               overlay.style.display='none';
@@ -453,17 +539,28 @@
       
       overlay.querySelector('#ed-save').onclick = async () => {
           draft.title = overlay.querySelector('#ed-title').value;
-          
-          // *** SAVE ORIGIN PAGE ***
-          if (!draft.originPage) {
-             draft.originPage = window.location.pathname;
+
+          // Scope: 'auto' lets classification decide (and re-decide later as more
+          // pages get mapped); global/page here is an explicit admin override.
+          const scopeChoice = scopeSelect.value;
+          if (scopeChoice === 'auto') {
+              draft.scopeManual = false;
+              if (!draft.originPage) draft.originPage = window.location.pathname;
+          } else {
+              draft.scopeManual = true;
+              draft.scope = scopeChoice;
+              if (scopeChoice === 'page') {
+                  draft.originPage = (overlay.querySelector('#ed-origin-page').value || window.location.pathname).trim();
+              }
           }
 
           def.fields.forEach(f => { draft[f.key] = overlay.querySelector(`#inp-${f.key}`).value; });
-          
+
           if(!U1W.state.cfg[type]) U1W.state.cfg[type] = [];
           if(index >= 0) U1W.state.cfg[type][index] = draft; else U1W.state.cfg[type].push(draft);
-          
+
+          if (U1W.autoClassifyScope) U1W.autoClassifyScope();
+
           await U1W.saveConfig(); overlay.remove(); document.getElementById('u1w-panel').style.display='flex'; U1W.render();
       };
   }

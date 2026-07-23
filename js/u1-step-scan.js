@@ -269,7 +269,12 @@
           const val = ol.querySelector('#fix-v').value;
           if(val) {
               U1W.state.cfg.static_fixes = U1W.state.cfg.static_fixes || [];
-              U1W.state.cfg.static_fixes.push({ selector: U1W.utils.selectorFor(issue.el), attr: issue.fixAttr, val });
+              U1W.state.cfg.static_fixes.push({
+                  selector: U1W.utils.selectorFor(issue.el), attr: issue.fixAttr, val,
+                  originPage: window.location.pathname
+              });
+              // Same selector fixed from another page later -> auto-promoted to global, no manual tagging needed.
+              if (U1W.autoClassifyScope) U1W.autoClassifyScope();
               await U1W.saveConfig(); ol.remove(); runScan(body);
           }
       };

@@ -216,6 +216,16 @@
 
   // --- 6. Helpers ---
   U1W.utils = {
+      // Mirrors matchesScope() in u1-runtime.js — kept as a separate copy since
+      // this bundle never ships to real visitors (wizard-only), so they can't share a module.
+      matchesScope: (item, currentPath) => {
+          if (!item || !item.scope || item.scope === 'global') return true;
+          if (item.scope === 'page') {
+              const norm = (p) => (p || '').replace(/\/+$/, '') || '/';
+              return norm(item.originPage) === norm(currentPath || window.location.pathname);
+          }
+          return true;
+      },
       selectorFor: (el) => {
         if (!el || el.nodeType !== 1) return '';
         if (el.id) return '#' + el.id;
@@ -267,6 +277,12 @@
           location.href=u.toString();
       };
       
+      // Re-derive global-vs-page scope from whatever's already saved (e.g. the
+      // same selector now recorded from a 2nd distinct page) before first render.
+      if (U1W.autoClassifyScope) {
+          const changed = U1W.autoClassifyScope();
+          if (changed) U1W.saveConfig();
+      }
       setTimeout(() => { if(U1W.render) U1W.render(); }, 100);
   });
 })();

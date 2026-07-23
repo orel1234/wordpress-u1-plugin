@@ -112,17 +112,17 @@ class U1_Accessibility_Wizard {
       }
     ');
 
-    $ver = '6.0.' . time();
-
+    // Cache-busting note: bump U1W_VERSION (top of file) whenever any plugin
+    // JS/CSS changes — a static version lets browsers/CDNs actually cache these.
     // 4. Runtime
-    wp_enqueue_script('u1-runtime', $plugin_url . 'u1-runtime.js', ['u1-external-engine'], $ver, true);
+    wp_enqueue_script('u1-runtime', $plugin_url . 'u1-runtime.js', ['u1-external-engine'], U1W_VERSION, true);
     wp_localize_script('u1-runtime', 'U1_SETTINGS', $cfg);
 
     // 5. Wizard
     if ($this->is_wizard_mode()) {
-      wp_enqueue_style('u1-wizard', $plugin_url . 'u1-wizard.css', [], $ver);
-      wp_enqueue_script('u1-wizard-core', $plugin_url . 'js/u1-wizard-core.js', ['u1-runtime'], $ver, true);
-      
+      wp_enqueue_style('u1-wizard', $plugin_url . 'u1-wizard.css', [], U1W_VERSION);
+      wp_enqueue_script('u1-wizard-core', $plugin_url . 'js/u1-wizard-core.js', ['u1-runtime'], U1W_VERSION, true);
+
       wp_localize_script('u1-wizard-core', 'U1_WIZARD', [
         'ajax_url' => admin_url('admin-ajax.php'),
         'nonce' => wp_create_nonce('u1_wizard_nonce'),
@@ -131,7 +131,7 @@ class U1_Accessibility_Wizard {
 
       $steps = ['init', 'components', 'skiplinks', 'scan'];
       foreach ($steps as $step) {
-          wp_enqueue_script("u1-step-$step", $plugin_url . "js/u1-step-$step.js", ['u1-wizard-core'], $ver, true);
+          wp_enqueue_script("u1-step-$step", $plugin_url . "js/u1-step-$step.js", ['u1-wizard-core'], U1W_VERSION, true);
       }
     }
   }

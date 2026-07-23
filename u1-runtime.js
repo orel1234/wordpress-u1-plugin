@@ -1,11 +1,55 @@
 (function () {
   if (typeof U1_SETTINGS === "undefined") return;
 
+  // Missing/unknown scope is treated as 'global' so pre-existing mappings
+  // (saved before page-scoping existed) keep working everywhere, unchanged.
+  function matchesScope(item) {
+      if (!item || !item.scope || item.scope === 'global') return true;
+      if (item.scope === 'page') {
+          var norm = function (p) { return (p || '').replace(/\/+$/, '') || '/'; };
+          return norm(item.originPage) === norm(window.location.pathname);
+      }
+      return true;
+  }
+
+  // Applies fix() jobs in small idle-scheduled chunks so a large mapping set
+  // doesn't block the main thread in one synchronous burst. Bounded by a hard
+  // watchdog cap so it can never add more than ~HARD_CAP ms of extra latency.
+  function applyJobs(jobs) {
+      var idx = 0;
+      var CHUNK = 15, IDLE_TIMEOUT = 30, HARD_CAP = 200;
+      var now = function () { return (window.performance && performance.now) ? performance.now() : Date.now(); };
+      var start = now();
+      var ric = window.requestIdleCallback || function (cb) {
+          return setTimeout(function () {
+              cb({ timeRemaining: function () { return 8; }, didTimeout: true });
+          }, 1);
+      };
+      function runOne(job) {
+          try {
+              window.u1.fix[job.g](job.it.element || job.it.container || job.it.trigger || job.it.slide || job.it.menu, { selectors: job.it });
+          } catch (e) {}
+      }
+      function step(deadline) {
+          if (now() - start > HARD_CAP) {
+              while (idx < jobs.length) runOne(jobs[idx++]);
+              return;
+          }
+          var n = 0;
+          while (idx < jobs.length && n < CHUNK && (deadline.didTimeout || deadline.timeRemaining() > 0)) {
+              runOne(jobs[idx++]);
+              n++;
+          }
+          if (idx < jobs.length) ric(step, { timeout: IDLE_TIMEOUT });
+      }
+      ric(step, { timeout: IDLE_TIMEOUT });
+  }
+
   function init() {
       // 1. Static Fixes
       if (U1_SETTINGS.static_fixes) {
           U1_SETTINGS.static_fixes.forEach(function (fix) {
-              if (!fix.selector) return;
+              if (!fix.selector || !matchesScope(fix)) return;
               try {
                   document.querySelectorAll(fix.selector).forEach(function (el) {
                       if (fix.attr === 'alt') {
@@ -216,7 +260,10 @@
 
 
       // 3. U1 Engine Legacy
+      var pollAttempts = 0;
+      var MAX_POLL_ATTEMPTS = 60; // ~30s at 500ms — give up if the engine never loads
       var check = setInterval(function () {
+          pollAttempts++;
           if (window.u1 && window.u1.setConfiguration) {
               clearInterval(check);
               var i = U1_SETTINGS.init || {};
@@ -230,13 +277,16 @@
                   }
               });
               var groups = ['button', 'link', 'menu', 'form', 'accordion', 'tabs', 'dialog', 'carousel'];
+              var jobs = [];
               groups.forEach(function (g) {
                   (U1_SETTINGS[g] || []).forEach(function (it) {
-                      try {
-                          window.u1.fix[g](it.element || it.container || it.trigger || it.slide || it.menu, { selectors: it });
-                      } catch (e) {}
+                      if (!matchesScope(it)) return;
+                      jobs.push({ g: g, it: it });
                   });
               });
+              applyJobs(jobs);
+          } else if (pollAttempts >= MAX_POLL_ATTEMPTS) {
+              clearInterval(check);
           }
       }, 500);
   }
