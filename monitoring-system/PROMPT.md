@@ -54,14 +54,19 @@ File: the plugin's `u1-runtime.js` (or wherever the per-page apply logic lives).
    `console.error` per broken mapping, in a single-line, greppable, stable
    format — this is what the daily monitor parses, so keep the shape exact:
 
-       U1-VALIDATION-ERROR | domain=<hostname> | type=<mapping type> | index=<1-based position within its type's array> | field=<the selector field name> | selector=<the selector string> | page=<location.pathname>
+       U1-VALIDATION-ERROR | domain=<hostname> | type=<mapping type> | id=<stable mapping id, or 'legacy-no-id'> | index=<1-based position within its type's array> | field=<the selector field name> | selector=<the selector string> | page=<location.pathname>
 
-   Example: `U1-VALIDATION-ERROR | domain=elal.com | type=menu | index=2 | field=menu | selector=".site-nav" | page=/flights`
+   Example: `U1-VALIDATION-ERROR | domain=elal.com | type=menu | id=m-3f9a21c7 | index=2 | field=menu | selector=".site-nav" | page=/flights`
 
-   (`index` is positional — 1-based index within `cfg[type]` at the time of
-   the check. It's not a stable ID; if mappings are reordered/deleted between
-   runs the number can shift. That's an accepted, known limitation — surface
-   it in the dashboard/report as "type + index", not as a permanent ID.)
+   Every mapping now carries a stable `id` (assigned once by the wizard,
+   `U1W.utils.generateId()`, backfilled onto legacy mappings the first time
+   the wizard is opened after this feature ships — see `U1W.ensureIds()`).
+   Use `id` as the durable identifier for a mapping across runs/reports; it
+   survives reordering or deleting other mappings. `index` is still included
+   as a convenience (current position within `cfg[type]`, 1-based) but is
+   NOT stable — don't use it as a long-term key. A mapping saved before this
+   feature existed and never re-saved since will report `id=legacy-no-id`
+   until an admin opens the wizard once (which backfills ids for everything).
 
 4. Never throw and never break the page even if `window.u1` failed to load or
    a mapping is malformed — wrap each check in try/catch.

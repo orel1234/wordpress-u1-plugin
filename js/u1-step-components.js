@@ -122,6 +122,24 @@
 
   function sel(el) { return U1W.utils.selectorFor(el); }
 
+  // --- STABLE IDS ---
+  // Backfills a permanent `id` (see U1W.utils.generateId) onto any component
+  // mapping or static_fix that predates this feature, so validation reports
+  // can reference a mapping that survives reordering/deletion, not just its
+  // current list position. Returns true if anything changed.
+  U1W.ensureIds = function() {
+      let changed = false;
+      Object.keys(CORE_DEFS).forEach(type => {
+          (U1W.state.cfg[type] || []).forEach(it => {
+              if (!it.id) { it.id = U1W.utils.generateId(); changed = true; }
+          });
+      });
+      (U1W.state.cfg.static_fixes || []).forEach(f => {
+          if (!f.id) { f.id = U1W.utils.generateId(); changed = true; }
+      });
+      return changed;
+  };
+
   // --- AUTO SCOPE CLASSIFICATION ---
   // Auto-*promotes* an item to 'global' when the same element (same primary
   // selector) has been mapped from 2+ distinct pages — a clear sign it's a
@@ -352,7 +370,7 @@
                           ${statusIcon} <span style="color:#60a5fa;">${item.type}</span> ${displayTitle} ${scopeBadge}
                       </div>
                       <div style="font-size:9px; color:#888; font-family:monospace; margin-top:2px;">
-                          ${selector ? selector.substring(0,30)+'...' : 'No selector'}
+                          ${selector ? selector.substring(0,30)+'...' : 'No selector'} <span style="color:#555;">· ID: ${item.id || '—'}</span>
                       </div>
                   </div>
                   <div style="display:flex; gap:5px;">
@@ -539,6 +557,7 @@
       
       overlay.querySelector('#ed-save').onclick = async () => {
           draft.title = overlay.querySelector('#ed-title').value;
+          if (!draft.id) draft.id = U1W.utils.generateId();
 
           // Scope: 'auto' lets classification decide (and re-decide later as more
           // pages get mapped); global/page here is an explicit admin override.

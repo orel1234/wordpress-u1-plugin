@@ -270,6 +270,7 @@
           if(val) {
               U1W.state.cfg.static_fixes = U1W.state.cfg.static_fixes || [];
               U1W.state.cfg.static_fixes.push({
+                  id: U1W.utils.generateId(),
                   selector: U1W.utils.selectorFor(issue.el), attr: issue.fixAttr, val,
                   originPage: window.location.pathname
               });

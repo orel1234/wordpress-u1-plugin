@@ -70,10 +70,17 @@
       } catch (e) { return false; }
   }
 
-  function logValidationError(type, index, field, selector) {
+  // `id` is a stable per-mapping identifier (assigned by the wizard, see
+  // U1W.utils.generateId / U1W.ensureIds) that survives reordering/deleting
+  // other mappings — unlike `index`, which is just this item's current
+  // position and can shift. Mappings saved before this existed won't have
+  // one until the wizard is opened once (it backfills on boot); until then
+  // this falls back to 'legacy-no-id' and `index` is the only way to locate it.
+  function logValidationError(type, index, field, selector, id) {
       console.error(
           'U1-VALIDATION-ERROR | domain=' + window.location.hostname +
           ' | type=' + type +
+          ' | id=' + (id || 'legacy-no-id') +
           ' | index=' + (index + 1) +
           ' | field=' + field +
           ' | selector=' + selector +
@@ -93,12 +100,12 @@
               var field = MAIN_FIELD_BY_TYPE[type];
               var selector = it[field];
               if (!selector) return;
-              if (selectorMissing(selector)) logValidationError(type, i, field, selector);
+              if (selectorMissing(selector)) logValidationError(type, i, field, selector, it.id);
           });
       });
       (U1_SETTINGS.static_fixes || []).forEach(function (fix, i) {
           if (!fix.selector || !matchesScope(fix)) return;
-          if (selectorMissing(fix.selector)) logValidationError('static_fixes', i, 'selector', fix.selector);
+          if (selectorMissing(fix.selector)) logValidationError('static_fixes', i, 'selector', fix.selector, fix.id);
       });
   }
 

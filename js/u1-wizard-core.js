@@ -226,6 +226,13 @@
           }
           return true;
       },
+      // Stable per-mapping ID, generated once and kept forever — unlike the
+      // list-position "index" shown in validation reports, this survives
+      // reordering/deleting other mappings. Short and readable on purpose.
+      generateId: () => {
+          if (window.crypto && crypto.randomUUID) return 'm-' + crypto.randomUUID().split('-')[0];
+          return 'm-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      },
       selectorFor: (el) => {
         if (!el || el.nodeType !== 1) return '';
         if (el.id) return '#' + el.id;
@@ -277,12 +284,12 @@
           location.href=u.toString();
       };
       
-      // Re-derive global-vs-page scope from whatever's already saved (e.g. the
+      // Backfill a stable id on any legacy mapping that predates it, then
+      // re-derive global-vs-page scope from whatever's already saved (e.g. the
       // same selector now recorded from a 2nd distinct page) before first render.
-      if (U1W.autoClassifyScope) {
-          const changed = U1W.autoClassifyScope();
-          if (changed) U1W.saveConfig();
-      }
+      const idsChanged = U1W.ensureIds ? U1W.ensureIds() : false;
+      const scopeChanged = U1W.autoClassifyScope ? U1W.autoClassifyScope() : false;
+      if (idsChanged || scopeChanged) U1W.saveConfig();
       setTimeout(() => { if(U1W.render) U1W.render(); }, 100);
   });
 })();
