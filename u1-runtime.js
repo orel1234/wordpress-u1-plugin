@@ -45,7 +45,66 @@
       ric(step, { timeout: IDLE_TIMEOUT });
   }
 
+  // --- QA validation mode ---
+  // Activated via ?u1qa=1 only — completely inert for real visitors, no
+  // console output otherwise. For every mapping that should apply on this
+  // page (per matchesScope), checks whether its selector actually resolves
+  // to an element and logs one console.error per broken one, in a fixed,
+  // greppable format a daily external monitor can parse. See
+  // monitoring-system/PROMPT.md for the full system this feeds.
+  //
+  // Note: this uses the *correct* primary-selector field per type (matching
+  // CORE_DEFS in js/u1-step-components.js), not the `it.element || it.container
+  // || it.trigger || it.slide || it.menu` fallback used by applyJobs()'s
+  // runOne() above — that fallback has no 'form' branch, so it never actually
+  // reads a form mapping's primary selector. Validation needs the accurate
+  // field per type, or 'form' mappings would falsely report as broken.
+  var MAIN_FIELD_BY_TYPE = {
+      button: 'element', link: 'element', menu: 'menu', form: 'form',
+      accordion: 'container', tabs: 'container', dialog: 'trigger', carousel: 'carouselContainer'
+  };
+
+  function isQaMode() {
+      try {
+          return new URLSearchParams(window.location.search).get('u1qa') === '1';
+      } catch (e) { return false; }
+  }
+
+  function logValidationError(type, index, field, selector) {
+      console.error(
+          'U1-VALIDATION-ERROR | domain=' + window.location.hostname +
+          ' | type=' + type +
+          ' | index=' + (index + 1) +
+          ' | field=' + field +
+          ' | selector=' + selector +
+          ' | page=' + window.location.pathname
+      );
+  }
+
+  function selectorMissing(selector) {
+      try { return !document.querySelector(selector); }
+      catch (e) { return true; } // invalid selector -> also worth flagging
+  }
+
+  function runQaValidation() {
+      Object.keys(MAIN_FIELD_BY_TYPE).forEach(function (type) {
+          (U1_SETTINGS[type] || []).forEach(function (it, i) {
+              if (!matchesScope(it)) return;
+              var field = MAIN_FIELD_BY_TYPE[type];
+              var selector = it[field];
+              if (!selector) return;
+              if (selectorMissing(selector)) logValidationError(type, i, field, selector);
+          });
+      });
+      (U1_SETTINGS.static_fixes || []).forEach(function (fix, i) {
+          if (!fix.selector || !matchesScope(fix)) return;
+          if (selectorMissing(fix.selector)) logValidationError('static_fixes', i, 'selector', fix.selector);
+      });
+  }
+
   function init() {
+      if (isQaMode()) runQaValidation();
+
       // 1. Static Fixes
       if (U1_SETTINGS.static_fixes) {
           U1_SETTINGS.static_fixes.forEach(function (fix) {
