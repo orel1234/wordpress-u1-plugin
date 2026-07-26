@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||fecdn.user1st.info",
+      "resourceTypes": [
+        "script",
+        "stylesheet",
+        "xmlhttprequest",
+        "image",
+        "font",
+        "media",
+        "sub_frame",
+        "other"
+      ]
+    }
+  }
+]

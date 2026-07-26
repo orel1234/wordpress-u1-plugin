@@ -1,0 +1,6 @@
+# Reference material & local env — never commit
+accessibility_autochecker/
+venv/
+_metadata/
+node_modules/
+.DS_Store

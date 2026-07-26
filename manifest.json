@@ -1,24 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "U1 Helper",
+  "name": "U1 Studio",
   "version": "3.0.0",
   "description": "Accessibility implementation helper for User1st (u1) library",
-  "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "declarativeNetRequest"],
   "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "u1_block",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
   "side_panel": {
     "default_path": "panel.html"
   },
   "action": {
-    "default_title": "Open U1 Helper"
+    "default_title": "Open U1 Studio"
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_idle"
-    }
-  ]
+  }
 }

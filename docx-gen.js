@@ -393,6 +393,12 @@ add_action('wp_footer', 'add_u1_js');`;
     para('That\'s it! At this point, the User1st system should be properly implemented and configured on your website.', 'Normal'),
   ];
 
+  return wrapDoc(bodyParts);
+}
+
+// ── Shared shell + helpers ────────────────────────────────────────────────────
+
+function wrapDoc(bodyParts) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document
   xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
@@ -408,10 +414,215 @@ ${bodyParts.join('\n')}
 </w:document>`;
 }
 
+function safeConfigOf(config, skipLinks) {
+  const sl = Array.isArray(skipLinks) ? skipLinks : [];
+  return config || {
+    visualFocus: { style: { color: 'white', secondaryColor: 'black', doubleBorder: true } },
+    skipLinks: sl, language: 'en', direction: 'ltr',
+  };
+}
+
+// Pretty JS object literal (unquoted identifier keys) for embedding in code.
+function jsObjSource(obj) {
+  return JSON.stringify(obj, null, 4).replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:');
+}
+
+function skipLinksHtmlOf(skipLinks) {
+  const sl = Array.isArray(skipLinks) ? skipLinks : [];
+  return sl.length
+    ? sl.map(s => `<a href="${s.target}" class="skip-link">${s.label}</a>`).join('\n')
+    : '<!-- No skip links configured. -->';
+}
+
+// visualFocus.style → the { color, secondaryColor, doubleBorder } used by setConfiguration.
+function setConfigCall(config) {
+  const cfg = config || {};
+  const style = (cfg.visualFocus && cfg.visualFocus.style) || { color: 'white', secondaryColor: 'black', doubleBorder: true };
+  const obj = { visualFocus: { style } };
+  let src = `window.u1?.setConfiguration(${jsObjSource(obj)});`;
+  if (cfg.language && cfg.language !== 'en') src += `\nwindow.u1.lang = '${cfg.language}';`;
+  return src;
+}
+
+// ── JS / plain-HTML guide ─────────────────────────────────────────────────────
+
+function buildBodyPartsJS(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+  const skipHtml = skipLinksHtmlOf(skipLinks);
+  const hasSkip  = (Array.isArray(skipLinks) ? skipLinks : []).length > 0;
+  const mappingLines = (mappings && mappings.length) ? mappings.join('\n\n') : '// No mappings saved yet.';
+  const configScript =
+    `<script>\n${setConfigCall(config).split('\n').join('\n')}\n\n// Component mappings\n${mappingLines}\n</script>`;
+
+  return [
+    para(`Implementing User1st on ${hostname} (HTML / JavaScript)`, 'Title'),
+    emptyPara(),
+    para('This guide explains how to add the User1st accessibility system to a plain HTML / JavaScript site.', 'Normal'),
+    emptyPara(),
+
+    heading('Step 1: Add the U1 CSS file', 1),
+    para('Add this link inside the <head> section that is shared across all pages:', 'Normal'),
+    emptyPara(),
+    para('HTML', 'CodeLabel'),
+    codeBlock(`<link id="u1-css" rel="stylesheet" href="${cssLink}">`),
+    ...(hasSkip ? [
+      emptyPara(),
+      para('Then, immediately after the opening <body> tag, add the Skip Links:', 'Normal'),
+      para('Skip Links HTML', 'CodeLabel'),
+      codeBlock(skipHtml),
+    ] : []),
+    emptyPara(),
+
+    heading('Step 2: Add the U1 JS SDK', 1),
+    para('Place this script at the end of the <body> section of your main HTML file:', 'Normal'),
+    emptyPara(),
+    para('HTML', 'CodeLabel'),
+    codeBlock(`<script id="u1-js" src="${jsLink}" type="text/javascript"></script>`),
+    emptyPara(),
+
+    heading('Step 3: Configuration and Site Mapping', 1),
+    para('Place this immediately after loading the U1 library (e.g. in your main entry file or a <script> tag after the SDK):', 'Normal'),
+    emptyPara(),
+    para('JavaScript', 'CodeLabel'),
+    codeBlock(configScript),
+    emptyPara(),
+    para('That\'s it — the User1st system is now implemented and configured on your site.', 'Normal'),
+  ];
+}
+
+// ── React guide (npm @u1 packages) ────────────────────────────────────────────
+
+function buildBodyPartsReact(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+  const style = ((config || {}).visualFocus || {}).style || {};
+  const u1Config = { desktop: { visualFocus: {
+    outlineColor: style.color || 'blue',
+    outline: `${style.color || 'blue'} ${style.width || 2}px solid`,
+    outlineStyle: 'solid',
+    outlineWidth: `${style.width || 2}px`,
+  }, button: { display: true } } };
+
+  return [
+    para(`U1 Installation & Integration Guide for React — ${hostname}`, 'Title'),
+    emptyPara(),
+    para('Prerequisites: a working React project (Vite / CRA / Next.js client app), Node.js + npm, and a valid User1st Authorization token.', 'Normal'),
+    emptyPara(),
+
+    heading('Step 1: Create .npmrc in the project root', 1),
+    bullet('In the root folder (same as package.json) create a file named .npmrc and paste the config below, replacing the token.'),
+    para('.npmrc', 'CodeLabel'),
+    codeBlock(`@u1:registry=https://registry.user1st.com\n//registry.user1st.com/:_authToken=PASTE_YOUR_U1_TOKEN_HERE\nregistry=https://registry.npmjs.org`),
+    bullet('Recommended: add .npmrc to .gitignore so the token is not committed.'),
+    emptyPara(),
+
+    heading('Step 2: Install the React U1 package', 1),
+    para('Terminal', 'CodeLabel'),
+    codeBlock(`npm install @u1/react-a11y-hooks`),
+    emptyPara(),
+
+    heading('Step 3: Import the U1 CSS (once, globally)', 1),
+    para('In src/App.jsx or your entry file (src/main.jsx / src/index.js):', 'Normal'),
+    para('JavaScript', 'CodeLabel'),
+    codeBlock(`import '@u1/react-a11y-hooks/u1.css';`),
+    emptyPara(),
+
+    heading('Step 4: Configure U1', 1),
+    para('Apply the configuration once when the app starts:', 'Normal'),
+    para('JavaScript', 'CodeLabel'),
+    codeBlock(`import React, { useEffect } from 'react';\nimport { setU1Configuration } from '@u1/react-a11y-hooks';\n\nconst u1Configuration = ${jsObjSource(u1Config)};\n\nexport default function App() {\n  useEffect(() => {\n    setU1Configuration(u1Configuration);\n  }, []);\n  return <div>Hello, world!</div>;\n}`),
+    emptyPara(),
+
+    heading('Step 5: Install and mount the Toolbar', 1),
+    para('Terminal', 'CodeLabel'),
+    codeBlock(`npm install @u1/toolbar`),
+    para('In your entry file (src/main.jsx / src/index.js):', 'Normal'),
+    para('JavaScript', 'CodeLabel'),
+    codeBlock(`import ReactDOM from 'react-dom/client';\nimport App from './App';\nimport '@u1/react-a11y-hooks/u1.css';\nimport '@u1/toolbar';\n\nReactDOM.createRoot(document.getElementById('root')).render(\n  <React.Fragment>\n    <u1-app enabled={true} />\n    <App />\n  </React.Fragment>\n);`),
+    emptyPara(),
+
+    heading('Step 6: Apply the component mappings', 1),
+    para('These are the per-component accessibility fixes built for this site. Run them AFTER the U1 library has loaded and configuration is applied (e.g. inside the same useEffect, after setU1Configuration):', 'Normal'),
+    para('JavaScript', 'CodeLabel'),
+    codeBlock((mappings && mappings.length) ? mappings.join('\n\n') : '// No mappings saved yet.'),
+    emptyPara(),
+
+    heading('Step 7: Run and verify', 1),
+    bullet('Run: npm install && npm run dev'),
+    bullet('npm install succeeds (no 401/403), the toolbar appears, and focus outlines match your configuration.'),
+  ];
+}
+
+// ── Angular guide (npm @u1 packages) ──────────────────────────────────────────
+
+function buildBodyPartsAngular(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+  const style = ((config || {}).visualFocus || {}).style || {};
+  const u1Config = { desktop: { visualFocus: { outlineColor: style.color || 'red' }, button: { display: true } } };
+
+  return [
+    para(`U1 Installation & Integration Guide for Angular — ${hostname}`, 'Title'),
+    emptyPara(),
+    para('Prerequisites: an existing Angular project, Node.js + npm, access to the User1st registry and a valid Authorization token.', 'Normal'),
+    emptyPara(),
+
+    heading('Step 1: Create .npmrc in the project root', 1),
+    bullet('In the project root (same folder as package.json and angular.json) create .npmrc and paste the config, replacing the token.'),
+    para('.npmrc', 'CodeLabel'),
+    codeBlock(`@u1:registry=https://registry.user1st.com\n//registry.user1st.com/:_authToken=PASTE_YOUR_U1_TOKEN_HERE\nregistry=https://registry.npmjs.org`),
+    bullet('Strongly recommended: add .npmrc to .gitignore.'),
+    emptyPara(),
+
+    heading('Step 2: Install the directives package', 1),
+    para('Terminal', 'CodeLabel'),
+    codeBlock(`npm install @u1/ng-a11y-directives`),
+    emptyPara(),
+
+    heading('Step 3: Import the U1 module in app.module.ts', 1),
+    para('TypeScript', 'CodeLabel'),
+    codeBlock(`import { NgA11yDirectiveModule } from '@u1/ng-a11y-directives';\n\n@NgModule({\n  imports: [\n    // ...\n    NgA11yDirectiveModule.forRoot(${jsObjSource(u1Config)}),\n  ],\n})\nexport class AppModule {}`),
+    emptyPara(),
+
+    heading('Step 4: Add the U1 CSS in angular.json', 1),
+    para('Under projects → <your-project> → architect → build → options → styles:', 'Normal'),
+    para('angular.json', 'CodeLabel'),
+    codeBlock(`"styles": [\n  "@u1/ng-a11y-directives/u1.css"\n]`),
+    emptyPara(),
+
+    heading('Step 5: Install and mount the Toolbar', 1),
+    para('Terminal', 'CodeLabel'),
+    codeBlock(`npm install @u1/toolbar`),
+    para('In your global entry file (commonly src/main.ts):', 'Normal'),
+    para('TypeScript', 'CodeLabel'),
+    codeBlock(`import '@u1/toolbar';`),
+    para('In src/app/app.component.html:', 'Normal'),
+    para('HTML', 'CodeLabel'),
+    codeBlock(`<u1-app [enabled]="true"></u1-app>`),
+    emptyPara(),
+
+    heading('Step 6: Apply the component mappings', 1),
+    para('These are the per-component accessibility fixes built for this site. Run them AFTER the U1 library has initialised — for example in AppComponent.ngAfterViewInit():', 'Normal'),
+    para('JavaScript', 'CodeLabel'),
+    codeBlock((mappings && mappings.length) ? mappings.join('\n\n') : '// No mappings saved yet.'),
+    emptyPara(),
+
+    heading('Step 7: Run and verify', 1),
+    bullet('Run: npm install && ng serve'),
+    bullet('No 401/403/404 during install, the toolbar appears, and u1.css is loaded.'),
+  ];
+}
+
+function buildDocumentXmlForType(siteType, hostname, cssLink, jsLink, mappings, skipLinks, config) {
+  switch (siteType) {
+    case 'react':   return wrapDoc(buildBodyPartsReact(hostname, cssLink, jsLink, mappings, skipLinks, config));
+    case 'angular': return wrapDoc(buildBodyPartsAngular(hostname, cssLink, jsLink, mappings, skipLinks, config));
+    case 'js':      return wrapDoc(buildBodyPartsJS(hostname, cssLink, jsLink, mappings, skipLinks, config));
+    case 'wordpress':
+    default:        return buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config);
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
-function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings, skipLinks, config, siteType) {
   const zip = new ZipWriter();
+  const type = siteType || 'wordpress';
 
   zip.add('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -438,7 +649,7 @@ function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings, skipLinks,
 </Relationships>`);
 
   zip.add('word/styles.xml', buildStylesXml());
-  zip.add('word/document.xml', buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config));
+  zip.add('word/document.xml', buildDocumentXmlForType(type, hostname, cssLink, jsLink, mappings, skipLinks, config));
 
   const bytes = zip.toUint8Array();
   const blob  = new Blob([bytes], {
@@ -448,7 +659,7 @@ function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings, skipLinks,
   const url = URL.createObjectURL(blob);
   const a   = document.createElement('a');
   a.href     = url;
-  a.download = `U1-Implementation-Guide-${hostname}.docx`;
+  a.download = `U1-Implementation-Guide-${type}-${hostname}.docx`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
