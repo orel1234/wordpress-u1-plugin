@@ -3607,14 +3607,24 @@ async function loadMappingsList() {
   }
   if (toolbar) toolbar.style.display = 'flex';
 
-  // Backfill Fix # for mappings saved before numbering existed — chronological
-  // by capture time so the numbers match the order the work was actually done.
-  if (list.some(m => m && typeof m === 'object' && !m.fixNo)) {
+  // Backfill / repair Fix # — chronological by capture time so the numbers match
+  // the order the work was actually done. Collision-safe: a mapping keeps its own
+  // number only if it's unique; missing OR duplicate numbers are reassigned the
+  // next free integer. This heals data where an old (unnumbered) mapping and a
+  // freshly added one both ended up as #1.
+  {
     const ordered = list.filter(m => m && typeof m === 'object')
       .slice().sort((a, b) => (a.capturedAt || 0) - (b.capturedAt || 0));
-    let n = 0;
-    ordered.forEach(m => { if (!m.fixNo) m.fixNo = ++n; else n = Math.max(n, m.fixNo); });
-    await chrome.storage.local.set({ [key]: list });
+    const used = new Set();
+    let n = 0, changed = false;
+    const nextFree = () => { do { n++; } while (used.has(n)); return n; };
+    ordered.forEach(m => {
+      let no = Number(m.fixNo);
+      if (!no || used.has(no)) { no = nextFree(); }
+      if (no !== m.fixNo) { m.fixNo = no; changed = true; }
+      used.add(no);
+    });
+    if (changed) await chrome.storage.local.set({ [key]: list });
   }
 
   // "On this page": a mapping belongs to this page if its selector matches RIGHT
