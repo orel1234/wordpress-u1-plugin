@@ -304,6 +304,29 @@
   // ── Keyboard-navigation test (Dimension B) with on-page animated HUD ───────
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
+  // Poll a predicate until it's truthy (or the timeout elapses); returns the
+  // truthy value, or false on timeout. Async widgets (portal datepickers, modal
+  // dialogs, framework re-renders) settle on their own schedule, so WAITING for
+  // the real condition — instead of betting on one fixed delay — is what makes a
+  // result the same from run to run. This is the core fix for flaky/inconsistent
+  // checks: a slightly-slow widget no longer flips a pass into a warn.
+  async function waitFor(fn, timeout = 2000, interval = 50) {
+    const end = Date.now() + timeout;
+    for (;;) {
+      let v; try { v = fn(); } catch (e) { v = false; }
+      if (v) return v;
+      if (Date.now() >= end) return false;
+      await delay(interval);
+    }
+  }
+  // Read the "selected/active cell" signal a roving-tabindex OR activedescendant
+  // grid uses, so we can tell whether an arrow key actually moved the selection.
+  const gridActiveSig = (container) => {
+    const ad = document.activeElement;
+    const adId = (container && container.getAttribute && container.getAttribute('aria-activedescendant')) || '';
+    const tabbable = container && container.querySelector ? container.querySelector('[role=gridcell][tabindex="0"],[role=gridcell][aria-selected="true"]') : null;
+    return (ad ? (ad.id || ad.getAttribute && ad.getAttribute('aria-label') || '') : '') + '|' + adId + '|' + (tabbable ? (tabbable.id || tabbable.getAttribute('aria-label') || tabbable.textContent || '') : '');
+  };
   const KEYCODES = { Enter: 13, ' ': 32, Escape: 27, Tab: 9, ArrowDown: 40, ArrowRight: 39, ArrowUp: 38, ArrowLeft: 37, Home: 36, End: 35 };
   const visible = (el) => { if (!el) return false; const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'; };
   const activeInside = (el) => !!el && (document.activeElement === el || el.contains(document.activeElement));
@@ -355,15 +378,20 @@
     try {
       if (type === 'dialog') {
         const trigger = q(sel.trigger) || root;
-        trigger.focus(); await delay(300); rec('Focus the trigger', activeInside(trigger) ? 'pass' : 'warn', '', trigger);
-        trigger.click(); await delay(650);
-        const dlg = (visible(root) ? root : null) || document.querySelector('[role=dialog],[role=alertdialog],dialog:not([hidden])');
-        rec('Trigger opens the dialog', dlg && visible(dlg) ? 'pass' : 'warn', dlg ? '' : 'No dialog appeared after activating the trigger.', dlg);
-        if (dlg && visible(dlg)) {
+        trigger.focus(); await delay(120); rec('Focus the trigger', activeInside(trigger) ? 'pass' : 'warn', '', trigger);
+        trigger.click();
+        // Wait for the dialog to actually appear rather than betting on a delay.
+        const dlg = await waitFor(() => {
+          const d = (visible(root) ? root : null) || document.querySelector('[role=dialog],[role=alertdialog],dialog:not([hidden])');
+          return d && visible(d) ? d : false;
+        }, 2000);
+        rec('Trigger opens the dialog', dlg ? 'pass' : 'warn', dlg ? '' : 'No dialog appeared after activating the trigger.', dlg);
+        if (dlg) {
+          await waitFor(() => activeInside(dlg), 500);
           rec('Focus moves into the dialog', activeInside(dlg) ? 'pass' : 'fail', '', document.activeElement);
           rec('aria-modal="true"', dlg.getAttribute('aria-modal') === 'true' ? 'pass' : 'warn', '');
-          press(document.activeElement, 'Escape'); await delay(450);
-          const closed = !visible(dlg);
+          press(document.activeElement, 'Escape');
+          const closed = await waitFor(() => !visible(dlg), 800);
           rec('Escape closes the dialog', closed ? 'pass' : 'fail', closed ? '' : 'Dialog still visible after Escape.');
           // Only meaningful when a trigger selector was actually provided — otherwise
           // we'd be matching focus against the dialog itself, which can't pass.
@@ -378,8 +406,9 @@
         else {
           tabs[0].focus(); await delay(250); rec('Focus first tab', activeInside(tabs[0]) ? 'pass' : 'warn', '', tabs[0]);
           const before = document.activeElement;
-          press(document.activeElement, 'ArrowRight'); await delay(300);
-          rec('ArrowRight moves to next tab', document.activeElement !== before ? 'pass' : 'warn', document.activeElement !== before ? '' : 'Focus did not move on ArrowRight.', document.activeElement);
+          press(document.activeElement, 'ArrowRight');
+          const movedTab = await waitFor(() => document.activeElement !== before, 700);
+          rec('ArrowRight moves to next tab', movedTab ? 'pass' : 'warn', movedTab ? '' : 'Focus did not move on ArrowRight.', document.activeElement);
         }
       } else if (type === 'accordion') {
         // primary IS the header selector — take the first matching header directly.
@@ -390,7 +419,8 @@
           const before = trig.getAttribute('aria-expanded');
           // Native <button> accordions toggle on the click default of Enter, which a
           // synthetic KeyboardEvent can't produce — so activate with a real .click().
-          trig.click(); await delay(350);
+          trig.click();
+          await waitFor(() => trig.getAttribute('aria-expanded') !== before, 700);
           const after = trig.getAttribute('aria-expanded');
           rec('Activate expands/collapses', before !== after ? 'pass' : 'warn',
             before !== after ? `aria-expanded ${before} → ${after}` : 'aria-expanded did not change on activation.', trig);
@@ -404,8 +434,8 @@
           opener.focus(); await delay(250); rec('Focus a menu item', activeInside(opener) ? 'pass' : 'warn', '', opener);
           const isMenubarKb = (type === 'menubar' || cfg.menubar === true);
           const before = document.activeElement;
-          press(document.activeElement, isMenubarKb ? 'ArrowRight' : 'ArrowDown'); await delay(300);
-          const moved = document.activeElement !== before;
+          press(document.activeElement, isMenubarKb ? 'ArrowRight' : 'ArrowDown');
+          const moved = await waitFor(() => document.activeElement !== before, 700);
           if (isMenubarKb) {
             // In an application menubar, arrow keys MUST move focus between items.
             rec('Arrow moves focus within menu', moved ? 'pass' : 'warn',
@@ -499,7 +529,10 @@
         const beforeAD = root.getAttribute('aria-activedescendant');
         const beforeSel = qa(sel.options, root).findIndex(o => o.getAttribute('aria-selected') === 'true');
         const beforeFocus = document.activeElement;
-        press(document.activeElement, 'ArrowDown'); await delay(300);
+        press(document.activeElement, 'ArrowDown');
+        await waitFor(() => (root.getAttribute('aria-activedescendant') !== beforeAD)
+          || (qa(sel.options, root).findIndex(o => o.getAttribute('aria-selected') === 'true') !== beforeSel)
+          || (document.activeElement !== beforeFocus), 700);
         const afterAD = root.getAttribute('aria-activedescendant');
         const afterSel = qa(sel.options, root).findIndex(o => o.getAttribute('aria-selected') === 'true');
         const moved = (afterAD && afterAD !== beforeAD) || (afterSel !== beforeSel) || (document.activeElement !== beforeFocus);
@@ -509,7 +542,9 @@
         const tb = q(sel.textbox, root) || (root.matches('input,[role=combobox],[contenteditable]') ? root : q('input,[role=combobox]', root)) || root;
         tb.focus(); await delay(250); rec('Focus the combobox', activeInside(tb) ? 'pass' : 'warn', '', tb);
         const beforeExp = (tb.getAttribute('aria-expanded') || root.getAttribute('aria-expanded'));
-        press(tb, 'ArrowDown'); await delay(300);
+        press(tb, 'ArrowDown');
+        await waitFor(() => (tb.getAttribute('aria-expanded') === 'true') || (root.getAttribute('aria-expanded') === 'true')
+          || !!(q(sel.listbox, root) || q('[role=listbox]', root) || q('[role=listbox]')), 700);
         const lb = q(sel.listbox, root) || q('[role=listbox]', root) || q('[role=listbox]');
         const opened = (tb.getAttribute('aria-expanded') === 'true') || (root.getAttribute('aria-expanded') === 'true') || (lb && visible(lb)) || (beforeExp !== (tb.getAttribute('aria-expanded') || root.getAttribute('aria-expanded')));
         rec('ArrowDown opens the list', opened ? 'pass' : 'warn', opened ? '' : 'aria-expanded did not become true and no listbox appeared on ArrowDown.', lb || tb);
@@ -522,7 +557,10 @@
           const beforeChecked = radios.findIndex(r => r.getAttribute('aria-checked') === 'true');
           const beforeAD = root.getAttribute('aria-activedescendant');
           const beforeFocus = document.activeElement;
-          press(document.activeElement, 'ArrowDown'); await delay(300);
+          press(document.activeElement, 'ArrowDown');
+          await waitFor(() => (radios.findIndex(r => r.getAttribute('aria-checked') === 'true') !== beforeChecked)
+            || (root.getAttribute('aria-activedescendant') !== beforeAD)
+            || (document.activeElement !== beforeFocus), 700);
           const afterChecked = radios.findIndex(r => r.getAttribute('aria-checked') === 'true');
           const moved = (afterChecked !== beforeChecked) || (root.getAttribute('aria-activedescendant') !== beforeAD) || (document.activeElement !== beforeFocus);
           rec('Arrow moves between radios', moved ? 'pass' : 'warn', moved ? '' : 'No change in aria-checked / aria-activedescendant / focus after Arrow.', document.activeElement);
@@ -531,17 +569,53 @@
         const cb = root;
         cb.focus(); await delay(250); rec('Focus the checkbox', activeInside(cb) ? 'pass' : 'warn', '', cb);
         const before = cb.getAttribute('aria-checked');
-        press(cb, ' '); await delay(300); // Space toggles a checkbox
+        press(cb, ' '); // Space toggles a checkbox
+        await waitFor(() => cb.getAttribute('aria-checked') !== before, 500);
         let after = cb.getAttribute('aria-checked');
-        if (after === before) { cb.click(); await delay(250); after = cb.getAttribute('aria-checked'); } // fallback: real activation
+        if (after === before) { cb.click(); await waitFor(() => cb.getAttribute('aria-checked') !== before, 500); after = cb.getAttribute('aria-checked'); } // fallback: real activation
         rec('Space toggles aria-checked', (after !== before) ? 'pass' : 'warn',
           (after !== before) ? `aria-checked ${before} → ${after}` : 'aria-checked did not change on Space/activation.', cb);
         if (after !== before) { cb.click(); await delay(150); } // restore
+      } else if (type === 'datepicker' || type === 'keyboard-grid') {
+        // Built by our grid engine and usually inside a popup that only exists
+        // once opened. Open it via the trigger, WAIT for the grid to actually
+        // render (portals are async — this is why the old fixed-delay version
+        // sometimes "didn't test" it), then verify arrow-key cell navigation.
+        const trigger = q(sel.trigger) || root;
+        let container = q(sel.container) || (root && root.matches && root.matches('[role=grid]') ? root : null) || q('[role=grid]');
+        if (!container || !visible(container)) {
+          if (trigger) { trigger.focus(); await delay(100); trigger.click(); }
+          container = await waitFor(() => { const c = q(sel.container) || q('[role=grid]'); return c && visible(c) ? c : false; }, 2500);
+        }
+        if (!container) {
+          rec('Grid/datepicker opens', 'warn', 'No grid appeared. Open the datepicker on the page first, then run the test.');
+        } else {
+          const hasGrid = !!(container.matches && (container.matches('[role=grid]') || container.querySelector('[role=grid],[role=gridcell]')));
+          rec('Grid semantics (role=grid/gridcell)', hasGrid ? 'pass' : 'warn', hasGrid ? '' : 'No role="grid"/"gridcell" found inside the widget.', container);
+          const cellSel = sel.day || sel.cell || '[role=gridcell]';
+          let cells = qa(cellSel, container).filter(visible);
+          if (!cells.length) cells = qa('[role=gridcell]', container).filter(visible);
+          if (!cells.length) {
+            rec('Grid cells found', 'warn', 'No focusable grid cells found in the widget.');
+          } else {
+            const start = container.querySelector('[role=gridcell][tabindex="0"]') || cells[0];
+            start.focus();
+            await waitFor(() => activeInside(container), 500);
+            rec('A cell can receive focus', activeInside(container) ? 'pass' : 'warn', '', start);
+            const before = gridActiveSig(container);
+            press(document.activeElement, 'ArrowRight');
+            const moved = await waitFor(() => gridActiveSig(container) !== before, 900);
+            rec('ArrowRight moves between cells', moved ? 'pass' : 'warn',
+              moved ? '' : 'Arrow key did not move the selection — roving tabindex / aria-activedescendant may not be wired.', document.activeElement);
+            const opCell = document.activeElement;
+            rec('Cell is keyboard-operable', (opCell && (opCell.getAttribute('role') === 'gridcell' || activeInside(container))) ? 'pass' : 'warn', '', opCell);
+          }
+        }
       } else {
         // Generic focusable check — but many types are CONTAINERS that are not
         // meant to take focus themselves (their focus lives on inner controls),
         // so a "not focusable" result there is expected, not a defect.
-        const CONTAINER_TYPES = ['form', 'table', 'grid', 'carousel', 'pagination', 'loading', 'tooltip', 'datepicker', 'keyboard-grid'];
+        const CONTAINER_TYPES = ['form', 'table', 'grid', 'carousel', 'pagination', 'loading', 'tooltip'];
         root.focus(); await delay(200);
         if (activeInside(root)) rec('Element is focusable', 'pass', '', root);
         else if (CONTAINER_TYPES.indexOf(type) >= 0)

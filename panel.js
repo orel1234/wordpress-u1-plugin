@@ -2585,7 +2585,24 @@ async function selectorsPresentOnPage(sels) {
   try {
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (list) => list.filter(s => { try { return !!document.querySelector(s); } catch { return false; } }),
+      // "Present" means an element that actually MATCHES *and is visible* — not
+      // merely in the DOM. Header/menu duplicates, mobile variants and leftover
+      // nodes are often display:none / zero-box; counting those made mappings
+      // wrongly show as "on this page" after navigating. Mirrors the Scan tab's
+      // visible() test. Widgets that exist only while open (dialog/datepicker)
+      // still surface via the captured-on-this-URL fallback in onPage().
+      func: (list) => list.filter(s => {
+        try {
+          const el = document.querySelector(s);
+          if (!el || !el.getBoundingClientRect) return false;
+          const r = el.getBoundingClientRect();
+          if (r.width < 1 || r.height < 1) return false;
+          const cs = getComputedStyle(el);
+          if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) return false;
+          if (el.offsetParent === null && cs.position !== 'fixed') return false;
+          return true;
+        } catch { return false; }
+      }),
       args: [sels],
     });
     return new Set((res && res[0] && res[0].result) || []);
@@ -2915,6 +2932,16 @@ async function scanPageStatic() {
           const lb = el.getAttribute('aria-labelledby');
           if (lb) { const t = lb.split(/\s+/).map(id => { const e = document.getElementById(id); return e ? txt(e) : ''; }).join(' ').trim(); if (t) return t; }
           const t = txt(el); if (t) return t;
+          // Accessible-name roll-up: an icon/image inside the control lends its
+          // name to it — <a><img alt="Home"></a> IS named "Home", and a logo link
+          // <a><img alt="ACME"></a> is named "ACME". textContent misses this, so
+          // gather a descendant's alt / aria-label / <svg><title>. (alt="" is
+          // decorative and contributes nothing, so a truly nameless link still flags.)
+          for (const d of el.querySelectorAll('[aria-label],img[alt],svg')) {
+            const n = (d.getAttribute('aria-label') || d.getAttribute('alt') || '').trim()
+              || (d.tagName.toLowerCase() === 'svg' ? ((d.querySelector('title') && d.querySelector('title').textContent) || '').trim() : '');
+            if (n) return n;
+          }
           return (el.getAttribute('title') || el.value || '').trim();
         };
         // "Really visible": rendered, non-zero box, not display:none/visibility:hidden/
@@ -3409,13 +3436,13 @@ async function buildDeployableCode(list, hostname) {
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
-    const n = m && m.fixNo ? `Fix #${m.fixNo}` : 'Fix';
+    // Lead each block with the durable id (the key the monitor reports on breakage).
     // Coerce to the id charset so a malformed/hostile id (e.g. an imported "*/…")
     // can't break out of the /* */ comment and inject code into the client bundle.
     const safeId = m && m.id ? String(m.id).replace(/[^A-Za-z0-9_-]/g, '') : '';
-    const id = safeId ? ` [${safeId}]` : '';   // durable id the monitor reports on breakage
+    const label = safeId || 'Fix';
     const what = [m && m.type, m && (m.primary || m.firstArg)].filter(Boolean).join('  ');
-    return `/* ---- ${n}${id} — ${what} ---- */`;
+    return `/* ---- ${label} — ${what} ---- */`;
   };
   const sorted = list.slice().sort((a, b) => {
     const an = (a && a.fixNo) || 1e9, bn = (b && b.fixNo) || 1e9;
@@ -3688,7 +3715,6 @@ async function loadMappingsList() {
       <div class="mapping-item${legacy ? ' legacy' : ''}" data-idx="${idx}">
         <button class="mapping-head" aria-expanded="false" data-idx="${idx}">
           <span class="mh-caret">▸</span>
-          ${m && m.fixNo ? `<span class="mh-fixno">#${m.fixNo}</span>` : ''}
           ${m && m.id ? `<span class="mh-id" title="Stable id — how the daily monitor reports this mapping if its selector breaks">${escapeHtml(m.id)}</span>` : ''}
           <span class="mh-type">${escapeHtml(type)}</span>
           <span class="mh-sel">${escapeHtml(primary)}</span>

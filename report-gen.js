@@ -231,7 +231,7 @@ function reportBuildHtml(pages) {
       return `
         <div class="element">
           <div class="element-info">
-            <h3>${m.fixNo ? `<span class="fixno">Fix #${m.fixNo}</span> ` : ''}${m.id ? `<span class="mapid" title="Monitor id">${reportEsc(m.id)}</span> ` : ''}<span class="badge">${reportEsc(d.label)}</span> <code>${reportEsc(d.primary)}</code></h3>
+            <h3>${m.id ? `<span class="mapid" title="Monitor id">${reportEsc(m.id)}</span> ` : ''}<span class="badge">${reportEsc(d.label)}</span> <code>${reportEsc(d.primary)}</code></h3>
             <p class="desc">${reportEsc(d.desc)}</p>
             ${selectorRows ? `<table class="selectors"><tbody>${selectorRows}</tbody></table>` : ''}
           </div>
