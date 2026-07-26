@@ -3686,8 +3686,12 @@ async function loadMappingsList() {
   };
 
   // Flat list (domain/page grouping lives only in the close-out report now).
+  // Display in Fix # order so the list reads 1,2,3… — the storage/insertion order
+  // can differ from the chronological numbering, which made numbers look shuffled.
+  // idx stays the original storage index so the row buttons still target the right one.
   const entries = [];
   list.forEach((m, idx) => { if (mappingsFilter === 'all' || onPage(m)) entries.push({ m, idx }); });
+  entries.sort((a, b) => (((a.m && a.m.fixNo) || 1e9) - ((b.m && b.m.fixNo) || 1e9)));
 
   if (entries.length === 0) {
     container.innerHTML = '<div class="empty-state">No mappings match an element on this page. Switch to “All” to see the rest.</div>';
