@@ -3429,6 +3429,32 @@ function stripComments(src) {
   return out.split('\n').filter((l, idx, a) => l.trim() !== '' || (a[idx - 1] || '').trim() !== '').join('\n').trim();
 }
 
+// For the QA monitoring hook: the ONE selector field per type that is reliably
+// present on a normal (unopened) page load. For widgets whose main element only
+// exists once opened (dialog/datepicker/combobox), the durable anchor is the
+// trigger — checking the popup container itself would false-report as broken on
+// every static monitor visit. Mirrors u1-runtime.js's MAIN_FIELD_BY_TYPE.
+const QA_MAIN_FIELD = {
+  dialog: 'trigger', datepicker: 'trigger', 'keyboard-grid': 'trigger',
+  combobox: 'textbox', tooltip: 'trigger',
+};
+
+// Build the single {id,type,field,selector,page} the monitor should validate for
+// a mapping: its reliable anchor selector plus the page path it was created on.
+function qaCheckFor(m) {
+  if (!m || typeof m !== 'object' || !m.id) return null;
+  const schema = COMPONENT_SCHEMAS[m.type];
+  const pKey = schema ? primaryKeyOf(schema) : null;
+  const mainField = QA_MAIN_FIELD[m.type] || pKey || 'primary';
+  let selector = '';
+  if (mainField !== pKey && m.config && typeof m.config[mainField] === 'string') selector = m.config[mainField].trim();
+  if (!selector) selector = (m.primary || m.firstArg || '').trim(); // fall back to the primary
+  if (!selector) return null;
+  let page = '';
+  try { page = new URL(m.pageUrl).pathname.replace(/\/+$/, '') || '/'; } catch (e) { page = ''; }
+  return { id: m.id, type: m.type || 'mapping', field: mainField, selector, page };
+}
+
 // Builds the full, self-contained script the implementer pastes into the site
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
@@ -3486,6 +3512,39 @@ async function buildDeployableCode(list, hostname) {
               : `/* !! Engine source unavailable — re-copy this script. */\n${calls}`)
     );
   }
+
+  // ── 4. Monitoring hook — inert unless the page is loaded with ?u1qa=1 ──────
+  // Lets the external daily monitor detect a mapping whose selector no longer
+  // resolves. On such a page it logs ONE greppable console.error per broken
+  // mapping, carrying the durable id, the type, the exact field that broke, the
+  // selector and the page — the monitor parses these lines straight into its
+  // dashboard. Completely silent for real visitors (no ?u1qa=1 → returns early).
+  const checks = [];
+  for (const m of sorted) { const c = qaCheckFor(m); if (c) checks.push(c); }
+  if (checks.length) {
+    parts.push(
+      `/* ---- 4. Monitoring hook (only runs with ?u1qa=1) ---- */\n` +
+      `(function () {\n` +
+      `  try {\n` +
+      `    if (new URLSearchParams(location.search).get('u1qa') !== '1') return;\n` +
+      `    var CHECKS = ${JSON.stringify(checks)};\n` +
+      `    var here = (location.pathname || '/').replace(/\\/+$/, '') || '/';\n` +
+      `    function run() {\n` +
+      `      CHECKS.forEach(function (c) {\n` +
+      `        try {\n` +
+      `          if (c.page && c.page !== here) return; // page-specific mapping — only validate on its own page\n` +
+      `          var ok = false; try { ok = !!document.querySelector(c.selector); } catch (e) { ok = false; }\n` +
+      `          if (!ok) console.error('U1-VALIDATION-ERROR | domain=' + location.hostname + ' | type=' + c.type + ' | id=' + c.id + ' | field=' + c.field + ' | selector=' + c.selector + ' | page=' + location.pathname);\n` +
+      `        } catch (e) {}\n` +
+      `      });\n` +
+      `    }\n` +
+      `    if (document.readyState === 'complete') setTimeout(run, 800);\n` +
+      `    else window.addEventListener('load', function () { setTimeout(run, 800); });\n` +
+      `  } catch (e) {}\n` +
+      `})();`
+    );
+  }
+
   return parts.join('\n\n');
 }
 
