@@ -360,6 +360,9 @@
               const scopeBadge = isItemGlobal
                   ? `<span style="font-size:9px; color:#60a5fa; border:1px solid #2563eb; border-radius:8px; padding:1px 6px; margin-left:5px;">🌐 Global${item.scopeManual ? '' : ' (auto)'}</span>`
                   : `<span style="font-size:9px; color:#4ade80; border:1px solid #059669; border-radius:8px; padding:1px 6px; margin-left:5px;">📍 This page${item.scopeManual ? '' : ' (auto)'}</span>`;
+              // Own badge (not a dim inline suffix) so it stays legible even when
+              // the row itself is dimmed (opacity 0.6 for mappings not found here).
+              const idBadge = `<span style="font-size:9px; color:#cbd5e1; font-family:monospace; border:1px solid #4b5563; border-radius:8px; padding:1px 6px; margin-left:5px;">ID: ${item.id || '—'}</span>`;
 
               const row = document.createElement('div');
               row.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px; margin-bottom:4px; border-radius:4px; background:#1f2937; opacity:${opacity}; border-left: 2px solid ${existsOnPage ? '#10b981' : '#ef4444'};`;
@@ -367,10 +370,10 @@
               row.innerHTML = `
                   <div style="flex:1;">
                       <div style="font-size:12px; font-weight:bold; color:white;">
-                          ${statusIcon} <span style="color:#60a5fa;">${item.type}</span> ${displayTitle} ${scopeBadge}
+                          ${statusIcon} <span style="color:#60a5fa;">${item.type}</span> ${displayTitle} ${scopeBadge} ${idBadge}
                       </div>
                       <div style="font-size:9px; color:#888; font-family:monospace; margin-top:2px;">
-                          ${selector ? selector.substring(0,30)+'...' : 'No selector'} <span style="color:#555;">· ID: ${item.id || '—'}</span>
+                          ${selector ? selector.substring(0,30)+'...' : 'No selector'}
                       </div>
                   </div>
                   <div style="display:flex; gap:5px;">

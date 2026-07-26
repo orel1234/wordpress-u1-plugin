@@ -2,13 +2,13 @@
 /**
  * Plugin Name: U1 Accessibility Wizard
  * Description: v6.0 - Final Stable Release (Protected Container Edition).
- * Version: 6.0.4
+ * Version: 6.0.5
  * Author: U1
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('U1W_VERSION', '6.0.4');
+define('U1W_VERSION', '6.0.5');
 
 class U1_Accessibility_Wizard {
   private $option_name = 'u1_accessibility_config';
