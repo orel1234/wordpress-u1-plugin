@@ -467,7 +467,14 @@ function sanitizeImport(raw) {
       const clean = val.filter(m =>
         m && typeof m === 'object' && VALID_MAPPING_TYPES.has(m.type) && SAFE_IMG(m.screenshot));
       // Drop any stored `code` — it is regenerated from config at export/apply time.
-      data[key] = clean.map(m => { const c = { ...m }; delete c.code; return c; });
+      // Drop a malformed `id` too (must be "m-<alnum>"); a valid one is backfilled
+      // on next render, so a hostile id string never reaches the export/report.
+      data[key] = clean.map(m => {
+        const c = { ...m };
+        delete c.code;
+        if (c.id != null && !/^m-[A-Za-z0-9]+$/.test(String(c.id))) delete c.id;
+        return c;
+      });
       if (clean.length !== val.length) dropped += (val.length - clean.length);
       continue;
     }
@@ -1245,6 +1252,16 @@ function nextFixNo(list) {
     if (n > max) max = n;
   }
   return max + 1;
+}
+
+// Stable per-mapping id, generated once and kept forever. Unlike fixNo (a
+// human-friendly sequential label that can be renumbered) this is the durable
+// key the daily monitor uses to say exactly WHICH mapping broke — it survives
+// reordering/deleting other mappings and travels into the exported client code.
+// Format matches the monitor's expectation: "m-" + 8 hex chars (e.g. m-3f9a21c7).
+function genMappingId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return 'm-' + crypto.randomUUID().split('-')[0];
+  return 'm-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
 function mappingKey(m) {
@@ -3291,6 +3308,9 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
     // close-out report. Assigned once and kept across edits so the number a
     // client sees in the report always points at the same fix.
     fixNo: (prev && prev.fixNo) || nextFixNo(list),
+    // Durable id kept across edits (see genMappingId) — the key the monitor
+    // reports as `id=…` when this mapping's selector breaks on a live site.
+    id: (prev && prev.id) || genMappingId(),
   };
   if (existingIdx >= 0) list[existingIdx] = entry;
   else list.push(entry);
@@ -3390,8 +3410,12 @@ async function buildDeployableCode(list, hostname) {
   // read against the close-out report line by line.
   const header = (m) => {
     const n = m && m.fixNo ? `Fix #${m.fixNo}` : 'Fix';
+    // Coerce to the id charset so a malformed/hostile id (e.g. an imported "*/…")
+    // can't break out of the /* */ comment and inject code into the client bundle.
+    const safeId = m && m.id ? String(m.id).replace(/[^A-Za-z0-9_-]/g, '') : '';
+    const id = safeId ? ` [${safeId}]` : '';   // durable id the monitor reports on breakage
     const what = [m && m.type, m && (m.primary || m.firstArg)].filter(Boolean).join('  ');
-    return `/* ---- ${n} — ${what} ---- */`;
+    return `/* ---- ${n}${id} — ${what} ---- */`;
   };
   const sorted = list.slice().sort((a, b) => {
     const an = (a && a.fixNo) || 1e9, bn = (b && b.fixNo) || 1e9;
@@ -3623,6 +3647,8 @@ async function loadMappingsList() {
       if (!no || used.has(no)) { no = nextFree(); }
       if (no !== m.fixNo) { m.fixNo = no; changed = true; }
       used.add(no);
+      // Backfill the durable monitor id onto any mapping saved before ids existed.
+      if (!m.id) { m.id = genMappingId(); changed = true; }
     });
     if (changed) await chrome.storage.local.set({ [key]: list });
   }
@@ -3663,6 +3689,7 @@ async function loadMappingsList() {
         <button class="mapping-head" aria-expanded="false" data-idx="${idx}">
           <span class="mh-caret">▸</span>
           ${m && m.fixNo ? `<span class="mh-fixno">#${m.fixNo}</span>` : ''}
+          ${m && m.id ? `<span class="mh-id" title="Stable id — how the daily monitor reports this mapping if its selector breaks">${escapeHtml(m.id)}</span>` : ''}
           <span class="mh-type">${escapeHtml(type)}</span>
           <span class="mh-sel">${escapeHtml(primary)}</span>
           ${hasShot ? `<span class="mh-thumb" data-idx="${idx}" title="Click to view full image">

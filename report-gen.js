@@ -231,7 +231,7 @@ function reportBuildHtml(pages) {
       return `
         <div class="element">
           <div class="element-info">
-            <h3>${m.fixNo ? `<span class="fixno">Fix #${m.fixNo}</span> ` : ''}<span class="badge">${reportEsc(d.label)}</span> <code>${reportEsc(d.primary)}</code></h3>
+            <h3>${m.fixNo ? `<span class="fixno">Fix #${m.fixNo}</span> ` : ''}${m.id ? `<span class="mapid" title="Monitor id">${reportEsc(m.id)}</span> ` : ''}<span class="badge">${reportEsc(d.label)}</span> <code>${reportEsc(d.primary)}</code></h3>
             <p class="desc">${reportEsc(d.desc)}</p>
             ${selectorRows ? `<table class="selectors"><tbody>${selectorRows}</tbody></table>` : ''}
           </div>
@@ -275,6 +275,7 @@ function reportBuildHtml(pages) {
   .element-info code { background: #f0eefb; color: #4b32c3; padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
   .badge { background: #6c4cf1; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 20px; text-transform: uppercase; letter-spacing: .4px; }
   .fixno { background:#111827; color:#fff; font:700 11px/1.6 ui-monospace,Menlo,Consolas,monospace; padding:2px 8px; border-radius:6px; }
+  .mapid { background:#f3f4f6; color:#4b5563; font:600 10px/1.6 ui-monospace,Menlo,Consolas,monospace; padding:2px 7px; border-radius:6px; border:1px dashed #cbd5e1; }
   .desc { margin: 0 0 10px; font-size: 13px; color: #444; line-height: 1.5; }
   table.selectors { border-collapse: collapse; width: 100%; font-size: 12px; }
   table.selectors td { border: 1px solid #eee; padding: 4px 8px; vertical-align: top; }
