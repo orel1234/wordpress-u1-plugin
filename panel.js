@@ -4275,6 +4275,14 @@ async function signOut() {
 document.getElementById('gateSignOutBlocked').addEventListener('click', signOut);
 document.getElementById('signOutBtn').addEventListener('click', signOut);
 
+// The session closes after a spell of inactivity, and the server only learns
+// the worker is still here when the panel calls it. Mapping fixes on one page
+// makes no calls at all, so without this a session could lapse while someone is
+// visibly working. U1Auth.touch() throttles itself, so this is cheap.
+['click', 'keydown'].forEach((evt) => {
+  document.addEventListener(evt, () => { U1Auth.touch().catch(() => {}); }, { passive: true });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Boot
 // ─────────────────────────────────────────────────────────────────────────────

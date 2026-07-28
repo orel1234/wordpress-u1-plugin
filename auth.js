@@ -19,6 +19,10 @@ const U1Auth = (() => {
   const AUTH_KEY = '__studioAuth';
   const CACHE_KEY = '__studioSiteCache';
 
+  // Well under the server's idle window, so an active session is renewed several
+  // times before it could lapse.
+  const TOUCH_INTERVAL_MS = 5 * 60 * 1000;
+
   let accessToken = null;      // memory only — never persisted
   let refreshPromise = null;   // de-dupes concurrent refreshes
 
@@ -218,6 +222,27 @@ const U1Auth = (() => {
     }
   }
 
+  // --- Keeping an in-use session alive -------------------------------------
+
+  let lastTouch = 0;
+
+  /**
+   * Tells the server the worker is still here.
+   *
+   * The session closes after a period of inactivity, but the server only sees
+   * activity when the extension happens to call it — and someone mapping fixes
+   * on a single page for half an hour makes no calls at all. Without this they
+   * would be signed out mid-job, which is not inactivity by any useful
+   * definition. Driven by real interaction with the panel, and throttled hard so
+   * it costs one request every few minutes rather than one per click.
+   */
+  async function touch() {
+    if (Date.now() - lastTouch < TOUCH_INTERVAL_MS) return;
+    if (!(await isLoggedIn())) return;
+    lastTouch = Date.now();
+    await refresh();
+  }
+
   async function requestAccess(hostname, note) {
     return request('/access-requests', {
       method: 'POST',
@@ -225,5 +250,5 @@ const U1Auth = (() => {
     });
   }
 
-  return { login, logout, isLoggedIn, getStoredClient, checkSiteAccess, requestAccess };
+  return { login, logout, isLoggedIn, getStoredClient, checkSiteAccess, requestAccess, touch };
 })();
