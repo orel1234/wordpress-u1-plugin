@@ -1310,7 +1310,7 @@ let currentHostname = 'unknown';
 async function migrateWwwHostname(host) {
   if (!host || host === 'unknown' || host.startsWith('www.')) return;
   const suffix = '_www.' + host;
-  const all = await chrome.storage.local.get(null);
+  const all = await U1Store.get(null);
   const updates = {};
   for (const key of Object.keys(all)) {
     if (key.endsWith(suffix)) {
@@ -1320,7 +1320,7 @@ async function migrateWwwHostname(host) {
     }
   }
   if (Object.keys(updates).length) {
-    await chrome.storage.local.set(updates);
+    await U1Store.set(updates);
   }
 }
 
@@ -1370,7 +1370,7 @@ async function autoRunOnOpen(tab) {
   try {
     const cfgKey = storageKey('config', currentHostname);
     const skipKey = storageKey('skipLinks', currentHostname);
-    const stored = await chrome.storage.local.get([cfgKey, skipKey]);
+    const stored = await U1Store.get([cfgKey, skipKey]);
     if (stored[cfgKey]) {
       const cfg = buildConfigObject(stored[skipKey] || []);
       await applyConfig(cfg);
@@ -1398,7 +1398,7 @@ async function autoRunOnOpen(tab) {
 
 async function refreshSetupTab(tab) {
   // Load saved global links
-  const { cssLink, jsLink } = await chrome.storage.local.get(['cssLink', 'jsLink']);
+  const { cssLink, jsLink } = await U1Store.get(['cssLink', 'jsLink']);
   if (cssLink) document.getElementById('cssLink').value = cssLink;
   if (jsLink)  document.getElementById('jsLink').value  = jsLink;
 
@@ -1413,7 +1413,7 @@ async function refreshSetupTab(tab) {
     document.getElementById('detectedCss').textContent = detected.cssHref || '(not found)';
     document.getElementById('detectedJs').textContent  = detected.jsSrc   || '(not found)';
     // Show auto-inject badge if this hostname has manual injection saved
-    const miStored = await chrome.storage.local.get([`manualInject_${currentHostname}`]);
+    const miStored = await U1Store.get([`manualInject_${currentHostname}`]);
     const badge = document.getElementById('autoInjectBadge');
     if (badge) badge.style.display = miStored[`manualInject_${currentHostname}`] ? 'block' : 'none';
     // Persist discovered URLs so Export/docx always has them even before user types anything
@@ -1421,7 +1421,7 @@ async function refreshSetupTab(tab) {
     if (detected.cssHref && !cssLink) updates.cssLink = detected.cssHref;
     if (detected.jsSrc   && !jsLink)  updates.jsLink  = detected.jsSrc;
     if (Object.keys(updates).length) {
-      await chrome.storage.local.set(updates);
+      await U1Store.set(updates);
       if (updates.cssLink) document.getElementById('cssLink').value = updates.cssLink;
       if (updates.jsLink)  document.getElementById('jsLink').value  = updates.jsLink;
     }
@@ -1437,7 +1437,7 @@ async function refreshSetupTab(tab) {
   const skipDetSec   = document.getElementById('skipDetected');
   const skipInpSec   = document.getElementById('skipInputs');
   const skipKey      = storageKey('skipLinks', currentHostname);
-  const stored       = await chrome.storage.local.get([skipKey]);
+  const stored       = await U1Store.get([skipKey]);
   const userSaved    = stored[skipKey];
 
   if (skipDetected && skipDetected.length > 0) {
@@ -1446,7 +1446,7 @@ async function refreshSetupTab(tab) {
     renderSkipDetectedList(skipDetected);
     // If user hasn't saved any, sync detected to storage so Config/Export see them
     if (!userSaved || !userSaved.length) {
-      await chrome.storage.local.set({ [skipKey]: skipDetected.slice(0, 3) });
+      await U1Store.set({ [skipKey]: skipDetected.slice(0, 3) });
     }
   } else {
     skipDetSec.style.display = 'none';
@@ -1651,7 +1651,7 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
     return;
   }
 
-  await chrome.storage.local.set({ cssLink, jsLink });
+  await U1Store.set({ cssLink, jsLink });
   const tab = await getTab();
   if (!isInjectable(tab)) { alert('Cannot inject on this page.'); return; }
 
@@ -1728,7 +1728,7 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
       const notice = document.getElementById('injectNotice');
       if (notice) notice.style.display = 'none';
       // Persist injection so background.js re-injects on every navigation for this hostname
-      await chrome.storage.local.set({ [`manualInject_${currentHostname}`]: { cssLink, jsLink } });
+      await U1Store.set({ [`manualInject_${currentHostname}`]: { cssLink, jsLink } });
       await refreshSetupTab(freshTab);
     }
   }, 2500);
@@ -1740,7 +1740,7 @@ document.getElementById('replaceU1Btn').addEventListener('click', () => {
 });
 
 document.getElementById('stopAutoInjectBtn').addEventListener('click', async () => {
-  await chrome.storage.local.remove([`manualInject_${currentHostname}`]);
+  await U1Store.remove([`manualInject_${currentHostname}`]);
   document.getElementById('autoInjectBadge').style.display = 'none';
 });
 
@@ -1750,7 +1750,7 @@ document.getElementById('addSkipLinkBtn').addEventListener('click', () => {
 
 document.getElementById('editSkipBtn').addEventListener('click', async () => {
   const skipKey = storageKey('skipLinks', currentHostname);
-  const stored  = await chrome.storage.local.get([skipKey]);
+  const stored  = await U1Store.get([skipKey]);
   populateSkipRows(stored[skipKey]);
   document.getElementById('skipDetected').style.display = 'none';
   document.getElementById('skipInputs').style.display   = 'block';
@@ -1870,7 +1870,7 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
   }
 
   const key = storageKey('skipLinks', currentHostname);
-  await chrome.storage.local.set({ [key]: links });
+  await U1Store.set({ [key]: links });
   // Keep config_<hostname> in sync too — background.js's persistent per-load
   // injection reads that key, so without this a skip link saved here would
   // never actually reach the page on subsequent navigations.
@@ -1902,7 +1902,7 @@ async function maybeAutoApply() {
   clearTimeout(autoApplyTimer);
   autoApplyTimer = setTimeout(async () => {
     const skipKey = storageKey('skipLinks', currentHostname);
-    const stored = await chrome.storage.local.get([skipKey]);
+    const stored = await U1Store.get([skipKey]);
     const cfg = buildConfigObject(stored[skipKey] || []);
     const result = await applyConfig(cfg);
     // No live refresh hook — reload the page so the change still takes effect.
@@ -1944,7 +1944,7 @@ document.querySelectorAll('input[name="direction"]').forEach(r =>
 
 // Persist the auto-apply preference per hostname; apply immediately when enabled.
 $autoApplyConfig.addEventListener('change', async () => {
-  await chrome.storage.local.set({
+  await U1Store.set({
     [storageKey('autoApply', currentHostname)]: $autoApplyConfig.checked,
   });
   if ($autoApplyConfig.checked) maybeAutoApply();
@@ -1953,7 +1953,7 @@ $autoApplyConfig.addEventListener('change', async () => {
 async function loadConfigForm() {
   const key = storageKey('config', currentHostname);
   const autoKey = storageKey('autoApply', currentHostname);
-  const stored = await chrome.storage.local.get([key, autoKey]);
+  const stored = await U1Store.get([key, autoKey]);
   if ($autoApplyConfig) $autoApplyConfig.checked = !!stored[autoKey];
   const cfg = stored[key];
   if (!cfg) { updateConfigPreview(); return; }
@@ -1975,7 +1975,7 @@ async function loadConfigForm() {
 
 async function refreshConfigSkipList() {
   const skipKey = storageKey('skipLinks', currentHostname);
-  const stored = await chrome.storage.local.get([skipKey]);
+  const stored = await U1Store.get([skipKey]);
   const links = stored[skipKey] || [];
   const ul = document.getElementById('configSkipList');
   if (!links.length) {
@@ -1999,7 +1999,7 @@ async function refreshConfigSkipList() {
 // per link, instead of guessing.
 async function verifySkipLinksOnPage() {
   const skipKey = storageKey('skipLinks', currentHostname);
-  const stored = await chrome.storage.local.get([skipKey]);
+  const stored = await U1Store.get([skipKey]);
   const links = stored[skipKey] || [];
   const tab = await getTab();
   if (!links.length || !isInjectable(tab)) return;
@@ -2064,15 +2064,15 @@ function buildConfigObject(includeSkipLinks = []) {
 
 async function saveConfig() {
   const skipKey = storageKey('skipLinks', currentHostname);
-  const stored = await chrome.storage.local.get([skipKey]);
+  const stored = await U1Store.get([skipKey]);
   const cfg = buildConfigObject(stored[skipKey] || []);
   const key = storageKey('config', currentHostname);
-  await chrome.storage.local.set({ [key]: cfg });
+  await U1Store.set({ [key]: cfg });
 }
 
 async function updateConfigPreview() {
   const skipKey = storageKey('skipLinks', currentHostname);
-  const stored = await chrome.storage.local.get([skipKey]);
+  const stored = await U1Store.get([skipKey]);
   const cfg = buildConfigObject(stored[skipKey] || []);
   const code = `window.u1 = window.u1 || {};\nwindow.u1.config = ${JSON.stringify(cfg, null, 2)};`;
   document.getElementById('configPreview').textContent = code;
@@ -2089,7 +2089,7 @@ document.getElementById('copyConfigBtn').addEventListener('click', () => {
 
 document.getElementById('runConfigBtn').addEventListener('click', async () => {
   const skipKey = storageKey('skipLinks', currentHostname);
-  const stored = await chrome.storage.local.get([skipKey]);
+  const stored = await U1Store.get([skipKey]);
   const cfg = buildConfigObject(stored[skipKey] || []);
   const status = document.getElementById('configRan');
   const reloadBtn = document.getElementById('reloadPageBtn');
@@ -2726,28 +2726,6 @@ function renderAdvisorNotes(notes) {
   }).join('');
 }
 
-document.getElementById('analyzeBtn')?.addEventListener('click', async () => {
-  const primary = $primarySelectorInput.value.trim();
-  if (!primary) { renderAdvisorNotes([{ level: 'err', msg: 'Type a CSS selector for the element first.' }]); return; }
-  renderAdvisorNotes([{ level: 'ok', msg: 'Analyzing the element on the page…' }]);
-  const profile = await analyzeElement(primary);
-  if (profile.err || profile.error) { renderAdvisorNotes([{ level: 'err', msg: profile.err || profile.error }]); return; }
-  if (profile.notFound) { renderAdvisorNotes([{ level: 'warn', msg: 'No element matches that selector on the page.' }]); return; }
-
-  const rec = recommendComponent(profile);
-  if (!rec) { renderAdvisorNotes([{ level: 'warn', msg: 'Could not auto-detect the component type — pick one manually below.' }]); return; }
-
-  $componentType.value = rec.type;
-  renderTypeGuide(rec.type);
-  renderSubSelectorInputs(rec.type);
-  for (const [k, v] of Object.entries(rec.fields || {})) {
-    const inp = $subSelArea.querySelector(`input[data-field="${k}"]`);
-    if (inp && v) inp.value = v;
-  }
-  const head = [{ level: 'ok', msg: `Suggested component: “${rec.type}”. Selectors pre-filled below — review, then Generate.` }];
-  renderAdvisorNotes(head.concat(rec.notes || []));
-});
-
 // Read the current builder form (type + primary + sub-selectors + options) and
 // return a fresh template, or null if type/primary are missing. Shared by
 // "Generate Template" and "Add to Mapping" so Add never silently no-ops on a
@@ -3313,7 +3291,7 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   }
   const btn = document.getElementById('addMappingBtn');
   const key = storageKey('mappings', currentHostname);
-  const stored = await chrome.storage.local.get([key]);
+  const stored = await U1Store.get([key]);
   const list = stored[key] || [];
   const newKey = mappingKey(currentTemplate);
   // If editing, drop the original (its key may have changed after edits).
@@ -3346,7 +3324,7 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   };
   if (existingIdx >= 0) list[existingIdx] = entry;
   else list.push(entry);
-  await chrome.storage.local.set({ [key]: list });
+  await U1Store.set({ [key]: list });
 
   const wasEditing = editingMappingKey != null || existingIdx >= 0;
   editingMappingKey = null;
@@ -3360,7 +3338,7 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
 // "no mappings" / success notices (used by the auto-run on panel open).
 async function applyAllMappings({ silent = false } = {}) {
   const key = storageKey('mappings', currentHostname);
-  const stored = await chrome.storage.local.get([key]);
+  const stored = await U1Store.get([key]);
   const list = stored[key] || [];
   const status = document.getElementById('applyAllStatus');
   if (list.length === 0) {
@@ -3555,7 +3533,7 @@ async function buildDeployableCode(list, hostname) {
 
 document.getElementById('copyAllBtn').addEventListener('click', async () => {
   const key = storageKey('mappings', currentHostname);
-  const stored = await chrome.storage.local.get([key]);
+  const stored = await U1Store.get([key]);
   const list = stored[key] || [];
   if (!list.length) return;
   const btn = document.getElementById('copyAllBtn');
@@ -3708,7 +3686,7 @@ function openImageDialog(src) {
 
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);
-  const stored = await chrome.storage.local.get([key]);
+  const stored = await U1Store.get([key]);
   const list = stored[key] || [];
   const container = document.getElementById('mappingsList');
   const applyAllRow = document.getElementById('applyAllRow');
@@ -3741,7 +3719,7 @@ async function loadMappingsList() {
       // Backfill the durable monitor id onto any mapping saved before ids existed.
       if (!m.id) { m.id = genMappingId(); changed = true; }
     });
-    if (changed) await chrome.storage.local.set({ [key]: list });
+    if (changed) await U1Store.set({ [key]: list });
   }
 
   // "On this page": a mapping belongs to this page if its selector matches RIGHT
@@ -3847,7 +3825,7 @@ async function loadMappingsList() {
     btn.addEventListener('click', async () => {
       const i = parseInt(btn.dataset.idx, 10);
       list.splice(i, 1);
-      await chrome.storage.local.set({ [key]: list });
+      await U1Store.set({ [key]: list });
       loadMappingsList();
       refreshExportInfo();
     });
@@ -3885,7 +3863,7 @@ async function loadMappingsList() {
           const scaled = await downscaleImage(reader.result, 900);
           m.screenshot = scaled || reader.result;
           m.capturedAt = Date.now();
-          await chrome.storage.local.set({ [key]: list });
+          await U1Store.set({ [key]: list });
           loadMappingsList();
           showNotice(document.getElementById('applyAllStatus'), 'Image added to mapping.', 'success', 2000);
         };
@@ -3914,7 +3892,7 @@ async function loadMappingsList() {
       m.pageUrl = tab?.url || m.pageUrl || '';
       m.pageTitle = tab?.title || m.pageTitle || '';
       m.capturedAt = Date.now();
-      await chrome.storage.local.set({ [key]: list });
+      await U1Store.set({ [key]: list });
       loadMappingsList();
       showNotice(status, 'Screenshot captured.', 'success', 2000);
     });
@@ -3945,7 +3923,7 @@ async function loadMappingsList() {
 async function refreshExportInfo() {
   const mKey   = storageKey('mappings', currentHostname);
   const platKey = storageKey('platform', currentHostname);
-  const stored = await chrome.storage.local.get([mKey, platKey]);
+  const stored = await U1Store.get([mKey, platKey]);
   const count  = (stored[mKey] || []).length;
   document.getElementById('exportMappingsCount').textContent =
     `${count} mapping${count !== 1 ? 's' : ''}`;
@@ -3966,17 +3944,17 @@ async function refreshExportInfo() {
 
 // Persist a manual platform override per site.
 document.getElementById('platformSelect').addEventListener('change', async (e) => {
-  await chrome.storage.local.set({ [storageKey('platform', currentHostname)]: e.target.value });
+  await U1Store.set({ [storageKey('platform', currentHostname)]: e.target.value });
   const detectedLabel = document.getElementById('platformDetected');
   if (detectedLabel) detectedLabel.textContent = ' — manual';
 });
 
 document.getElementById('exportBtn').addEventListener('click', async () => {
-  const { cssLink = '', jsLink = '' } = await chrome.storage.local.get(['cssLink', 'jsLink']);
+  const { cssLink = '', jsLink = '' } = await U1Store.get(['cssLink', 'jsLink']);
   const skipKey = storageKey('skipLinks', currentHostname);
   const cfgKey  = storageKey('config', currentHostname);
   const mKey    = storageKey('mappings', currentHostname);
-  const stored = await chrome.storage.local.get([skipKey, cfgKey, mKey]);
+  const stored = await U1Store.get([skipKey, cfgKey, mKey]);
   const skipLinks = stored[skipKey] || [];
   const config    = stored[cfgKey]  || buildConfigObject(skipLinks);
   // The guide must contain code that ACTUALLY RUNS on the live site with no
@@ -4025,15 +4003,12 @@ document.getElementById('closeOutBtn').addEventListener('click', async () => {
 document.getElementById('exportDataBtn').addEventListener('click', async () => {
   const status = document.getElementById('backupStatus');
   try {
-    const all = await chrome.storage.local.get(null);
-    // Drop every "__" key. These are private/transient — the close-out render
-    // cache, and since licensing was added the signed-in session (__studioAuth
-    // holds a refresh token). A backup file gets emailed and passed between
+    // The store decides what may leave the machine. It drops every private
+    // ("__") key — the close-out render cache, and the signed-in session, which
+    // holds a refresh token. A backup file gets emailed and carried between
     // machines, so a credential must never be able to ride along inside one.
     // sanitizeImport() rejects the same prefix on the way back in.
-    for (const key of Object.keys(all)) {
-      if (key.startsWith('__')) delete all[key];
-    }
+    const all = await U1Store.getExportable();
     const payload = {
       __u1helper: true,
       version: 1,
@@ -4079,7 +4054,7 @@ document.getElementById('importDataBtn').addEventListener('click', () => {
         const { data, dropped } = sanitizeImport(raw);
         if (!Object.keys(data).length) throw new Error('Nothing valid to import (all entries were rejected).');
         // Merge into storage (imported keys overwrite matching ones, others kept).
-        await chrome.storage.local.set(data);
+        await U1Store.set(data);
         // Refresh the whole UI for the current tab.
         await loadConfigForm();
         await refreshConfigSkipList();
@@ -4199,7 +4174,12 @@ function applyLicenceMode(state) {
 async function showAccountRow() {
   const client = await U1Auth.getStoredClient();
   const el = document.getElementById('accountEmail');
-  if (el) el.textContent = client?.email || '';
+  if (!el) return;
+  const email = client?.email || '';
+  el.textContent = email;
+  // The header truncates long addresses to fit beside the wordmark, so the full
+  // value has to stay recoverable on hover.
+  if (email) el.title = email; else el.removeAttribute('title');
 }
 
 /**

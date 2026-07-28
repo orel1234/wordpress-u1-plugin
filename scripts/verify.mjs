@@ -20,6 +20,9 @@ const html = read('panel.html');
 const panel = read('panel.js');
 const auth = read('auth.js');
 const config = read('config.js');
+const store = read('store.js');
+const background = read('background.js');
+const reportGen = read('report-gen.js');
 const manifest = JSON.parse(read('manifest.json'));
 
 // --- Every getElementById target exists in the markup ---------------------
@@ -52,6 +55,7 @@ const loaded = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
 for (const [file, global, consumer, consumerName] of [
   ['config.js', 'U1_CONFIG', auth, 'auth.js'],
   ['auth.js', 'U1Auth', panel, 'panel.js'],
+  ['store.js', 'U1Store', panel, 'panel.js'],
 ]) {
   if (!loaded.includes(file)) fail(`${file} is not loaded by panel.html`);
   else if (!consumer.includes(global)) fail(`${file} is loaded but ${global} is never used by ${consumerName}`);
@@ -83,13 +87,41 @@ if (!serverUrl) {
 // --- Credentials can never travel inside a backup ------------------------
 
 console.log('\nSession data stays out of backups:');
-if (!/for \(const key of Object\.keys\(all\)\)[\s\S]{0,120}startsWith\('__'\)/.test(panel)) {
-  fail('the backup export no longer strips "__" keys — a refresh token could be exported');
+if (!/getExportable\(\)/.test(panel)) {
+  fail('the backup export no longer goes through U1Store.getExportable() — a refresh token could be exported');
+} else if (!/isPrivate\(key\)\) delete all\[key\]/.test(store)) {
+  fail('U1Store.getExportable() no longer strips private keys');
 } else {
-  pass('export strips all "__" keys');
+  pass('export goes through the store, which strips every private key');
 }
 if (!/__studioAuth/.test(auth)) fail('auth.js no longer uses the "__" storage prefix');
 else pass('auth state is stored under a "__" key, which sanitizeImport rejects');
+
+// --- Storage goes through one door --------------------------------------
+
+console.log('\nStorage access is centralised:');
+// Direct chrome.storage.local calls are how the tap gets bypassed. The store
+// itself is the one legitimate caller.
+const storageUsers = [['panel.js', panel], ['background.js', background], ['report-gen.js', reportGen], ['auth.js', auth]];
+let leaks = 0;
+for (const [name, src] of storageUsers) {
+  const direct = (src.match(/chrome\.storage\.local\./g) || []).length;
+  if (direct) { fail(`${name} calls chrome.storage.local directly ${direct}×  — use U1Store instead`); leaks++; }
+}
+if (!leaks) pass(`no direct chrome.storage.local calls outside store.js (${storageUsers.length} files checked)`);
+
+const storeCalls = storageUsers.reduce((n, [, src]) => n + (src.match(/U1Store\./g) || []).length, 0);
+pass(`${storeCalls} call sites go through U1Store`);
+
+// The service worker has no <script> tags — it must pull the store in itself.
+if (!/importScripts\(['"]store\.js['"]\)/.test(background)) {
+  fail('background.js does not importScripts("store.js") — U1Store would be undefined in the service worker');
+} else {
+  pass('background.js imports the store (service worker has no <script> tags)');
+}
+if (loaded.indexOf('store.js') === -1) fail('panel.html does not load store.js');
+else if (loaded.indexOf('store.js') > loaded.indexOf('panel.js')) fail('store.js must load before panel.js');
+else pass('panel.html loads store.js before its users');
 
 console.log(failures === 0 ? '\n✅ All extension checks passed.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

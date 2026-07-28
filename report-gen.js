@@ -404,7 +404,7 @@ function buildStaticIssuesHtml(hostname, items, pageUrl, pageTitle) {
 // Scan tab (already screenshotted by the caller).
 async function generateStaticIssuesReport(hostname, items, pageUrl, pageTitle) {
   const html = buildStaticIssuesHtml(hostname, items, pageUrl, pageTitle);
-  await chrome.storage.local.set({ __closeOutReportHtml: html });
+  await U1Store.set({ __closeOutReportHtml: html });
   try { await chrome.tabs.create({ url: chrome.runtime.getURL('report.html') }); } catch {}
   try {
     const blob = new Blob([html], { type: 'text/html' });
@@ -422,13 +422,13 @@ async function generateStaticIssuesReport(hostname, items, pageUrl, pageTitle) {
 
 // Public: build the report for one site, store it and open it in a real tab.
 async function generateCloseOutReport(onlyHostname) {
-  const allStorage = await chrome.storage.local.get(null);
+  const allStorage = await U1Store.get(null);
   const pages = reportCollectPages(allStorage, onlyHostname);
   const html = reportBuildHtml(pages);
 
   // Store the HTML so the extension page (report.html) can render it. This opens
   // reliably in a normal tab, unlike a blob: URL created in the side panel.
-  await chrome.storage.local.set({ __closeOutReportHtml: html });
+  await U1Store.set({ __closeOutReportHtml: html });
   try { await chrome.tabs.create({ url: chrome.runtime.getURL('report.html') }); } catch {}
 
   // Also offer it as a downloadable file. A blob *download* works fine (only

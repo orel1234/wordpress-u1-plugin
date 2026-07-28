@@ -132,10 +132,16 @@ body {
   margin-left: 1px;
 }
 
+.header h1,
+.header .version {
+  white-space: nowrap;
+}
+
+/* Sits directly after the wordmark — the right edge of the header now belongs
+   to the account cluster. */
 .header .version {
   font-size: 10px;
   color: var(--u1-text-dim);
-  margin-left: auto;
   font-weight: 500;
 }
 
@@ -1760,6 +1766,52 @@ button {
 
 .account-signout:hover {
   color: var(--u1-text-muted);
+}
+
+/* ── Account cluster, in the header ──────────────────────────────────────── */
+/* The row used to sit under the tab bar and cost a full band of vertical space
+   in a panel that is already narrow. In the header it reads as identity rather
+   than as another control, and the tabs gain that space back. */
+
+.header .account-row {
+  margin-left: auto;
+  padding: 0;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* A cap, not a fixed width: a company address fits whole at the panel's usual
+   size, and anything longer ellipsises instead of squeezing the wordmark. */
+.header .account-email {
+  max-width: 150px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--u1-text-muted);
+}
+
+.header .account-signout {
+  flex-shrink: 0;
+  text-decoration: none;
+  color: var(--u1-text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.header .account-signout:hover {
+  color: var(--u1-text);
+  border-color: var(--u1-primary);
+  background: var(--u1-primary-dim);
+}
+
+.header .account-signout:focus-visible {
+  outline: 2px solid var(--u1-primary);
+  outline-offset: 2px;
 }
 
 /* Status banners */

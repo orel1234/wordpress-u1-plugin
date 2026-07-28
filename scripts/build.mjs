@@ -17,7 +17,7 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const FILES = [
   'manifest.json', 'rules.json',
   'panel.html', 'panel.js', 'styles.css',
-  'config.js', 'auth.js',
+  'config.js', 'store.js', 'auth.js',
   'background.js', 'test-engine.js', 'grid-nav.js',
   'docx-gen.js', 'report-gen.js',
   'report.html', 'report-view.js',

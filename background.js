@@ -1,5 +1,10 @@
 'use strict';
 
+// The service worker reads the same saved data the panel does, so it goes
+// through the same store. importScripts is how a classic MV3 worker loads a
+// dependency — there is no <script> tag and no module graph here.
+importScripts('store.js');
+
 chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ windowId: tab.windowId });
 });
@@ -194,7 +199,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 
     const hostname = getHostnameFromTab(tab);
     if (!hostname) return;
-    const stored = await chrome.storage.local.get([`manualInject_${hostname}`, `config_${hostname}`, `mappings_${hostname}`]);
+    const stored = await U1Store.get([`manualInject_${hostname}`, `config_${hostname}`, `mappings_${hostname}`]);
     // Auto-inject the saved config on EVERY load for this hostname — not just
     // ones where U1 was manually injected — so skip links / colors / language
     // persist across normal site navigation.
@@ -216,7 +221,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (info.status === 'complete') {
     const hostname = getHostnameFromTab(tab);
     if (!hostname) return;
-    const stored = await chrome.storage.local.get([`manualInject_${hostname}`, `mappings_${hostname}`]);
+    const stored = await U1Store.get([`manualInject_${hostname}`, `mappings_${hostname}`]);
 
     // Auto-apply mappings (independent of manual-inject — the site may load U1 itself).
     const all = stored[`mappings_${hostname}`] || [];

@@ -66,6 +66,14 @@
     <div class="u1-logo">u</div>
     <h1><span class="u1-gradient-text">U1</span> Studio<span class="dot">.</span></h1>
     <span class="version">v3.0</span>
+
+    <!-- Who you are signed in as is context, not a control to hunt for, so it
+         sits beside the wordmark and stays visible on every tab. Sign out rides
+         along with it — leaving is one click from anywhere in the tool. -->
+    <div class="account-row">
+      <span id="accountEmail" class="account-email"></span>
+      <button id="signOutBtn" class="account-signout" title="Sign out">Sign out</button>
+    </div>
   </div>
 
   <div class="tabs">
@@ -74,11 +82,6 @@
     <button class="tab-btn" data-tab="picker">Picker</button>
     <button class="tab-btn" data-tab="scan">Scan</button>
     <button class="tab-btn" data-tab="export">Export</button>
-  </div>
-
-  <div class="account-row">
-    <span id="accountEmail" class="account-email"></span>
-    <button id="signOutBtn" class="account-signout" title="Sign out">Sign out</button>
   </div>
 </div>
 
@@ -325,7 +328,6 @@
 
 
     <div class="btn-row right" style="gap:8px;">
-      <button class="btn-outline btn-sm" id="analyzeBtn" title="Inspect the element on the page and suggest the component type + selectors">✨ Analyze &amp; suggest</button>
       <button class="btn-ghost btn-sm" id="resetPickerBtn" title="Clear the form to start a new element">↺ Reset — new element</button>
     </div>
 
@@ -473,6 +475,7 @@
 </div>
 
 <script src="config.js"></script>
+<script src="store.js"></script>
 <script src="auth.js"></script>
 <script src="docx-gen.js"></script>
 <script src="report-gen.js"></script>

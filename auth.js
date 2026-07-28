@@ -25,19 +25,19 @@ const U1Auth = (() => {
   const api = (path) => `${U1_CONFIG.SERVER_URL}/api/studio${path}`;
 
   async function readAuth() {
-    const stored = await chrome.storage.local.get(AUTH_KEY);
+    const stored = await U1Store.get(AUTH_KEY);
     return stored[AUTH_KEY] || null;
   }
 
   async function writeAuth(auth) {
-    await chrome.storage.local.set({ [AUTH_KEY]: auth });
+    await U1Store.set({ [AUTH_KEY]: auth });
   }
 
   /** Signing out clears credentials only. Mappings are the worker's, not ours. */
   async function clearAuth() {
     accessToken = null;
     refreshPromise = null;
-    await chrome.storage.local.remove(AUTH_KEY);
+    await U1Store.remove(AUTH_KEY);
   }
 
   // --- Site verification cache -------------------------------------------
@@ -45,14 +45,14 @@ const U1Auth = (() => {
   // time we learned it. Consulted only when the server can't be reached.
 
   async function readCache() {
-    const stored = await chrome.storage.local.get(CACHE_KEY);
+    const stored = await U1Store.get(CACHE_KEY);
     return stored[CACHE_KEY] || {};
   }
 
   async function cacheSiteResult(hostname, result) {
     const cache = await readCache();
     cache[hostname] = { ...result, verifiedAt: Date.now() };
-    await chrome.storage.local.set({ [CACHE_KEY]: cache });
+    await U1Store.set({ [CACHE_KEY]: cache });
   }
 
   function withinGracePeriod(entry) {
