@@ -143,11 +143,109 @@ class U1_Accessibility_Wizard {
     $wp_admin_bar->add_node(['id' => 'u1-wizard', 'title' => 'U1 Wizard', 'href' => esc_url($url)]);
   }
 
-  public function ajax_save_config() {
+  public function ajax_get_config() {
+    if (!check_ajax_referer('u1_wizard_nonce', 'nonce', false)) wp_send_json_error(['message' => 'bad_nonce'], 403);
     if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'forbidden'], 403);
+    wp_send_json_success(['config' => get_option($this->option_name, $this->get_default_config())]);
+  }
+
+  public function ajax_save_config() {
+    // Both checks matter: the capability check stops non-admins, the nonce stops
+    // an attacker from riding a logged-in admin's session. Without the nonce a
+    // single cross-site POST rewrites the config, and the config is executed as
+    // setAttribute() calls on every front-end visitor.
+    if (!check_ajax_referer('u1_wizard_nonce', 'nonce', false)) wp_send_json_error(['message' => 'bad_nonce'], 403);
+    if (!current_user_can('manage_options')) wp_send_json_error(['message' => 'forbidden'], 403);
+
+    if (!isset($_POST['config'])) wp_send_json_error(['message' => 'missing_config'], 400);
     $raw = json_decode(wp_unslash($_POST['config']), true);
-    update_option($this->option_name, $raw);
-    wp_send_json_success(['ok' => true, 'config' => $raw]);
+    if (!is_array($raw)) wp_send_json_error(['message' => 'bad_config'], 400);
+
+    $clean = $this->sanitize_config($raw);
+    update_option($this->option_name, $clean);
+    wp_send_json_success(['ok' => true, 'config' => $clean]);
+  }
+
+  /** Attributes u1-runtime.js must never be told to write. */
+  private static $forbidden_attrs = ['style', 'href', 'src', 'srcdoc', 'formaction', 'action', 'data', 'xlink:href'];
+
+  private function is_safe_attr($attr) {
+    if (!is_string($attr) || $attr === '') return false;
+    if (!preg_match('/^[a-zA-Z][a-zA-Z0-9:_-]*$/', $attr)) return false;
+    $lower = strtolower($attr);
+    if (strpos($lower, 'on') === 0) return false; // onclick, onerror, …
+    return !in_array($lower, self::$forbidden_attrs, true);
+  }
+
+  private function clean_scalar($v) {
+    if (is_bool($v) || is_int($v) || is_float($v) || is_null($v)) return $v;
+    return sanitize_text_field((string) $v);
+  }
+
+  /**
+   * Component entries are passed straight to window.u1.fix.*, whose field names
+   * vary per component and change with the upstream library — so entries are
+   * validated by shape (flat map of scalars, sane key names) rather than by an
+   * exact key list that would silently drop legitimate new fields.
+   */
+  private function sanitize_entry($entry) {
+    if (!is_array($entry)) return null;
+    $out = [];
+    foreach ($entry as $k => $v) {
+      if (!is_string($k) || !preg_match('/^[a-zA-Z_][a-zA-Z0-9_-]*$/', $k)) continue;
+      if (is_array($v)) continue; // no nested structures anywhere in the schema
+      $out[$k] = $this->clean_scalar($v);
+    }
+    return $out ? $out : null;
+  }
+
+  private function sanitize_list($list, $extra = null) {
+    if (!is_array($list)) return [];
+    $out = [];
+    foreach ($list as $entry) {
+      $clean = $this->sanitize_entry($entry);
+      if ($clean === null) continue;
+      if ($extra && ($clean = call_user_func($extra, $clean)) === null) continue;
+      $out[] = $clean;
+    }
+    return $out;
+  }
+
+  private function sanitize_config($raw) {
+    $defaults = $this->get_default_config();
+    $out = [];
+
+    $init = isset($raw['init']) && is_array($raw['init']) ? $raw['init'] : [];
+    $out['init'] = [
+      'js_url'  => isset($init['js_url'])  ? esc_url_raw((string) $init['js_url'], ['http', 'https'])  : $defaults['init']['js_url'],
+      'css_url' => isset($init['css_url']) ? esc_url_raw((string) $init['css_url'], ['http', 'https']) : $defaults['init']['css_url'],
+      'focus_color'           => $this->clean_color($init['focus_color']           ?? null, $defaults['init']['focus_color']),
+      'focus_secondary_color' => $this->clean_color($init['focus_secondary_color'] ?? null, $defaults['init']['focus_secondary_color']),
+      'focus_double'      => !empty($init['focus_double']),
+      'skiplinks_enabled' => !empty($init['skiplinks_enabled']),
+    ];
+
+    $out['skiplinks'] = $this->sanitize_list($raw['skiplinks'] ?? []);
+
+    // The one place a stored value becomes a DOM attribute — hence the allow-list.
+    $out['static_fixes'] = $this->sanitize_list($raw['static_fixes'] ?? [], function ($fix) {
+      if (empty($fix['selector']) || !$this->is_safe_attr($fix['attr'] ?? '')) return null;
+      return $fix;
+    });
+
+    foreach (['button', 'link', 'menu', 'form', 'accordion', 'tabs', 'dialog', 'carousel'] as $group) {
+      $out[$group] = $this->sanitize_list($raw[$group] ?? []);
+    }
+
+    $out['setup_complete'] = !empty($raw['setup_complete']);
+    if (isset($raw['scan_schedule'])) $out['scan_schedule'] = sanitize_key((string) $raw['scan_schedule']);
+    if (isset($raw['scan_email']))    $out['scan_email']    = sanitize_email((string) $raw['scan_email']);
+
+    return $out;
+  }
+
+  private function clean_color($val, $fallback) {
+    return (is_string($val) && preg_match('/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $val)) ? $val : $fallback;
   }
 }
 

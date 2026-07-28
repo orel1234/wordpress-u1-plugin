@@ -12,13 +12,13 @@ function withQaFlag(url) {
     return u.toString();
 }
 
-// Playwright's bundled-revision auto-download is disabled in some hosting/dev
-// setups in favor of a pre-installed Chromium at a fixed path. Use it when
-// present; otherwise fall back to Playwright's own managed browser.
-const PREINSTALLED_CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM_PATH || '/opt/pw-browsers/chromium';
+// Playwright's bundled-revision auto-download is disabled in some hosting setups
+// in favor of a pre-installed Chromium. Point PLAYWRIGHT_CHROMIUM_PATH at it
+// there; otherwise Playwright's own managed browser is used.
+const PREINSTALLED_CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM_PATH || '';
 
 async function launchChromium() {
-    if (existsSync(PREINSTALLED_CHROMIUM)) {
+    if (PREINSTALLED_CHROMIUM && existsSync(PREINSTALLED_CHROMIUM)) {
         return chromium.launch({ executablePath: PREINSTALLED_CHROMIUM });
     }
     return chromium.launch();

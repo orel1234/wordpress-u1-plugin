@@ -1,0 +1,14 @@
+{
+  "name": "u1-studio",
+  "version": "3.0.0",
+  "private": true,
+  "description": "U1 Studio — Chrome side-panel accessibility implementation tool for the User1st (u1) library.",
+  "type": "module",
+  "scripts": {
+    "check:version": "node scripts/build.mjs --check-only",
+    "build": "node scripts/build.mjs"
+  },
+  "workspaces": [
+    "u1-accessibility-wizard/monitoring-system"
+  ]
+}

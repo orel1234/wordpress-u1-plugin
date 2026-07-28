@@ -4,3 +4,17 @@ venv/
 _metadata/
 node_modules/
 .DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Build output — the packaged extension is produced by `npm run build:zip`,
+# never committed. A checked-in zip silently drifts from source.
+*.zip
+dist/
+
+# The extension source lives at the repo root. u1-studio-extension/ was a stale
+# copy of it that had already diverged; don't let it come back.
+u1-studio-extension/

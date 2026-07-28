@@ -56,7 +56,7 @@ File: the plugin's `u1-runtime.js` (or wherever the per-page apply logic lives).
 
        U1-VALIDATION-ERROR | domain=<hostname> | type=<mapping type> | id=<stable mapping id, or 'legacy-no-id'> | index=<1-based position within its type's array> | field=<the selector field name> | selector=<the selector string> | page=<location.pathname>
 
-   Example: `U1-VALIDATION-ERROR | domain=elal.com | type=menu | id=m-3f9a21c7 | index=2 | field=menu | selector=".site-nav" | page=/flights`
+   Example: `U1-VALIDATION-ERROR | domain=example.com | type=menu | id=m-3f9a21c7 | index=2 | field=menu | selector=".site-nav" | page=/products`
 
    Every mapping now carries a stable `id` (assigned once by the wizard,
    `U1W.utils.generateId()`, backfilled onto legacy mappings the first time
@@ -78,7 +78,7 @@ available there) — build it with whatever stack this project already uses
 (reuse existing hosting/auth/DB rather than introducing a new one).
 
 Needs:
-- **Storage**: one row per monitored site — domain/label (e.g. "elal.com"),
+- **Storage**: one row per monitored site — domain/label (e.g. "example.com"),
   and a list of page paths on that site to check (a domain typically needs
   more than just its homepage checked, to cover both global mappings and the
   various page-specific ones — e.g. `/`, `/flights`, `/booking`, ...).
