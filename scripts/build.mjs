@@ -5,7 +5,7 @@
 // disagree is how "which version is the client running?" becomes unanswerable.
 // Run with --check-only to assert agreement without building.
 
-import { readFileSync, rmSync, mkdirSync, cpSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, mkdirSync, cpSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const FILES = [
   'manifest.json', 'rules.json',
   'panel.html', 'panel.js', 'styles.css',
+  'config.js', 'auth.js',
   'background.js', 'test-engine.js', 'grid-nav.js',
   'docx-gen.js', 'report-gen.js',
   'report.html', 'report-view.js',
@@ -51,6 +52,43 @@ const stage = join(ROOT, 'dist', `u1-studio-${version}`);
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 for (const f of FILES) cpSync(join(ROOT, f), join(stage, f));
+
+// --server=https://… points the packaged build at a licence server. It has to be
+// rewritten in two places that must never disagree: config.js, which is what the
+// code calls, and the manifest's connect-src, which is what Chrome permits. A
+// build that updates only one of them fails at runtime with an opaque CSP error.
+const serverArg = process.argv.find((a) => a.startsWith('--server='));
+if (serverArg) {
+  const serverUrl = serverArg.slice('--server='.length).replace(/\/+$/, '');
+  if (!/^https?:\/\/[^\s'"]+$/.test(serverUrl)) {
+    console.error(`Invalid --server value: ${serverUrl}`);
+    process.exit(1);
+  }
+  if (serverUrl.startsWith('http://') && !serverUrl.startsWith('http://localhost')) {
+    console.error('Refusing to build: Chrome will not let the extension talk to a plain-HTTP server. Use https://.');
+    process.exit(1);
+  }
+
+  const cfgPath = join(stage, 'config.js');
+  const cfg = readFileSync(cfgPath, 'utf8');
+  const rewritten = cfg.replace(/SERVER_URL:\s*'[^']*'/, `SERVER_URL: '${serverUrl}'`);
+  if (rewritten === cfg) {
+    console.error('Could not rewrite SERVER_URL in config.js — has the field been renamed?');
+    process.exit(1);
+  }
+  writeFileSync(cfgPath, rewritten);
+
+  const manPath = join(stage, 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manPath, 'utf8'));
+  manifest.content_security_policy.extension_pages =
+    manifest.content_security_policy.extension_pages.replace(
+      /connect-src [^;]+;/,
+      `connect-src 'self' ${serverUrl};`,
+    );
+  writeFileSync(manPath, JSON.stringify(manifest, null, 2) + '\n');
+
+  console.log(`Pointed build at ${serverUrl} (config.js + manifest connect-src).`);
+}
 
 const zip = `u1-studio-${version}.zip`;
 execFileSync('zip', ['-qr', zip, `u1-studio-${version}`], { cwd: join(ROOT, 'dist') });

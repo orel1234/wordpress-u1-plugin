@@ -8,6 +8,59 @@
 </head>
 <body>
 
+<!-- ═══ LICENCE GATE ═══════════════════════════════════════════════════
+     Covers the whole panel until the worker is signed in AND assigned to the
+     current site. panel.js shows exactly one of the three screens below and
+     only then boots the tool. -->
+<div id="gate" class="gate" style="display:none;">
+  <div class="gate-inner">
+    <div class="gate-brand">
+      <div class="u1-logo">u</div>
+      <h1><span class="u1-gradient-text">U1</span> Studio<span class="dot">.</span></h1>
+    </div>
+
+    <!-- Sign in -->
+    <div id="gateLogin" class="gate-screen" style="display:none;">
+      <div class="gate-title">Sign in</div>
+      <p class="gate-sub">Use the email and password you set from your invitation link.</p>
+      <form id="gateLoginForm" autocomplete="on">
+        <input type="email" id="gateEmail" placeholder="you@company.com" autocomplete="username" required>
+        <input type="password" id="gatePassword" placeholder="Password" autocomplete="current-password" required>
+        <div id="gateLoginError" class="gate-error" style="display:none;"></div>
+        <button type="submit" class="btn-primary" id="gateLoginBtn">Sign in</button>
+      </form>
+    </div>
+
+    <!-- Signed in, but not assigned to this site -->
+    <div id="gateBlocked" class="gate-screen" style="display:none;">
+      <div class="gate-title">This site isn't assigned to you</div>
+      <p class="gate-sub">
+        U1 Studio works on the sites you've been given access to.
+        <strong id="gateBlockedHost"></strong> isn't one of them yet.
+      </p>
+      <div id="gateRequestWrap">
+        <textarea id="gateRequestNote" rows="2" placeholder="Optional: why do you need access?"></textarea>
+        <button class="btn-primary" id="gateRequestBtn">Request access</button>
+      </div>
+      <div id="gateRequestDone" class="gate-ok" style="display:none;">
+        Request sent. You'll get access once it's approved — reopen the panel then.
+      </div>
+      <div id="gateBlockedError" class="gate-error" style="display:none;"></div>
+      <button class="btn-ghost" id="gateSignOutBlocked">Sign out</button>
+    </div>
+
+    <!-- Offline past the grace period -->
+    <div id="gateOffline" class="gate-screen" style="display:none;">
+      <div class="gate-title">Can't reach the licence server</div>
+      <p class="gate-sub">
+        Your saved work is safe on this computer and nothing has been removed.
+        Reconnect and reopen the panel to carry on.
+      </p>
+      <button class="btn-primary" id="gateRetryBtn">Try again</button>
+    </div>
+  </div>
+</div>
+
 <div class="topbar">
   <div class="header">
     <div class="u1-logo">u</div>
@@ -22,6 +75,25 @@
     <button class="tab-btn" data-tab="scan">Scan</button>
     <button class="tab-btn" data-tab="export">Export</button>
   </div>
+
+  <div class="account-row">
+    <span id="accountEmail" class="account-email"></span>
+    <button id="signOutBtn" class="account-signout" title="Sign out">Sign out</button>
+  </div>
+</div>
+
+<!-- Shown when the licence has expired. Deliberately not a lockout: everything
+     stays visible and exportable, only creating new work is switched off. -->
+<div id="readonlyBanner" class="readonly-banner" style="display:none;">
+  <strong>Licence expired — read-only.</strong>
+  Your mappings, reports and exports all still work. Creating new work is paused
+  until the licence is renewed.
+</div>
+
+<!-- Shown when we're working from the cached answer because the server was
+     unreachable. -->
+<div id="offlineBanner" class="offline-banner" style="display:none;">
+  Working offline — verified access is being used. Reconnect to re-check.
 </div>
 
 <!-- ═══ TAB 1: SETUP ═══════════════════════════════════════════════════ -->
@@ -400,6 +472,8 @@
   </div>
 </div>
 
+<script src="config.js"></script>
+<script src="auth.js"></script>
 <script src="docx-gen.js"></script>
 <script src="report-gen.js"></script>
 <script src="panel.js"></script>

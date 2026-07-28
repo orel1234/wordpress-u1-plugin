@@ -1335,6 +1335,11 @@ async function init() {
   const h = getHostname(tab);
   if (h !== 'unknown') currentHostname = h;
 
+  // Licence check happens before anything is loaded or applied. If it fails the
+  // gate is on screen and we stop here — without deleting or altering a single
+  // stored mapping.
+  if (!(await enforceLicence(currentHostname))) return;
+
   // One-time migration: earlier versions stored per-site data under the "www."
   // hostname. Now that we strip "www.", move that data to the new key so saved
   // mappings / config / skip links aren't lost.
@@ -4021,7 +4026,14 @@ document.getElementById('exportDataBtn').addEventListener('click', async () => {
   const status = document.getElementById('backupStatus');
   try {
     const all = await chrome.storage.local.get(null);
-    delete all.__closeOutReportHtml; // transient render cache — no need to export
+    // Drop every "__" key. These are private/transient — the close-out render
+    // cache, and since licensing was added the signed-in session (__studioAuth
+    // holds a refresh token). A backup file gets emailed and passed between
+    // machines, so a credential must never be able to ride along inside one.
+    // sanitizeImport() rejects the same prefix on the way back in.
+    for (const key of Object.keys(all)) {
+      if (key.startsWith('__')) delete all[key];
+    }
     const payload = {
       __u1helper: true,
       version: 1,
@@ -4101,6 +4113,10 @@ async function onTabChanged(tab) {
     el.textContent = currentHostname;
   });
 
+  // Assignment is per site, so moving to a different host has to be re-checked
+  // — otherwise one assigned site would unlock every tab in the window.
+  if (hostnameChanged && !(await enforceLicence(currentHostname))) return;
+
   if (hostnameChanged) {
     await loadConfigForm();
     await refreshConfigSkipList();
@@ -4130,6 +4146,154 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (tab) await onTabChanged(tab);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  LICENCE GATE
+//
+//  Decides whether the tool may be used on the current site, and in what mode.
+//  Nothing here ever touches stored mappings — a worker who is signed out,
+//  unassigned or expired keeps every byte of their work on this machine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Controls that create or persist NEW work. Read, report and export controls are
+// deliberately absent: an expired licence must still be able to hand over
+// finished work and take a backup out.
+const READONLY_DISABLED_IDS = [
+  'addMappingBtn',      // add a mapping
+  'applyTemplateBtn',   // apply a generated fix as a new mapping
+  'addSkipLinkBtn',     // add a skip link
+  'saveSkipBtn',        // persist skip links
+  'importDataBtn',      // overwrite local data from a backup
+];
+
+let licenceState = { accessLevel: 'full', stale: false };
+
+function showGateScreen(id) {
+  const gate = document.getElementById('gate');
+  gate.style.display = 'flex';
+  ['gateLogin', 'gateBlocked', 'gateOffline'].forEach(s => {
+    document.getElementById(s).style.display = s === id ? 'block' : 'none';
+  });
+}
+
+function hideGate() {
+  document.getElementById('gate').style.display = 'none';
+}
+
+function applyLicenceMode(state) {
+  licenceState = state;
+
+  const readonly = state.accessLevel === 'readonly';
+  document.getElementById('readonlyBanner').style.display = readonly ? 'block' : 'none';
+  document.getElementById('offlineBanner').style.display = state.stale ? 'block' : 'none';
+
+  READONLY_DISABLED_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('u1-readonly-off', readonly);
+    el.disabled = readonly;
+    if (readonly) el.title = 'Licence expired — existing work stays available to view and export.';
+  });
+}
+
+async function showAccountRow() {
+  const client = await U1Auth.getStoredClient();
+  const el = document.getElementById('accountEmail');
+  if (el) el.textContent = client?.email || '';
+}
+
+/**
+ * Returns true when the tool may boot. When it returns false the gate is
+ * already on screen and the caller must stop.
+ */
+async function enforceLicence(hostname) {
+  const result = await U1Auth.checkSiteAccess(hostname);
+
+  if (result.allowed) {
+    hideGate();
+    applyLicenceMode(result);
+    await showAccountRow();
+    return true;
+  }
+
+  if (result.reason === 'not_logged_in') {
+    showGateScreen('gateLogin');
+    return false;
+  }
+  if (result.reason === 'offline') {
+    showGateScreen('gateOffline');
+    return false;
+  }
+  if (result.reason === 'no_site') {
+    // Opened on a browser page rather than a real site — nothing to check yet.
+    hideGate();
+    return true;
+  }
+
+  document.getElementById('gateBlockedHost').textContent = hostname;
+  document.getElementById('gateRequestWrap').style.display = 'block';
+  document.getElementById('gateRequestDone').style.display = 'none';
+  showGateScreen('gateBlocked');
+  return false;
+}
+
+document.getElementById('gateLoginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('gateLoginBtn');
+  const err = document.getElementById('gateLoginError');
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+
+  try {
+    await U1Auth.login(
+      document.getElementById('gateEmail').value.trim(),
+      document.getElementById('gatePassword').value,
+    );
+    document.getElementById('gatePassword').value = '';
+    await init(); // re-runs the gate, now with credentials
+  } catch (e2) {
+    err.textContent = e2.message;
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+});
+
+document.getElementById('gateRequestBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('gateRequestBtn');
+  const err = document.getElementById('gateBlockedError');
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+
+  try {
+    await U1Auth.requestAccess(currentHostname, document.getElementById('gateRequestNote').value.trim());
+    document.getElementById('gateRequestWrap').style.display = 'none';
+    document.getElementById('gateRequestDone').style.display = 'block';
+  } catch (e) {
+    err.textContent = e.offline
+      ? 'Could not reach the server. Try again when you are back online.'
+      : 'Could not send the request. Try again.';
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Request access';
+  }
+});
+
+document.getElementById('gateRetryBtn').addEventListener('click', () => init());
+
+// Signing out clears credentials only. Local mappings are the worker's work and
+// are never removed — that promise is the whole reason this is a two-line
+// handler and not a "clean up" routine.
+async function signOut() {
+  await U1Auth.logout();
+  await init();
+}
+document.getElementById('gateSignOutBlocked').addEventListener('click', signOut);
+document.getElementById('signOutBtn').addEventListener('click', signOut);
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Boot
