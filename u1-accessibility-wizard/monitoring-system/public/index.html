@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>U1 Accessibility Monitor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>🛡️ U1 Accessibility Monitor</h1>
+  <button id="btn-check-all" class="btn primary">▶ Run All Checks Now</button>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Add Site</h2>
+    <form id="add-site-form">
+      <div class="field">
+        <label for="inp-label">Label / Domain</label>
+        <input id="inp-label" placeholder="elal.com" required>
+      </div>
+      <div class="field">
+        <label for="inp-pages">Pages to check (one full URL per line)</label>
+        <textarea id="inp-pages" rows="3" placeholder="https://elal.com/&#10;https://elal.com/flights&#10;https://elal.com/booking" required></textarea>
+      </div>
+      <button type="submit" class="btn primary">+ Add Site</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Monitored Sites</h2>
+    <div id="sites-list" class="sites-list"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
