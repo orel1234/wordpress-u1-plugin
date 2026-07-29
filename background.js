@@ -16,6 +16,12 @@ chrome.action.onClicked.addListener((tab) => {
 const pendingInjections = new Map(); // tabId → { config, once }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Only act on messages from this extension's own pages. A message that
+  // triggers arbitrary config injection into a tab must not be actionable by
+  // anything else; without externally_connectable a web page can't reach here,
+  // but a script injected into the isolated world could, so check explicitly.
+  if (sender.id !== chrome.runtime.id) return false;
+
   if (msg.action === 'injectConfigOnReload') {
     const { tabId, config } = msg;
     pendingInjections.set(tabId, { config });
