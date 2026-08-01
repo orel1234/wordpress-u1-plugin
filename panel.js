@@ -3321,6 +3321,10 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
 
   const host = document.getElementById('aiMappings');
   host.style.display = 'block';
+  // One carousel on screen from the first moment. Hiding this only after the
+  // run meant both lists were up for the whole run, with independent positions
+  // — approving in one left the other sitting where it was.
+  document.getElementById('aiResults').style.display = 'none';
   const track = document.getElementById('aiSlideTrack');
   track.innerHTML = '';
   document.getElementById('aiApproved').style.display = 'none';
@@ -3369,8 +3373,6 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
     }
     status.style.display = 'none';
     showSlide(0);
-    // One carousel on screen at a time. The found-list comes back via Clear.
-    document.getElementById('aiResults').style.display = 'none';
   } catch (err) {
     showNotice(status, 'Failed: ' + err.message, 'error', 6000);
   } finally {
@@ -3467,9 +3469,9 @@ document.getElementById('tab-picker')?.addEventListener('click', (e) => {
 function addApproved(row, verdict) {
   const box = document.getElementById('aiApproved');
   if (!box) return;
-  if (!box.children.length) {
-    box.innerHTML = '<div class="section-title">Approved<span class="dot">.</span></div><div id="aiApprovedList"></div>';
-  }
+  // The stage caption comes from CSS (#aiApproved::before), so this only needs
+  // the list container.
+  if (!box.children.length) box.innerHTML = '<div id="aiApprovedList"></div>';
   box.style.display = 'block';
   const cls = verdict.ok ? 'ok' : 'warn';
   // A conflicting older mapping is actionable, so offer the action rather than
@@ -3635,6 +3637,11 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
         verdict.ok = false;   // it works here, but not yet on the real site
         verdict.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted on this page so the fix could run — remove it from the markup or this will not work in production.`;
       }
+    } else if (d && d.status === 'error') {
+      // u1.fix THREW. This used to fall through to "ran without error", which
+      // hid the one piece of information that explains the failure — U1's own
+      // message ("Submenu must have a trigger element", a rejected selector…).
+      verdict = { ok: false, msg: `Saved, but u1.fix.${d.type} threw: ${(res.errs && res.errs[0]) || 'unknown error'}` };
     } else if (d && d.status === 'no-match') {
       verdict = { ok: false, msg: `Saved, but nothing on the page matches ${d.sel}.` };
     } else if (d && d.reason === 'source-opt-out') {
@@ -4724,7 +4731,7 @@ async function applyAllMappings({ silent = false } = {}) {
   const fixes = list.filter(m => !(m && typeof m === 'object' && m.custom));
 
   let applied = 0, failed = 0, noEffect = 0, u1Missing = false, err = null;
-  let details = [];
+  let details = [], engineErrs = [];
   if (fixes.length) {
     const result = await applyMappingsBatch(fixes);
     if (result.ok) {
@@ -4732,6 +4739,7 @@ async function applyAllMappings({ silent = false } = {}) {
       failed += result.failed;
       noEffect += result.noEffect || 0;
       details = result.details || [];
+      engineErrs = result.errs || [];
     } else if (result.u1Missing) { u1Missing = true; }
     else { err = result.err; }
   }
@@ -4757,6 +4765,7 @@ async function applyAllMappings({ silent = false } = {}) {
       } else {
         msg = 'Nothing changed on the page. u1.fix ran without error but wrote no attributes — usually the domain is not authorised for U1, or the selector is one U1\'s validator rejects.';
       }
+      if (engineErrs.length) msg += ' ' + engineErrs.join(' · ');
       showNotice(status, msg, 'error', 12000);
     } else {
       const parts = [`Applied ${applied} mapping${applied !== 1 ? 's' : ''}`];
@@ -4764,6 +4773,8 @@ async function applyAllMappings({ silent = false } = {}) {
       if (failed) parts.push(`${failed} failed`);
       const unblocked = details.filter(d => d.unblocked);
       let msg = parts.join(' · ') + '.';
+      // Whatever U1 itself said is the most useful sentence here — never drop it.
+      if (engineErrs.length) msg += ' ' + engineErrs.join(' · ');
       if (unblocked.length) {
         msg += ` ${unblocked.map(d => d.sel).join(', ')} had u1st-avoid-change-detection in the page markup — it was lifted here so the fix could run, but it must come out of the site's HTML for this to work in production.`;
       }

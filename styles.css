@@ -1315,6 +1315,38 @@ button {
   font-size: 10px;
 }
 
+/* ── Stage separation ────────────────────────────────────────────────────────
+   The three stages — what was found, the mappings being reviewed, what has
+   been approved — run down one narrow column. Without a boundary they read as
+   one long scroll and it stops being obvious which carousel a control belongs
+   to. Same purple, one rule, applied to each stage. */
+#aiResults,
+#aiMappings,
+#aiApproved {
+  padding: 12px;
+  border: 1px solid var(--u1-primary);
+  border-radius: 8px;
+}
+
+#aiResults  { margin-bottom: 14px; }
+#aiMappings { margin-bottom: 14px; }
+
+/* A quiet caption so each block says which stage it is. */
+#aiResults::before,
+#aiMappings::before,
+#aiApproved::before {
+  display: block;
+  margin: -2px 0 8px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--u1-primary);
+}
+#aiResults::before  { content: "1 · Found on this screen"; }
+#aiMappings::before { content: "2 · Review and approve"; }
+#aiApproved::before { content: "3 · Approved and applied"; }
+
 /* ── Carousel: one mapping at a time ─────────────────────────────────────── */
 .ai-carousel-head {
   display: flex;
