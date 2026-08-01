@@ -3275,9 +3275,22 @@ document.getElementById('aiDismissBtn')?.addEventListener('click', () => {
   aiFound = null;
   document.getElementById('aiResults').style.display = 'none';
   document.getElementById('aiMappings').style.display = 'none';
+  document.getElementById('aiApproved').style.display = 'none';
+  document.getElementById('aiApproved').innerHTML = '';
   // Clear the CARDS, not the container: the carousel head and track are static
   // markup now, and wiping innerHTML took them out with the cards.
   document.getElementById('aiSlideTrack').innerHTML = '';
+  document.getElementById('aiCompTrack').innerHTML = '';
+});
+
+// Back to what was found, without losing the mappings already generated.
+document.getElementById('aiBackBtn')?.addEventListener('click', () => {
+  const found = document.getElementById('aiResults');
+  const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
+  if (!left) { showNotice(document.getElementById('aiMapStatus'), 'Everything found has been handled.', 'success', 3000); return; }
+  found.style.display = 'block';
+  document.getElementById('aiMappings').style.display = 'none';
+  showCompSlide(slideIndex('aiComp'));
 });
 
 // ── Stage 2: turn the ticked rows into real mappings ────────────────────────
@@ -3294,6 +3307,10 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
       type: r.querySelector('.ai-comp-type').value,
       sel: r.querySelector('.ai-comp-sel').value.trim(),
       label: r.querySelector('.ai-comp-label').textContent,
+      // Which found card this came from, so approving it can retire that card
+      // too — a component you have dealt with should not still be in the list
+      // of things to deal with.
+      compIndex: r.dataset.i,
     }))
     .filter(r => r.sel && COMPONENT_SCHEMAS[r.type]);
 
@@ -3345,9 +3362,15 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
       // Build the real inputs with the shared renderer so this card behaves
       // exactly like the manual form, then fill them.
       fillAiMapCard(idx, row, out);
+      // Re-slide on every insert. Without this the cards pile up visible for
+      // the whole run — which is a stack of eight full mapping forms while you
+      // are trying to read one.
+      showSlide(slideIndex('aiSlide'));
     }
     status.style.display = 'none';
     showSlide(0);
+    // One carousel on screen at a time. The found-list comes back via Clear.
+    document.getElementById('aiResults').style.display = 'none';
   } catch (err) {
     showNotice(status, 'Failed: ' + err.message, 'error', 6000);
   } finally {
@@ -3579,6 +3602,10 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
     const idx = Number(save.dataset.savecard);
     const tpl = aiCardTemplate(idx);
     const status = document.getElementById('aiMapStatus');
+    if (isReadonly()) {
+      showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
+      return;
+    }
     if (!tpl) { showNotice(status, 'Nothing to save — the selector is empty.', 'error', 3500); return; }
 
     save.disabled = true; save.textContent = 'Saving…';
@@ -3626,7 +3653,16 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
 
     const card = save.closest('.ai-map-card');
     card.dataset.done = '1';
-    addApproved(aiMapped[idx].row, verdict);
+    const row = aiMapped[idx].row;
+
+    // Retire the found-card this came from as well. Something you have already
+    // approved should not still be sitting in the list of things to deal with.
+    if (row.compIndex != null) {
+      const comp = document.querySelector(`#aiCompTrack .ai-comp[data-i="${CSS.escape(row.compIndex)}"]`);
+      if (comp) { comp.dataset.done = '1'; showCompSlide(slideIndex('aiComp')); }
+    }
+
+    addApproved(row, verdict);
     showSlide(slideIndex('aiSlide'));
     showNotice(status, verdict.msg, verdict.ok ? 'success' : 'error', verdict.ok ? 4000 : 10000);
     return;
@@ -5509,7 +5545,15 @@ const READONLY_DISABLED_IDS = [
   'addSkipLinkBtn',     // add a skip link
   'saveSkipBtn',        // persist skip links
   'importDataBtn',      // overwrite local data from a backup
+  // AI mode creates and persists mappings too, and it also spends money on the
+  // specialist's API key — both are exactly what an expired licence pauses.
+  'aiDiscoverBtn',      // start a paid review
+  'aiMapBtn',           // generate mappings
 ];
+
+// The per-card Approve buttons are built at runtime, so an id list cannot reach
+// them — the handler checks this instead.
+const isReadonly = () => licenceState.accessLevel === 'readonly';
 
 let licenceState = { accessLevel: 'full', stale: false };
 
