@@ -3226,9 +3226,13 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
   const host = document.getElementById('aiMappings');
-  host.innerHTML = '';
+  host.innerHTML = carouselShell();
   host.style.display = 'block';
+  const track = document.getElementById('aiSlideTrack');
+  document.getElementById('aiApproved').style.display = 'none';
+  document.getElementById('aiApproved').innerHTML = '';
   aiMapped = [];
+  aiSlide = 0;
 
   const original = btn.textContent;
   btn.disabled = true;
@@ -3242,7 +3246,7 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
 
       const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
       if (!markup || markup.error || markup.notFound) {
-        host.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error || 'that selector matches nothing on the page'));
+        track.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error || 'that selector matches nothing on the page'));
         continue;
       }
 
@@ -3256,22 +3260,28 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
         options: Object.keys(schema.rootFields || {}),
       });
       aiCost += U1AI.estimateCost(out.usage) || 0;
-      if (out.err) { host.insertAdjacentHTML('beforeend', aiMapCardError(row, out.err)); continue; }
+      if (out.err) { track.insertAdjacentHTML('beforeend', aiMapCardError(row, out.err)); continue; }
 
       const idx = aiMapped.length;
       aiMapped.push({ row, result: out, markup });
-      host.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
+      track.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
       // Build the real inputs with the shared renderer so this card behaves
       // exactly like the manual form, then fill them.
       fillAiMapCard(idx, row, out);
     }
     status.style.display = 'none';
+    showSlide(0);
   } catch (err) {
     showNotice(status, 'Failed: ' + err.message, 'error', 6000);
   } finally {
     btn.disabled = false;
     btn.textContent = original;
   }
+});
+
+document.getElementById('aiMappings')?.addEventListener('click', (e) => {
+  if (e.target.closest('#aiSlidePrev')) showSlide(aiSlide - 1);
+  else if (e.target.closest('#aiSlideNext')) showSlide(aiSlide + 1);
 });
 
 const aiMapCardError = (row, why) => `
@@ -3297,10 +3307,70 @@ function renderAiMapCard(idx, row, out, recorderActive) {
       <div class="ai-map-form" id="aiMapForm${idx}"></div>
       <div class="code-preview" id="aiMapCode${idx}"></div>
       <div class="ai-find-actions">
-        <button class="btn-outline btn-xs" data-editcard="${idx}">✍️ Open in the builder</button>
-        <button class="btn-primary btn-xs" data-savecard="${idx}">Save mapping</button>
+        <button class="btn-ghost btn-xs" data-skipcard="${idx}">Skip</button>
+        <button class="btn-outline btn-xs" data-editcard="${idx}">✍️ Builder</button>
+        <button class="btn-primary btn-xs" data-savecard="${idx}">✓ Approve &amp; apply</button>
       </div>
     </div>`;
+}
+
+// ── The carousel ────────────────────────────────────────────────────────────
+// One card at a time: at side-panel width, several stacked mapping forms is
+// exactly the wall of inputs that made this unreadable. Approved cards leave
+// the carousel and drop into the list underneath.
+let aiSlide = 0;
+
+const pendingCards = () =>
+  [...document.querySelectorAll('#aiMappings .ai-map-card')].filter(c => c.dataset.done !== '1');
+
+function showSlide(i) {
+  // Hide EVERY card first, including the ones already approved or skipped —
+  // iterating only the pending ones left a handled card on screen next to its
+  // replacement.
+  document.querySelectorAll('#aiMappings .ai-map-card').forEach(c => { c.style.display = 'none'; });
+  const cards = pendingCards();
+  if (!cards.length) {
+    document.getElementById('aiMappings').style.display = 'none';
+    return;
+  }
+  aiSlide = Math.max(0, Math.min(i, cards.length - 1));
+  cards[aiSlide].style.display = '';
+  const count = document.getElementById('aiSlideCount');
+  if (count) count.textContent = `${aiSlide + 1} / ${cards.length}`;
+  const prev = document.getElementById('aiSlidePrev');
+  const next = document.getElementById('aiSlideNext');
+  if (prev) prev.disabled = aiSlide === 0;
+  if (next) next.disabled = aiSlide >= cards.length - 1;
+  // Grade the card that just became visible: its inputs were hidden until now.
+  const active = cards[aiSlide];
+  if (active) refreshAiCard(Number(active.dataset.card));
+}
+
+const carouselShell = () => `
+  <div class="ai-carousel-head">
+    <button class="btn-ghost btn-xs" id="aiSlidePrev" title="Previous">‹</button>
+    <span id="aiSlideCount" class="ai-slide-count"></span>
+    <button class="btn-ghost btn-xs" id="aiSlideNext" title="Next">›</button>
+  </div>
+  <div id="aiSlideTrack"></div>`;
+
+// Approved mappings collect here, each carrying whether it actually took effect
+// on the page — the same measured verdict the Apply button reports.
+function addApproved(row, verdict) {
+  const box = document.getElementById('aiApproved');
+  if (!box) return;
+  if (!box.children.length) {
+    box.innerHTML = '<div class="section-title">Approved<span class="dot">.</span></div><div id="aiApprovedList"></div>';
+  }
+  box.style.display = 'block';
+  const cls = verdict.ok ? 'ok' : 'warn';
+  document.getElementById('aiApprovedList').insertAdjacentHTML('beforeend', `
+    <div class="ai-approved-row">
+      <span class="ai-approved-tick ${cls}">${verdict.ok ? '✓' : '!'}</span>
+      <span class="ai-approved-label">${escapeHtml(row.label)}</span>
+      <code>u1.fix.${escapeHtml(row.type)}</code>
+      <div class="ai-approved-why">${escapeHtml(verdict.msg)}</div>
+    </div>`);
 }
 
 // Renders the standard sub-selector rows into a card and fills them with the
@@ -3406,14 +3476,51 @@ document.getElementById('aiMappings')?.addEventListener('change', (e) => {
 });
 
 document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
+  const skip = e.target.closest('[data-skipcard]');
+  if (skip) {
+    skip.closest('.ai-map-card').dataset.done = '1';
+    showSlide(aiSlide);
+    return;
+  }
+
   const save = e.target.closest('[data-savecard]');
   if (save) {
     const idx = Number(save.dataset.savecard);
     const tpl = aiCardTemplate(idx);
-    if (!tpl) { showNotice(document.getElementById('aiMapStatus'), 'Nothing to save — the selector is empty.', 'error', 3500); return; }
+    const status = document.getElementById('aiMapStatus');
+    if (!tpl) { showNotice(status, 'Nothing to save — the selector is empty.', 'error', 3500); return; }
+
     save.disabled = true; save.textContent = 'Saving…';
     await saveMappingEntry(tpl);
-    save.textContent = 'Saved ✓';
+
+    // Approving applies it straight away, and reports what actually happened on
+    // the page rather than "saved" — a mapping that saves but never takes is
+    // the failure mode this whole flow exists to make visible.
+    save.textContent = 'Applying…';
+    const res = await applyMappingsBatch([{
+      type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg, config: tpl.config,
+    }]);
+    const d = (res.details || [])[0];
+    let verdict;
+    if (!res.ok) {
+      verdict = { ok: false, msg: res.u1Missing ? 'Saved. U1 is not loaded on this page, so nothing was applied.' : 'Saved, but applying failed: ' + (res.err || 'unknown') };
+    } else if (res.applied) {
+      verdict = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
+    } else if (d && d.status === 'no-match') {
+      verdict = { ok: false, msg: `Saved, but nothing on the page matches ${d.sel}.` };
+    } else if (d && d.reason === 'source-opt-out') {
+      verdict = { ok: false, msg: `Saved, but ${d.sel} carries u1st-avoid-change-detection in the site's own HTML — U1 skips it. That attribute has to come out of the markup.` };
+    } else if (d && d.reason === 'already-processed') {
+      verdict = { ok: false, msg: 'Saved, but U1 had already processed this element this page load. Reload the page and press Apply All.' };
+    } else {
+      verdict = { ok: false, msg: 'Saved, but nothing changed on the page — u1.fix ran without error and wrote no attributes.' };
+    }
+
+    const card = save.closest('.ai-map-card');
+    card.dataset.done = '1';
+    addApproved(aiMapped[idx].row, verdict);
+    showSlide(aiSlide);
+    showNotice(status, verdict.msg, verdict.ok ? 'success' : 'error', verdict.ok ? 4000 : 10000);
     return;
   }
 
