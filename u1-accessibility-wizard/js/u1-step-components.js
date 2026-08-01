@@ -258,6 +258,8 @@
       groups.forEach(function(g) {
           (U1W.state.cfg[g] || []).forEach(function(it) {
               try {
+                  // Only apply a mapping on the pages it was scoped to —
+                  // without this every mapping is applied on every page.
                   if (!U1W.utils.matchesScope(it)) return;
                   const def = CORE_DEFS[g];
                   const mainKey = def.fields[0].key;

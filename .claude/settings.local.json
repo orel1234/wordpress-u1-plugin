@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:blog.user1st.com)",
+      "WebFetch(domain:www.user1st.com)"
+    ]
+  }
+}
