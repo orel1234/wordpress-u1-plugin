@@ -4832,6 +4832,95 @@ async function applyAllMappings({ silent = false } = {}) {
 
 document.getElementById('applyAllBtn').addEventListener('click', () => applyAllMappings());
 
+// ── "The list is empty, but the site still behaves as if it is not" ─────────
+//
+// Three different things can decorate this page and they are indistinguishable
+// by eye: mappings this extension holds, work left over in the DOM from before
+// (nothing un-does it but a reload), and U1's OWN project configuration served
+// from User1st for this domain — which the extension neither owns nor can
+// delete. Guessing between them wastes hours, so measure and attribute.
+document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () => {
+  const box = document.getElementById('whatsOnPage');
+  const btn = document.getElementById('whatsOnPageBtn');
+  const tab = await getTab();
+  if (!isInjectable(tab)) { box.style.display = 'block'; box.className = 'selector-test-result error'; box.textContent = 'Cannot read this page.'; return; }
+
+  const key = storageKey('mappings', currentHostname);
+  const mine = ((await U1Store.get([key]))[key] || [])
+    .filter(m => m && typeof m === 'object')
+    .map(m => ({ type: m.type, sel: m.firstArg || m.primary }));
+
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Checking…';
+  let res = null;
+  try {
+    const out = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: (saved) => {
+        const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
+        const decorated = [];
+        document.querySelectorAll('*').forEach(el => {
+          if (decorated.length >= 400) return;
+          const hit = Array.from(el.attributes).some(a => U1_ATTR.test(a.name)) || /^u1st-/.test(el.id || '');
+          if (hit) decorated.push(el);
+        });
+        // Which of them does a mapping we hold actually account for?
+        const ours = new Set();
+        for (const m of saved) {
+          let els = [];
+          try { els = Array.from(document.querySelectorAll(m.sel)); } catch {}
+          for (const root of els) {
+            if (decorated.includes(root)) ours.add(root);
+            root.querySelectorAll('*').forEach(d => { if (decorated.includes(d)) ours.add(d); });
+          }
+        }
+        const orphans = decorated.filter(el => !ours.has(el)).slice(0, 12).map(el => {
+          const cls = (el.className && typeof el.className === 'string')
+            ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+          const attrs = Array.from(el.attributes).filter(a => U1_ATTR.test(a.name))
+            .map(a => a.name).slice(0, 4).join(' ');
+          return { tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls), attrs };
+        });
+        return {
+          u1Present: !!(window.u1 && window.u1.fix),
+          skipLinks: document.querySelectorAll('.u1st-skip-link').length,
+          decorated: decorated.length,
+          fromOurMappings: ours.size,
+          orphans,
+        };
+      },
+      args: [mine],
+    });
+    res = out && out[0] ? out[0].result : null;
+  } catch (e) {
+    res = { err: e.message };
+  }
+  btn.disabled = false;
+  btn.textContent = original;
+
+  box.style.display = 'block';
+  if (!res || res.err) {
+    box.className = 'selector-test-result error';
+    box.textContent = 'Could not read the page: ' + ((res && res.err) || 'no result');
+    return;
+  }
+
+  const unexplained = res.decorated - res.fromOurMappings;
+  box.className = 'selector-test-result ' + (unexplained > 0 ? 'warn' : 'ok');
+  box.innerHTML =
+    `<div><strong>${res.decorated}</strong> element${res.decorated === 1 ? '' : 's'} on this page carry U1 attributes.</div>` +
+    `<div>${res.fromOurMappings} of them are covered by the ${mine.length} mapping${mine.length === 1 ? '' : 's'} this extension holds` +
+    `${res.skipLinks ? ` · ${res.skipLinks} U1 skip link${res.skipLinks === 1 ? '' : 's'}` : ''}` +
+    `${res.u1Present ? '' : ' · window.u1 is not loaded'}.</div>` +
+    (unexplained > 0
+      ? `<div class="u1-warn">⚠️ ${unexplained} element${unexplained === 1 ? '' : 's'} are decorated but belong to no mapping here. That is either work U1 applied before your last change — a page reload clears it — or U1's own project configuration for this domain, served by User1st. The extension cannot delete that; it has to be changed in the U1 project.</div>` +
+        `<ul>${res.orphans.map(o => `<li><code>${escapeHtml(o.tag)}</code> — ${escapeHtml(o.attrs)}</li>`).join('')}</ul>` +
+        `<div><button class="btn-outline btn-xs" data-reload-tab>↻ Reload the page</button> then press this again: whatever survives a reload with an empty mapping list is not coming from this extension.</div>`
+      : '<div>Nothing on this page is decorated beyond what your mappings account for.</div>');
+});
+
 // The keyboard-grid engine lives in grid-nav.js. For DEPLOYMENT we inline its
 // source so the produced snippet runs on the live site with no extension.
 async function getGridEngineSource() {

@@ -480,6 +480,13 @@
       </div>
     </div>
     <div id="mappingsList"><div class="empty-state">No mappings yet.</div></div>
+
+    <!-- "The list is empty but the site still looks fixed" has several possible
+         causes and no way to tell them apart by eye. This asks the page. -->
+    <div class="btn-row" style="margin-top:8px;">
+      <button class="btn-ghost btn-sm" id="whatsOnPageBtn">🩺 What is applied on this page?</button>
+    </div>
+    <div id="whatsOnPage" class="selector-test-result" style="display:none;"></div>
     <div class="btn-row" id="applyAllRow" style="display:none;">
       <button class="btn-outline" id="applyAllBtn">Apply All Mappings on Page</button>
       <button class="btn-outline" id="copyAllBtn">Copy All</button>
