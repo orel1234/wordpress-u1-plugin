@@ -296,7 +296,7 @@
     <!-- ── AI accessibility teacher ──────────────────────────────────────── -->
     <div class="ai-box" id="aiBox" style="display:none;">
       <div class="ai-head">
-        <span class="ai-title">🎓 Ask the accessibility teacher</span>
+        <span class="ai-title">🎓 Accessibility assistant</span>
         <button class="btn-ghost btn-xs" id="aiKeyToggle" title="API key">🔑</button>
       </div>
 
@@ -334,6 +334,10 @@
     <!-- Stage 2 result: the same mapping form as Manual mode, pre-filled. -->
     <div class="ai-results" id="aiMappings" style="display:none;"></div>
 
+    <!-- Manual-only controls. In Automatic mode you never type a type or a
+         selector — the AI cards carry their own copies of this form — so the
+         whole block is hidden rather than competing for attention. -->
+    <div id="manualOnly">
     <div class="field-group">
       <label for="componentType">Component Type</label>
       <select id="componentType">
@@ -377,19 +381,25 @@
       <div class="input-hint input-hint-primary" id="primaryHint" style="display:none;"></div>
     </div>
 
-    <!-- Auto mode only: analyze the parent element and propose the sub-selectors -->
-    <div class="btn-row" id="autoAnalyzeRow" style="display:none; margin-top:10px;">
-      <button class="btn-primary btn-sm" id="autoAnalyzeBtn">✨ Analyze &amp; fill</button>
-      <span class="map-mode-hint" style="margin:0 0 0 8px;">Reads the element on the page and suggests each selector.</span>
-    </div>
+    <!-- The rule-based analyzer and the event recorder do the same job as the
+         AI path without calling out. Kept, but folded away: two competing
+         routes side by side is most of what made this tab feel crowded. -->
+    <details class="auto-advanced" id="autoAdvanced" style="display:none;">
+      <summary>Work the selectors out without AI</summary>
 
-    <!-- Opt-in: records addEventListener at document_start so "has a click event"
-         is measured rather than guessed. Needs one page reload to take effect. -->
-    <label class="root-toggle" id="preciseEventsRow" style="display:none;">
-      <input type="checkbox" id="preciseEventsToggle">
-      <span><strong>Precise event detection</strong> — needs a page reload</span>
-      <div class="input-hint" style="display:block;">Off: a trigger is recognised from its tag, role, aria-* and data-* attributes. On: the real click handlers are recorded as the page loads, so detection is exact. Reload the page once after switching this on.</div>
-    </label>
+      <div class="btn-row" id="autoAnalyzeRow" style="margin-top:8px;">
+        <button class="btn-outline btn-sm" id="autoAnalyzeBtn">✨ Analyze &amp; fill</button>
+        <span class="map-mode-hint" style="margin:0 0 0 8px;">Reads the parent element and suggests each selector.</span>
+      </div>
+
+      <!-- Opt-in: records addEventListener at document_start so "has a click
+           event" is measured rather than guessed. Needs one page reload. -->
+      <label class="root-toggle" id="preciseEventsRow">
+        <input type="checkbox" id="preciseEventsToggle">
+        <span><strong>Precise event detection</strong> — needs a page reload</span>
+        <div class="input-hint" style="display:block;">Off: a trigger is recognised from its tag, role, aria-* and data-* attributes. On: the real click handlers are recorded as the page loads, so detection is exact. Reload the page once after switching this on.</div>
+      </label>
+    </details>
 
     <div id="selectorTestResult" class="selector-test-result" style="display:none;"></div>
 
@@ -399,6 +409,7 @@
     </div>
 
     <div class="advisor-box" id="advisorBox" style="display:none;"></div>
+    </div><!-- /#manualOnly -->
   </div>
 
   <!-- Auto-fill review: one question per selector, nothing is written until the

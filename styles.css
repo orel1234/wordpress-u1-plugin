@@ -1141,6 +1141,21 @@ button {
   margin-top: 9px;
 }
 
+/* The second, non-AI route — present but folded away. */
+.auto-advanced {
+  margin: 10px 0 4px;
+  font-size: 11px;
+}
+
+.auto-advanced > summary {
+  padding: 5px 0;
+  color: var(--u1-text-muted);
+  cursor: pointer;
+  list-style: revert;
+}
+
+.auto-advanced > summary:hover { color: var(--u1-primary); }
+
 /* ── Stage 1: the discovered-component rows ──────────────────────────────── */
 .ai-comp {
   margin-bottom: 8px;

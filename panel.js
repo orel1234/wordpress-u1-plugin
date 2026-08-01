@@ -943,7 +943,7 @@ async function applyMappingsBatch(items) {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: 'MAIN',
-      func: (list) => {
+      func: async (list) => {
         const raw = window.u1 !== undefined ? window.u1
                   : window.U1 !== undefined ? window.U1
                   : window.user1st;
@@ -958,23 +958,75 @@ async function applyMappingsBatch(items) {
             else if (typeof v === 'object') { stripEmpty(v); if (!Object.keys(v).length) delete o[k]; }
           }
         };
-        let applied = 0, failed = 0, errs = [];
+        // A call that does not throw is NOT proof that anything happened.
+        // u1.fix.* no-ops silently when the domain is not authorised, when the
+        // selector fails U1's own validator, and — most often — when U1 has
+        // already processed that container this page load (it keeps an internal
+        // Set and stamps u1st-avoid-change-detection). So measure the DOM: snap
+        // the attributes U1 writes before and after, and report what changed.
+        const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
+        const snap = (root) => {
+          const m = new Map();
+          const els = [root].concat(Array.from(root.querySelectorAll('*')).slice(0, 800));
+          for (const el of els) {
+            let s = '';
+            for (const a of el.attributes) if (U1_ATTR.test(a.name)) s += a.name + '=' + a.value + '|';
+            m.set(el, s);
+          }
+          return m;
+        };
+        const changedCount = (before, after) => {
+          let n = 0;
+          for (const [el, v] of after) if (before.get(el) !== v) n++;
+          return n;
+        };
+
+        let applied = 0, failed = 0, noEffect = 0, errs = [], details = [];
         for (const it of list) {
+          const sel = it.firstArg || it.primary;
           try {
-            if (raw.fix && typeof raw.fix[it.type] === 'function') {
-              stripEmpty(it.config && it.config.selectors);
-              raw.fix[it.type](it.firstArg || it.primary, it.config);
-              applied++;
-            } else {
+            if (!(raw.fix && typeof raw.fix[it.type] === 'function')) {
+              failed++; errs.push('u1.fix.' + it.type + ' missing');
+              continue;
+            }
+            let target = null;
+            try { target = document.querySelector(sel); } catch {}
+            if (!target) {
               failed++;
-              errs.push('u1.fix.' + it.type + ' missing');
+              errs.push(`${it.type}: nothing on the page matches ${sel}`);
+              details.push({ type: it.type, sel, status: 'no-match' });
+              continue;
+            }
+            const preStamped = target.hasAttribute('u1st-avoid-change-detection');
+            const before = snap(target);
+
+            stripEmpty(it.config && it.config.selectors);
+            raw.fix[it.type](sel, it.config);
+
+            // U1 decorates asynchronously (RxJS + MutationObserver), so give it
+            // a moment before deciding nothing happened.
+            await new Promise(r => setTimeout(r, 400));
+
+            const changed = changedCount(before, snap(target));
+            if (changed > 0) {
+              applied++;
+              details.push({ type: it.type, sel, status: 'ok', changed });
+            } else {
+              noEffect++;
+              details.push({
+                type: it.type, sel, status: 'no-effect', changed: 0,
+                // The one distinction worth making: already-processed is fixed
+                // by a reload, an unauthorised domain never is.
+                reason: preStamped ? 'already-processed' : 'silent',
+              });
             }
           } catch (e) {
             failed++;
-            errs.push(String(e && e.message ? e.message : e));
+            errs.push(`${it.type}: ${String(e && e.message ? e.message : e)}`);
+            details.push({ type: it.type, sel, status: 'error' });
           }
         }
-        return { ok: true, applied, failed, errs };
+        return { ok: true, applied, failed, noEffect, errs, details };
       },
       args: [structured],
     });
@@ -2568,21 +2620,45 @@ function setMapMode(mode) {
       ? 'Enter the selector of the parent element only — the rest is worked out for you and shown for approval.'
       : 'Fill each selector yourself.';
   }
-  if ($autoAnalyzeRow) $autoAnalyzeRow.style.display = isAuto ? '' : 'none';
-  if ($preciseEventsRow) $preciseEventsRow.style.display = isAuto ? '' : 'none';
+  // Show one route at a time. In Automatic mode the type picker, the CSS
+  // Selector field, the sub-selector form and the preview are all things you
+  // never touch — the AI cards carry their own copies — so hiding them is what
+  // actually makes this tab readable, rather than shrinking everything.
+  const manualOnly = document.getElementById('manualOnly');
+  if (manualOnly) manualOnly.style.display = isAuto ? 'none' : '';
+  const advanced = document.getElementById('autoAdvanced');
+  if (advanced) {
+    advanced.style.display = isAuto ? '' : 'none';
+    if (!isAuto) advanced.open = false;
+  }
   // The AI teacher lives in Automatic mode alongside the rule-based analyzer.
   const aiBox = document.getElementById('aiBox');
   if (aiBox) aiBox.style.display = isAuto ? '' : 'none';
+  // Show a results panel only when it holds actual results. #aiResults has a
+  // fixed shell (summary, list, buttons), so testing its own innerHTML would
+  // always be truthy and leave an empty box with a dead button sitting there.
+  const hasResults = {
+    aiResults: () => !!document.getElementById('aiComponentList')?.children.length,
+    aiMappings: () => !!document.getElementById('aiMappings')?.children.length,
+  };
   for (const id of ['aiResults', 'aiMappings']) {
     const el = document.getElementById(id);
     if (!el) continue;
-    el.style.display = (isAuto && el.innerHTML.trim()) ? 'block' : 'none';
+    el.style.display = (isAuto && hasResults[id]()) ? 'block' : 'none';
   }
   if (!isAuto) hideAutoReview();
 }
 
 $modeManualBtn?.addEventListener('click', () => setMapMode('manual'));
 $modeAutoBtn?.addEventListener('click', () => setMapMode('auto'));
+
+// "Work the selectors out without AI" fills the manual form, so opening it has
+// to bring that form back — otherwise Analyze & fill writes into a hidden box.
+document.getElementById('autoAdvanced')?.addEventListener('toggle', (e) => {
+  const manualOnly = document.getElementById('manualOnly');
+  if (!manualOnly || mapMode !== 'auto') return;
+  manualOnly.style.display = e.target.open ? '' : 'none';
+});
 
 function hideAutoReview() {
   autoResult = null;
@@ -4344,11 +4420,16 @@ async function applyAllMappings({ silent = false } = {}) {
   const custom = list.filter(m => m && typeof m === 'object' && m.custom);
   const fixes = list.filter(m => !(m && typeof m === 'object' && m.custom));
 
-  let applied = 0, failed = 0, u1Missing = false, err = null;
+  let applied = 0, failed = 0, noEffect = 0, u1Missing = false, err = null;
+  let details = [];
   if (fixes.length) {
     const result = await applyMappingsBatch(fixes);
-    if (result.ok) { applied += result.applied; failed += result.failed; }
-    else if (result.u1Missing) { u1Missing = true; }
+    if (result.ok) {
+      applied += result.applied;
+      failed += result.failed;
+      noEffect += result.noEffect || 0;
+      details = result.details || [];
+    } else if (result.u1Missing) { u1Missing = true; }
     else { err = result.err; }
   }
   for (const m of custom) {
@@ -4361,13 +4442,27 @@ async function applyAllMappings({ silent = false } = {}) {
       showNotice(status, 'U1 library is not loaded — inject U1 in Setup first.', 'error', 4500);
     } else if (err && applied === 0) {
       showNotice(status, 'Error: ' + err, 'error', 4500);
+    } else if (noEffect && !applied) {
+      // The case that used to read "Applied N" while the page was untouched.
+      const stale = details.some(d => d.reason === 'already-processed');
+      showNotice(status,
+        stale
+          ? `Nothing changed: U1 had already processed ${noEffect === 1 ? 'this element' : 'these elements'} on this page load. Reload the page, then apply again.`
+          : `Nothing changed on the page. u1.fix ran without error but wrote no attributes — usually the domain is not authorised for U1, or the selector is one U1's validator rejects.`,
+        'error', 9000);
     } else {
-      const msg = `Applied ${applied} mapping${applied !== 1 ? 's' : ''}` +
-                  (failed ? ` (${failed} failed)` : '') + '.';
-      showNotice(status, msg, failed ? 'error' : 'success', 4000);
+      const parts = [`Applied ${applied} mapping${applied !== 1 ? 's' : ''}`];
+      if (noEffect) parts.push(`${noEffect} changed nothing`);
+      if (failed) parts.push(`${failed} failed`);
+      showNotice(status, parts.join(' · ') + '.', (failed || noEffect) ? 'error' : 'success', noEffect || failed ? 7000 : 4000);
+    }
+    // Per-mapping detail, so "which one" is answerable without guessing.
+    for (const d of details) {
+      if (d.status === 'ok') continue;
+      console.warn('[U1 Studio] apply:', d.type, d.sel, '→', d.status, d.reason || '');
     }
   }
-  return { applied, failed, u1Missing };
+  return { applied, failed, noEffect, u1Missing, details };
 }
 
 document.getElementById('applyAllBtn').addEventListener('click', () => applyAllMappings());
