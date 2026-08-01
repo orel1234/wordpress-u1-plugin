@@ -4623,33 +4623,6 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
   }
 });
 
-// Is the element this mapping targeted still carrying U1's output? Used after a
-// delete: storage is the easy half, the live DOM is the half people actually
-// look at in DevTools.
-async function pageStillDecorated(sel) {
-  const tab = await getTab();
-  if (!isInjectable(tab)) return false;
-  try {
-    const res = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (s) => {
-        let el;
-        try { el = document.querySelector(s); } catch { return false; }
-        if (!el) return false;
-        // See the note in the page diagnostic: u1st-avoid-change-detection alone
-        // proves nothing, it is often the site's own markup.
-        const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
-        const marked = (n) => Array.from(n.attributes)
-            .some(a => U1_ATTR.test(a.name) && a.name !== 'u1st-avoid-change-detection')
-          || /^u1st-/.test(n.id || '');
-        return marked(el) || Array.from(el.querySelectorAll('*')).slice(0, 400).some(marked);
-      },
-      args: [sel],
-    });
-    return !!(res && res[0] && res[0].result);
-  } catch { return false; }
-}
-
 // A one-click way to act on that, since the fix is always the same.
 function offerReload(status) {
   if (!status) return;
@@ -4862,22 +4835,41 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
       target: { tabId: tab.id },
       world: 'MAIN',
       func: (saved) => {
-        // u1st-avoid-change-detection on its own is NOT evidence that U1 did
-        // anything — it is routinely authored into the site's own markup, which
-        // is the whole reason a nav can carry it while U1 has never touched it.
-        const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
-        const isEvidence = (a) => U1_ATTR.test(a.name) && a.name !== 'u1st-avoid-change-detection';
+        // ONLY U1's own fingerprints count as evidence.
+        //
+        // role, tabindex and aria-* are ordinary HTML that authors write by
+        // hand — this very site ships tabindex="0" on every nav link — so
+        // treating them as proof of U1 flagged twelve untouched nav items as
+        // mystery decoration on the first real page it was pointed at. There
+        // is no way to attribute those without a before/after, and guessing is
+        // worse than saying nothing.
+        //
+        // What only U1 produces: u1st-* attributes, generated u1st-<uuid> ids,
+        // and u1st-* classes. u1st-avoid-change-detection is excluded — it is
+        // routinely authored into a site's markup, and is reported separately.
+        const isEvidence = (a) => /^u1st-/.test(a.name) && a.name !== 'u1st-avoid-change-detection';
+        const u1Marked = (el) =>
+          Array.from(el.attributes).some(isEvidence) ||
+          /^u1st-/.test(el.id || '') ||
+          (typeof el.className === 'string' && /\bu1st-/.test(el.className));
         const decorated = [];
         document.querySelectorAll('*').forEach(el => {
           if (decorated.length >= 400) return;
-          const hit = Array.from(el.attributes).some(isEvidence) || /^u1st-/.test(el.id || '');
-          if (hit) decorated.push(el);
+          if (u1Marked(el)) decorated.push(el);
         });
         // U1's own plumbing, which it creates on every load whatever you have
         // mapped: the screen-reader announcer regions and the status element.
         // These are not fixes and there is nothing to remove — counting them as
         // "unexplained" sends people hunting for a mapping that never existed.
+        // Skip links point at their target by id, and U1 generates a
+        // u1st-<uuid> id on any target that had none. That id is the config's
+        // doing, not a stray mapping, so attribute it to the config.
+        const skipTargets = new Set(
+          Array.from(document.querySelectorAll('.u1st-skip-link'))
+            .map(a => (a.getAttribute('href') || '').replace(/^#/, ''))
+            .filter(Boolean));
         const isInfra = (el) =>
+          skipTargets.has(el.id) ||
           el.id === 'u1-status-element' ||
           el.classList.contains('u1st-sr-only') ||
           el.classList.contains('u1st-skip-link') ||
@@ -4914,8 +4906,8 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
         const orphans = decorated.filter(el => !ours.has(el) && !isInfra(el)).slice(0, 12).map(el => {
           const cls = (el.className && typeof el.className === 'string')
             ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
-          const attrs = Array.from(el.attributes).filter(isEvidence)
-            .map(a => a.name).slice(0, 4).join(' ');
+          const attrs = (Array.from(el.attributes).filter(isEvidence).map(a => a.name)
+            .concat(/^u1st-/.test(el.id || '') ? ['generated id'] : [])).slice(0, 4).join(' ');
           return { tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls), attrs };
         });
         return {
@@ -4948,7 +4940,7 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
   box.className = 'selector-test-result ' + (unexplained > 0 ? 'warn' : 'ok');
 
   const lines = [
-    `<div><strong>${res.decorated}</strong> element${res.decorated === 1 ? '' : 's'} on this page carry U1 attributes.</div>`,
+    `<div><strong>${res.decorated}</strong> element${res.decorated === 1 ? '' : 's'} on this page carry U1's own fingerprints (u1st-* ids, classes or attributes).</div>`,
     `<div>· ${res.fromOurMappings} from the ${mine.length} mapping${mine.length === 1 ? '' : 's'} this extension holds${res.u1Present ? '' : ' — note window.u1 is not loaded'}</div>`,
   ];
   if (res.infra) {
@@ -4978,6 +4970,8 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
   } else {
     lines.push('<div>✅ Nothing here is left over from a deleted mapping.</div>');
   }
+  // Say what this cannot tell you, rather than letting silence imply it did.
+  lines.push('<div class="ai-comp-why" style="margin-top:6px;">Ordinary role, tabindex and aria-* attributes are not counted: sites write those by hand, so they cannot be attributed to U1 without comparing the page before and after.</div>');
   box.innerHTML = lines.join('');
 });
 
@@ -5435,14 +5429,14 @@ async function loadMappingsList() {
       refreshExportInfo();
 
       // Deleting the mapping deletes the INSTRUCTION. It does not undo what U1
-      // already wrote into the live DOM — the roles, aria-* and tabindex are
-      // still on the elements, and U1 attaches key handlers we cannot detach.
-      // A reload is the only clean way back, so say so and offer to do it
-      // rather than leaving "I deleted it but it is still in the code".
-      const sel = gone && (gone.firstArg || gone.primary);
-      if (!sel) return;
-      const stillThere = await pageStillDecorated(sel);
-      if (!stillThere) return;
+      // already wrote into the live DOM — roles, aria-*, tabindex, plus key
+      // handlers that cannot be detached from outside. A reload is the only
+      // clean way back.
+      //
+      // Said unconditionally rather than detected: U1's roles are
+      // indistinguishable from the site's own, so any detector here is either
+      // silent when it matters or crying wolf. This is always true anyway.
+      if (!gone) return;
       const status = document.getElementById('applyAllStatus') || document.getElementById('applyStatus');
       showNotice(status,
         'Removed from the mapping list — but the page still carries what U1 already applied to it. Reload the page to clear it.',
