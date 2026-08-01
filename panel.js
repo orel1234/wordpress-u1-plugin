@@ -4636,8 +4636,11 @@ async function pageStillDecorated(sel) {
         let el;
         try { el = document.querySelector(s); } catch { return false; }
         if (!el) return false;
+        // See the note in the page diagnostic: u1st-avoid-change-detection alone
+        // proves nothing, it is often the site's own markup.
         const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
-        const marked = (n) => Array.from(n.attributes).some(a => U1_ATTR.test(a.name))
+        const marked = (n) => Array.from(n.attributes)
+            .some(a => U1_ATTR.test(a.name) && a.name !== 'u1st-avoid-change-detection')
           || /^u1st-/.test(n.id || '');
         return marked(el) || Array.from(el.querySelectorAll('*')).slice(0, 400).some(marked);
       },
@@ -4859,13 +4862,45 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
       target: { tabId: tab.id },
       world: 'MAIN',
       func: (saved) => {
+        // u1st-avoid-change-detection on its own is NOT evidence that U1 did
+        // anything — it is routinely authored into the site's own markup, which
+        // is the whole reason a nav can carry it while U1 has never touched it.
         const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
+        const isEvidence = (a) => U1_ATTR.test(a.name) && a.name !== 'u1st-avoid-change-detection';
         const decorated = [];
         document.querySelectorAll('*').forEach(el => {
           if (decorated.length >= 400) return;
-          const hit = Array.from(el.attributes).some(a => U1_ATTR.test(a.name)) || /^u1st-/.test(el.id || '');
+          const hit = Array.from(el.attributes).some(isEvidence) || /^u1st-/.test(el.id || '');
           if (hit) decorated.push(el);
         });
+        // U1's own plumbing, which it creates on every load whatever you have
+        // mapped: the screen-reader announcer regions and the status element.
+        // These are not fixes and there is nothing to remove — counting them as
+        // "unexplained" sends people hunting for a mapping that never existed.
+        const isInfra = (el) =>
+          el.id === 'u1-status-element' ||
+          el.classList.contains('u1st-sr-only') ||
+          el.classList.contains('u1st-skip-link') ||
+          (el.getAttribute('role') === 'status' && el.hasAttribute('aria-live')) ||
+          el.getAttribute('aria-live') === 'polite' && el.getAttribute('aria-atomic') === 'true';
+        const infra = decorated.filter(isInfra);
+
+        // Reported separately, because it is neither decoration nor noise: an
+        // element carrying u1st-avoid-change-detection is one U1 has been told
+        // to leave alone. Counting it as decorated is a false positive; saying
+        // nothing hides the single most common reason a mapping does nothing.
+        const optedOut = Array.from(document.querySelectorAll('[u1st-avoid-change-detection]'))
+          .slice(0, 12).map(el => {
+            const cls = (el.className && typeof el.className === 'string')
+              ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+            return {
+              tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls),
+              // U1 stamps a generated id on what it decorates, so this tells us
+              // whether U1 put the attribute there or the site's author did.
+              touchedByU1: /^u1st-/.test(el.id || '') || !!el.querySelector('[id^="u1st-"]'),
+            };
+          });
+
         // Which of them does a mapping we hold actually account for?
         const ours = new Set();
         for (const m of saved) {
@@ -4876,10 +4911,10 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
             root.querySelectorAll('*').forEach(d => { if (decorated.includes(d)) ours.add(d); });
           }
         }
-        const orphans = decorated.filter(el => !ours.has(el)).slice(0, 12).map(el => {
+        const orphans = decorated.filter(el => !ours.has(el) && !isInfra(el)).slice(0, 12).map(el => {
           const cls = (el.className && typeof el.className === 'string')
             ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
-          const attrs = Array.from(el.attributes).filter(a => U1_ATTR.test(a.name))
+          const attrs = Array.from(el.attributes).filter(isEvidence)
             .map(a => a.name).slice(0, 4).join(' ');
           return { tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls), attrs };
         });
@@ -4888,6 +4923,8 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
           skipLinks: document.querySelectorAll('.u1st-skip-link').length,
           decorated: decorated.length,
           fromOurMappings: ours.size,
+          infra: infra.length,
+          optedOut,
           orphans,
         };
       },
@@ -4907,18 +4944,41 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
     return;
   }
 
-  const unexplained = res.decorated - res.fromOurMappings;
+  const unexplained = res.orphans.length;
   box.className = 'selector-test-result ' + (unexplained > 0 ? 'warn' : 'ok');
-  box.innerHTML =
-    `<div><strong>${res.decorated}</strong> element${res.decorated === 1 ? '' : 's'} on this page carry U1 attributes.</div>` +
-    `<div>${res.fromOurMappings} of them are covered by the ${mine.length} mapping${mine.length === 1 ? '' : 's'} this extension holds` +
-    `${res.skipLinks ? ` · ${res.skipLinks} U1 skip link${res.skipLinks === 1 ? '' : 's'}` : ''}` +
-    `${res.u1Present ? '' : ' · window.u1 is not loaded'}.</div>` +
-    (unexplained > 0
-      ? `<div class="u1-warn">⚠️ ${unexplained} element${unexplained === 1 ? '' : 's'} are decorated but belong to no mapping here. That is either work U1 applied before your last change — a page reload clears it — or U1's own project configuration for this domain, served by User1st. The extension cannot delete that; it has to be changed in the U1 project.</div>` +
-        `<ul>${res.orphans.map(o => `<li><code>${escapeHtml(o.tag)}</code> — ${escapeHtml(o.attrs)}</li>`).join('')}</ul>` +
-        `<div><button class="btn-outline btn-xs" data-reload-tab>↻ Reload the page</button> then press this again: whatever survives a reload with an empty mapping list is not coming from this extension.</div>`
-      : '<div>Nothing on this page is decorated beyond what your mappings account for.</div>');
+
+  const lines = [
+    `<div><strong>${res.decorated}</strong> element${res.decorated === 1 ? '' : 's'} on this page carry U1 attributes.</div>`,
+    `<div>· ${res.fromOurMappings} from the ${mine.length} mapping${mine.length === 1 ? '' : 's'} this extension holds${res.u1Present ? '' : ' — note window.u1 is not loaded'}</div>`,
+  ];
+  if (res.infra) {
+    lines.push(`<div>· ${res.infra} are U1's own announcer regions, which the library creates on every page load. Not fixes, and nothing to remove.</div>`);
+  }
+  if (res.skipLinks) {
+    // Skip links are the extension's doing, but they come from the CONFIG, not
+    // the mapping list — which is exactly why emptying the mappings does not
+    // make them go away.
+    lines.push(`<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} injected from this site's saved <strong>config</strong>, not from a mapping. Clear them in Setup → Skip Links if you do not want them.</div>`);
+  }
+  if (res.optedOut && res.optedOut.length) {
+    const authored = res.optedOut.filter(o => !o.touchedByU1);
+    lines.push(
+      `<div class="u1-warn">⚠️ ${res.optedOut.length} element${res.optedOut.length === 1 ? '' : 's'} carry ` +
+      `<code>u1st-avoid-change-detection</code> — U1 skips ${res.optedOut.length === 1 ? 'it' : 'them'}, so a mapping pointed here does nothing.` +
+      (authored.length
+        ? ` ${authored.length} of them show no sign of U1 having run on them, so the attribute is in the site's own HTML and a reload will not clear it.`
+        : ' U1 stamped these itself after decorating them — a reload clears that.') +
+      `</div>` +
+      `<ul>${res.optedOut.map(o => `<li><code>${escapeHtml(o.tag)}</code>${o.touchedByU1 ? ' — U1 stamped this' : ' — in the site\'s markup'}</li>`).join('')}</ul>`);
+  }
+  if (unexplained > 0) {
+    lines.push(`<div class="u1-warn">⚠️ ${unexplained} element${unexplained === 1 ? '' : 's'} decorated by something else — either work U1 applied before your last change (a reload clears it) or U1's own project configuration for this domain, served by User1st. The extension cannot delete that; it has to change in the U1 project.</div>`);
+    lines.push(`<ul>${res.orphans.map(o => `<li><code>${escapeHtml(o.tag)}</code> — ${escapeHtml(o.attrs)}</li>`).join('')}</ul>`);
+    lines.push(`<div><button class="btn-outline btn-xs" data-reload-tab>↻ Reload the page</button> then press this again: whatever survives a reload with an empty mapping list is not coming from this extension.</div>`);
+  } else {
+    lines.push('<div>✅ Nothing here is left over from a deleted mapping.</div>');
+  }
+  box.innerHTML = lines.join('');
 });
 
 // The keyboard-grid engine lives in grid-nav.js. For DEPLOYMENT we inline its
