@@ -628,10 +628,17 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
   })(selectors);
 
   // 3) root config object
+  //
+  // Root options get the same empty-string treatment as the selectors above:
+  // U1 validates every value it is handed and rejects '', so shipping an
+  // untouched `menuDescription: ""` is enough to make the whole fix do nothing.
+  // Booleans and numbers are kept as-is — only blank strings are dropped.
   const config = { selectors };
   if (schema.rootFields) {
     for (const [k, defaultVal] of Object.entries(schema.rootFields)) {
-      config[k] = (rootValues && k in rootValues) ? rootValues[k] : defaultVal;
+      const v = (rootValues && k in rootValues) ? rootValues[k] : defaultVal;
+      if (typeof v === 'string' && v.trim() === '') continue;
+      config[k] = v;
     }
   }
 
@@ -997,7 +1004,15 @@ async function applyMappingsBatch(items) {
               details.push({ type: it.type, sel, status: 'no-match' });
               continue;
             }
+            // `u1st-avoid-change-detection` means "U1 must not touch this".
+            // It gets there two very different ways, and the fix differs:
+            //   · U1 stamped it after decorating  → a reload clears the slate.
+            //   · it is in the SITE'S OWN HTML    → U1 skips the element for
+            //     good, and no amount of reloading will help.
+            // Tell them apart by whether U1 left its fingerprints: it assigns
+            // generated u1st-<uuid> ids to what it decorates.
             const preStamped = target.hasAttribute('u1st-avoid-change-detection');
+            const u1Touched = /^u1st-/.test(target.id || '') || !!target.querySelector('[id^="u1st-"]');
             const before = snap(target);
 
             stripEmpty(it.config && it.config.selectors);
@@ -1015,9 +1030,9 @@ async function applyMappingsBatch(items) {
               noEffect++;
               details.push({
                 type: it.type, sel, status: 'no-effect', changed: 0,
-                // The one distinction worth making: already-processed is fixed
-                // by a reload, an unauthorised domain never is.
-                reason: preStamped ? 'already-processed' : 'silent',
+                reason: !preStamped ? 'silent'
+                  : u1Touched ? 'already-processed'   // reload and re-apply
+                  : 'source-opt-out',                 // the site's HTML says skip
               });
             }
           } catch (e) {
@@ -3082,9 +3097,11 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     const out = await U1AI.discover({ screenshot: shot, context, scope });
     if (out.err) { showNotice($aiStatus, out.err, 'error', 8000); return; }
 
-    // Re-mark so the 👁 buttons can locate elements after the overlay was cleared.
-    await inPage(tab.id, () => window.__u1SelectorIntel.collectCandidates(60));
-
+    // Deliberately NOT re-marking here. The 👁 buttons work off each row's
+    // container selector, so they need nothing on the page — and re-marking
+    // left data-u1-mark attributes scattered across the site's DOM, which both
+    // pollutes what the specialist is inspecting and lands in any markup they
+    // copy out of DevTools.
     aiFound = { ...out, context };
     aiCost += U1AI.estimateCost(out.usage) || 0;
     renderAiComponents(aiFound);
@@ -3094,6 +3111,12 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   } finally {
     btn.disabled = false;
     btn.textContent = original;
+    // Belt and braces: never leave our own attributes on the site's DOM, even
+    // if something threw between stamping and the capture's own cleanup.
+    try {
+      const t = await getTab();
+      if (isInjectable(t)) await inPage(t.id, () => window.__u1SelectorIntel.clearMarks());
+    } catch {}
   }
 });
 
@@ -4444,12 +4467,17 @@ async function applyAllMappings({ silent = false } = {}) {
       showNotice(status, 'Error: ' + err, 'error', 4500);
     } else if (noEffect && !applied) {
       // The case that used to read "Applied N" while the page was untouched.
+      const optOut = details.filter(d => d.reason === 'source-opt-out');
       const stale = details.some(d => d.reason === 'already-processed');
-      showNotice(status,
-        stale
-          ? `Nothing changed: U1 had already processed ${noEffect === 1 ? 'this element' : 'these elements'} on this page load. Reload the page, then apply again.`
-          : `Nothing changed on the page. u1.fix ran without error but wrote no attributes — usually the domain is not authorised for U1, or the selector is one U1's validator rejects.`,
-        'error', 9000);
+      let msg;
+      if (optOut.length) {
+        msg = `Nothing changed: ${optOut.map(d => d.sel).join(', ')} carries u1st-avoid-change-detection in the page's own HTML, which tells U1 to skip that element entirely. Reloading will not help — the attribute has to come out of the site's markup.`;
+      } else if (stale) {
+        msg = `Nothing changed: U1 had already processed ${noEffect === 1 ? 'this element' : 'these elements'} on this page load. Reload the page, then apply again.`;
+      } else {
+        msg = 'Nothing changed on the page. u1.fix ran without error but wrote no attributes — usually the domain is not authorised for U1, or the selector is one U1\'s validator rejects.';
+      }
+      showNotice(status, msg, 'error', 12000);
     } else {
       const parts = [`Applied ${applied} mapping${applied !== 1 ? 's' : ''}`];
       if (noEffect) parts.push(`${noEffect} changed nothing`);
