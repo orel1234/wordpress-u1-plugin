@@ -1022,7 +1022,27 @@ async function applyMappingsBatch(items) {
             // a moment before deciding nothing happened.
             await new Promise(r => setTimeout(r, 400));
 
-            const changed = changedCount(before, snap(target));
+            let changed = changedCount(before, snap(target));
+
+            // The attribute is the only thing standing between this mapping and
+            // a working one, and it is in the site's markup where we cannot
+            // edit it. We are already modifying this page — that is what apply
+            // IS — so lift the opt-out, retry once, and say plainly that we did.
+            // A reload restores the page's own markup, so nothing is destroyed.
+            if (changed === 0 && preStamped && !u1Touched) {
+              target.removeAttribute('u1st-avoid-change-detection');
+              const before2 = snap(target);
+              try { raw.fix[it.type](sel, it.config); } catch {}
+              await new Promise(r => setTimeout(r, 400));
+              changed = changedCount(before2, snap(target));
+              if (changed > 0) {
+                applied++;
+                details.push({ type: it.type, sel, status: 'ok', changed, unblocked: true });
+                continue;
+              }
+              target.setAttribute('u1st-avoid-change-detection', 'true'); // put it back
+            }
+
             if (changed > 0) {
               applied++;
               details.push({ type: it.type, sel, status: 'ok', changed });
@@ -3584,6 +3604,10 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       verdict = { ok: false, msg: res.u1Missing ? 'Saved. U1 is not loaded on this page, so nothing was applied.' : 'Saved, but applying failed: ' + (res.err || 'unknown') };
     } else if (res.applied) {
       verdict = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
+      if (d.unblocked) {
+        verdict.ok = false;   // it works here, but not yet on the real site
+        verdict.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted on this page so the fix could run — remove it from the markup or this will not work in production.`;
+      }
     } else if (d && d.status === 'no-match') {
       verdict = { ok: false, msg: `Saved, but nothing on the page matches ${d.sel}.` };
     } else if (d && d.reason === 'source-opt-out') {
@@ -4702,12 +4726,20 @@ async function applyAllMappings({ silent = false } = {}) {
       const parts = [`Applied ${applied} mapping${applied !== 1 ? 's' : ''}`];
       if (noEffect) parts.push(`${noEffect} changed nothing`);
       if (failed) parts.push(`${failed} failed`);
-      showNotice(status, parts.join(' · ') + '.', (failed || noEffect) ? 'error' : 'success', noEffect || failed ? 7000 : 4000);
+      const unblocked = details.filter(d => d.unblocked);
+      let msg = parts.join(' · ') + '.';
+      if (unblocked.length) {
+        msg += ` ${unblocked.map(d => d.sel).join(', ')} had u1st-avoid-change-detection in the page markup — it was lifted here so the fix could run, but it must come out of the site's HTML for this to work in production.`;
+      }
+      showNotice(status, msg, (failed || noEffect) ? 'error' : (unblocked.length ? 'error' : 'success'),
+        (noEffect || failed || unblocked.length) ? 9000 : 4000);
     }
-    // Per-mapping detail, so "which one" is answerable without guessing.
+    // Per-mapping detail. console.debug, not warn: these are expected outcomes
+    // of a normal run, and at warn level an error collector files each one as a
+    // fault report.
     for (const d of details) {
-      if (d.status === 'ok') continue;
-      console.warn('[U1 Studio] apply:', d.type, d.sel, '→', d.status, d.reason || '');
+      if (d.status === 'ok' && !d.unblocked) continue;
+      console.debug('[U1 Studio] apply:', d.type, d.sel, '→', d.status, d.reason || (d.unblocked ? 'opt-out lifted' : ''));
     }
   }
   return { applied, failed, noEffect, u1Missing, details };
