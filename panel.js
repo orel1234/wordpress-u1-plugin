@@ -2881,11 +2881,46 @@ function checkAiSelector(value, context) {
 document.getElementById('aiKeyToggle')?.addEventListener('click', async () => {
   const showing = $aiKeyRow.style.display !== 'none';
   $aiKeyRow.style.display = showing ? 'none' : '';
-  if (!showing && $aiKeyInput && !$aiKeyInput.value) {
-    // Show that a key exists without ever rendering it back.
-    const saved = await U1AI.getKey();
-    $aiKeyInput.placeholder = saved ? '•••••••• (saved — type to replace)' : 'sk-ant-…';
-  }
+  if (!showing) await markKeyState();
+});
+
+// Reflect whether a key is saved, without ever rendering the key back.
+async function markKeyState() {
+  if (!$aiKeyInput || !globalThis.U1AI) return false;
+  const saved = await U1AI.getKey();
+  $aiKeyInput.placeholder = saved ? '•••••••• saved — type to replace' : 'sk-ant-…';
+  const toggle = document.getElementById('aiKeyToggle');
+  if (toggle) toggle.title = saved ? 'API key saved' : 'No API key yet — click to add one';
+  return !!saved;
+}
+
+// Open the key field on first use rather than hiding it behind an icon: with it
+// collapsed, the instruction box is the only thing that looks like an input,
+// which is exactly how a key ends up pasted into the prompt.
+// Runs at panel load, so it must not take the rest of panel.js down with it if
+// ai-advisor.js is missing — Manual mode does not depend on the AI layer.
+(async () => {
+  try {
+    if (!$aiKeyRow || !globalThis.U1AI) return;
+    const hasKey = await markKeyState();
+    if (!hasKey) $aiKeyRow.style.display = '';
+  } catch {}
+})();
+
+// An API key pasted into the instruction box would be sent to Claude as prompt
+// text — a real leak, and an easy mistake to make when both fields sit in the
+// same panel. Catch it on the way in: move it to the key field and say so,
+// rather than letting it sit there looking accepted.
+const LOOKS_LIKE_KEY = /\bsk-ant-[A-Za-z0-9_-]{10,}/;
+
+$aiInstruction?.addEventListener('input', () => {
+  const val = $aiInstruction.value;
+  if (!LOOKS_LIKE_KEY.test(val)) return;
+  const key = (val.match(LOOKS_LIKE_KEY) || [])[0];
+  $aiInstruction.value = val.replace(LOOKS_LIKE_KEY, '').trim();
+  $aiKeyRow.style.display = '';
+  if ($aiKeyInput) { $aiKeyInput.value = key; $aiKeyInput.focus(); }
+  showNotice($aiStatus, 'That looked like your API key — moved it to the key field above. Press “Save key”.', 'error', 7000);
 });
 
 document.getElementById('aiKeySave')?.addEventListener('click', async () => {
@@ -2965,7 +3000,10 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     $aiStatus.className = 'map-mode-hint';
     $aiStatus.style.display = '';
 
-    const out = await U1AI.discover({ screenshot: shot, context, scope: $aiInstruction.value.trim() });
+    // Belt and braces: never let a credential reach the prompt, whatever route
+    // it took into the box.
+    const scope = $aiInstruction.value.replace(LOOKS_LIKE_KEY, '[removed]').trim();
+    const out = await U1AI.discover({ screenshot: shot, context, scope });
     if (out.err) { showNotice($aiStatus, out.err, 'error', 8000); return; }
 
     // Re-mark so the 👁 buttons can locate elements after the overlay was cleared.

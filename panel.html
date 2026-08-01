@@ -301,16 +301,17 @@
       </div>
 
       <div class="ai-key-row" id="aiKeyRow" style="display:none;">
-        <label for="aiKeyInput">Anthropic API key</label>
-        <div class="selector-test-row">
-          <input type="password" id="aiKeyInput" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
-          <button class="btn-outline btn-sm" id="aiKeySave">Save</button>
+        <label class="ai-field-label" for="aiKeyInput">🔑 Anthropic API key — paste it here</label>
+        <input type="password" id="aiKeyInput" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+        <div class="btn-row" style="margin-top:6px;">
+          <button class="btn-primary btn-sm" id="aiKeySave">Save key</button>
         </div>
         <div class="input-hint" style="display:block;">Stored on this machine only, and kept out of exported backups. It is sent straight to api.anthropic.com from this panel.</div>
       </div>
 
+      <label class="ai-field-label" for="aiInstruction">What to look at <span class="ai-optional">(optional)</span></label>
       <textarea id="aiInstruction" rows="2"
-        placeholder="Optional — narrow it down, e.g. “only the header and the product filters”"></textarea>
+        placeholder="Leave empty to review the whole screen, or narrow it down: “only the header and the product filters”"></textarea>
 
       <div class="btn-row" style="margin-top:8px;gap:8px;align-items:center;">
         <button class="btn-primary btn-sm" id="aiDiscoverBtn">🔎 Find what's on this screen</button>

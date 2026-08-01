@@ -123,5 +123,33 @@ if (loaded.indexOf('store.js') === -1) fail('panel.html does not load store.js')
 else if (loaded.indexOf('store.js') > loaded.indexOf('panel.js')) fail('store.js must load before panel.js');
 else pass('panel.html loads store.js before its users');
 
+// --- Every shipped file must parse as a CLASSIC browser script -------------
+//
+// `node --check` is not this check. package.json sets "type": "module", so node
+// parses these as ESM — where top-level `await` is legal. The browser loads them
+// with <script src> as classic scripts, where it is a SyntaxError that kills the
+// whole file. That gap let a broken panel.js pass every check and get pushed.
+// `new Function(src)` parses with exactly the browser's classic-script rules.
+
+console.log('\nShipped files parse as classic browser scripts:');
+const SCRIPTS = [
+  'panel.js', 'selector-intel.js', 'ai-advisor.js', 'event-recorder.js',
+  'test-engine.js', 'background.js', 'store.js', 'auth.js', 'config.js',
+  'grid-nav.js', 'docx-gen.js', 'report-gen.js', 'report-view.js',
+];
+let unparseable = 0;
+for (const name of SCRIPTS) {
+  let src;
+  try { src = readFileSync(join(ROOT, name), 'utf8'); }
+  catch { continue; } // not every file is present in every checkout
+  try {
+    new Function(src);
+  } catch (e) {
+    fail(`${name} is not a valid classic script — ${e.message}`);
+    unparseable++;
+  }
+}
+if (!unparseable) pass(`all ${SCRIPTS.length} scripts parse (no top-level await, no ESM-only syntax)`);
+
 console.log(failures === 0 ? '\n✅ All extension checks passed.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);
