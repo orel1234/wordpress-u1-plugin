@@ -4623,6 +4623,44 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
   }
 });
 
+// Is the element this mapping targeted still carrying U1's output? Used after a
+// delete: storage is the easy half, the live DOM is the half people actually
+// look at in DevTools.
+async function pageStillDecorated(sel) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return false;
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (s) => {
+        let el;
+        try { el = document.querySelector(s); } catch { return false; }
+        if (!el) return false;
+        const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
+        const marked = (n) => Array.from(n.attributes).some(a => U1_ATTR.test(a.name))
+          || /^u1st-/.test(n.id || '');
+        return marked(el) || Array.from(el.querySelectorAll('*')).slice(0, 400).some(marked);
+      },
+      args: [sel],
+    });
+    return !!(res && res[0] && res[0].result);
+  } catch { return false; }
+}
+
+// A one-click way to act on that, since the fix is always the same.
+function offerReload(status) {
+  if (!status) return;
+  if (status.querySelector('[data-reload-tab]')) return;
+  status.insertAdjacentHTML('beforeend',
+    ' <button class="btn-outline btn-xs" data-reload-tab>↻ Reload the page</button>');
+}
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('[data-reload-tab]')) return;
+  const tab = await getTab();
+  if (tab) chrome.tabs.reload(tab.id);
+});
+
 // Which saved mappings target the same DOM as `primary`?
 //
 // mappingKey is type::primary, so a listbox on `button.main-nav__trigger` and a
@@ -5241,10 +5279,26 @@ async function loadMappingsList() {
   container.querySelectorAll('.del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const i = parseInt(btn.dataset.idx, 10);
+      const gone = list[i];
       list.splice(i, 1);
       await U1Store.set({ [key]: list });
       loadMappingsList();
       refreshExportInfo();
+
+      // Deleting the mapping deletes the INSTRUCTION. It does not undo what U1
+      // already wrote into the live DOM — the roles, aria-* and tabindex are
+      // still on the elements, and U1 attaches key handlers we cannot detach.
+      // A reload is the only clean way back, so say so and offer to do it
+      // rather than leaving "I deleted it but it is still in the code".
+      const sel = gone && (gone.firstArg || gone.primary);
+      if (!sel) return;
+      const stillThere = await pageStillDecorated(sel);
+      if (!stillThere) return;
+      const status = document.getElementById('applyAllStatus') || document.getElementById('applyStatus');
+      showNotice(status,
+        'Removed from the mapping list — but the page still carries what U1 already applied to it. Reload the page to clear it.',
+        'error', 12000);
+      offerReload(status);
     });
   });
 
