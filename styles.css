@@ -764,6 +764,453 @@ button {
   font-weight: 700;
 }
 
+/* ── Selector strength meter ─────────────────────────────────────────────────
+   A Weak/Medium/Strong badge that sits INSIDE the right edge of every selector
+   input. The wrapper is the positioning context; the input reserves room for it
+   via padding-right so the badge never covers the text being typed. The grid
+   columns of .sub-sel-row / .root-text are untouched — the wrapper occupies the
+   same single cell the bare input used to. */
+.sel-strength-wrap {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.sel-strength-wrap input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 78px;
+}
+
+.sel-strength {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Three bars, filled according to level, drawn with a repeating gradient so no
+   extra markup is needed. */
+.sel-strength::before {
+  content: "";
+  width: 15px;
+  height: 8px;
+  background:
+    linear-gradient(to right,
+      currentColor 0 4px, transparent 4px 5.5px,
+      currentColor 5.5px 9.5px, transparent 9.5px 11px,
+      currentColor 11px 15px);
+  opacity: 0.35;
+}
+
+.sel-strength[data-level="weak"],
+.sel-strength[data-level="medium"],
+.sel-strength[data-level="strong"],
+.sel-strength[data-level="invalid"] { display: inline-flex; }
+
+.sel-strength[data-level="weak"] {
+  color: var(--u1-danger, #ef4444);
+  background: rgba(239, 68, 68, 0.12);
+}
+.sel-strength[data-level="weak"]::before {
+  background: linear-gradient(to right, currentColor 0 4px, transparent 4px 15px);
+  opacity: 1;
+}
+
+.sel-strength[data-level="medium"] {
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.14);
+}
+.sel-strength[data-level="medium"]::before {
+  background: linear-gradient(to right,
+    currentColor 0 4px, transparent 4px 5.5px,
+    currentColor 5.5px 9.5px, transparent 9.5px 15px);
+  opacity: 1;
+}
+
+.sel-strength[data-level="strong"] {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.14);
+}
+.sel-strength[data-level="strong"]::before { opacity: 1; }
+
+.sel-strength[data-level="invalid"] {
+  color: var(--u1-danger, #ef4444);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.sel-strength[data-level="invalid"]::before { display: none; }
+
+/* The reason behind the grade, folded into the row's existing on-focus bubble. */
+.strength-why {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--u1-border, rgba(127, 127, 127, 0.3));
+  font-weight: 600;
+}
+.strength-why[data-level="weak"],
+.strength-why[data-level="invalid"] { color: var(--u1-danger, #ef4444); }
+.strength-why[data-level="medium"] { color: #d97706; }
+.strength-why[data-level="strong"] { color: #16a34a; }
+
+/* ── Manual | Auto mode switch ───────────────────────────────────────────── */
+.map-mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.10));
+}
+
+.map-mode-btn {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--u1-text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.map-mode-btn.active {
+  background: var(--u1-primary);
+  color: #fff;
+  font-weight: 600;
+}
+
+.map-mode-hint {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--u1-text-muted);
+}
+
+/* ── Auto-fill review rows ───────────────────────────────────────────────── */
+.auto-row {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--u1-border, rgba(127, 127, 127, 0.25));
+  border-left: 3px solid var(--u1-primary);
+  border-radius: 5px;
+}
+
+.auto-row.skipped { opacity: 0.55; border-left-color: var(--u1-text-muted); }
+.auto-row.ask { border-left-color: #d97706; }
+
+.auto-q {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.auto-field {
+  font-family: "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--u1-text-muted);
+}
+
+.auto-cand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.auto-cand code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.auto-count { color: var(--u1-text-muted); font-size: 10px; white-space: nowrap; }
+
+.auto-why {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--u1-text-muted);
+}
+
+.auto-sig {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.12));
+  font-family: "Consolas", monospace;
+  font-size: 9px;
+}
+.auto-sig.verified { color: #16a34a; }
+
+.auto-eye {
+  padding: 0 5px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+.auto-eye:hover { background: var(--u1-surface-2, rgba(127, 127, 127, 0.15)); }
+
+/* ── AI accessibility teacher ────────────────────────────────────────────── */
+.ai-box {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--u1-border, rgba(127, 127, 127, 0.25));
+  border-radius: 6px;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.06));
+}
+
+.ai-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.ai-title { font-size: 12px; font-weight: 600; }
+
+.ai-key-row { margin-bottom: 8px; }
+.ai-key-row label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--u1-text-muted);
+}
+
+.ai-box textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+/* Findings list */
+.ai-results { margin-bottom: 14px; }
+
+.ai-summary {
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border-left: 3px solid var(--u1-primary);
+  border-radius: 4px;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.08));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-meta {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--u1-text-muted);
+}
+
+.ai-find {
+  margin-bottom: 8px;
+  border: 1px solid var(--u1-border, rgba(127, 127, 127, 0.25));
+  border-left-width: 3px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.ai-find[data-sev="blocker"] { border-left-color: var(--u1-danger, #ef4444); }
+.ai-find[data-sev="major"]   { border-left-color: #d97706; }
+.ai-find[data-sev="minor"]   { border-left-color: var(--u1-text-muted); }
+
+.ai-find-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.ai-find-head:hover { background: var(--u1-surface-2, rgba(127, 127, 127, 0.10)); }
+
+.ai-sev {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.ai-find[data-sev="blocker"] .ai-sev { background: rgba(239, 68, 68, 0.15); color: var(--u1-danger, #ef4444); }
+.ai-find[data-sev="major"]   .ai-sev { background: rgba(217, 119, 6, 0.16); color: #d97706; }
+.ai-find[data-sev="minor"]   .ai-sev { background: var(--u1-surface-2, rgba(127, 127, 127, 0.15)); color: var(--u1-text-muted); }
+
+.ai-mark {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: #ff2d95;
+  color: #fff;
+  font: 700 10px/1.5 monospace;
+  text-align: center;
+}
+.ai-mark.none { background: var(--u1-surface-2, rgba(127,127,127,0.2)); color: var(--u1-text-muted); }
+
+.ai-find-title { flex: 1; font-weight: 600; }
+.ai-wcag { flex: none; font-size: 10px; color: var(--u1-text-muted); }
+
+.ai-find-body {
+  padding: 0 10px 10px;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.ai-find-body h5 {
+  margin: 8px 0 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--u1-text-muted);
+}
+
+.ai-find-body code {
+  font-size: 10px;
+  word-break: break-all;
+}
+
+.ai-fix-sel {
+  margin: 3px 0;
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.10));
+  font-family: "Consolas", monospace;
+  font-size: 10px;
+  overflow-x: auto;
+}
+
+.ai-sel-bad { color: var(--u1-danger, #ef4444); }
+
+.ai-find-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+/* ── Stage 1: the discovered-component rows ──────────────────────────────── */
+.ai-comp {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--u1-border, rgba(127, 127, 127, 0.25));
+  border-radius: 5px;
+}
+
+.ai-comp-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.ai-comp-label { flex: 1; font-weight: 600; }
+
+.ai-sev[data-need="1"] { background: rgba(217, 119, 6, 0.16); color: #d97706; }
+.ai-sev[data-need="0"] { background: var(--u1-surface-2, rgba(127, 127, 127, 0.15)); color: var(--u1-text-muted); }
+
+.ai-comp-why {
+  margin: 4px 0 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--u1-text-muted);
+}
+
+/* type + container on one line: the two things a wrong guess needs corrected */
+.ai-comp-fields {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 1fr) auto minmax(0, 2fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.ai-comp-fields label {
+  margin: 0;
+  font-size: 10px;
+  color: var(--u1-text-muted);
+}
+
+.ai-comp-fields select,
+.ai-comp-fields input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 7px;
+  font-family: "Consolas", monospace;
+  font-size: 10px;
+}
+
+/* ── Stage 2: one card per generated mapping ─────────────────────────────── */
+.ai-map-card {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--u1-border, rgba(127, 127, 127, 0.25));
+  border-left: 3px solid var(--u1-primary);
+  border-radius: 5px;
+}
+
+.ai-map-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.ai-map-head code { font-size: 10px; color: var(--u1-text-muted); }
+
+.ai-conf {
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.ai-conf[data-c="high"]   { background: rgba(22, 163, 74, 0.15); color: #16a34a; }
+.ai-conf[data-c="medium"] { background: rgba(217, 119, 6, 0.16); color: #d97706; }
+.ai-conf[data-c="low"]    { background: rgba(239, 68, 68, 0.15); color: var(--u1-danger, #ef4444); }
+
+.ai-map-form { margin-bottom: 8px; }
+
+.ai-map-card .code-preview {
+  max-height: 160px;
+  overflow: auto;
+  font-size: 10px;
+}
+
 /* On-focus hint bubble describing what a selector/option is for. Hidden until
    the row that owns it is focused (keeps the form compact). */
 .input-hint {

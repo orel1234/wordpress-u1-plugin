@@ -284,6 +284,55 @@
   <div class="section">
     <div class="section-title">Element<span class="dot">.</span></div>
 
+    <!-- Manual    = fill every selector by hand (the original flow).
+         Automatic = the rule-based analyzer proposes the selectors, and the AI
+                     reviewer says what on this screen needs fixing at all. -->
+    <div class="map-mode" role="tablist" aria-label="Mapping mode">
+      <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true">✍️ Manual</button>
+      <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false">🤖 Automatic (AI)</button>
+    </div>
+    <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
+
+    <!-- ── AI accessibility teacher ──────────────────────────────────────── -->
+    <div class="ai-box" id="aiBox" style="display:none;">
+      <div class="ai-head">
+        <span class="ai-title">🎓 Ask the accessibility teacher</span>
+        <button class="btn-ghost btn-xs" id="aiKeyToggle" title="API key">🔑</button>
+      </div>
+
+      <div class="ai-key-row" id="aiKeyRow" style="display:none;">
+        <label for="aiKeyInput">Anthropic API key</label>
+        <div class="selector-test-row">
+          <input type="password" id="aiKeyInput" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+          <button class="btn-outline btn-sm" id="aiKeySave">Save</button>
+        </div>
+        <div class="input-hint" style="display:block;">Stored on this machine only, and kept out of exported backups. It is sent straight to api.anthropic.com from this panel.</div>
+      </div>
+
+      <textarea id="aiInstruction" rows="2"
+        placeholder="Optional — narrow it down, e.g. “only the header and the product filters”"></textarea>
+
+      <div class="btn-row" style="margin-top:8px;gap:8px;align-items:center;">
+        <button class="btn-primary btn-sm" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
+        <span class="map-mode-hint" id="aiStatus" style="margin:0;"></span>
+      </div>
+    </div>
+
+    <!-- Stage 1 result: the inventory. Each row's type and container are
+         editable — the AI proposes, the specialist decides. -->
+    <div class="ai-results" id="aiResults" style="display:none;">
+      <div class="ai-summary" id="aiSummary"></div>
+      <div id="aiComponentList"></div>
+      <div class="btn-row" style="margin-top:10px;gap:8px;align-items:center;">
+        <button class="btn-primary btn-sm" id="aiMapBtn">✨ Make these accessible</button>
+        <button class="btn-ghost btn-sm" id="aiDismissBtn">Clear</button>
+        <span class="map-mode-hint" id="aiMapStatus" style="margin:0;"></span>
+      </div>
+    </div>
+
+    <!-- Stage 2 result: the same mapping form as Manual mode, pre-filled. -->
+    <div class="ai-results" id="aiMappings" style="display:none;"></div>
+
     <div class="field-group">
       <label for="componentType">Component Type</label>
       <select id="componentType">
@@ -318,11 +367,28 @@
     <div class="field-group">
       <label for="primarySelectorInput" id="primaryLabel">CSS Selector</label>
       <div class="selector-test-row">
-        <input type="text" id="primarySelectorInput" class="primary-selector-input" placeholder="e.g. #login-modal">
+        <span class="sel-strength-wrap">
+          <input type="text" id="primarySelectorInput" class="primary-selector-input" placeholder="e.g. #login-modal">
+          <span class="sel-strength" data-level="empty" aria-hidden="true"></span>
+        </span>
         <button class="btn-outline btn-sm sel-test" title="Test selector on page">🔍</button>
       </div>
       <div class="input-hint input-hint-primary" id="primaryHint" style="display:none;"></div>
     </div>
+
+    <!-- Auto mode only: analyze the parent element and propose the sub-selectors -->
+    <div class="btn-row" id="autoAnalyzeRow" style="display:none; margin-top:10px;">
+      <button class="btn-primary btn-sm" id="autoAnalyzeBtn">✨ Analyze &amp; fill</button>
+      <span class="map-mode-hint" style="margin:0 0 0 8px;">Reads the element on the page and suggests each selector.</span>
+    </div>
+
+    <!-- Opt-in: records addEventListener at document_start so "has a click event"
+         is measured rather than guessed. Needs one page reload to take effect. -->
+    <label class="root-toggle" id="preciseEventsRow" style="display:none;">
+      <input type="checkbox" id="preciseEventsToggle">
+      <span><strong>Precise event detection</strong> — needs a page reload</span>
+      <div class="input-hint" style="display:block;">Off: a trigger is recognised from its tag, role, aria-* and data-* attributes. On: the real click handlers are recorded as the page loads, so detection is exact. Reload the page once after switching this on.</div>
+    </label>
 
     <div id="selectorTestResult" class="selector-test-result" style="display:none;"></div>
 
@@ -332,6 +398,17 @@
     </div>
 
     <div class="advisor-box" id="advisorBox" style="display:none;"></div>
+  </div>
+
+  <!-- Auto-fill review: one question per selector, nothing is written until the
+       specialist confirms. Populated by renderAutoReview() in panel.js. -->
+  <div class="section" id="autoReviewSection" style="display:none;">
+    <div class="section-title">Confirm the suggestions<span class="dot">.</span></div>
+    <div id="autoReviewList"></div>
+    <div class="btn-row" style="margin-top:14px; gap:8px;">
+      <button class="btn-primary btn-sm" id="autoApplyBtn">Fill the ticked selectors</button>
+      <button class="btn-ghost btn-sm" id="autoDismissBtn">Dismiss</button>
+    </div>
   </div>
 
   <!-- Sub-selector inputs (dynamically populated by panel.js) -->
@@ -475,7 +552,10 @@
 </div>
 
 <script src="config.js"></script>
+<script src="selector-intel.js"></script>
 <script src="store.js"></script>
+<!-- after store.js: it reads U1Store.PRIVATE_PREFIX to key the API key -->
+<script src="ai-advisor.js"></script>
 <script src="auth.js"></script>
 <script src="docx-gen.js"></script>
 <script src="report-gen.js"></script>

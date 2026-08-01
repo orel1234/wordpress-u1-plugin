@@ -10,47 +10,22 @@
   if (window.__u1TestEngine) return; // idempotent
 
   // ── Robust, U1-valid, UNIQUE selector builder ─────────────────────────────
-  const NOISE = /^(flex|grid|w-|h-|py-|px-|mt-|mb-|ml-|mr-|p-|m-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui)/i;
-  // Reject ids that are GENERATED and therefore change on every page load:
-  // U1's own `u1st-<uuid>`, Angular Material's `mat-input-4` / `cdk-*`, and any
-  // bare-uuid id. Building a mapping on one of these breaks on the next reload.
-  const VOLATILE_ID = /^(u1st-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-  const idOk = (id) => /^[A-Za-z][\w-]*$/.test(id) && !VOLATILE_ID.test(id);
-  const uniqueOnPage = (s) => { try { return document.querySelectorAll(s).length === 1; } catch { return false; } };
-
-  function compound(node) {
+  // The implementation lives in selector-intel.js, which panel.js injects just
+  // before this file (see callTestEngine). Keeping one copy matters: the whole
+  // point of `robustSelector` is that it never emits a selector U1 will reject
+  // or one anchored on a generated id, and two copies drift apart silently.
+  //
+  // The local fallback below covers the case where this file is injected on its
+  // own — reduced to the identity ladder without the uniqueness chain, so if it
+  // ever runs it is obviously the degraded path rather than a second opinion.
+  const robustSelector = (node) => {
+    if (window.__u1SelectorIntel) return window.__u1SelectorIntel.robustSelector(node);
     if (!node || node.nodeType !== 1) return '';
-    if (node.id && idOk(node.id)) return '#' + node.id;
-    const testId = node.getAttribute('data-testid') || node.getAttribute('data-test');
-    if (testId) return `[data-testid="${testId}"]`;
-    const tag = node.tagName.toLowerCase();
-    const al = node.getAttribute('aria-label');
-    if (al && al.length < 40 && !al.includes('"')) return `${tag}[aria-label="${al}"]`;
-    const nm = node.getAttribute('name');
-    if (nm && !nm.includes('"')) return `${tag}[name="${nm}"]`;
-    const classes = (node.className && typeof node.className === 'string')
-      ? node.className.trim().split(/\s+/).filter(c => c && !c.includes(':') && !c.includes('/') && !c.includes('[') && !NOISE.test(c)) : [];
-    if (classes.length) {
-      for (const c of classes) { try { if (document.getElementsByClassName(c).length === 1) return '.' + c; } catch {} }
-      return tag + '.' + classes[0];
-    }
-    return tag;
-  }
-
-  // Build a unique, U1-valid selector (no spaces, no :nth) for `node`.
-  function robustSelector(node) {
-    if (!node || node.nodeType !== 1) return '';
-    let c = compound(node);
-    if (c.charAt(0) === '#' || uniqueOnPage(c)) return c;
-    let chain = c, cur = node.parentElement, guard = 0;
-    while (cur && cur !== document.body && guard++ < 6) {
-      const pc = compound(cur);
-      chain = pc + '>' + chain;
-      if (pc.charAt(0) === '#' || uniqueOnPage(chain)) return chain;
-      cur = cur.parentElement;
-    }
-    return uniqueOnPage(chain) ? chain : c;
-  }
+    if (node.id && /^[A-Za-z][\w-]*$/.test(node.id)) return '#' + node.id;
+    const cls = (node.className && typeof node.className === 'string')
+      ? node.className.trim().split(/\s+/).filter(Boolean) : [];
+    return cls.length ? node.tagName.toLowerCase() + '.' + cls[0] : node.tagName.toLowerCase();
+  };
 
   // ── Selector recommendation per U1 component type ──────────────────────────
   // Returns { notFound?, err?, count, current, tag, robust, notes:[{level,msg,suggestion}] }

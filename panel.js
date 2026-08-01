@@ -2278,10 +2278,19 @@ function primaryKeyOf(schema) {
   return null;
 }
 
-function renderSubSelectorInputs(type) {
+// Renders the selector rows for a component type.
+//
+// `into` lets an AI mapping card host its own copy of the exact same form, so
+// the two modes cannot drift apart: same markup, same hints, same required
+// markers, same 🔍 testers, same strength badges. With `append` the container's
+// existing content is kept (the card puts its primary row in first), and the
+// shared primary label/hint at the top of the tab is left alone.
+function renderSubSelectorInputs(type, into, opts) {
   const schema = COMPONENT_SCHEMAS[type];
   if (!schema) return;
-  $subSelArea.innerHTML = '';
+  const $subSelArea = into || document.getElementById('subSelectorsArea');
+  const scoped = !!into;
+  if (!(opts && opts.append)) $subSelArea.innerHTML = '';
 
   const req = schema.req || [];
   const desc = schema.desc || {};
@@ -2294,18 +2303,19 @@ function renderSubSelectorInputs(type) {
 
   // Rename the top label to the actual selector this field maps to, so it's
   // obvious the CSS Selector is e.g. the "listbox" (the <ul>), not the trigger.
-  const primaryLabel = document.getElementById('primaryLabel');
+  // Scoped renders (an AI card) own no shared header, so they skip all of this.
+  const primaryLabel = scoped ? null : document.getElementById('primaryLabel');
   if (primaryLabel) {
     primaryLabel.textContent = pKey ? `CSS Selector — ${labelOf(pKey)}` : 'CSS Selector';
   }
 
   // Friendly, plain-language help + example for the primary field.
   const helpInfo = PRIMARY_HELP[type];
-  if (helpInfo && helpInfo.ex && $primarySelectorInput) {
+  if (!scoped && helpInfo && helpInfo.ex && $primarySelectorInput) {
     $primarySelectorInput.placeholder = 'e.g. ' + helpInfo.ex;
   }
 
-  const primaryHint = document.getElementById('primaryHint');
+  const primaryHint = scoped ? null : document.getElementById('primaryHint');
   if (primaryHint) {
     // Prefer the plain-language explanation; fall back to the terse doc text.
     const body = (helpInfo && helpInfo.help) || (pKey && desc[pKey]) || '';
@@ -2329,7 +2339,10 @@ function renderSubSelectorInputs(type) {
     row.className = 'sub-sel-row';
     row.innerHTML = `
       <div class="key">${escapeHtml(labelOf(f))}${isReq ? ' <span class="req-star" title="required">*</span>' : ''}</div>
-      <input type="text" data-field="${escapeHtml(f)}" placeholder="${isReq ? 'required' : 'optional'}">
+      <span class="sel-strength-wrap">
+        <input type="text" data-field="${escapeHtml(f)}" placeholder="${isReq ? 'required' : 'optional'}">
+        <span class="sel-strength" data-level="empty" aria-hidden="true"></span>
+      </span>
       <button class="btn-ghost btn-xs sel-test" title="Test selector on page">🔍</button>
       ${hint ? `<div class="input-hint">${escapeHtml(hint)}</div>` : ''}
     `;
@@ -2357,7 +2370,7 @@ function renderSubSelectorInputs(type) {
         row.innerHTML = `
           <label>${escapeHtml(labelOf(k))} <span class="root-tag">(option)</span></label>
           ${isSelRoot
-            ? `<div class="selector-test-row">${inputHtml}<button class="btn-ghost btn-xs sel-test" title="Test selector on page">🔍</button></div>`
+            ? `<div class="selector-test-row"><span class="sel-strength-wrap">${inputHtml}<span class="sel-strength" data-level="empty" aria-hidden="true"></span></span><button class="btn-ghost btn-xs sel-test" title="Test selector on page">🔍</button></div>`
             : inputHtml}
           ${hint ? `<div class="input-hint">${escapeHtml(hint)}</div>` : ''}
         `;
@@ -2366,9 +2379,970 @@ function renderSubSelectorInputs(type) {
     }
   }
 
+  if (scoped) return;   // an AI card manages its own visibility and grading
   $subSelSection.style.display = 'block';
   $previewSection.style.display = 'none';
+  refreshStrength();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Selector strength meter
+//  Every selector input carries a live Weak / Medium / Strong badge so a fragile
+//  mapping (bare tag, utility class, generated id, 0 or many matches) is obvious
+//  while it is being typed — not after it breaks in production.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Some components are built ONLY when the widget opens (the datepicker popup,
+// the dialog body), so 0 matches on those inner selectors is expected, not a
+// fault. Keyed by type → the selector keys that MUST match even while closed.
+const DYNAMIC_OPEN = {
+  datepicker: ['trigger'],
+  dialog: ['trigger'],
+  combobox: ['trigger', 'input'],
+  'keyboard-grid': [], // container + cell are created only when the widget opens
+};
+
+// Fields that point at exactly ONE element. u1.fix.* resolves a selector rather
+// than looping, and applies to the LAST match — so several matches here is a
+// real defect, not a style note. (Plural fields like `items` are meant to match
+// many, and must not be penalised for it.)
+const SINGULAR_FIELDS = new Set([
+  'element', 'container', 'menu', 'horizontalMenu', 'listbox', 'combobox', 'trigger',
+  'input', 'dialog', 'closeBtn', 'heading', 'form', 'table', 'grid', 'carouselContainer',
+  'headerSelector', 'contentSelector', 'loading', 'tooltip', 'paginationContainer',
+]);
+
+// Batched match counts — ONE executeScript for every visible selector input, so
+// typing does not fire a round-trip per field per keystroke.
+async function countSelectors(sels) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return sels.map(() => null);
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (list) => list.map(s => {
+        if (!s) return null;
+        try { return document.querySelectorAll(s).length; } catch { return -1; }
+      }),
+      args: [sels],
+    });
+    return (res && res[0] && res[0].result) || sels.map(() => null);
+  } catch { return sels.map(() => null); }
+}
+
+function strengthOf(sel, opts) {
+  const intel = globalThis.__u1SelectorIntel;
+  if (!intel) return { level: 'empty', label: '', reasons: [] };
+  return intel.selectorStrength(sel, opts);
+}
+
+// Paint one badge and fold its reasons into the row's on-focus hint bubble.
+function paintStrength(badge, s) {
+  if (!badge) return;
+  badge.dataset.level = s.level;
+  badge.textContent = s.label || '';
+  badge.title = (s.reasons || []).join('\n');
+  const row = badge.closest('.sub-sel-row, .root-text, .field-group');
+  const hint = row && row.querySelector('.input-hint');
+  if (!hint) return;
+  let why = hint.querySelector('.strength-why');
+  if (s.level === 'empty') { if (why) why.remove(); return; }
+  if (!why) {
+    why = document.createElement('div');
+    why.className = 'strength-why';
+    hint.appendChild(why);
+  }
+  why.dataset.level = s.level;
+  why.textContent = (s.label ? s.label + ' selector — ' : '') + (s.reasons || []).join(' ');
+}
+
+let strengthTimer = null;
+
+// Re-grade every selector input on the builder form. Debounced by its callers.
+async function refreshStrength() {
+  const type = $componentType.value;
+  const schema = COMPONENT_SCHEMAS[type];
+  const pKey = schema ? primaryKeyOf(schema) : null;
+  const alwaysPresent = DYNAMIC_OPEN[type];
+
+  // Collect every (input, badge, field-key) triple currently on screen.
+  const rows = [];
+  if ($primarySelectorInput) {
+    const badge = $primarySelectorInput.parentElement?.querySelector('.sel-strength');
+    if (badge) rows.push({ input: $primarySelectorInput, badge, key: pKey || 'element', unique: true });
+  }
+  $subSelArea.querySelectorAll('.sel-strength-wrap').forEach(wrap => {
+    const input = wrap.querySelector('input[type="text"]');
+    const badge = wrap.querySelector('.sel-strength');
+    if (!input || !badge) return;
+    const key = input.dataset.field || input.dataset.root || '';
+    rows.push({ input, badge, key, unique: SINGULAR_FIELDS.has(key) });
+  });
+  if (!rows.length) return;
+
+  // Grade statically first so the badge responds instantly, then refine with
+  // live match counts when the page answers.
+  const opts = rows.map(r => ({
+    allowZero: !!(alwaysPresent && !alwaysPresent.includes(r.key)),
+    unique: r.unique,
+  }));
+  rows.forEach((r, i) => paintStrength(r.badge, strengthOf(r.input.value.trim(), opts[i])));
+
+  const sels = rows.map(r => r.input.value.trim());
+  if (!sels.some(Boolean)) return;
+  const counts = await countSelectors(sels);
+  rows.forEach((r, i) => {
+    if (r.input.value.trim() !== sels[i]) return; // typed on since — skip stale paint
+    const o = opts[i];
+    if (typeof counts[i] === 'number') o.count = counts[i];
+    paintStrength(r.badge, strengthOf(sels[i], o));
+  });
+}
+
+function scheduleStrength() {
+  clearTimeout(strengthTimer);
+  strengthTimer = setTimeout(refreshStrength, 400);
+}
+
+// One delegated listener covers the primary input and every generated sub-row.
+document.getElementById('tab-picker')?.addEventListener('input', (e) => {
+  if (e.target.matches('input[type="text"]')) scheduleStrength();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  AUTO MAPPING MODE
+//  Manual mode is unchanged. In Auto mode the specialist supplies only the
+//  PARENT selector; the analyzer reads that element on the page and proposes
+//  each sub-selector as a plain-English question. Nothing is written into the
+//  form until the suggestions are confirmed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Plain-English questions, keyed `type.field`. Deliberately short and free of
+// U1 jargon — the schema's `desc` text is the doc wording and reads as a spec,
+// which is not what you want to be answering one question at a time.
+const AUTO_QUESTIONS = {
+  'menu.items': 'Which things should the arrow keys move between?',
+  'menu.triggers': 'Which items open a drop-down when clicked?',
+  'menu.submenus': 'Which boxes open up when you click a top-level item?',
+  'menu.horizontalMenu': 'Do the top-level items sit side by side (left/right arrows)?',
+  'menu.menubar': 'Is this a bar of commands, or site navigation with drop-downs?',
+  'menu.openByMouseenter': 'Does just hovering over an item open its drop-down?',
+  'menu.openByMouseover': 'Does just hovering over an item open its drop-down?',
+  'listbox.options': 'Which rows are the options you pick from?',
+  'listbox.trigger': 'Which button opens this list?',
+  'dialog.trigger': 'Which button opens this pop-up?',
+  'dialog.closeBtn': 'Which button closes it? (Esc will do the same)',
+  'dialog.heading': 'Which text is the title of the pop-up?',
+  'accordion.contentSelector': 'Which panel opens and closes underneath?',
+  'tabs.tab': 'Which elements are the tabs themselves?',
+  'table.row': 'Which elements are the rows?',
+  'table.cell': 'Which elements are the cells?',
+  'grid.row': 'Which elements are the rows?',
+  'grid.cell': 'Which elements are the cells the arrows move between?',
+  'carousel.carouselContainer': 'Which element wraps all the slides?',
+};
+
+// The last analysis, so Apply can read the specialist's choices back.
+let autoResult = null;
+
+const $modeManualBtn = document.getElementById('modeManualBtn');
+const $modeAutoBtn = document.getElementById('modeAutoBtn');
+const $modeHint = document.getElementById('modeHint');
+const $autoAnalyzeRow = document.getElementById('autoAnalyzeRow');
+const $autoReviewSection = document.getElementById('autoReviewSection');
+const $autoReviewList = document.getElementById('autoReviewList');
+const $preciseEventsRow = document.getElementById('preciseEventsRow');
+const $preciseEventsToggle = document.getElementById('preciseEventsToggle');
+
+let mapMode = 'manual';
+
+function setMapMode(mode) {
+  mapMode = mode;
+  const isAuto = mode === 'auto';
+  $modeManualBtn?.classList.toggle('active', !isAuto);
+  $modeAutoBtn?.classList.toggle('active', isAuto);
+  $modeManualBtn?.setAttribute('aria-selected', String(!isAuto));
+  $modeAutoBtn?.setAttribute('aria-selected', String(isAuto));
+  if ($modeHint) {
+    $modeHint.textContent = isAuto
+      ? 'Enter the selector of the parent element only — the rest is worked out for you and shown for approval.'
+      : 'Fill each selector yourself.';
+  }
+  if ($autoAnalyzeRow) $autoAnalyzeRow.style.display = isAuto ? '' : 'none';
+  if ($preciseEventsRow) $preciseEventsRow.style.display = isAuto ? '' : 'none';
+  // The AI teacher lives in Automatic mode alongside the rule-based analyzer.
+  const aiBox = document.getElementById('aiBox');
+  if (aiBox) aiBox.style.display = isAuto ? '' : 'none';
+  for (const id of ['aiResults', 'aiMappings']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.style.display = (isAuto && el.innerHTML.trim()) ? 'block' : 'none';
+  }
+  if (!isAuto) hideAutoReview();
+}
+
+$modeManualBtn?.addEventListener('click', () => setMapMode('manual'));
+$modeAutoBtn?.addEventListener('click', () => setMapMode('auto'));
+
+function hideAutoReview() {
+  autoResult = null;
+  if ($autoReviewSection) $autoReviewSection.style.display = 'none';
+  if ($autoReviewList) $autoReviewList.innerHTML = '';
+}
+
+document.getElementById('autoDismissBtn')?.addEventListener('click', hideAutoReview);
+
+// ── The analyzer bridge ─────────────────────────────────────────────────────
+// Pass 1 (isolated world): selector-intel.js walks the container's subtree,
+// proposes candidates, and stamps the matched elements with data-u1-idx.
+// Pass 2 (MAIN world): if the opt-in recorder is installed it reports the REAL
+// listener types per stamped element; without it we keep the heuristic silently.
+// Pass 3: clear the stamps so the page is left exactly as it was.
+async function autoAnalyze(type, primary) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { err: 'Cannot run on this page.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (t, p) => window.__u1SelectorIntel.analyze(t, p),
+      args: [type, primary],
+    });
+    const out = (res && res[0] && res[0].result) || { err: 'No result' };
+
+    if (out && out.stampCount) {
+      let verified = null;
+      try {
+        const vr = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: 'MAIN',
+          func: () => {
+            if (!window.__u1EventMap) return null; // recorder not installed
+            const map = {};
+            document.querySelectorAll('[data-u1-idx]').forEach(el => {
+              const types = window.__u1EventMap.types(el);
+              if (types.length) map[el.getAttribute('data-u1-idx')] = types;
+            });
+            return map;
+          },
+        });
+        verified = (vr && vr[0]) ? vr[0].result : null;
+      } catch { verified = null; }
+      out.verified = verified;   // null = recorder absent → heuristic stands
+    }
+
+    // Always clear the stamps, even if the MAIN pass threw.
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => window.__u1SelectorIntel && window.__u1SelectorIntel.clearStamps(),
+      });
+    } catch {}
+    return out;
+  } catch (err) { return { err: err.message }; }
+}
+
+document.getElementById('autoAnalyzeBtn')?.addEventListener('click', async () => {
+  const status = document.getElementById('applyStatus');
+  const type = $componentType.value;
+  const primary = $primarySelectorInput.value.trim();
+  if (!type) { showNotice(status, 'Pick a component type first.', 'error', 3000); return; }
+  if (!primary) { showNotice(status, 'Enter the parent element’s selector first.', 'error', 3000); return; }
+
+  const btn = document.getElementById('autoAnalyzeBtn');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Analyzing…';
+  const res = await autoAnalyze(type, primary);
+  btn.disabled = false; btn.textContent = original;
+
+  if (!res || res.err) { showNotice(status, res?.err || 'Analysis failed.', 'error', 4000); return; }
+  if (res.error) { showNotice(status, 'That selector is not valid CSS: ' + res.error, 'error', 4000); return; }
+  if (res.notFound) { showNotice(status, 'Nothing on this page matches that selector.', 'error', 4000); return; }
+
+  // Step 0 — does this even look like the component that was chosen? The
+  // listbox-vs-menu distinction in particular is easy to get wrong, and U1
+  // throws "Submenu must have a trigger element" when it is.
+  let typeNote = null;
+  try {
+    const profile = await analyzeElement(primary);
+    const rec = recommendComponent(profile);
+    if (rec && rec.type !== type) {
+      typeNote = `This looks more like a “${rec.type}” than a “${type}”. ` +
+        (rec.notes && rec.notes[0] ? rec.notes[0].msg : '') +
+        ' Change the Component Type above if you agree — the suggestions below assume ' + type + '.';
+    }
+  } catch {}
+
+  autoResult = res;
+  renderAutoReview(type, res, typeNote);
+});
+
+// One review row per field. A field with several plausible readings becomes a
+// question with radio options instead of a pre-ticked answer.
+function renderAutoReview(type, res, typeNote) {
+  if (!$autoReviewList || !$autoReviewSection) return;
+  const schema = COMPONENT_SCHEMAS[type] || {};
+  const desc = schema.desc || {};
+  const req = schema.req || [];
+  const fields = res.fields || {};
+  const keys = Object.keys(fields);
+
+  let html = '';
+  if (typeNote) html += `<div class="advisor-note warn" style="margin-bottom:10px;">⚠️ ${escapeHtml(typeNote)}</div>`;
+
+  if (!res.hasRules) {
+    html += `<div class="advisor-note warn">⚠️ There is no auto-fill recipe for “${escapeHtml(type)}” yet — fill the selectors by hand below.</div>`;
+  } else if (!keys.length) {
+    html += `<div class="advisor-note warn">⚠️ Nothing could be worked out inside that element. Check the parent selector points at the whole component, then fill the selectors by hand.</div>`;
+  }
+
+  for (const f of keys) {
+    const list = fields[f];
+    const ask = list.length > 1;
+    const question = AUTO_QUESTIONS[type + '.' + f] || desc[f] || `Selector for “${f}”`;
+    const isReq = req.includes(f);
+
+    const cands = list.map((c, i) => {
+      // A boolean option (e.g. menu's `menubar`) has no selector to grade or
+      // highlight — show the value it should be set to and why.
+      if (typeof c.bool === 'boolean') {
+        return `
+          <div class="auto-cand">
+            <input type="checkbox" data-field="${escapeHtml(f)}" data-cand="${i}" checked>
+            <code>${escapeHtml(f)} = ${c.bool ? 'on' : 'off'}</code>
+          </div>
+          <div class="auto-why">${escapeHtml(c.why || '')}</div>`;
+      }
+      const s = strengthOf(c.selector, { count: c.count, unique: SINGULAR_FIELDS.has(f) });
+      const sig = signalLabel(c, res.verified);
+      // `optIn` candidates are guesses the markup cannot settle (does hovering
+      // open this menu?), so they start UNticked — a wrong guess there rewires
+      // the widget to the wrong event.
+      const control = ask
+        ? `<input type="radio" name="auto-${escapeHtml(f)}" data-field="${escapeHtml(f)}" data-cand="${i}" ${i === 0 && !c.optIn ? 'checked' : ''}>`
+        : `<input type="checkbox" data-field="${escapeHtml(f)}" data-cand="${i}" ${c.optIn ? '' : 'checked'}>`;
+      return `
+        <div class="auto-cand">
+          ${control}
+          <code>${escapeHtml(c.selector)}</code>
+          <span class="auto-count">${c.count} match${c.count === 1 ? '' : 'es'}</span>
+          <span class="sel-strength" data-level="${s.level}" style="position:static;transform:none;">${escapeHtml(s.label)}</span>
+          <button class="btn-ghost auto-eye" data-eye="${escapeHtml(c.selector)}" title="Show on the page">👁</button>
+        </div>
+        <div class="auto-why">${escapeHtml(c.why || '')}${sig}</div>`;
+    }).join('');
+
+    html += `
+      <div class="auto-row ${ask ? 'ask' : ''}" data-row="${escapeHtml(f)}">
+        <div class="auto-q">
+          <span>${ask ? '❓ ' : ''}${escapeHtml(question)}${isReq ? ' <span class="req-star">*</span>' : ''}</span>
+          <span class="auto-field">${escapeHtml(f)}</span>
+        </div>
+        ${cands}
+        ${ask ? `<div class="auto-why">Two readings fit — pick the one that matches what you see on the page (use 👁).</div>` : ''}
+      </div>`;
+  }
+
+  // Fields with no suggestion at all: say so, rather than leaving them silent.
+  const missing = (schema.fields || []).filter(f => !fields[f] && req.includes(f));
+  for (const f of missing) {
+    html += `
+      <div class="auto-row skipped">
+        <div class="auto-q"><span>${escapeHtml(AUTO_QUESTIONS[type + '.' + f] || f)}</span><span class="auto-field">${escapeHtml(f)}</span></div>
+        <div class="auto-why">Could not be worked out automatically — this one is required, so fill it in by hand below.</div>
+      </div>`;
+  }
+
+  $autoReviewList.innerHTML = html;
+  $autoReviewSection.style.display = keys.length || typeNote || !res.hasRules ? 'block' : 'none';
+  $autoReviewSection.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// "has a click event" badge: `verified` only when the opt-in recorder saw the
+// real addEventListener call; otherwise the heuristic signals, labelled as such.
+function signalLabel(c, verified) {
+  if (verified) {
+    const types = [];
+    for (const i of (c.idxs || [])) {
+      const t = verified[String(i)];
+      if (t) for (const x of t) if (!types.includes(x)) types.push(x);
+    }
+    const clickish = types.filter(t => /^(click|mousedown|mouseup|mouseenter|mouseover|keydown|touchstart|pointerdown)$/.test(t));
+    if (clickish.length) return `<span class="auto-sig verified" title="Recorded as the page loaded">✓ real handler: ${escapeHtml(clickish.join(', '))}</span>`;
+  }
+  const sigs = (c.signals || []).filter(Boolean);
+  if (!sigs.length) return '';
+  const first = sigs[0].split(' ').slice(0, 3).join(' ');
+  return `<span class="auto-sig" title="Worked out from the markup, not measured">looks clickable: ${escapeHtml(first)}</span>`;
+}
+
+// Highlight a proposed selector on the page (reuses the inspect overlay).
+$autoReviewList?.addEventListener('click', async (e) => {
+  const eye = e.target.closest('.auto-eye');
+  if (!eye) return;
+  const sel = eye.dataset.eye;
+  const on = eye.dataset.on !== '1';
+  // Toggle: a second click clears the overlay.
+  $autoReviewList.querySelectorAll('.auto-eye').forEach(b => { b.dataset.on = '0'; });
+  eye.dataset.on = on ? '1' : '0';
+  await highlightMatch(sel, 0, on);
+  const result = await testSelector(sel);
+  renderSelectorTest(result, sel);
+});
+
+// Write the ticked suggestions into the real form inputs, then run the existing
+// Generate path so validation + preview behave exactly as in Manual mode.
+document.getElementById('autoApplyBtn')?.addEventListener('click', async () => {
+  const status = document.getElementById('applyStatus');
+  if (!autoResult || !autoResult.fields) { hideAutoReview(); return; }
+
+  let filled = 0;
+  $autoReviewList.querySelectorAll('input[data-field]').forEach(ctrl => {
+    if (!ctrl.checked) return;
+    const f = ctrl.dataset.field;
+    const cand = (autoResult.fields[f] || [])[parseInt(ctrl.dataset.cand, 10)];
+    if (!cand) return;
+    const input = $subSelArea.querySelector(`input[data-field="${CSS.escape(f)}"]`) ||
+                  $subSelArea.querySelector(`[data-root="${CSS.escape(f)}"]`);
+    if (!input) return;
+    if (typeof cand.bool === 'boolean') {
+      if (input.type !== 'checkbox') return;
+      input.checked = cand.bool;
+    } else {
+      input.value = cand.selector;
+    }
+    filled++;
+  });
+
+  await highlightMatch('', 0, false);
+  hideAutoReview();
+  await refreshStrength();
+  showNotice(status, filled ? `Filled ${filled} selector${filled === 1 ? '' : 's'} — check them, then Generate.` : 'Nothing was ticked, so nothing changed.', filled ? 'success' : 'error', 4000);
+  if (filled) document.getElementById('generateBtn')?.click();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  AI MODE — two stages, and the specialist decides at both.
+//
+//  Stage 1  "Find what's on this screen": screenshot with a number drawn on
+//           every candidate element + the matching element list → an inventory
+//           of components. Each row's TYPE and CONTAINER are editable inputs,
+//           because a wrong guess must be correctable before it costs anything.
+//  Stage 2  "Make these accessible": for each ticked row, the container's real
+//           markup and its click-handler data go to Claude, which decides which
+//           selector belongs in which field. The answer is rendered in THE SAME
+//           form Manual mode uses — the AI replaces the typing, not the review.
+//
+//  Nothing is written to the mappings list until Save is pressed on a card, and
+//  every selector still goes through the same U1 validation and strength meter.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const $aiBox = document.getElementById('aiBox');
+const $aiResults = document.getElementById('aiResults');
+const $aiStatus = document.getElementById('aiStatus');
+const $aiInstruction = document.getElementById('aiInstruction');
+const $aiKeyRow = document.getElementById('aiKeyRow');
+const $aiKeyInput = document.getElementById('aiKeyInput');
+
+let aiFound = null;     // stage 1 result + the element context it was based on
+let aiMapped = [];      // stage 2 cards, index-aligned with the DOM cards
+let aiCost = 0;         // running spend for this panel session, in USD
+let aiRowTimer = null;
+let aiCardTimer = null;
+
+// Nothing may reach a mapping that we did not observe on the page. A selector
+// we produced is accepted outright; anything else only if every one of its
+// simple tokens (.class / #id / [attr] / tag) came from one we produced. That
+// allows the legitimate case — regrouping known classes into a comma group —
+// while an invented name has nowhere to have come from and is rejected.
+function checkAiSelector(value, context) {
+  const intel = globalThis.__u1SelectorIntel;
+  const norm = intel ? intel.normalize(value) : String(value || '').trim();
+  if (!norm) return { ok: false, why: 'empty' };
+  if (intel && !intel.isU1Valid(norm)) return { ok: false, why: 'U1 cannot use this selector (spaces or a pseudo-class)' };
+
+  const known = new Set((context.candidates || []).map(c => c.selector).filter(Boolean));
+  const TOKEN = /#[\w-]+|\.[\w-]+|\[[^\]]+\]|[a-z][\w-]*/gi;
+  const knownTokens = new Set();
+  for (const s of known) for (const t of (s.match(TOKEN) || [])) knownTokens.add(t);
+
+  const invented = [];
+  for (const branch of norm.split(',')) {
+    if (known.has(branch)) continue;
+    for (const t of (branch.match(TOKEN) || [])) if (!knownTokens.has(t)) invented.push(t);
+  }
+  if (invented.length) {
+    const list = [...new Set(invented)].join(', ');
+    return { ok: false, why: `invented — ${list} is on no element we found on the page` };
+  }
+  return { ok: true, value: norm };
+}
+
+document.getElementById('aiKeyToggle')?.addEventListener('click', async () => {
+  const showing = $aiKeyRow.style.display !== 'none';
+  $aiKeyRow.style.display = showing ? 'none' : '';
+  if (!showing && $aiKeyInput && !$aiKeyInput.value) {
+    // Show that a key exists without ever rendering it back.
+    const saved = await U1AI.getKey();
+    $aiKeyInput.placeholder = saved ? '•••••••• (saved — type to replace)' : 'sk-ant-…';
+  }
+});
+
+document.getElementById('aiKeySave')?.addEventListener('click', async () => {
+  const val = ($aiKeyInput.value || '').trim();
+  if (!val) { showNotice($aiStatus, 'Paste a key first.', 'error', 3000); return; }
+  await U1AI.setKey(val);
+  $aiKeyInput.value = '';
+  $aiKeyInput.placeholder = '•••••••• (saved — type to replace)';
+  $aiKeyRow.style.display = 'none';
+  showNotice($aiStatus, 'Key saved on this machine.', 'success', 3000);
+});
+
+// Run selector-intel in the page (injecting it first, idempotently).
+async function inPage(tabId, fn, args) {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['selector-intel.js'] });
+  const res = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args: args || [] });
+  return res && res[0] ? res[0].result : null;
+}
+
+// Screenshot the visible tab and scale it down. The long edge is capped at
+// 1568px: Claude accepts up to 2576px, but a full-resolution image costs up to
+// ~3x the image tokens and this review does not need that fidelity.
+function scaleShot(dataUrl, maxEdge) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const long = Math.max(img.width, img.height);
+      const scale = long > maxEdge ? maxEdge / long : 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+// ── Stage 1: discover what is on the screen ─────────────────────────────────
+document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('aiDiscoverBtn');
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice($aiStatus, 'Cannot read this page.', 'error', 4000); return; }
+  if (!(await U1AI.getKey())) {
+    $aiKeyRow.style.display = '';
+    showNotice($aiStatus, 'Paste your Anthropic API key first.', 'error', 4000);
+    return;
+  }
+
+  const original = btn.textContent;
+  btn.disabled = true;
+  try {
+    btn.textContent = 'Reading the page…';
+    const context = await inPage(tab.id, () => window.__u1SelectorIntel.collectCandidates(60));
+    if (!context || !context.candidates || !context.candidates.length) {
+      showNotice($aiStatus, 'Nothing reviewable in the viewport — scroll to the part you want.', 'error', 5000);
+      return;
+    }
+
+    // Draw the numbers, capture, then clear them again immediately so the page
+    // is left as it was even if the request fails.
+    btn.textContent = 'Capturing…';
+    await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
+    await new Promise(r => setTimeout(r, 250)); // let the overlay paint
+    let shot = null;
+    try {
+      const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
+      shot = await scaleShot(raw, 1568);
+    } finally {
+      await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+    }
+    if (!shot) { showNotice($aiStatus, 'Could not capture the screen.', 'error', 4000); return; }
+
+    btn.textContent = 'Looking…';
+    $aiStatus.textContent = 'Usually 10–30 seconds.';
+    $aiStatus.className = 'map-mode-hint';
+    $aiStatus.style.display = '';
+
+    const out = await U1AI.discover({ screenshot: shot, context, scope: $aiInstruction.value.trim() });
+    if (out.err) { showNotice($aiStatus, out.err, 'error', 8000); return; }
+
+    // Re-mark so the 👁 buttons can locate elements after the overlay was cleared.
+    await inPage(tab.id, () => window.__u1SelectorIntel.collectCandidates(60));
+
+    aiFound = { ...out, context };
+    aiCost += U1AI.estimateCost(out.usage) || 0;
+    renderAiComponents(aiFound);
+    $aiStatus.style.display = 'none';
+  } catch (err) {
+    showNotice($aiStatus, 'Failed: ' + err.message, 'error', 6000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+// The inventory. Every row's component type and container selector are inputs,
+// not labels — a wrong guess is corrected here rather than worked around later.
+function renderAiComponents(found) {
+  const list = document.getElementById('aiComponentList');
+  const comps = found.components || [];
+  document.getElementById('aiSummary').innerHTML =
+    escapeHtml(found.summary || '') +
+    `<div class="ai-meta">${comps.length} component${comps.length === 1 ? '' : 's'} found` +
+    ` · ${escapeHtml(found.model || '')} · ~$${aiCost.toFixed(3)} this session</div>`;
+
+  const typeOptions = (sel) => U1AI.U1_TYPES
+    .map(t => `<option value="${t}"${t === sel ? ' selected' : ''}>${t}</option>`).join('');
+
+  list.innerHTML = comps.map((c, i) => {
+    const chk = checkAiSelector(c.containerSelector, found.context);
+    const bad = !chk.ok ? `<div class="ai-sel-bad">⛔ ${escapeHtml(chk.why)} — pick another element or fix this by hand.</div>` : '';
+    return `
+      <div class="ai-comp" data-i="${i}">
+        <div class="ai-comp-head">
+          <input type="checkbox" class="ai-comp-tick" ${c.needsWork && chk.ok ? 'checked' : ''} ${chk.ok ? '' : 'disabled'}>
+          <span class="ai-mark">${Number.isInteger(c.mark) && c.mark > 0 ? c.mark : '—'}</span>
+          <span class="ai-comp-label">${escapeHtml(c.label || '')}</span>
+          ${c.needsWork ? '<span class="ai-sev" data-need="1">needs work</span>' : '<span class="ai-sev" data-need="0">looks ok</span>'}
+        </div>
+        <div class="ai-comp-why">${escapeHtml(c.why || '')}</div>
+        <div class="ai-comp-fields">
+          <label>Type</label>
+          <select class="ai-comp-type">${typeOptions(c.u1Type)}</select>
+          <label>Container</label>
+          <span class="sel-strength-wrap">
+            <input type="text" class="ai-comp-sel" value="${escapeHtml(c.containerSelector || '')}">
+            <span class="sel-strength" data-level="empty" aria-hidden="true"></span>
+          </span>
+          <button class="btn-ghost auto-eye ai-comp-eye" title="Show on the page">👁</button>
+        </div>
+        ${bad}
+      </div>`;
+  }).join('') || '<div class="advisor-note ok">✅ Nothing found that needs a mapping.</div>';
+
+  document.getElementById('aiResults').style.display = 'block';
+  document.getElementById('aiMappings').style.display = 'none';
+  document.getElementById('aiMappings').innerHTML = '';
+  paintAiRowStrength();
+}
+
+// Grade each row's container selector with the same meter as the manual form.
+async function paintAiRowStrength() {
+  const rows = [...document.querySelectorAll('#aiComponentList .ai-comp')];
+  if (!rows.length) return;
+  const sels = rows.map(r => r.querySelector('.ai-comp-sel').value.trim());
+  rows.forEach((r, i) => paintStrength(r.querySelector('.sel-strength'), strengthOf(sels[i], { unique: true })));
+  const counts = await countSelectors(sels);
+  rows.forEach((r, i) => {
+    if (r.querySelector('.ai-comp-sel').value.trim() !== sels[i]) return;
+    const o = { unique: true };
+    if (typeof counts[i] === 'number') o.count = counts[i];
+    paintStrength(r.querySelector('.sel-strength'), strengthOf(sels[i], o));
+  });
+}
+
+document.getElementById('aiComponentList')?.addEventListener('input', (e) => {
+  if (e.target.classList.contains('ai-comp-sel')) {
+    clearTimeout(aiRowTimer);
+    aiRowTimer = setTimeout(paintAiRowStrength, 400);
+  }
+});
+
+document.getElementById('aiComponentList')?.addEventListener('click', async (e) => {
+  const eye = e.target.closest('.ai-comp-eye');
+  if (!eye) return;
+  const sel = eye.closest('.ai-comp').querySelector('.ai-comp-sel').value.trim();
+  if (!sel) return;
+  await highlightMatch(sel, 0, true);
+  renderSelectorTest(await testSelector(sel), sel);
+});
+
+document.getElementById('aiDismissBtn')?.addEventListener('click', () => {
+  aiFound = null;
+  document.getElementById('aiResults').style.display = 'none';
+  document.getElementById('aiMappings').style.display = 'none';
+  document.getElementById('aiMappings').innerHTML = '';
+});
+
+// ── Stage 2: turn the ticked rows into real mappings ────────────────────────
+// For each ticked component: pull the container's markup + event data from the
+// page, ask Claude which selector belongs in which field, then render THE SAME
+// form Manual mode uses, pre-filled. Nothing is saved until the specialist
+// presses Save on a card.
+document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('aiMapBtn');
+  const status = document.getElementById('aiMapStatus');
+  const rows = [...document.querySelectorAll('#aiComponentList .ai-comp')]
+    .filter(r => r.querySelector('.ai-comp-tick').checked)
+    .map(r => ({
+      type: r.querySelector('.ai-comp-type').value,
+      sel: r.querySelector('.ai-comp-sel').value.trim(),
+      label: r.querySelector('.ai-comp-label').textContent,
+    }))
+    .filter(r => r.sel && COMPONENT_SCHEMAS[r.type]);
+
+  if (!rows.length) { showNotice(status, 'Tick at least one component first.', 'error', 3500); return; }
+
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
+
+  const host = document.getElementById('aiMappings');
+  host.innerHTML = '';
+  host.style.display = 'block';
+  aiMapped = [];
+
+  const original = btn.textContent;
+  btn.disabled = true;
+  try {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      btn.textContent = `Mapping ${i + 1}/${rows.length}…`;
+      status.textContent = row.label;
+      status.className = 'map-mode-hint';
+      status.style.display = '';
+
+      const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
+      if (!markup || markup.error || markup.notFound) {
+        host.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error || 'that selector matches nothing on the page'));
+        continue;
+      }
+
+      const schema = COMPONENT_SCHEMAS[row.type];
+      const out = await U1AI.mapComponent({
+        u1Type: row.type,
+        containerSel: row.sel,
+        markup,
+        fields: schema.fields || [],
+        fieldDocs: schema.desc || {},
+        options: Object.keys(schema.rootFields || {}),
+      });
+      aiCost += U1AI.estimateCost(out.usage) || 0;
+      if (out.err) { host.insertAdjacentHTML('beforeend', aiMapCardError(row, out.err)); continue; }
+
+      const idx = aiMapped.length;
+      aiMapped.push({ row, result: out, markup });
+      host.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
+      // Build the real inputs with the shared renderer so this card behaves
+      // exactly like the manual form, then fill them.
+      fillAiMapCard(idx, row, out);
+    }
+    status.style.display = 'none';
+  } catch (err) {
+    showNotice(status, 'Failed: ' + err.message, 'error', 6000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+const aiMapCardError = (row, why) => `
+  <div class="ai-map-card">
+    <div class="ai-map-head"><strong>${escapeHtml(row.label)}</strong>
+      <span class="ai-conf" data-c="low">failed</span></div>
+    <div class="ai-comp-why">${escapeHtml(why)}</div>
+  </div>`;
+
+function renderAiMapCard(idx, row, out, recorderActive) {
+  const conf = ['high', 'medium', 'low'].includes(out.confidence) ? out.confidence : 'medium';
+  return `
+    <div class="ai-map-card" data-card="${idx}">
+      <div class="ai-map-head">
+        <strong>${escapeHtml(row.label)}</strong>
+        <code>u1.fix.${escapeHtml(row.type)}</code>
+        <span class="ai-conf" data-c="${conf}">${conf} confidence</span>
+      </div>
+      ${out.notes ? `<div class="ai-comp-why">⚠️ ${escapeHtml(out.notes)}</div>` : ''}
+      <div class="ai-comp-why">${recorderActive
+        ? '✓ Triggers were identified from the real click handlers recorded on this page.'
+        : 'Triggers were worked out from tags and attributes. For measured handlers, switch on precise event detection and reload the page.'}</div>
+      <div class="ai-map-form" id="aiMapForm${idx}"></div>
+      <div class="code-preview" id="aiMapCode${idx}"></div>
+      <div class="ai-find-actions">
+        <button class="btn-outline btn-xs" data-editcard="${idx}">✍️ Open in the builder</button>
+        <button class="btn-primary btn-xs" data-savecard="${idx}">Save mapping</button>
+      </div>
+    </div>`;
+}
+
+// Renders the standard sub-selector rows into a card and fills them with the
+// AI's answer. Reuses renderSubSelectorInputs by pointing it at this card's
+// container, so the markup, hints, 🔍 testers and strength badges are identical
+// to Manual mode — the AI only replaces the typing.
+function fillAiMapCard(idx, row, out) {
+  const form = document.getElementById('aiMapForm' + idx);
+  if (!form) return;
+  const schema = COMPONENT_SCHEMAS[row.type];
+  const pKey = primaryKeyOf(schema);
+
+  form.innerHTML =
+    `<div class="sub-sel-row">
+       <div class="key">${escapeHtml(pKey || 'selector')} <span class="req-star">*</span></div>
+       <span class="sel-strength-wrap">
+         <input type="text" data-field="__primary" value="${escapeHtml(out.primary || row.sel)}">
+         <span class="sel-strength" data-level="empty" aria-hidden="true"></span>
+       </span>
+       <button class="btn-ghost btn-xs sel-test" title="Test selector on page">🔍</button>
+     </div>`;
+  renderSubSelectorInputs(row.type, form, { append: true });
+
+  const byKey = {};
+  for (const f of (out.fields || [])) byKey[f.key] = f;
+  for (const f of (schema.fields || [])) {
+    const inp = form.querySelector(`input[data-field="${CSS.escape(f)}"]`);
+    if (inp && byKey[f]) {
+      inp.value = byKey[f].value;
+      if (byKey[f].why) {
+        const hint = inp.closest('.sub-sel-row')?.querySelector('.input-hint');
+        if (hint) hint.insertAdjacentHTML('beforeend', `<div class="strength-why">AI: ${escapeHtml(byKey[f].why)}</div>`);
+      }
+    }
+  }
+  for (const o of (out.options || [])) {
+    const inp = form.querySelector(`[data-root="${CSS.escape(o.key)}"]`);
+    if (!inp) continue;
+    if (inp.type === 'checkbox') inp.checked = !/^(false|no|off|0)$/i.test(String(o.value).trim());
+    else inp.value = o.value;
+  }
+  // A menu with submenus MUST have menubar off, or u1 throws
+  // "Submenu must have a trigger element".
+  if (row.type === 'menu' && byKey.submenus && !(out.options || []).some(o => o.key === 'menubar')) {
+    const mb = form.querySelector('[data-root="menubar"]');
+    if (mb && mb.type === 'checkbox') mb.checked = false;
+  }
+
+  refreshAiCard(idx);
+}
+
+// Build the template from one card's inputs (the card-scoped twin of
+// buildTemplateFromForm), refresh its code preview and its strength badges.
+function aiCardTemplate(idx) {
+  const form = document.getElementById('aiMapForm' + idx);
+  const entry = aiMapped[idx];
+  if (!form || !entry) return null;
+  const primary = form.querySelector('input[data-field="__primary"]').value.trim();
+  if (!primary) return null;
+  const fieldValues = {};
+  form.querySelectorAll('input[type="text"][data-field]').forEach(inp => {
+    if (inp.dataset.field !== '__primary') fieldValues[inp.dataset.field] = inp.value.trim();
+  });
+  const rootValues = {};
+  form.querySelectorAll('[data-root]').forEach(inp => {
+    rootValues[inp.dataset.root] = inp.type === 'checkbox' ? inp.checked : inp.value.trim();
+  });
+  return buildTemplate(entry.row.type, primary, fieldValues, rootValues);
+}
+
+async function refreshAiCard(idx) {
+  const tpl = aiCardTemplate(idx);
+  const pre = document.getElementById('aiMapCode' + idx);
+  if (pre) pre.textContent = tpl ? tpl.code : '';
+  const form = document.getElementById('aiMapForm' + idx);
+  if (!form) return;
+  const wraps = [...form.querySelectorAll('.sel-strength-wrap')];
+  const sels = wraps.map(w => w.querySelector('input').value.trim());
+  wraps.forEach((w, i) => {
+    const key = w.querySelector('input').dataset.field || '';
+    paintStrength(w.querySelector('.sel-strength'), strengthOf(sels[i], { unique: key === '__primary' || SINGULAR_FIELDS.has(key) }));
+  });
+  const counts = await countSelectors(sels);
+  wraps.forEach((w, i) => {
+    const inp = w.querySelector('input');
+    if (inp.value.trim() !== sels[i]) return;
+    const key = inp.dataset.field || '';
+    const o = { unique: key === '__primary' || SINGULAR_FIELDS.has(key) };
+    if (typeof counts[i] === 'number') o.count = counts[i];
+    paintStrength(w.querySelector('.sel-strength'), strengthOf(sels[i], o));
+  });
+}
+
+document.getElementById('aiMappings')?.addEventListener('input', (e) => {
+  const card = e.target.closest('[data-card]');
+  if (!card) return;
+  clearTimeout(aiCardTimer);
+  aiCardTimer = setTimeout(() => refreshAiCard(Number(card.dataset.card)), 400);
+});
+document.getElementById('aiMappings')?.addEventListener('change', (e) => {
+  const card = e.target.closest('[data-card]');
+  if (card && e.target.matches('[data-root]')) refreshAiCard(Number(card.dataset.card));
+});
+
+document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
+  const save = e.target.closest('[data-savecard]');
+  if (save) {
+    const idx = Number(save.dataset.savecard);
+    const tpl = aiCardTemplate(idx);
+    if (!tpl) { showNotice(document.getElementById('aiMapStatus'), 'Nothing to save — the selector is empty.', 'error', 3500); return; }
+    save.disabled = true; save.textContent = 'Saving…';
+    await saveMappingEntry(tpl);
+    save.textContent = 'Saved ✓';
+    return;
+  }
+
+  const edit = e.target.closest('[data-editcard]');
+  if (edit) {
+    // Hand this card off to the Manual builder, unchanged.
+    const idx = Number(edit.dataset.editcard);
+    const tpl = aiCardTemplate(idx);
+    if (!tpl) return;
+    loadMappingIntoForm({ type: tpl.type, primary: tpl.primary, config: tpl.config });
+  }
+});
+
+// ── Precise event detection (opt-in) ────────────────────────────────────────
+// Registered dynamically rather than in manifest.json so the recorder only runs
+// on pages when the specialist has asked for it. `scripting` + <all_urls> are
+// already granted, so no manifest change is needed.
+const RECORDER_ID = 'u1-event-recorder';
+// A device-local preference, not project data: the `__` prefix keeps it out of
+// exported backups (U1Store.getExportable strips private keys).
+const PRECISE_EVENTS_KEY = U1Store.PRIVATE_PREFIX + 'preciseEvents';
+
+async function setPreciseEvents(on) {
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [RECORDER_ID] });
+    if (on && !existing.length) {
+      await chrome.scripting.registerContentScripts([{
+        id: RECORDER_ID,
+        matches: ['<all_urls>'],
+        js: ['event-recorder.js'],
+        runAt: 'document_start',
+        world: 'MAIN',
+        allFrames: false,
+      }]);
+    } else if (!on && existing.length) {
+      await chrome.scripting.unregisterContentScripts({ ids: [RECORDER_ID] });
+    }
+    await U1Store.set({ [PRECISE_EVENTS_KEY]: !!on });
+    return true;
+  } catch (err) {
+    showNotice(document.getElementById('applyStatus'), 'Could not change event detection: ' + err.message, 'error', 4000);
+    return false;
+  }
+}
+
+$preciseEventsToggle?.addEventListener('change', async () => {
+  const on = $preciseEventsToggle.checked;
+  const ok = await setPreciseEvents(on);
+  if (!ok) { $preciseEventsToggle.checked = !on; return; }
+  showNotice(document.getElementById('applyStatus'),
+    on ? 'Event recording is on — reload the page once, then Analyze again.' : 'Back to working it out from the markup.',
+    'success', 4000);
+});
+
+// Restore the toggle's state on load (and re-register, since dynamic scripts do
+// persist but the checkbox has to agree with reality either way).
+(async () => {
+  if (!$preciseEventsToggle) return;
+  try {
+    const stored = await U1Store.get(PRECISE_EVENTS_KEY);
+    const wanted = !!stored[PRECISE_EVENTS_KEY];
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [RECORDER_ID] });
+    $preciseEventsToggle.checked = !!existing.length || wanted;
+    if (wanted && !existing.length) await setPreciseEvents(true);
+  } catch {}
+})();
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Smart Advisor — inspect the selected element on the live page and recommend
@@ -2382,6 +3356,8 @@ async function analyzeElement(sel) {
   const tab = await getTab();
   if (!isInjectable(tab)) return { err: 'Cannot run on this page.' };
   try {
+    // Provides window.__u1SelectorIntel.robustSelector, used below.
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (selector) => {
@@ -2390,45 +3366,18 @@ async function analyzeElement(sel) {
         catch (e) { return { error: e.message }; }
         if (!el) return { notFound: true };
 
-        // Robust, U1-valid, UNIQUE selector builder (ported from the
-        // accessibility_autochecker algorithm): identity ladder + class noise
-        // filter + uniqueness gate + id-anchored '>' chain. No spaces, no :nth.
-        const NOISE = /^(flex|grid|w-|h-|p-|m-|py-|px-|mt-|mb-|ml-|mr-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui)/i;
-        // Never build on a GENERATED id (U1's own u1st-<uuid>, Angular Material's
-        // mat-input-N / cdk-*, framework uuids) — they change on every reload.
-        const VOLATILE_ID = /^(u1st-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-        const idOk = (id) => /^[A-Za-z][\w-]*$/.test(id) && !VOLATILE_ID.test(id);
-        const uniqueOnPage = (s) => { try { return document.querySelectorAll(s).length === 1; } catch { return false; } };
-        const compound = (node) => {
-          if (!node || node.nodeType !== 1) return '';
-          if (node.id && idOk(node.id)) return '#' + node.id;
-          const testId = node.getAttribute('data-testid') || node.getAttribute('data-test');
-          if (testId) return `[data-testid="${testId}"]`;
-          const tag = node.tagName.toLowerCase();
-          const al = node.getAttribute('aria-label');
-          if (al && al.length < 40 && !al.includes('"')) return `${tag}[aria-label="${al}"]`;
-          const nm = node.getAttribute('name');
-          if (nm && !nm.includes('"')) return `${tag}[name="${nm}"]`;
-          const classes = (node.className && typeof node.className === 'string')
-            ? node.className.trim().split(/\s+/).filter(c => c && !c.includes(':') && !c.includes('/') && !c.includes('[') && !NOISE.test(c)) : [];
-          if (classes.length) {
-            for (const c of classes) { try { if (document.getElementsByClassName(c).length === 1) return '.' + c; } catch {} }
-            return tag + '.' + classes[0];
-          }
-          return tag;
-        };
+        // Robust, U1-valid, UNIQUE selector builder: identity ladder + class
+        // noise filter + uniqueness gate + id-anchored '>' chain. No spaces, no
+        // :nth. One implementation, in selector-intel.js — this function's
+        // caller injects it first. The fallback is the degraded identity ladder,
+        // so a missing module is obvious rather than a silent second opinion.
         const simple = (node) => {
+          if (window.__u1SelectorIntel) return window.__u1SelectorIntel.robustSelector(node);
           if (!node || node.nodeType !== 1) return '';
-          let c = compound(node);
-          if (c.charAt(0) === '#' || uniqueOnPage(c)) return c;
-          let chain = c, cur = node.parentElement, guard = 0;
-          while (cur && cur !== document.body && guard++ < 6) {
-            const pc = compound(cur);
-            chain = pc + '>' + chain;
-            if (pc.charAt(0) === '#' || uniqueOnPage(chain)) return chain;
-            cur = cur.parentElement;
-          }
-          return uniqueOnPage(chain) ? chain : c;
+          if (node.id && /^[A-Za-z][\w-]*$/.test(node.id)) return '#' + node.id;
+          const cls = (node.className && typeof node.className === 'string')
+            ? node.className.trim().split(/\s+/).filter(Boolean) : [];
+          return cls.length ? node.tagName.toLowerCase() + '.' + cls[0] : node.tagName.toLowerCase();
         };
 
         const classList = (el.className && typeof el.className === 'string')
@@ -2568,7 +3517,11 @@ async function callTestEngine(fnName, args) {
   const tab = await getTab();
   if (!isInjectable(tab)) return null;
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['test-engine.js'] });
+    // selector-intel.js first: test-engine.js delegates robustSelector to it.
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['selector-intel.js', 'test-engine.js'],
+    });
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (fn, a) => (window.__u1TestEngine && window.__u1TestEngine[fn]) ? window.__u1TestEngine[fn].apply(null, a) : null,
@@ -2685,16 +3638,8 @@ async function validateMapping(type, primary, fieldValues) {
       });
       const r = res?.[0]?.result;
       if (r) {
-        // Some components are built ONLY when the widget opens (the datepicker
-        // popup, the dialog body). For those, only the always-present key (the
-        // trigger) must match now — the inner selectors legitimately match 0
-        // while closed, so a 0 there is expected, not a warning.
-        const DYNAMIC_OPEN = {
-          datepicker: ['trigger'],
-          dialog: ['trigger'],
-          combobox: ['trigger', 'input'],
-          'keyboard-grid': [], // container + cell are created only when the widget opens
-        };
+        // Components built ONLY when the widget opens: only the always-present
+        // key (the trigger) must match now — see DYNAMIC_OPEN at module scope.
         const alwaysPresent = DYNAMIC_OPEN[type];
         for (const [k, c] of Object.entries(r.counts)) {
           if (c === -1) { notes.push({ level: 'err', msg: `“${k}” is not a valid CSS selector.` }); continue; }
@@ -2807,6 +3752,7 @@ function loadMappingIntoForm(m) {
   }
 
   // Build preview + currentTemplate from the filled inputs, mark edit mode.
+  refreshStrength();
   document.getElementById('generateBtn').click();
   editingMappingKey = mappingKey(m);
   const addBtn = document.getElementById('addMappingBtn');
@@ -2841,6 +3787,9 @@ function resetPicker() {
   if (testBox) { testBox.style.display = 'none'; testBox.innerHTML = ''; }
   const applyStatus = document.getElementById('applyStatus');
   if (applyStatus) applyStatus.style.display = 'none';
+  hideAutoReview();
+  const primaryBadge = $primarySelectorInput.parentElement?.querySelector('.sel-strength');
+  if (primaryBadge) paintStrength(primaryBadge, { level: 'empty', label: '', reasons: [] });
   $primarySelectorInput.focus();
 }
 
@@ -3279,36 +4228,28 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
   }
 });
 
-document.getElementById('addMappingBtn').addEventListener('click', async () => {
-  const status = document.getElementById('applyStatus');
-  // Always rebuild from the current form so an edited-but-not-regenerated form
-  // still saves (previously this silently returned when currentTemplate was stale).
-  const fresh = buildTemplateFromForm();
-  if (fresh) currentTemplate = fresh;
-  if (!currentTemplate) {
-    showNotice(status, 'Enter a CSS selector and pick a component type first.', 'error', 3500);
-    return;
-  }
-  const btn = document.getElementById('addMappingBtn');
+// Persist one built template as a mapping for the current host, replacing an
+// existing entry with the same key (or the one being edited). Shared by the
+// manual "Add to Mapping" button and the AI mapping cards, so a mapping made
+// either way is byte-for-byte the same record.
+async function saveMappingEntry(template, { editingKey = null } = {}) {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
-  const newKey = mappingKey(currentTemplate);
-  // If editing, drop the original (its key may have changed after edits).
-  let existingIdx = editingMappingKey ? list.findIndex(m => mappingKey(m) === editingMappingKey) : -1;
+  const newKey = mappingKey(template);
+  let existingIdx = editingKey ? list.findIndex(m => mappingKey(m) === editingKey) : -1;
   if (existingIdx < 0) existingIdx = list.findIndex(m => mappingKey(m) === newKey);
 
-  btn.textContent = 'Capturing…';
   const tab = await getTab();
-  const screenshot = await captureElementScreenshot(currentTemplate.primary);
+  const screenshot = await captureElementScreenshot(template.primary);
   const prev = existingIdx >= 0 ? list[existingIdx] : null;
   const entry = {
-    type: currentTemplate.type,
-    primary: currentTemplate.primary,
-    firstArg: currentTemplate.firstArg,
-    custom: currentTemplate.custom || null,
-    config: currentTemplate.config,
-    code: currentTemplate.code,
+    type: template.type,
+    primary: template.primary,
+    firstArg: template.firstArg,
+    custom: template.custom || null,
+    config: template.config,
+    code: template.code,
     // Keep the previous screenshot if a fresh capture wasn't possible.
     screenshot: screenshot || (prev && prev.screenshot) || null,
     pageUrl: tab?.url || (prev && prev.pageUrl) || '',
@@ -3326,10 +4267,26 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   else list.push(entry);
   await U1Store.set({ [key]: list });
 
-  const wasEditing = editingMappingKey != null || existingIdx >= 0;
-  editingMappingKey = null;
   loadMappingsList();
   refreshExportInfo();
+  return { updated: existingIdx >= 0 };
+}
+
+document.getElementById('addMappingBtn').addEventListener('click', async () => {
+  const status = document.getElementById('applyStatus');
+  // Always rebuild from the current form so an edited-but-not-regenerated form
+  // still saves (previously this silently returned when currentTemplate was stale).
+  const fresh = buildTemplateFromForm();
+  if (fresh) currentTemplate = fresh;
+  if (!currentTemplate) {
+    showNotice(status, 'Enter a CSS selector and pick a component type first.', 'error', 3500);
+    return;
+  }
+  const btn = document.getElementById('addMappingBtn');
+  btn.textContent = 'Capturing…';
+  const { updated } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey });
+  const wasEditing = editingMappingKey != null || updated;
+  editingMappingKey = null;
   btn.textContent = wasEditing ? 'Updated ✓' : 'Added ✓';
   setTimeout(() => { btn.textContent = 'Add to Mapping'; }, 1500);
 });
