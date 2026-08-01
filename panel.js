@@ -2652,9 +2652,12 @@ function setMapMode(mode) {
   // Show a results panel only when it holds actual results. #aiResults has a
   // fixed shell (summary, list, buttons), so testing its own innerHTML would
   // always be truthy and leave an empty box with a dead button sitting there.
+  // Count the CARDS, not the container. Both panels now hold a static carousel
+  // shell, so testing the wrapper's children is always truthy and would leave
+  // an empty carousel with dead arrows on screen.
   const hasResults = {
-    aiResults: () => !!document.getElementById('aiComponentList')?.children.length,
-    aiMappings: () => !!document.getElementById('aiMappings')?.children.length,
+    aiResults: () => !!document.getElementById('aiCompTrack')?.children.length,
+    aiMappings: () => !!document.getElementById('aiSlideTrack')?.children.length,
   };
   for (const id of ['aiResults', 'aiMappings']) {
     const el = document.getElementById(id);
@@ -3133,37 +3136,89 @@ function renderAiComponents(found) {
   const typeOptions = (sel) => U1AI.U1_TYPES
     .map(t => `<option value="${t}"${t === sel ? ' selected' : ''}>${t}</option>`).join('');
 
-  list.innerHTML = comps.map((c, i) => {
+  const track = document.getElementById('aiCompTrack');
+
+  track.innerHTML = comps.map((c, i) => {
     const chk = checkAiSelector(c.containerSelector, found.context);
-    const bad = !chk.ok ? `<div class="ai-sel-bad">⛔ ${escapeHtml(chk.why)} — pick another element or fix this by hand.</div>` : '';
+    const bad = !chk.ok ? `<div class="ai-sel-bad">⛔ ${escapeHtml(chk.why)} — put another selector above, or handle this one by hand.</div>` : '';
     return `
       <div class="ai-comp" data-i="${i}">
         <div class="ai-comp-head">
-          <input type="checkbox" class="ai-comp-tick" ${c.needsWork && chk.ok ? 'checked' : ''} ${chk.ok ? '' : 'disabled'}>
-          <span class="ai-mark">${Number.isInteger(c.mark) && c.mark > 0 ? c.mark : '—'}</span>
           <span class="ai-comp-label">${escapeHtml(c.label || '')}</span>
-          ${c.needsWork ? '<span class="ai-sev" data-need="1">needs work</span>' : '<span class="ai-sev" data-need="0">looks ok</span>'}
+          ${c.needsWork ? '<span class="ai-sev" data-need="1">needs work</span>'
+                        : '<span class="ai-sev" data-need="0">looks ok</span>'}
         </div>
-        <div class="ai-comp-why">${escapeHtml(c.why || '')}</div>
-        <div class="ai-comp-fields">
-          <label>Type</label>
-          <select class="ai-comp-type">${typeOptions(c.u1Type)}</select>
-          <label>Container</label>
+
+        <!-- The element is the thing being decided about, so it leads the card
+             at full width — and stays editable, because a wrong container is
+             the most common thing to correct. -->
+        <label class="ai-comp-eltag" for="aiCompSel${i}">Element</label>
+        <div class="ai-comp-elrow">
           <span class="sel-strength-wrap">
-            <input type="text" class="ai-comp-sel" value="${escapeHtml(c.containerSelector || '')}">
+            <input type="text" class="ai-comp-sel" id="aiCompSel${i}"
+                   value="${escapeHtml(c.containerSelector || '')}" spellcheck="false">
             <span class="sel-strength" data-level="empty" aria-hidden="true"></span>
           </span>
           <button class="btn-ghost auto-eye ai-comp-eye" title="Show on the page">👁</button>
         </div>
         ${bad}
+
+        <div class="ai-comp-why">${escapeHtml(c.why || '')}</div>
+
+        <div class="ai-comp-fields">
+          <label for="aiCompType${i}">Component type</label>
+          <select class="ai-comp-type" id="aiCompType${i}">${typeOptions(c.u1Type)}</select>
+        </div>
+
+        <label class="ai-comp-tickrow">
+          <input type="checkbox" class="ai-comp-tick" ${c.needsWork && chk.ok ? 'checked' : ''} ${chk.ok ? '' : 'disabled'}>
+          <span>Include this one</span>
+        </label>
       </div>`;
   }).join('') || '<div class="advisor-note ok">✅ Nothing found that needs a mapping.</div>';
 
   document.getElementById('aiResults').style.display = 'block';
   document.getElementById('aiMappings').style.display = 'none';
-  document.getElementById('aiMappings').innerHTML = '';
+  // Clear the CARDS, not the container: the carousel head and track are static
+  // markup now, and wiping innerHTML took them out with the cards.
+  document.getElementById('aiSlideTrack').innerHTML = '';
+  document.getElementById('aiApproved').style.display = 'none';
+  document.getElementById('aiApproved').innerHTML = '';
+  showCompSlide(0);
   paintAiRowStrength();
+  refreshTickCount();
 }
+
+const showCompSlide = (i) => slideTo('aiComp', i, '.ai-comp', () => paintAiRowStrength());
+
+// Remove a conflicting older mapping, on request, from the approved list.
+document.getElementById('aiApproved')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-dropkey]');
+  if (!btn) return;
+  const key = storageKey('mappings', currentHostname);
+  const list = (await U1Store.get([key]))[key] || [];
+  const next = list.filter(m => mappingKey(m) !== btn.dataset.dropkey);
+  if (next.length === list.length) { btn.textContent = 'Already gone'; btn.disabled = true; return; }
+  await U1Store.set({ [key]: next });
+  loadMappingsList();
+  refreshExportInfo();
+  btn.textContent = 'Removed ✓';
+  btn.disabled = true;
+});
+
+// Keep the "Make these accessible" button honest about how many are ticked —
+// with one card on screen at a time, the count is the only way to know.
+function refreshTickCount() {
+  const btn = document.getElementById('aiMapBtn');
+  if (!btn) return;
+  const n = document.querySelectorAll('#aiComponentList .ai-comp-tick:checked').length;
+  btn.textContent = n ? `✨ Make these accessible (${n})` : '✨ Make these accessible';
+  btn.disabled = n === 0;
+}
+
+document.getElementById('aiComponentList')?.addEventListener('change', (e) => {
+  if (e.target.classList.contains('ai-comp-tick')) refreshTickCount();
+});
 
 // Grade each row's container selector with the same meter as the manual form.
 async function paintAiRowStrength() {
@@ -3200,7 +3255,9 @@ document.getElementById('aiDismissBtn')?.addEventListener('click', () => {
   aiFound = null;
   document.getElementById('aiResults').style.display = 'none';
   document.getElementById('aiMappings').style.display = 'none';
-  document.getElementById('aiMappings').innerHTML = '';
+  // Clear the CARDS, not the container: the carousel head and track are static
+  // markup now, and wiping innerHTML took them out with the cards.
+  document.getElementById('aiSlideTrack').innerHTML = '';
 });
 
 // ── Stage 2: turn the ticked rows into real mappings ────────────────────────
@@ -3226,13 +3283,13 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
   const host = document.getElementById('aiMappings');
-  host.innerHTML = carouselShell();
   host.style.display = 'block';
   const track = document.getElementById('aiSlideTrack');
+  track.innerHTML = '';
   document.getElementById('aiApproved').style.display = 'none';
   document.getElementById('aiApproved').innerHTML = '';
   aiMapped = [];
-  aiSlide = 0;
+  carouselAt.aiSlide = 0;
 
   const original = btn.textContent;
   btn.disabled = true;
@@ -3279,10 +3336,7 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
   }
 });
 
-document.getElementById('aiMappings')?.addEventListener('click', (e) => {
-  if (e.target.closest('#aiSlidePrev')) showSlide(aiSlide - 1);
-  else if (e.target.closest('#aiSlideNext')) showSlide(aiSlide + 1);
-});
+
 
 const aiMapCardError = (row, why) => `
   <div class="ai-map-card">
@@ -3314,45 +3368,56 @@ function renderAiMapCard(idx, row, out, recorderActive) {
     </div>`;
 }
 
-// ── The carousel ────────────────────────────────────────────────────────────
-// One card at a time: at side-panel width, several stacked mapping forms is
-// exactly the wall of inputs that made this unreadable. Approved cards leave
-// the carousel and drop into the list underneath.
-let aiSlide = 0;
+// ── Carousels ───────────────────────────────────────────────────────────────
+// One card at a time, for both stages. At side-panel width a stack of cards is
+// the wall of controls that made this unreadable; a card that gets the full
+// width gets read. Cards marked data-done="1" (approved, skipped) drop out.
+const carouselAt = {};   // id -> current index
 
-const pendingCards = () =>
-  [...document.querySelectorAll('#aiMappings .ai-map-card')].filter(c => c.dataset.done !== '1');
+// `id` is the track prefix; `sel` matches the cards inside it.
+function slideTo(id, i, sel, onShow) {
+  const track = document.getElementById(id + 'Track');
+  if (!track) return;
+  const all = [...track.querySelectorAll(sel)];
+  all.forEach(c => { c.style.display = 'none'; });
+  const cards = all.filter(c => c.dataset.done !== '1');
 
-function showSlide(i) {
-  // Hide EVERY card first, including the ones already approved or skipped —
-  // iterating only the pending ones left a handled card on screen next to its
-  // replacement.
-  document.querySelectorAll('#aiMappings .ai-map-card').forEach(c => { c.style.display = 'none'; });
-  const cards = pendingCards();
+  const head = track.previousElementSibling;
   if (!cards.length) {
-    document.getElementById('aiMappings').style.display = 'none';
+    if (head) head.style.display = 'none';
+    const host = track.closest('.ai-results');
+    if (host && !all.some(c => c.dataset.done !== '1')) host.style.display = 'none';
     return;
   }
-  aiSlide = Math.max(0, Math.min(i, cards.length - 1));
-  cards[aiSlide].style.display = '';
-  const count = document.getElementById('aiSlideCount');
-  if (count) count.textContent = `${aiSlide + 1} / ${cards.length}`;
-  const prev = document.getElementById('aiSlidePrev');
-  const next = document.getElementById('aiSlideNext');
-  if (prev) prev.disabled = aiSlide === 0;
-  if (next) next.disabled = aiSlide >= cards.length - 1;
-  // Grade the card that just became visible: its inputs were hidden until now.
-  const active = cards[aiSlide];
-  if (active) refreshAiCard(Number(active.dataset.card));
+  if (head) head.style.display = '';
+
+  const at = Math.max(0, Math.min(i, cards.length - 1));
+  carouselAt[id] = at;
+  cards[at].style.display = '';
+
+  const count = document.getElementById(id + 'Count');
+  if (count) count.textContent = `${at + 1} / ${cards.length}`;
+  const [prev, next] = [`[data-slide="${id}:prev"]`, `[data-slide="${id}:next"]`]
+    .map(s => document.querySelector(s));
+  if (prev) prev.disabled = at === 0;
+  if (next) next.disabled = at >= cards.length - 1;
+  if (onShow) onShow(cards[at]);
 }
 
-const carouselShell = () => `
-  <div class="ai-carousel-head">
-    <button class="btn-ghost btn-xs" id="aiSlidePrev" title="Previous">‹</button>
-    <span id="aiSlideCount" class="ai-slide-count"></span>
-    <button class="btn-ghost btn-xs" id="aiSlideNext" title="Next">›</button>
-  </div>
-  <div id="aiSlideTrack"></div>`;
+// Stage 2 keeps its own thin wrapper so the call sites stay readable.
+const showSlide = (i) => slideTo('aiSlide', i, '.ai-map-card',
+  (card) => refreshAiCard(Number(card.dataset.card)));
+const slideIndex = (id) => carouselAt[id] || 0;
+
+// Delegated prev/next for every carousel on the tab.
+document.getElementById('tab-picker')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-slide]');
+  if (!btn) return;
+  const [id, dir] = btn.dataset.slide.split(':');
+  const at = carouselAt[id] || 0;
+  if (id === 'aiSlide') showSlide(dir === 'next' ? at + 1 : at - 1);
+  else showCompSlide(dir === 'next' ? at + 1 : at - 1);
+});
 
 // Approved mappings collect here, each carrying whether it actually took effect
 // on the page — the same measured verdict the Apply button reports.
@@ -3364,12 +3429,18 @@ function addApproved(row, verdict) {
   }
   box.style.display = 'block';
   const cls = verdict.ok ? 'ok' : 'warn';
+  // A conflicting older mapping is actionable, so offer the action rather than
+  // just naming the problem — but never delete anything without being asked.
+  const clashBtns = (verdict.clashes || []).map(c =>
+    `<button class="btn-outline btn-xs" data-dropkey="${escapeHtml(c.key)}">Remove u1.fix.${escapeHtml(c.type)} on ${escapeHtml(c.sel)}</button>`).join(' ');
+
   document.getElementById('aiApprovedList').insertAdjacentHTML('beforeend', `
     <div class="ai-approved-row">
       <span class="ai-approved-tick ${cls}">${verdict.ok ? '✓' : '!'}</span>
       <span class="ai-approved-label">${escapeHtml(row.label)}</span>
       <code>u1.fix.${escapeHtml(row.type)}</code>
       <div class="ai-approved-why">${escapeHtml(verdict.msg)}</div>
+      ${clashBtns ? `<div class="ai-approved-why">${clashBtns}</div>` : ''}
     </div>`);
 }
 
@@ -3479,7 +3550,7 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
   const skip = e.target.closest('[data-skipcard]');
   if (skip) {
     skip.closest('.ai-map-card').dataset.done = '1';
-    showSlide(aiSlide);
+    showSlide(slideIndex('aiSlide'));
     return;
   }
 
@@ -3491,6 +3562,13 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
     if (!tpl) { showNotice(status, 'Nothing to save — the selector is empty.', 'error', 3500); return; }
 
     save.disabled = true; save.textContent = 'Saving…';
+
+    // Look for an older mapping fighting over the same elements before adding
+    // another one to the pile.
+    const mkey = storageKey('mappings', currentHostname);
+    const existing = (await U1Store.get([mkey]))[mkey] || [];
+    const clashes = await overlappingMappings(tpl.primary, existing);
+
     await saveMappingEntry(tpl);
 
     // Approving applies it straight away, and reports what actually happened on
@@ -3516,10 +3594,16 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       verdict = { ok: false, msg: 'Saved, but nothing changed on the page — u1.fix ran without error and wrote no attributes.' };
     }
 
+    if (clashes.length) {
+      verdict.clashes = clashes;
+      verdict.ok = false;
+      verdict.msg += ` Also: ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} already targets these elements — two components on the same DOM fight, and the second wins.`;
+    }
+
     const card = save.closest('.ai-map-card');
     card.dataset.done = '1';
     addApproved(aiMapped[idx].row, verdict);
-    showSlide(aiSlide);
+    showSlide(slideIndex('aiSlide'));
     showNotice(status, verdict.msg, verdict.ok ? 'success' : 'error', verdict.ok ? 4000 : 10000);
     return;
   }
@@ -4471,6 +4555,35 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
     showNotice(status, 'Error: ' + result.err, 'error', 4500);
   }
 });
+
+// Which saved mappings target the same DOM as `primary`?
+//
+// mappingKey is type::primary, so a listbox on `button.main-nav__trigger` and a
+// menu on `#mainNav` are different keys and both survive — then Apply All hands
+// U1 two components claiming the same elements, and the second undoes the
+// first. That is invisible in a flat list of mappings, so ask the page.
+async function overlappingMappings(primary, list) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return [];
+  const others = (list || [])
+    .map((m, i) => ({ i, key: mappingKey(m), type: m.type, sel: m.firstArg || m.primary }))
+    .filter(o => o.sel && o.sel !== primary);
+  if (!others.length) return [];
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (mine, list2) => {
+        const q = (s) => { try { return Array.from(document.querySelectorAll(s)); } catch { return []; } };
+        const a = q(mine);
+        if (!a.length) return [];
+        return list2.filter(o => q(o.sel).some(el =>
+          a.some(x => x === el || x.contains(el) || el.contains(x))));
+      },
+      args: [primary, others],
+    });
+    return (res && res[0] && res[0].result) || [];
+  } catch { return []; }
+}
 
 // Persist one built template as a mapping for the current host, replacing an
 // existing entry with the same key (or the one being edited). Shared by the

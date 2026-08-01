@@ -1184,6 +1184,49 @@ button {
   color: var(--u1-text-muted);
 }
 
+/* The element leads the card — it is what the whole card is a decision about,
+   and the most common thing to correct, so it is big and it stays an input. */
+.ai-comp-eltag {
+  display: block;
+  margin: 8px 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--u1-text-muted);
+}
+
+.ai-comp-elrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+  align-items: center;
+}
+
+.ai-comp-elrow input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--u1-primary);
+  border-radius: 5px;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.10));
+  font-family: "Consolas", monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-comp-tickrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--u1-border, rgba(127, 127, 127, 0.2));
+  font-size: 11px;
+  cursor: pointer;
+}
+.ai-comp-tickrow input { accent-color: var(--u1-primary); }
+
 /* The two things a wrong guess needs corrected. The side panel is often only
    ~380px wide, where five columns collapse into unusable slivers — so label
    above field, and the container gets the full width it needs. */

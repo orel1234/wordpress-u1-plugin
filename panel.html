@@ -323,7 +323,16 @@
          editable — the AI proposes, the specialist decides. -->
     <div class="ai-results" id="aiResults" style="display:none;">
       <div class="ai-summary" id="aiSummary"></div>
-      <div id="aiComponentList"></div>
+      <!-- One found component at a time. Head and track are real markup so the
+           id check in verify.mjs stays meaningful; only the cards are built. -->
+      <div id="aiComponentList">
+        <div class="ai-carousel-head" style="display:none;">
+          <button class="btn-ghost btn-xs" data-slide="aiComp:prev" title="Previous">‹</button>
+          <span id="aiCompCount" class="ai-slide-count"></span>
+          <button class="btn-ghost btn-xs" data-slide="aiComp:next" title="Next">›</button>
+        </div>
+        <div id="aiCompTrack"></div>
+      </div>
       <div class="btn-row" style="margin-top:10px;gap:8px;align-items:center;">
         <button class="btn-primary btn-sm" id="aiMapBtn">✨ Make these accessible</button>
         <button class="btn-ghost btn-sm" id="aiDismissBtn">Clear</button>
@@ -333,7 +342,14 @@
 
     <!-- Stage 2 result: the same mapping form as Manual mode, pre-filled, shown
          one at a time so a card gets the full panel width and full attention. -->
-    <div class="ai-results" id="aiMappings" style="display:none;"></div>
+    <div class="ai-results" id="aiMappings" style="display:none;">
+      <div class="ai-carousel-head" style="display:none;">
+        <button class="btn-ghost btn-xs" data-slide="aiSlide:prev" title="Previous">‹</button>
+        <span id="aiSlideCount" class="ai-slide-count"></span>
+        <button class="btn-ghost btn-xs" data-slide="aiSlide:next" title="Next">›</button>
+      </div>
+      <div id="aiSlideTrack"></div>
+    </div>
 
     <!-- What you have approved, kept below the carousel as it fills up. -->
     <div class="ai-approved" id="aiApproved" style="display:none;"></div>
