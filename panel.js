@@ -989,6 +989,21 @@ async function applyMappingsBatch(items) {
         };
         // Poll rather than sample once: return the moment anything changes,
         // and only conclude "nothing happened" after the whole budget.
+        // What changed, element by element — the receipt a later delete needs in
+        // order to remove exactly what was added and nothing the site authored.
+        const diffAdded = (before, after) => {
+          const out = [];
+          for (const [el, now] of after) {
+            const was = before.get(el) || '';
+            if (was === now) continue;
+            const wasAttrs = new Set(was.split('|').filter(Boolean).map(s => s.split('=')[0]));
+            const added = Array.from(el.attributes)
+              .filter(a => U1_ATTR.test(a.name) && !wasAttrs.has(a.name))
+              .map(a => a.name);
+            if (added.length) out.push({ mark: el.getAttribute('data-u1-revert') || '', added, el });
+          }
+          return out;
+        };
         const waitForChange = async (before, root, budgetMs) => {
           const step = 150;
           for (let waited = 0; waited < budgetMs; waited += step) {
@@ -1089,7 +1104,17 @@ async function applyMappingsBatch(items) {
 
             if (changed > 0) {
               applied++;
-              details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect });
+              // Stamp a revert token on everything that gained U1 attributes,
+              // and hand back the list. Deleting the mapping can then undo
+              // precisely this, instead of asking for a page reload.
+              const receipt = [];
+              let token = 0;
+              for (const rec of diffAdded(before, snap(target))) {
+                const t = `${it.type}-${++token}`;
+                rec.el.setAttribute('data-u1-revert', t);
+                receipt.push({ token: t, added: rec.added });
+              }
+              details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt });
             } else {
               noEffect++;
               details.push({
@@ -1439,6 +1464,11 @@ let currentHostname = 'unknown';
 // Skip links found in the page's own markup. Session-only: shown in Setup and
 // offered as a starting point, never written to storage on its own.
 let detectedSkipLinks = [];
+
+// What each applied mapping actually added to the page, so deleting it can take
+// that back rather than telling you to reload. Session-only: a reload clears the
+// page anyway, which is the other way to the same place.
+const applyReceipts = new Map();   // mappingKey -> [{token, added:[attr]}]
 
 // Moves any per-site data stored under "www.<host>" to "<host>" (once), so the
 // www-stripping change doesn't orphan previously saved mappings/config/etc.
@@ -3312,6 +3342,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   const original = btn.textContent;
   btn.disabled = true;
   try {
+    showAiBusy('Reading the page…', 'Looking at what is on screen.');
     btn.textContent = 'Reading the page…';
     const context = await inPage(tab.id, () => window.__u1SelectorIntel.collectCandidates(60));
     if (!context || !context.candidates || !context.candidates.length) {
@@ -3321,6 +3352,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
 
     // Draw the numbers, capture, then clear them again immediately so the page
     // is left as it was even if the request fails.
+    showAiBusy('Capturing the screen…', 'Numbering every element so the answer can point at real ones.');
     btn.textContent = 'Capturing…';
     await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
     await new Promise(r => setTimeout(r, 250)); // let the overlay paint
@@ -3333,6 +3365,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     }
     if (!shot) { showNotice($aiStatus, 'Could not capture the screen.', 'error', 4000); return; }
 
+    showAiBusy('Claude is looking…', 'Usually 10–30 seconds.');
     btn.textContent = 'Looking…';
     $aiStatus.textContent = 'Usually 10–30 seconds.';
     $aiStatus.className = 'map-mode-hint';
@@ -3367,6 +3400,41 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     } catch {}
   }
 });
+
+// Something to look at while it works. A panel that sits still for thirty
+// seconds reads as broken, and the two slow steps here are a screenshot and a
+// model call — neither of which can report progress, so the least we can do is
+// say which one is running.
+function showAiBusy(title, sub) {
+  const results = document.getElementById('aiResults');
+  const track = document.getElementById('aiCompTrack');
+  if (!results || !track) return;
+  results.style.display = 'block';
+  const head = track.previousElementSibling;
+  if (head) head.style.display = 'none';
+  document.getElementById('aiSummary').innerHTML = '';
+  track.innerHTML = `
+    <div class="ai-busy">
+      <div class="ai-busy-bar"><span></span></div>
+      <div class="ai-busy-title">${escapeHtml(title)}</div>
+      <div class="ai-busy-sub">${escapeHtml(sub || '')}</div>
+      ${[0, 1, 2].map(() => '<div class="ai-skel"></div>').join('')}
+    </div>`;
+}
+
+function showMapBusy(label, n, total) {
+  const track = document.getElementById('aiSlideTrack');
+  if (!track || track.querySelector('.ai-map-card')) return;   // real cards already in
+  track.innerHTML = `
+    <div class="ai-busy" id="aiMapBusy">
+      <div class="ai-busy-bar"><span></span></div>
+      <div class="ai-busy-title">Working out ${escapeHtml(label)} (${n} of ${total})</div>
+      <div class="ai-busy-sub">Reading its markup and its click handlers.</div>
+      ${[0, 1, 2, 3].map(() => '<div class="ai-skel"></div>').join('')}
+    </div>`;
+}
+
+const clearMapBusy = () => document.getElementById('aiMapBusy')?.remove();
 
 // The inventory. Every row's component type and container selector are inputs,
 // not labels — a wrong guess is corrected here rather than worked around later.
@@ -3563,6 +3631,7 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       btn.textContent = `Mapping ${i + 1}/${rows.length}…`;
+      showMapBusy(row.label, i + 1, rows.length);
       status.textContent = row.label;
       status.className = 'map-mode-hint';
       status.style.display = '';
@@ -3590,6 +3659,7 @@ document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
       track.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
       // Build the real inputs with the shared renderer so this card behaves
       // exactly like the manual form, then fill them.
+      clearMapBusy();
       fillAiMapCard(idx, row, out);
       // Re-slide on every insert. Without this the cards pile up visible for
       // the whole run — which is a stack of eight full mapping forms while you
@@ -4881,6 +4951,32 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
   }
 });
 
+// Take back exactly what an apply added. Uses the receipt recorded at apply
+// time, so only the attributes U1 wrote are removed — the site's own role,
+// tabindex and aria-* are left alone, which is why this cannot be done by
+// pattern-matching after the fact.
+async function revertApplied(receipt) {
+  const tab = await getTab();
+  if (!isInjectable(tab) || !receipt || !receipt.length) return 0;
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (list) => {
+        let n = 0;
+        for (const { token, added } of list) {
+          const el = document.querySelector(`[data-u1-revert="${token}"]`);
+          if (!el) continue;
+          for (const attr of added) { el.removeAttribute(attr); n++; }
+          el.removeAttribute('data-u1-revert');
+        }
+        return n;
+      },
+      args: [receipt],
+    });
+    return (res && res[0] && res[0].result) || 0;
+  } catch { return 0; }
+}
+
 // A one-click way to act on that, since the fix is always the same.
 function offerReload(status) {
   if (!status) return;
@@ -5021,6 +5117,9 @@ async function applyAllMappings({ silent = false } = {}) {
       noEffect += result.noEffect || 0;
       details = result.details || [];
       engineErrs = result.errs || [];
+      for (const d of details) {
+        if (d.receipt && d.receipt.length) applyReceipts.set(d.type + '::' + d.sel, d.receipt);
+      }
     } else if (result.u1Missing) { u1Missing = true; }
     else { err = result.err; }
   }
@@ -5637,10 +5736,18 @@ async function loadMappingsList() {
       // silent when it matters or crying wolf. This is always true anyway.
       if (!gone) return;
       const status = document.getElementById('applyAllStatus') || document.getElementById('applyStatus');
-      showNotice(status,
-        'Removed from the mapping list — but the page still carries what U1 already applied to it. Reload the page to clear it.',
-        'error', 12000);
-      offerReload(status);
+      const rk = mappingKey(gone);
+      const receipt = applyReceipts.get(gone.type + '::' + (gone.firstArg || gone.primary));
+      const undone = await revertApplied(receipt);
+      applyReceipts.delete(gone.type + '::' + (gone.firstArg || gone.primary));
+      if (undone) {
+        showNotice(status, `Removed — and ${undone} attribute${undone === 1 ? '' : 's'} U1 had written were taken back off the page.`, 'success', 6000);
+      } else {
+        showNotice(status,
+          'Removed from the list. Anything U1 already wrote to the page in an earlier session is still there — reload to clear it.',
+          'error', 10000);
+        offerReload(status);
+      }
     });
   });
 
