@@ -9,22 +9,23 @@
 //
 //  Everything it produces must be a U1-VALID selector: compound simple selectors
 //  joined only by `> + ~` (no spaces, no descendant combinator, no :pseudo) and
-//  never anchored on a generated id. See U1_SELECTOR_RE / VOLATILE_ID below.
+//  never anchored on a generated id. See U1_COMPOUND_RE / VOLATILE_ID below.
 // ─────────────────────────────────────────────────────────────────────────────
 (function (root) {
   'use strict';
 
   // ── Shared vocabulary (kept identical to test-engine.js / panel.js) ────────
 
-  // U1 validates selectors with a strict regex: compound simple-selectors joined
-  // only by > + ~ combinators, plus comma groups. ".nav > li" is REJECTED.
-  // A pseudo-class is legal. U1's own menu documentation uses one:
-  //   items: 'a.menu-item:not(.has-submenu), li.has-submenu'
-  // This grammar rejected every `:pseudo`, so the selector printed in the vendor's
-  // docs failed our validation and the auto-mapper could never propose it. What
-  // U1 genuinely cannot take is a DESCENDANT SPACE — only > + ~ join compounds —
-  // and that is still rejected.
-  const U1_SELECTOR_RE = /^(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?)(?:[>+~]?(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?))*(?:,(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?)(?:[>+~]?(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?))*)*$/;
+  // One COMPOUND, e.g. `a.menu-item:not(.has-submenu)`. An optional tag, then any
+  // number of parts that each begin with a distinct sigil (. # [ :). That
+  // distinctness is the point: the engine never has to guess how to split the
+  // input, so matching is linear.
+  //
+  // The previous single-regex grammar nested a quantifier over overlapping
+  // alternatives, which backtracks catastrophically. Measured on the real thing:
+  // a 28-character non-match took 1.3s and a 32-character one took 21 SECONDS —
+  // and this runs on every keystroke, so typing a selector froze the panel.
+  const U1_COMPOUND_RE = /^(?:[\w-]+)?(?:\.[\w-]+|#[\w-]+|\[[^\]]*\]|::?[\w-]+(?:\([^()]*\))?)*$/;
 
   // Utility / framework / state classes — present on thousands of elements and
   // liable to change, so never the basis of a mapping.
@@ -35,7 +36,12 @@
   const VOLATILE_ID = /^(u1st-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
   const normalize = (s) => String(s == null ? '' : s).trim().replace(/\s*([>+~,])\s*/g, '$1');
-  const isU1Valid = (s) => { const n = normalize(s); return n === '' || U1_SELECTOR_RE.test(n); };
+  const isU1Valid = (s) => {
+    const n = normalize(s);
+    if (n === '') return true;
+    return n.split(',').every(group =>
+      group !== '' && group.split(/[>+~]/).every(c => c !== '' && U1_COMPOUND_RE.test(c)));
+  };
   const idOk = (id) => /^[A-Za-z][\w-]*$/.test(id) && !VOLATILE_ID.test(id);
   const classOk = (c) => !!c && !c.includes(':') && !c.includes('/') && !c.includes('[') && !c.includes('(');
 
@@ -802,7 +808,7 @@
 
   const api = {
     // pure
-    selectorStrength, normalize, isU1Valid, U1_SELECTOR_RE, NOISE, VOLATILE_ID,
+    selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
     // set-of-mark (AI review)
