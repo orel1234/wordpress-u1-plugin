@@ -2992,3 +2992,108 @@ details.ai-approved[open] > summary::before { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   .ai-msg.thinking span { animation: none; opacity: 0.6; }
 }
+
+/* ═══ Buttons: one scale, one radius, one focus ring ═══════════════════════
+   These grew apart: .btn-primary was 10px/22px, .btn-outline 8px/20px plus a
+   1.5px border, .btn-sm 6px/14px, .btn-xs 2px/6px. Put two side by side and
+   they did not line up, because none of them agreed on a height. And there
+   was no :focus-visible anywhere — in a tool for building accessible sites,
+   that is the one thing that cannot be missing. */
+
+.btn-primary,
+.btn-outline,
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 0 18px;
+  border-radius: var(--u1-radius-md);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.2px;
+  text-align: center;
+  /* `transition: all` animates layout properties too, which is what made
+     these shift about when a label changed. Name what should move. */
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+
+/* A primary in a row shares the space instead of demanding all of it — the
+   blanket width:100% is what squashed labelled buttons into blobs when a
+   count or a second control appeared beside them. Alone in a row it still
+   fills, because it is the only thing growing. */
+.btn-row .btn-primary,
+.ai-find-actions .btn-primary {
+  width: auto;
+  flex: 1 1 auto;
+}
+
+.btn-outline {
+  border-width: 1px;
+  padding: 0 17px;   /* 1px border + 17px = the primary's 18px */
+}
+
+.btn-ghost {
+  min-height: 30px;
+  padding: 0 10px;
+  font-weight: 500;
+  font-size: 11px;
+}
+
+/* Sizes change the box, not just the type — that is what kept them aligned
+   with nothing and made icon buttons taller than the rows holding them. */
+.btn-sm  { min-height: 30px; padding: 0 13px; font-size: 11px; }
+.btn-xs  { min-height: 24px; padding: 0 9px;  font-size: 10.5px; border-radius: var(--u1-radius-sm); }
+.btn-ghost.btn-xs { padding: 0 7px; }
+
+/* Keyboard focus, everywhere, and never removed. */
+.btn-primary:focus-visible,
+.btn-outline:focus-visible,
+.btn-ghost:focus-visible,
+.tab-btn:focus-visible,
+.map-mode-btn:focus-visible,
+.mapping-actions button:focus-visible,
+.mapping-head:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--u1-primary);
+  outline-offset: 2px;
+  border-radius: var(--u1-radius-sm);
+}
+
+.btn-primary:active:not(:disabled),
+.btn-outline:active:not(:disabled) { transform: translateY(1px); }
+
+/* Every variant says when it is unavailable — .btn-outline and .btn-ghost
+   simply did not, so a disabled one looked live and clicked like a dud. */
+.btn-outline:disabled,
+.btn-ghost:disabled,
+.mapping-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+.btn-outline:disabled:hover { background: transparent; color: var(--u1-primary); }
+.btn-ghost:disabled:hover { color: var(--u1-text-muted); }
+
+/* Row actions: square targets that line up with each other. */
+.mapping-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--u1-radius-sm);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.btn-row { align-items: center; }

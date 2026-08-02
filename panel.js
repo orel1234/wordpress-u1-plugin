@@ -2937,7 +2937,11 @@ function setMapMode(mode) {
   const pendingFound = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
   if (found) found.style.display = (isAuto && !pendingCards && pendingFound) ? 'block' : 'none';
   if (maps) maps.style.display = (isAuto && pendingCards) ? 'block' : 'none';
-  if (approved) approved.style.display = (isAuto && approved.children.length) ? 'block' : 'none';
+  // Count the ROWS. The section is a <details> with a summary and a list in
+  // the markup, so it always has children — which made it show itself even
+  // when it had nothing to report.
+  const approvedRows = document.querySelectorAll('#aiApprovedList .ai-approved-row').length;
+  if (approved) approved.style.display = (isAuto && approvedRows) ? 'block' : 'none';
   if (!isAuto) hideAutoReview();
 }
 
@@ -3835,6 +3839,7 @@ let approvedSeq = 0;
 function addApproved(row, verdict, code) {
   const box = document.getElementById('aiApproved');
   if (!box) return null;
+  box.style.display = 'block';
   // The stage caption comes from CSS (#aiApproved::before), so this only needs
   // the list container.
   box.open = true;
