@@ -4069,8 +4069,39 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       const res = await applyMappingsBatch([{
         type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg, config: tpl.config,
       }]);
-      const verdict = describeApply(res, tpl);
-
+      const d = (res.details || [])[0];
+      let verdict;
+      if (!res.ok) {
+        verdict = { ok: false, msg: res.u1Missing ? 'Saved. U1 is not loaded on this page, so nothing was applied.' : 'Saved, but applying failed: ' + (res.err || 'unknown') };
+      } else if (res.applied) {
+        verdict = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
+        if (d.fieldsNoEffect && d.fieldsNoEffect.length) {
+          verdict.ok = false;
+          // For a menu this is usually not a selector fault at all. With
+          // menubar:false — which u1 requires as soon as there are submenus —
+          // it gives tabindex and aria-hidden but no role="menu"/"menuitem",
+          // so the fields look untouched to anyone checking for roles.
+          const menubarFalse = tpl.type === 'menu' && tpl.config && tpl.config.menubar === false;
+          verdict.msg += ` But ${d.fieldsNoEffect.map(f => `"${f}"`).join(', ')} changed nothing — U1 decorated the container and left ${d.fieldsNoEffect.length === 1 ? 'that field' : 'those fields'} alone.`;
+          verdict.msg += menubarFalse
+            ? ` For a menu with submenus that is expected: menubar is false (U1 requires it, or it throws "Submenu must have a trigger element"), and with it off U1 adds tabindex and aria-hidden but no role="menu" or role="menuitem". The mapping is doing what it can; menu roles need a flat menubar.`
+            : ` Check the selector, or whether this component supports it.`;
+        }
+        if (d.unblocked) {
+          verdict.ok = false;
+          verdict.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted here so the fix could run — remove it from the markup or this will not work in production.`;
+        }
+      } else if (d && d.status === 'error') {
+        verdict = { ok: false, msg: `Saved, but u1.fix.${d.type} threw: ${(res.errs && res.errs[0]) || 'unknown error'}` };
+      } else if (d && d.status === 'no-match') {
+        verdict = { ok: false, msg: `Saved, but nothing on the page matches ${d.sel}.` };
+      } else if (d && d.reason === 'source-opt-out') {
+        verdict = { ok: false, msg: `Saved, but ${d.sel} carries u1st-avoid-change-detection in the site's own HTML — U1 skips it.` };
+      } else if (d && d.reason === 'already-processed') {
+        verdict = { ok: false, msg: 'Saved, but U1 had already processed this element this page load. Reload the page and press Apply All.' };
+      } else {
+        verdict = { ok: false, msg: 'Saved, but nothing changed on the page — u1.fix ran without error and wrote no attributes.' };
+      }
       if (clashes.length) {
         verdict.clashes = clashes;
         verdict.ok = false;
@@ -5260,14 +5291,6 @@ async function applyAllMappings({ silent = false } = {}) {
       if (unblocked.length) {
         msg += ` ${unblocked.map(d => d.sel).join(', ')} had u1st-avoid-change-detection in the page markup — it was lifted here so the fix could run, but it must come out of the site's HTML for this to work in production.`;
       }
-      // Half-applied mappings, named. This detail only ever reached the AI
-      // card, so building the same mapping by hand told you nothing about a
-      // menu that decorated its container and skipped every field.
-      for (const d of details.filter(x => x.fieldsNoEffect && x.fieldsNoEffect.length)) {
-        const m = fixes.find(f => (f.firstArg || f.primary) === d.sel);
-        msg += ' ' + describeApply({ ok: true, applied: 1, details: [d] }, m).msg
-          .replace(/^Applied — \d+ elements? changed on the page\. /, `${d.sel}: `);
-      }
       showNotice(status, msg, (failed || noEffect) ? 'error' : (unblocked.length ? 'error' : 'success'),
         (noEffect || failed || unblocked.length) ? 9000 : 4000);
     }
@@ -5360,55 +5383,6 @@ function resetApprovedRun() {
   for (const key of [...agentThreads.keys()]) {
     if (key.startsWith('saved:')) agentThreads.delete(key);
   }
-}
-
-// What did applying actually do? One answer, wherever it is asked from.
-//
-// This lived inside the AI approve handler, so Manual mode never got any of
-// it: no per-field report, no explanation of what menubar:false does. Applying
-// is applying — the mode you built the mapping in should not change what you
-// are told about it.
-function describeApply(res, m) {
-  const d = (res.details || [])[0];
-  if (!res.ok) {
-    return { ok: false, msg: res.u1Missing
-      ? 'U1 is not loaded on this page, so nothing was applied.'
-      : 'Applying failed: ' + (res.err || 'unknown') };
-  }
-  if (res.applied) {
-    const v = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
-    if (d.fieldsNoEffect && d.fieldsNoEffect.length) {
-      v.ok = false;
-      // For a menu this is usually not a selector fault. menubar:false is
-      // mandatory once there are submenus, and with it off U1 adds tabindex
-      // and aria-hidden but no role="menu"/"menuitem" — so the fields look
-      // untouched to anyone checking the DOM for roles.
-      const menubarFalse = m && m.type === 'menu' && m.config && m.config.menubar === false;
-      v.msg += ` But ${d.fieldsNoEffect.map(f => `"${f}"`).join(', ')} changed nothing — U1 decorated the container and left ${d.fieldsNoEffect.length === 1 ? 'that field' : 'those fields'} alone.`;
-      v.msg += menubarFalse
-        ? ` For a menu with submenus that is expected: menubar is false (U1 requires it, or it throws "Submenu must have a trigger element"), and with it off U1 adds tabindex and aria-hidden but no role="menu" or role="menuitem". The mapping is doing what it can; menu roles need a flat menubar.`
-        : ` Check the selector, or whether this component supports it.`;
-    }
-    if (d.unblocked) {
-      v.ok = false;
-      v.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted here so the fix could run — remove it from the markup or this will not work in production.`;
-    }
-    return v;
-  }
-  if (d && d.status === 'error') {
-    return { ok: false, msg: `u1.fix.${d.type} threw: ${(res.errs && res.errs[0]) || 'unknown error'}` };
-  }
-  if (d && d.status === 'no-match') return { ok: false, msg: `Nothing on the page matches ${d.sel}.` };
-  if (d && d.reason === 'source-opt-out') {
-    return { ok: false, msg: `${d.sel} carries u1st-avoid-change-detection in the site's own HTML — U1 skips it.` };
-  }
-  if (d && d.reason === 'already-processed') {
-    return { ok: false, msg: 'U1 had already processed this element this page load. Reload the page and press Apply All.' };
-  }
-  if (res.u1State && res.u1State.decoratedOnPage === 0) {
-    return { ok: false, msg: 'U1 is loaded but has decorated nothing anywhere on this page — it never started up for this domain. No mapping can apply until that is fixed, and the selectors are not the problem.' };
-  }
-  return { ok: false, msg: 'Nothing changed on the page — u1.fix ran without error and wrote no attributes.' };
 }
 
 // ── The agent, as a conversation ────────────────────────────────────────────
