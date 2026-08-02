@@ -6,7 +6,10 @@
   "type": "module",
   "scripts": {
     "check:version": "node scripts/build.mjs --check-only",
-    "verify": "node scripts/verify.mjs && node scripts/verify-store.mjs",
+    "verify": "node scripts/verify.mjs && node scripts/verify-store.mjs && node scripts/verify-mappings.mjs",
     "build": "npm run verify && node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
   }
 }

@@ -1004,11 +1004,28 @@ async function applyMappingsBatch(items) {
           }
           return out;
         };
-        const waitForChange = async (before, root, budgetMs) => {
+        // Watch EVERY root the component owns, not just one.
+        //
+        // `firstArg` is the element U1 is told to wait for, and for a dialog,
+        // listbox, datepicker, carousel or pagination that is the trigger /
+        // slide / buttons — while the decoration lands on the CONTAINER. So
+        // measuring the first arg alone reported "nothing changed" for those
+        // types even when the mapping worked perfectly, which is exactly the
+        // false negative that sends you looking at correct selectors.
+        const snapAll = (roots) => roots.filter(Boolean).map(r => snap(r));
+        const changedAll = (before, roots) => {
+          const after = snapAll(roots);
+          let n = 0;
+          for (let i = 0; i < after.length; i++) n += changedCount(before[i] || new Map(), after[i]);
+          return n;
+        };
+        const waitForChange = async (before, roots, budgetMs) => {
+          const list = Array.isArray(roots) ? roots : [roots];
+          const baseline = Array.isArray(before) ? before : [before];
           const step = 150;
           for (let waited = 0; waited < budgetMs; waited += step) {
             await new Promise(r => setTimeout(r, step));
-            const n = changedCount(before, snap(root));
+            const n = changedAll(baseline, list);
             if (n > 0) return n;
           }
           return 0;
@@ -1056,7 +1073,13 @@ async function applyMappingsBatch(items) {
             const siteAuthoredOptOut = preStamped && !u1Touched;
             if (siteAuthoredOptOut) target.removeAttribute('u1st-avoid-change-detection');
 
-            const before = snap(target);
+            // The container as well as the element U1 waits for. For most types
+            // these are the same node; for the trigger-first ones they are not,
+            // and the container is where the roles actually appear.
+            let container = null;
+            try { container = it.primary && it.primary !== sel ? document.querySelector(it.primary) : null; } catch {}
+            const roots = container && container !== target ? [target, container] : [target];
+            const before = snapAll(roots);
 
             // Snapshot each configured field's own elements too, so we can say
             // WHICH parts U1 decorated. A menu whose container gains attributes
@@ -1087,7 +1110,7 @@ async function applyMappingsBatch(items) {
             // reporting "nothing changed" about work that had plainly landed,
             // which is worse than saying nothing at all. So watch until it
             // changes, and only give up after a real budget.
-            let changed = await waitForChange(before, target, 4000);
+            let changed = await waitForChange(before, roots, 4000);
 
             // Which fields actually moved.
             const fieldsNoEffect = [];
@@ -1106,9 +1129,9 @@ async function applyMappingsBatch(items) {
             // will not look at it again. Calling once more costs nothing and
             // occasionally lands when the first pass raced the markup.
             if (changed === 0 && preStamped && !u1Touched) {
-              const before2 = snap(target);
+              const before2 = snapAll(roots);
               try { raw.fix[it.type](sel, it.config); } catch {}
-              changed = await waitForChange(before2, target, 4000);
+              changed = await waitForChange(before2, roots, 4000);
               if (changed > 0) {
                 applied++;
                 details.push({ type: it.type, sel, status: 'ok', changed, unblocked: true, fieldsNoEffect });
@@ -1122,13 +1145,22 @@ async function applyMappingsBatch(items) {
               // Stamp a revert token on everything that gained U1 attributes,
               // and hand back the list. Deleting the mapping can then undo
               // precisely this, instead of asking for a page reload.
+              // One receipt across every root we watched — a dialog's roles land
+              // on the container while the trigger is what U1 was handed, and
+              // an undo that only knew about the trigger would leave the
+              // container's attributes behind.
               const receipt = [];
               let token = 0;
-              for (const rec of diffAdded(before, snap(target))) {
-                const t = `${it.type}-${++token}`;
-                rec.el.setAttribute('data-u1-revert', t);
-                receipt.push({ token: t, added: rec.added });
-              }
+              const seen = new Set();
+              roots.forEach((root, i) => {
+                for (const rec of diffAdded(before[i] || new Map(), snap(root))) {
+                  if (seen.has(rec.el)) continue;
+                  seen.add(rec.el);
+                  const t = `${it.type}-${++token}`;
+                  rec.el.setAttribute('data-u1-revert', t);
+                  receipt.push({ token: t, added: rec.added });
+                }
+              });
               // If it only worked because we took the opt-out off, say so — the
               // attribute is still in the site's markup, so without this the
               // mapping looks fine here and does nothing in production.
@@ -4392,7 +4424,7 @@ async function selectorsPresentOnPage(sels) {
   } catch { return null; }
 }
 
-async function validateMapping(type, primary, fieldValues) {
+async function validateMapping(type, primary, fieldValues, rootValues) {
   const schema = COMPONENT_SCHEMAS[type];
   if (!schema) return [];
   const pKey = primaryKeyOf(schema);
@@ -4430,6 +4462,13 @@ async function validateMapping(type, primary, fieldValues) {
   // option is never announced. Allowed, but the user must know.
   if (type === 'radio' && fieldValues.checkedState && !fieldValues.uncheckedState) {
     notes.push({ level: 'warn', msg: 'No “uncheckedState”: roles + arrow-key navigation will work, but U1 will not maintain aria-checked — a screen reader won’t announce which option is selected (WCAG 4.1.2).' });
+  }
+  // menubar:true together with submenus makes U1 throw "Submenu must have a
+  // trigger element" and abort tagging entirely — the mapping reports as
+  // applied and the DOM gains no roles at all. This is the single most costly
+  // config mistake in the tool, so it is an error, not a warning.
+  if (type === 'menu' && fieldValues.submenus && rootValues && rootValues.menubar === true) {
+    notes.push({ level: 'err', msg: 'menubar is on AND “submenus” is set. U1 throws “Submenu must have a trigger element” for that combination and stops adding roles altogether — the mapping will look applied and do nothing. Turn menubar off for a navigation menu with drop-downs.' });
   }
   if (type === 'menu' && fieldValues.items && fieldValues.items === primary) {
     notes.push({ level: 'warn', msg: `“items” points at the container itself. Use the individual items, e.g. ${primary}>li>a.` });
@@ -4540,7 +4579,9 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
   // Non-blocking advice: surface any problems with the mapping + selector
   // recommendation (is the primary selector the best element for this type?).
   try {
-    const notes = await validateMapping(type, primary, fieldValues);
+    // currentTemplate.config carries the resolved root options (menubar etc.),
+    // which is where the fatal menubar+submenus combination lives.
+    const notes = await validateMapping(type, primary, fieldValues, currentTemplate.config || {});
     const rec = await recommendSelector(type, currentTemplate.firstArg || primary);
     if (rec && Array.isArray(rec.notes)) {
       for (const n of rec.notes) {
