@@ -5090,7 +5090,7 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
     .map(m => ({ type: m.type, sel: m.firstArg || m.primary }));
   // How many skip links THIS extension is configured to inject. Without this
   // the report was asserting that every skip link on the page came from here,
-  // which is false whenever the U1 project itself defines them.
+  // which is false whenever something else on the page defines them.
   const cfg = stored[cfgKey] || {};
   const configuredSkipLinks = Array.isArray(cfg.skipLinks) ? cfg.skipLinks.length : 0;
 
@@ -5102,7 +5102,9 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
     const out = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: 'MAIN',
-      func: (saved) => {
+      // async: it fetches the page's own served HTML. executeScript awaits a
+      // promise returned by the injected function.
+      func: async (saved) => {
         // ONLY U1's own fingerprints count as evidence.
         //
         // role, tabindex and aria-* are ordinary HTML that authors write by
@@ -5181,6 +5183,19 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
             .concat(/^u1st-/.test(el.id || '') ? ['generated id'] : [])).slice(0, 4).join(' ');
           return { tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls), attrs };
         });
+        // Are the skip links in the HTML the SERVER sent, or created by script
+        // after load? Fetching the page's own URL is same-origin and returns
+        // the served markup, which separates "the site's author wrote them"
+        // from "something on this page injected them" — instead of guessing.
+        let inServedHtml = null;
+        try {
+          const res = await fetch(location.href, { credentials: 'same-origin' });
+          if (res.ok) {
+            const html = await res.text();
+            inServedHtml = (html.match(/u1st-skip-link/g) || []).length;
+          }
+        } catch {}
+
         // What U1 is actually holding at runtime. The extension presets
         // window.u1.config before U1 initialises; if U1 ends up with skip
         // links the extension never set, they came from U1's own project
@@ -5199,6 +5214,7 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
           u1Present: !!(window.u1 && window.u1.fix),
           runtimeSkipLinks,
           runtimeConfigKeys,
+          inServedHtml,
           skipLinks: document.querySelectorAll('.u1st-skip-link').length,
           decorated: decorated.length,
           fromOurMappings: ours.size,
@@ -5238,10 +5254,15 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
       (res.runtimeSkipLinks == null
         ? '.'
         : `, and U1 is holding <strong>${res.runtimeSkipLinks}</strong> at runtime.`) + '</div>');
+    if (res.inServedHtml) {
+      lines.push(`<div class="u1-warn">${res.inServedHtml} of them are in the HTML the server sent, before any script ran — they are written into the site's own pages, and nothing in this extension put them there.</div>`);
+    } else if (res.inServedHtml === 0) {
+      lines.push(`<div class="u1-warn">None are in the served HTML, so script on this page created them after it loaded — U1 from a config it was handed, or the site's own code.</div>`);
+    }
     if (!configuredSkipLinks && res.runtimeSkipLinks) {
-      lines.push(`<div class="u1-warn">U1 has ${res.runtimeSkipLinks} skip link${res.runtimeSkipLinks === 1 ? '' : 's'} that this extension did not set — skip links are stored per site here, and this site has none. They come from the U1 project configuration served for this domain and can only be changed there.</div>`);
+      lines.push(`<div class="u1-warn">U1 is holding ${res.runtimeSkipLinks} skip link${res.runtimeSkipLinks === 1 ? '' : 's'} that this extension did not set — skip links are stored per site here, and this site has none. Something else on the page put them into window.u1.config.</div>`);
     } else if (!configuredSkipLinks && res.skipLinks) {
-      lines.push(`<div class="u1-warn">This extension has no skip links for ${escapeHtml(currentHostname)}, so these were not injected from here. Either the site's own HTML contains them, or the U1 project for this domain defines them.</div>`);
+      lines.push(`<div class="u1-warn">This extension has no skip links for ${escapeHtml(currentHostname)}, so it did not inject them.</div>`);
     }
   }
   if (res.optedOut && res.optedOut.length) {
@@ -5268,7 +5289,7 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
         : 'origin unclear: U1 from an earlier load, or the site\'s markup'}</li>`).join('')}</ul>`);
   }
   if (unexplained > 0) {
-    lines.push(`<div class="u1-warn">⚠️ ${unexplained} element${unexplained === 1 ? '' : 's'} decorated by something else — either work U1 applied before your last change (a reload clears it) or U1's own project configuration for this domain, served by User1st. The extension cannot delete that; it has to change in the U1 project.</div>`);
+    lines.push(`<div class="u1-warn">⚠️ ${unexplained} element${unexplained === 1 ? '' : 's'} decorated by something this extension did not do — most likely work U1 applied before your last change, which a reload clears.</div>`);
     lines.push(`<ul>${res.orphans.map(o => `<li><code>${escapeHtml(o.tag)}</code> — ${escapeHtml(o.attrs)}</li>`).join('')}</ul>`);
     lines.push(`<div><button class="btn-outline btn-xs" data-reload-tab>↻ Reload the page</button> then press this again: whatever survives a reload with an empty mapping list is not coming from this extension.</div>`);
   } else {
