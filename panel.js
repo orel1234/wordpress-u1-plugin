@@ -1559,16 +1559,32 @@ async function refreshSetupTab(tab) {
     document.getElementById('detectedJs').textContent  = detected.jsSrc   || '(not found)';
     // Show auto-inject badge if this hostname has manual injection saved
     const miStored = await U1Store.get([`manualInject_${currentHostname}`]);
+    const armed = miStored[`manualInject_${currentHostname}`];
     const badge = document.getElementById('autoInjectBadge');
-    if (badge) badge.style.display = miStored[`manualInject_${currentHostname}`] ? 'block' : 'none';
-    // Persist discovered URLs so Export/docx always has them even before user types anything
-    const updates = {};
-    if (detected.cssHref && !cssLink) updates.cssLink = detected.cssHref;
-    if (detected.jsSrc   && !jsLink)  updates.jsLink  = detected.jsSrc;
-    if (Object.keys(updates).length) {
-      await U1Store.set(updates);
-      if (updates.cssLink) document.getElementById('cssLink').value = updates.cssLink;
-      if (updates.jsLink)  document.getElementById('jsLink').value  = updates.jsLink;
+    if (badge) badge.style.display = armed ? 'block' : 'none';
+    // Which project's bundle is being re-injected on every page load here. A
+    // bundle belongs to a project and brings that project's configuration with
+    // it, so a mismatch is the difference between "my skip links" and
+    // "somebody else's skip links I cannot delete".
+    renderBundleOwner(armed || { cssLink: detected.cssHref, jsLink: detected.jsSrc });
+    // Persist discovered URLs so Export/docx has them before anything is typed.
+    //
+    // PER SITE. This wrote the bare `cssLink`/`jsLink` keys — globally, for
+    // every site — and it ran automatically on every panel open where U1 was
+    // detected. So merely opening the panel on one client's site filed that
+    // client's bundle as the default everywhere, and the next site's Setup
+    // form, Export and handover DOCX picked it up. That is the leak, and it
+    // needed no action from anyone to happen.
+    if (detected.cssHref || detected.jsSrc) {
+      const merged = {
+        cssLink: cssLink || detected.cssHref || '',
+        jsLink: jsLink || detected.jsSrc || '',
+      };
+      if (merged.cssLink !== cssLink || merged.jsLink !== jsLink) {
+        await U1Store.set({ [storageKey('u1Links', currentHostname)]: merged });
+        document.getElementById('cssLink').value = merged.cssLink;
+        document.getElementById('jsLink').value = merged.jsLink;
+      }
     }
   } else {
     detectedSec.style.display = 'none';
@@ -1802,6 +1818,36 @@ function renderSkipDetectedList(items) {
   `).join('');
 }
 
+// Which U1 project a bundle URL belongs to. Bundles are served per project at
+// prd.<project>.user1st.com, and the project's own configuration — skip links
+// included — comes with it.
+function u1ProjectOf(url) {
+  try { return new URL(url).hostname.match(/^prd\.([^.]+)\.user1st\.com$/i)?.[1] || ''; }
+  catch { return ''; }
+}
+
+// Say whose bundle is loaded here, and flag it when it is not this site's.
+function renderBundleOwner(links) {
+  let el = document.getElementById('bundleOwner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'bundleOwner';
+    const host = document.getElementById('u1Detected');
+    if (!host) return;
+    host.appendChild(el);
+  }
+  const proj = u1ProjectOf((links && links.jsLink) || '') || u1ProjectOf((links && links.cssLink) || '');
+  if (!proj) { el.style.display = 'none'; return; }
+  const mine = currentHostname && currentHostname.toLowerCase().includes(proj.toLowerCase());
+  el.style.display = 'block';
+  el.className = mine ? 'advisor-note ok' : 'advisor-note warn';
+  el.innerHTML = mine
+    ? `Bundle belongs to the <strong>${escapeHtml(proj)}</strong> project.`
+    : `<strong>This is the ${escapeHtml(proj)} project's bundle, on ${escapeHtml(currentHostname)}.</strong> ` +
+      `It brings that project's configuration with it — its skip links and settings appear here and cannot be removed from this panel. ` +
+      `Use <em>Stop</em> above, then <em>Replace</em> with this site's own bundle.`;
+}
+
 document.getElementById('injectBtn').addEventListener('click', async () => {
   const cssLink = document.getElementById('cssLink').value.trim();
   const jsLink  = document.getElementById('jsLink').value.trim();
@@ -1926,8 +1972,14 @@ document.getElementById('replaceU1Btn').addEventListener('click', () => {
 });
 
 document.getElementById('stopAutoInjectBtn').addEventListener('click', async () => {
-  await U1Store.remove([`manualInject_${currentHostname}`]);
+  // Clear the remembered bundle as well, or Setup re-fills the form with the
+  // same URLs and the next Inject arms exactly what was just stopped.
+  await U1Store.remove([`manualInject_${currentHostname}`, storageKey('u1Links', currentHostname)]);
   document.getElementById('autoInjectBadge').style.display = 'none';
+  const owner = document.getElementById('bundleOwner');
+  if (owner) owner.style.display = 'none';
+  document.getElementById('cssLink').value = '';
+  document.getElementById('jsLink').value = '';
 });
 
 document.getElementById('addSkipLinkBtn').addEventListener('click', () => {
