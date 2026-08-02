@@ -293,6 +293,66 @@ const after = store.mappings_x[0];
 const migrated = repaired === 1 && after.config.menubar === false && !/menubar: true/.test(after.code);
 const leftAlone = store.mappings_x[1].type === 'link' && !('menubar' in store.mappings_x[1].config);
 
+// ── The Shoe Store failure: a nav rebuilt after U1 has finished with it ─────
+// The page ships <nav id="mainNav"> EMPTY and fills it on DOMContentLoaded via
+// innerHTML. U1 runs first, decorates the empty container, marks it handled and
+// hides it — then every child it touched is replaced, and it never returns.
+// Applying must notice and re-apply, or the menu can never be decorated at all.
+async function rebuildCase(rebuild) {
+  const dom = new JSDOM('<!doctype html><body><nav class="main-nav" id="nav"></nav></body>');
+  const d = dom.window.document;
+  const handled = new Set();
+  dom.window.u1 = { fix: { menu: (first, cfg) => {
+    const el = d.querySelector(cfg.selectors.menu);
+    if (!el || handled.has(el)) return undefined;                   // once per element
+    if (el.hasAttribute('u1st-avoid-change-detection')) return undefined;
+    handled.add(el);
+    setTimeout(() => {
+      const items = d.querySelectorAll(cfg.selectors.items);
+      el.setAttribute('aria-hidden', items.length ? 'false' : 'true');   // empty ⇒ hidden
+      el.setAttribute('u1st-avoid-change-detection', 'true');
+      items.forEach((i, n) => i.setAttribute('tabindex', n ? '-1' : '0'));
+      d.querySelectorAll(cfg.selectors.triggers).forEach(t => {
+        t.setAttribute('aria-haspopup', 'true'); t.setAttribute('aria-expanded', 'false');
+      });
+      d.querySelectorAll(cfg.selectors.submenus).forEach(x => x.setAttribute('role', 'menu'));
+    }, 60);
+  } } };
+  global.window = dom.window; global.document = d;
+
+  const cfg = { menubar: false, selectors: {
+    menu: '#nav', items: '.lk,.ddlk', triggers: '.tg', submenus: '.dd' } };
+
+  // 1. U1's own early pass over the EMPTY nav.
+  dom.window.u1.fix.menu('#nav', cfg);
+  await new Promise(r => setTimeout(r, 200));
+
+  // 2. The site builds the real menu (or, in the control, does not).
+  if (rebuild) {
+    d.querySelector('#nav').innerHTML =
+      '<div class="it"><a class="lk" href="/">Home</a></div>' +
+      '<div class="it"><button class="tg">Shop</button><div class="dd"><a class="ddlk" href="/a">All</a></div></div>';
+  }
+
+  // 3. The specialist presses Apply.
+  const res = await eval('(' + applyFnSrc + ')')([
+    { type: 'menu', primary: '#nav', firstArg: '#nav', config: cfg }]);
+  const nav = d.querySelector('#nav');
+  return {
+    res, detail: (res.details || [])[0] || {},
+    ariaHidden: nav.getAttribute('aria-hidden'),
+    haspopup: d.querySelectorAll('[aria-haspopup]').length,
+    roleMenu: d.querySelectorAll('[role="menu"]').length,
+  };
+}
+
+const rb = await rebuildCase(true);
+const rebuiltDetected = rb.detail.rebuilt === true;
+
+// Control: a nav U1 handled that was NOT rebuilt must not be re-applied.
+const ct = await rebuildCase(false);
+const controlLeftAlone = ct.detail.rebuilt !== true;
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -315,7 +375,11 @@ console.log(`  ${migrated ? '✅' : '❌'} a menu ALREADY SAVED with the fatal p
 if (!migrated) failed++;
 console.log(`  ${leftAlone ? '✅' : '❌'} …and other mappings are left untouched`);
 if (!leftAlone) failed++;
+console.log(`  ${rebuiltDetected ? '✅' : '❌'} a nav rebuilt by the site AFTER U1 finished is DETECTED (not blamed on selectors)`);
+if (!rebuiltDetected) failed++;
+console.log(`  ${controlLeftAlone ? '✅' : '❌'} …and a nav that was NOT rebuilt is not re-applied`);
+if (!controlLeftAlone) failed++;
 
-const total = results.length + 7;
+const total = results.length + 9;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

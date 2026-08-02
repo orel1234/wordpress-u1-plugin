@@ -1077,7 +1077,40 @@ async function applyMappingsBatch(items) {
             // site author's and really does stop U1, so lifting it before the
             // one call that counts is worth doing.
             const siteAuthoredOptOut = preStamped && !u1Touched;
-            if (siteAuthoredOptOut) target.removeAttribute('u1st-avoid-change-detection');
+
+            // The other way an element carries U1's marker and still needs the
+            // fix run again: the SITE rebuilt the component after U1 finished.
+            //
+            // A nav that ships empty and is filled by the page's own JS on
+            // DOMContentLoaded is the ordinary case — most themes and every SPA
+            // do it. U1 starts earlier, processes the empty container, marks it
+            // handled and (correctly, for something empty) hides it. Then
+            // innerHTML is replaced and every child U1 decorated is gone, while
+            // the container still says "handled", so U1 never returns.
+            //
+            // The signature is unambiguous: the container is marked, yet the
+            // elements the mapping points at carry nothing U1 writes. That can
+            // only happen if those elements did not exist when U1 ran. Here
+            // re-applying is not a workaround — it is the only way the current
+            // children can ever be decorated.
+            const cfgSels = (it.config && it.config.selectors) || {};
+            let fieldEls = 0, fieldElsTouched = 0;
+            for (const fsel of Object.values(cfgSels)) {
+              if (typeof fsel !== 'string' || !fsel.trim() || fsel === sel) continue;
+              let els = [];
+              try { els = Array.from(document.querySelectorAll(fsel)); } catch { continue; }
+              for (const el of els.slice(0, 200)) {
+                fieldEls++;
+                for (const a of el.attributes) {
+                  if (U1_ATTR.test(a.name)) { fieldElsTouched++; break; }
+                }
+              }
+            }
+            const rebuiltAfterU1 = preStamped && fieldEls > 0 && fieldElsTouched === 0;
+
+            if (siteAuthoredOptOut || rebuiltAfterU1) {
+              target.removeAttribute('u1st-avoid-change-detection');
+            }
 
             // The container as well as the element U1 waits for. For most types
             // these are the same node; for the trigger-first ones they are not,
@@ -1205,6 +1238,7 @@ async function applyMappingsBatch(items) {
               // mapping looks fine here and does nothing in production.
               details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt,
                              unblocked: siteAuthoredOptOut || undefined,
+                             rebuilt: rebuiltAfterU1 || undefined,
                              harm: harm.length ? harm : undefined });
             } else {
               noEffect++;
@@ -1227,7 +1261,7 @@ async function applyMappingsBatch(items) {
                 };
               })();
               details.push({
-                type: it.type, sel, status: 'no-effect', changed: 0,
+                type: it.type, sel, status: 'no-effect', changed: 0, rebuilt: rebuiltAfterU1 || undefined,
                 reason: !preStamped ? 'silent'
                   : u1Touched ? 'already-processed'   // reload and re-apply
                   : 'source-opt-out',                 // the site's HTML says skip
@@ -1612,6 +1646,32 @@ async function migrateGlobalU1Links() {
 // anything already in storage keeps the setting that broke it, which is exactly
 // the mapping someone has been staring at. There is no configuration in which
 // this pair does something useful, so repair it and say so.
+// Are any saved mappings still waiting for their content to be rendered?
+// True while a mapping's container is present but its own field selectors match
+// nothing — the shape of a component the page builds client-side.
+async function mappingContentPending() {
+  try {
+    const key = storageKey('mappings', currentHostname);
+    const list = (await U1Store.get([key]))[key] || [];
+    const probes = [];
+    for (const m of list) {
+      if (!m || m.custom || !m.config || !m.config.selectors) continue;
+      const root = m.firstArg || m.primary;
+      for (const [k, v] of Object.entries(m.config.selectors)) {
+        if (typeof v === 'string' && v.trim() && v !== root) probes.push([root, v]);
+      }
+    }
+    if (!probes.length) return false;
+    const tab = await getTab();
+    if (!isInjectable(tab)) return false;
+    return await inPage(tab.id, (pairs) => pairs.some(([root, field]) => {
+      try {
+        return !!document.querySelector(root) && document.querySelectorAll(field).length === 0;
+      } catch { return false; }
+    }), [probes]);
+  } catch { return false; }
+}
+
 async function migrateFatalMenubar(host) {
   const key = storageKey('mappings', host);
   const list = (await U1Store.get([key]))[key];
@@ -1735,7 +1795,17 @@ async function autoRunOnOpen(tab) {
       await applyConfig(cfg);
     }
     // Retry loop: wait for U1 to be ready before applying mappings.
+    //
+    // It also holds while a mapping's own field selectors match nothing. The
+    // container existing is not the same as the component existing: a nav that
+    // ships empty and is filled by the page's JS on DOMContentLoaded would
+    // otherwise be applied against nothing, and U1 does not revisit an element
+    // it has already handled — so the one chance to get it right is missed.
     for (let attempt = 0; attempt < 6; attempt++) {
+      if (attempt < 5 && await mappingContentPending()) {
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
       const res = await applyAllMappings({ silent: true });
       if (!res) return;
       if (res.applied > 0 || !res.u1Missing) {
@@ -5492,6 +5562,9 @@ function describeApply(res, m) {
   }
   if (res.applied) {
     const v = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
+    if (d.rebuilt) {
+      v.msg += ' Note: this component is built by the site\u2019s own JavaScript after the page loads, so U1 had already finished with the empty container before these elements existed.';
+    }
     if (d.fieldsNoEffect && d.fieldsNoEffect.length) {
       v.ok = false;
       // For a menu this is usually not a selector fault. menubar:false is
@@ -5525,6 +5598,11 @@ function describeApply(res, m) {
   }
   if (d && d.reason === 'already-processed') {
     return { ok: false, msg: 'U1 had already processed this element this page load. Reload the page and press Apply All.' };
+  }
+  // The one we chased all day. Say the whole thing, because no amount of
+  // selector work can help and the fix is not in this panel.
+  if (d && d.rebuilt) {
+    return { ok: false, msg: `Nothing changed, and the selectors are not the problem. ${d.sel} is built by the site's own JavaScript after the page loads — it ships empty. U1 processed the empty container first, marked it handled, and will not look at an element twice in one page load, so the items created afterwards can never be decorated. Lifting U1's marker does not help: it tracks the element itself. The site has to render this component in the HTML, or call u1.fix.* itself after it finishes building it.` };
   }
   if (res.u1State && res.u1State.decoratedOnPage === 0) {
     return { ok: false, msg: 'U1 is loaded but has decorated nothing anywhere on this page — it never started up for this domain. No mapping can apply until that is fixed, and the selectors are not the problem.' };

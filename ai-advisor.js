@@ -289,6 +289,7 @@ WHAT "changed nothing" USUALLY MEANS
 - A required field missing, so u1 decorates the container and stops.
 - u1st-avoid-change-detection on the element tells u1 to skip it.
 - u1 already processed it this page load; it will not do so again until a reload.
+- THE COMMON ONE, check it first: the component is rendered by the site's own JavaScript after page load — the container ships empty in the HTML and is filled by innerHTML on DOMContentLoaded, as most themes and every SPA do. u1 processes the empty container first, marks it handled, and never returns, so the items created afterwards can never be decorated. The signature is the container carrying u1st-avoid-change-detection while the elements the mapping points at carry no role/aria/tabindex at all. When you see it, say so plainly and say the selectors are NOT the problem: the fix is for the site to render the component in the HTML, or to call u1.fix.* itself once it has finished building it. Lifting u1's marker does not help, because it tracks the element itself.
 - The domain is not authorised for the project — but that silences EVERY component equally, so if others worked, it is not this.`;
 
   async function chat({ u1Type, containerSel, config, markup, outcome, history }) {
