@@ -1015,6 +1015,7 @@ async function applyMappingsBatch(items) {
         };
 
         let applied = 0, failed = 0, noEffect = 0, errs = [], details = [];
+        let u1State = null;   // filled the first time a fix has no effect
         for (const it of list) {
           const sel = it.firstArg || it.primary;
           try {
@@ -1117,6 +1118,24 @@ async function applyMappingsBatch(items) {
               details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt });
             } else {
               noEffect++;
+              // Nothing happened. Before blaming the selector, ask whether U1
+              // is working AT ALL on this page: a library that failed to load
+              // its project config answers every fix.* call with undefined and
+              // decorates nothing, and its own console log says "0 of 0
+              // targets". That is invisible from here unless we look.
+              u1State = u1State || (() => {
+                const decorated = document.querySelectorAll('[id^="u1st-"]').length;
+                const cfg = raw.config || null;
+                return {
+                  decoratedOnPage: decorated,
+                  fixMethods: Object.keys(raw.fix || {}).length,
+                  configKeys: cfg && typeof cfg === 'object' ? Object.keys(cfg) : null,
+                  // Anything that looks like a registry of what U1 was told to
+                  // handle. Named loosely on purpose — we do not own these.
+                  targetsish: Object.keys(raw).filter(k => /target|registr|componen|element/i.test(k))
+                    .map(k => { const v = raw[k]; return k + ':' + (Array.isArray(v) ? v.length : typeof v); }),
+                };
+              })();
               details.push({
                 type: it.type, sel, status: 'no-effect', changed: 0,
                 reason: !preStamped ? 'silent'
@@ -1130,7 +1149,7 @@ async function applyMappingsBatch(items) {
             details.push({ type: it.type, sel, status: 'error' });
           }
         }
-        return { ok: true, applied, failed, noEffect, errs, details };
+        return { ok: true, applied, failed, noEffect, errs, details, u1State };
       },
       args: [structured],
     });
@@ -5195,7 +5214,7 @@ async function applyAllMappings({ silent = false } = {}) {
   const custom = list.filter(m => m && typeof m === 'object' && m.custom);
   const fixes = list.filter(m => !(m && typeof m === 'object' && m.custom));
 
-  let applied = 0, failed = 0, noEffect = 0, u1Missing = false, err = null;
+  let applied = 0, failed = 0, noEffect = 0, u1Missing = false, err = null, u1State = null;
   let details = [], engineErrs = [];
   if (fixes.length) {
     const result = await applyMappingsBatch(fixes);
@@ -5411,7 +5430,15 @@ async function agentContext(type, primary, firstArg, config) {
           ? ` These fields changed nothing: ${d.fieldsNoEffect.join(', ')}.`
           : ' Every configured field changed something.')
       : `Nothing changed at all. u1.fix ran without throwing and wrote no attributes.${d && d.reason ? ' Reason: ' + d.reason + '.' : ''}`;
-  return { u1Type: type, containerSel: sel, config, markup, outcome };
+  // Hand the agent U1's own state, so a conversation starts from what the
+  // library is actually doing rather than from the selectors.
+  const state = res.u1State
+    ? `\n\nState of the u1 library on this page: ${JSON.stringify(res.u1State)}.` +
+      (res.u1State.decoratedOnPage === 0
+        ? ' It has decorated NOTHING anywhere on this page, so it never started up for this domain — that is not a selector problem.'
+        : '')
+    : '';
+  return { u1Type: type, containerSel: sel, config, markup, outcome: outcome + state };
 }
 
 document.addEventListener('click', (e) => {
