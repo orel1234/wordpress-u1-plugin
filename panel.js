@@ -987,6 +987,17 @@ async function applyMappingsBatch(items) {
           for (const [el, v] of after) if (before.get(el) !== v) n++;
           return n;
         };
+        // Poll rather than sample once: return the moment anything changes,
+        // and only conclude "nothing happened" after the whole budget.
+        const waitForChange = async (before, root, budgetMs) => {
+          const step = 150;
+          for (let waited = 0; waited < budgetMs; waited += step) {
+            await new Promise(r => setTimeout(r, step));
+            const n = changedCount(before, snap(root));
+            if (n > 0) return n;
+          }
+          return 0;
+        };
 
         let applied = 0, failed = 0, noEffect = 0, errs = [], details = [];
         for (const it of list) {
@@ -1018,11 +1029,13 @@ async function applyMappingsBatch(items) {
             stripEmpty(it.config && it.config.selectors);
             raw.fix[it.type](sel, it.config);
 
-            // U1 decorates asynchronously (RxJS + MutationObserver), so give it
-            // a moment before deciding nothing happened.
-            await new Promise(r => setTimeout(r, 400));
-
-            let changed = changedCount(before, snap(target));
+            // U1 decorates asynchronously (RxJS + MutationObserver), and how
+            // long it takes depends on the component and the page. A single
+            // 400ms sample called a fix that was still in progress a failure —
+            // reporting "nothing changed" about work that had plainly landed,
+            // which is worse than saying nothing at all. So watch until it
+            // changes, and only give up after a real budget.
+            let changed = await waitForChange(before, target, 4000);
 
             // The attribute is the only thing standing between this mapping and
             // a working one, and it is in the site's markup where we cannot
@@ -1033,8 +1046,7 @@ async function applyMappingsBatch(items) {
               target.removeAttribute('u1st-avoid-change-detection');
               const before2 = snap(target);
               try { raw.fix[it.type](sel, it.config); } catch {}
-              await new Promise(r => setTimeout(r, 400));
-              changed = changedCount(before2, snap(target));
+              changed = await waitForChange(before2, target, 4000);
               if (changed > 0) {
                 applied++;
                 details.push({ type: it.type, sel, status: 'ok', changed, unblocked: true });
