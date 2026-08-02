@@ -398,8 +398,8 @@
       // A boolean option rather than a selector (see `bool` handling below).
       // menubar:true makes every item role="menuitem" — but combined with nested
       // submenus U1 throws "Submenu must have a trigger element". A site nav
-      // with drop-downs therefore needs menubar:false, and the schema default of
-      // true is wrong for it.
+      // with drop-downs therefore needs menubar:false, which is now the schema
+      // default too.
       menubar: (c) => {
         const hasSubmenus = findTriggers(c).some(t => siblingPanel(t));
         return [hasSubmenus

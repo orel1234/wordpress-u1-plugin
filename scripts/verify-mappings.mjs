@@ -252,6 +252,26 @@ const itemsFocusable = [...harmDoc.querySelectorAll('.lk,.ddlk')].filter(e => e.
 const harmCaught = harmDetail.status === 'harmful' && harmRes.applied === 0;
 const harmUndone = navAfter.getAttribute('aria-hidden') !== 'true' && itemsFocusable.length > 0;
 
+// ── Defaults must agree with the documentation written beside them ──────────
+// menu.menubar shipped as `true` while its own desc said "Default false =
+// navigation menu". Every menu mapping was therefore born with the one setting
+// that makes U1 throw as soon as submenus are filled. Nothing caught it,
+// because nothing compared a default to its own docs.
+const defaultMismatches = [];
+for (const [t, sc] of Object.entries(COMPONENT_SCHEMAS)) {
+  for (const [k, v] of Object.entries(sc.rootFields || {})) {
+    const m = /Default(?: is)? (true|false|\d+)/i.exec((sc.desc || {})[k] || '');
+    if (!m) continue;
+    const documented = m[1] === 'true' ? true : m[1] === 'false' ? false : Number(m[1]);
+    if (documented !== v) defaultMismatches.push(`${t}.${k}: code=${v} docs=${documented}`);
+  }
+}
+const defaultsAgree = defaultMismatches.length === 0;
+
+// A nav with drop-downs must not be born with the fatal combination.
+const navTpl = buildTemplate('menu', CASES.menu.primary, CASES.menu.fields, {});
+const navSafe = navTpl.config.menubar !== true;
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -266,7 +286,11 @@ console.log(`  ${harmCaught ? '✅' : '❌'} an apply that hides the page from s
 if (!harmCaught) failed++;
 console.log(`  ${harmUndone ? '✅' : '❌'} …and is undone — aria-hidden lifted, items focusable again`);
 if (!harmUndone) failed++;
+console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
+if (!defaultsAgree) failed++;
+console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
+if (!navSafe) failed++;
 
-const total = results.length + 3;
+const total = results.length + 5;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

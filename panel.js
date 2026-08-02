@@ -41,9 +41,15 @@ const COMPONENT_SCHEMAS = {
                openByMouseover:'', openByMouseenter:'', openByFocus:''},
     fields:['items','submenus','triggers','horizontalMenu',
             'openByMouseover','openByMouseenter','openByFocus'],
-    // menubar:true makes every item a role="menuitem" (needed for horizontal
-    // nav bars). Without it, only items matching `triggers` get role="button".
-    rootFields:{menubar:true, menuDescription:''},
+    // Defaults to FALSE, which is what this schema's own desc says ("Default
+    // false = navigation menu") and what U1 documents. It was true, so every
+    // menu mapping was born with the one setting that makes U1 throw
+    // "Submenu must have a trigger element" the moment `submenus` is filled —
+    // and a website nav with drop-downs is the overwhelmingly common case.
+    // menubar:true is for an application menubar with no nested submenus; it
+    // is what gives every item role="menuitem". With it off, the triggers get
+    // role="button" and the submenu containers role="menu" instead.
+    rootFields:{menubar:false, menuDescription:''},
     req:['menu','items'],
     desc:{
       menu:'Selector of the main menu container.',
