@@ -166,11 +166,20 @@ COMPONENT RULES
 - listbox: "options" must be the individual option items, never the list container, or arrow keys and Escape do nothing.
 - Leave a field out entirely rather than filling it with a guess. Say so in "notes" and set confidence accordingly.`;
 
-  async function mapComponent({ u1Type, containerSel, markup, fields, fieldDocs, options }) {
+  // `instruction` is the specialist correcting the result in their own words —
+  // "map submenus to the parent div, not the button". It arrives with the same
+  // markup and the config produced last time, so the model is editing a real
+  // answer rather than starting over.
+  async function mapComponent({ u1Type, containerSel, markup, fields, fieldDocs, options, instruction, current }) {
     return callClaude({
       system: MAP_PROMPT,
       schema: MAP_SCHEMA,
       text:
+        (instruction
+          ? `The specialist has looked at your previous answer and asked for this change:\n"${instruction}"\n\n` +
+            `Apply it and return the WHOLE config again, keeping everything they did not ask you to change.\n\n` +
+            (current ? `Your previous answer:\n${JSON.stringify(current, null, 2)}\n\n` : '')
+          : '') +
         `Component type: ${u1Type}\n` +
         `Container selector (use this as "primary" unless the markup shows a better root): ${containerSel}\n\n` +
         `FIELDS you may fill for this type:\n` +

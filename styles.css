@@ -2737,3 +2737,54 @@ button.u1-readonly-off {
 }
 .ai-why-head .ai-conf { margin-left: auto; }
 .ai-why-fix { margin: 6px 0 4px; line-height: 1.5; }
+
+/* A card that is thinking says so, wherever you happen to be looking. */
+.ai-comp.is-working,
+.ai-map-card.is-working { position: relative; }
+.ai-comp.is-working::after,
+.ai-map-card.is-working::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(90deg,
+    transparent, var(--u1-primary) 40%, var(--u1-primary) 60%, transparent);
+  background-size: 220% 100%;
+  animation: u1-sweep 1.1s linear infinite;
+}
+@keyframes u1-sweep {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -60% 0; }
+}
+.ai-comp.is-working { opacity: 0.75; }
+
+/* Talk to the mapping. */
+.ai-ask {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.ai-ask-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 11px;
+}
+
+/* What the 👁 found, said on the card. */
+.ai-comp-hit {
+  margin-top: 5px;
+  font-size: 10px;
+  line-height: 1.4;
+  min-height: 0;
+}
+.ai-comp-hit.ok   { color: #16a34a; }
+.ai-comp-hit.warn { color: #d97706; }
+.ai-comp-hit.bad  { color: var(--u1-danger, #ef4444); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-comp.is-working::after, .ai-map-card.is-working::after { animation: none; }
+}

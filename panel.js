@@ -3475,8 +3475,9 @@ function renderAiComponents(found) {
                    value="${escapeHtml(c.containerSelector || '')}" spellcheck="false">
             <span class="sel-strength" data-level="empty" aria-hidden="true"></span>
           </span>
-          <button class="btn-ghost auto-eye ai-comp-eye" title="Show on the page">👁</button>
+          <button class="btn-ghost auto-eye ai-comp-eye" title="Show it on the page">👁</button>
         </div>
+        <div class="ai-comp-hit" id="aiCompHit${i}"></div>
         ${bad}
 
         <div class="ai-comp-why">${escapeHtml(c.why || '')}</div>
@@ -3539,6 +3540,38 @@ async function paintAiRowStrength() {
   });
 }
 
+// 👁 — highlight the container on the page and say how many it matches. The
+// handler for this was lost when the tick counter was removed, so the button
+// rendered and did nothing; and its result used to go to the shared test panel
+// in the manual area, which is not on screen in this mode.
+document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
+  const eye = e.target.closest('.ai-comp-eye');
+  if (!eye) return;
+  const comp = eye.closest('.ai-comp');
+  const sel = comp.querySelector('.ai-comp-sel').value.trim();
+  const hit = document.getElementById('aiCompHit' + comp.dataset.i);
+  if (!sel) return;
+  eye.disabled = true;
+  try {
+    const res = await testSelector(sel);
+    if (hit) {
+      const n = res && typeof res.count === 'number' ? res.count : null;
+      hit.className = 'ai-comp-hit ' + (n === 1 ? 'ok' : n ? 'warn' : 'bad');
+      hit.textContent = res && res.err ? res.err
+        : n === null ? ''
+        : n === 0 ? 'Matches nothing on this page.'
+        : n === 1 ? '1 match — highlighted on the page.'
+        : `${n} matches — highlighted. u1.fix decorates only one of them.`;
+    }
+    if (res && res.count) {
+      await highlightMatch(sel, 0, true);
+      setTimeout(() => highlightMatch(sel, 0, false), 2500);
+    }
+  } finally {
+    eye.disabled = false;
+  }
+});
+
 // Re-grade a container selector as it is edited — the badge is the fastest way
 // to see that a hand-typed selector matches nothing.
 document.getElementById('aiComponentList')?.addEventListener('input', (e) => {
@@ -3581,6 +3614,7 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   btn.disabled = true;
   const original = btn.textContent;
   btn.textContent = 'Working…';
+  comp.classList.add('is-working');
   showMapBusy(row.label, 1, 1);
 
   try {
@@ -3618,6 +3652,7 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   } finally {
     btn.disabled = false;
     btn.textContent = original;
+    comp.classList.remove('is-working');
   }
 });
 
@@ -3653,6 +3688,15 @@ function renderAiMapCard(idx, row, out, recorderActive) {
           : 'Triggers were worked out from tags and attributes. For measured handlers, switch on precise event detection and reload the page.'}</div>
         <div class="ai-map-form" id="aiMapForm${idx}"></div>
       </details>
+
+      <!-- Talk to it about THIS mapping. It still has the markup this was built
+           from and the config it produced, so "map submenus to the parent div,
+           not the button" is an edit it can make rather than a fresh guess. -->
+      <div class="ai-ask">
+        <input type="text" class="ai-ask-input" data-askinput="${idx}"
+               placeholder="Tell it what to change — e.g. “submenus should be the parent div, not the button”">
+        <button class="btn-outline btn-sm" data-askfix="${idx}">Ask</button>
+      </div>
 
       <div class="ai-find-actions">
         <button class="btn-primary btn-sm" data-savecard="${idx}">✓ Approve &amp; apply</button>
@@ -3994,6 +4038,53 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       }
       updateApproved(rowId, verdict);
     })();
+    return;
+  }
+
+  const askFix = e.target.closest('[data-askfix]');
+  if (askFix) {
+    const idx = Number(askFix.dataset.askfix);
+    const entry = aiMapped[idx];
+    const input = document.querySelector(`[data-askinput="${idx}"]`);
+    const instruction = (input?.value || '').trim();
+    if (!entry || !instruction) { input?.focus(); return; }
+
+    const card = askFix.closest('.ai-map-card');
+    askFix.disabled = true;
+    const label = askFix.textContent;
+    askFix.textContent = 'Asking…';
+    card.classList.add('is-working');
+
+    const tpl = aiCardTemplate(idx);
+    const schema = COMPONENT_SCHEMAS[entry.row.type];
+    const out = await U1AI.mapComponent({
+      u1Type: entry.row.type,
+      containerSel: entry.row.sel,
+      markup: entry.markup,
+      fields: schema.fields || [],
+      fieldDocs: schema.desc || {},
+      options: Object.keys(schema.rootFields || {}),
+      instruction,
+      current: tpl ? tpl.config : entry.result,
+    });
+    aiCost += U1AI.estimateCost(out.usage) || 0;
+    askFix.disabled = false;
+    askFix.textContent = label;
+    card.classList.remove('is-working');
+
+    const status = document.getElementById('aiMapStatus');
+    if (out.err) { showNotice(status, out.err, 'error', 8000); return; }
+
+    // Rebuild the card's form from the revised answer, and say what moved.
+    const beforeFields = {};
+    for (const f of (entry.result.fields || [])) beforeFields[f.key] = f.value;
+    aiMapped[idx].result = out;
+    fillAiMapCard(idx, entry.row, out);
+    if (input) input.value = '';
+    const moved = (out.fields || []).filter(f => beforeFields[f.key] !== f.value).map(f => f.key);
+    showNotice(status, moved.length ? `Updated: ${moved.join(', ')}.` : 'It kept the same selectors.', 'success', 5000);
+    document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${idx}"]`)
+      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     return;
   }
 
