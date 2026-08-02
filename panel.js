@@ -1392,6 +1392,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 let currentHostname = 'unknown';
 
+// Skip links found in the page's own markup. Session-only: shown in Setup and
+// offered as a starting point, never written to storage on its own.
+let detectedSkipLinks = [];
+
 // Moves any per-site data stored under "www.<host>" to "<host>" (once), so the
 // www-stripping change doesn't orphan previously saved mappings/config/etc.
 async function migrateWwwHostname(host) {
@@ -1558,10 +1562,13 @@ async function refreshSetupTab(tab) {
     skipDetSec.style.display = 'block';
     skipInpSec.style.display = 'none';
     renderSkipDetectedList(skipDetected);
-    // If user hasn't saved any, sync detected to storage so Config/Export see them
-    if (!userSaved || !userSaved.length) {
-      await U1Store.set({ [skipKey]: skipDetected.slice(0, 3) });
-    }
+    // Detected ≠ configured. This used to WRITE the detected links to storage,
+    // which filed a per-site record for every site the panel was merely opened
+    // on — sites with their own skip links in their own HTML showed up in the
+    // saved-sites list having never been worked on. It also put links into
+    // "your config" that nobody chose. Detection is for display; only an
+    // explicit save persists anything.
+    if (!userSaved || !userSaved.length) detectedSkipLinks = skipDetected.slice(0, 3);
   } else {
     skipDetSec.style.display = 'none';
     skipInpSec.style.display = 'block';
@@ -4924,14 +4931,26 @@ document.getElementById('storedSitesBtn')?.addEventListener('click', async () =>
       here: h === currentHostname,
       rel: hostRelation(currentHostname, h),
       types: [...new Set(list.map(m => m && m.type).filter(Boolean))].join(', '),
+      hasConfig: !!cfg,
       extras: [cfg ? 'config' : null, skips ? `${skips} skip link${skips === 1 ? '' : 's'}` : null].filter(Boolean).join(', '),
     };
   });
 
-  box.className = 'selector-test-result ' + (rows.length > 1 ? 'warn' : 'ok');
+  // A site with no mappings and no real config is a record the tool created by
+  // being opened there, not work anyone did. Separate them out and offer to
+  // clear the lot in one go, rather than making the list look like a mess you
+  // caused.
+  // Saving skip links through the UI always writes config_<host> as well (see
+  // saveConfig in the skip-link save path), so a site holding ONLY a skipLinks
+  // record — no mappings, no config — was never saved by anyone. That is the
+  // footprint of the auto-write this build removed.
+  const junk = rows.filter(r => !r.here && !r.n && !r.hasConfig);
+  const real = rows.filter(r => r.here || r.n || r.hasConfig);
+
+  box.className = 'selector-test-result ' + (real.length > 1 ? 'warn' : 'ok');
   box.innerHTML =
     `<div>Everything saved, by site. Bold is what this panel reads and writes right now.</div>` +
-    `<ul>${rows.map(r =>
+    `<ul>${real.map(r =>
       `<li>${r.here ? '<strong>' : ''}${escapeHtml(r.h)}${r.here ? '</strong> ← current' : ''}` +
       `${r.rel ? ' <span class="ai-sev" data-need="1">same client?</span>' : ''}` +
       ` — ${r.n} mapping${r.n === 1 ? '' : 's'}${r.types ? ` (${escapeHtml(r.types)})` : ''}` +
@@ -4939,7 +4958,13 @@ document.getElementById('storedSitesBtn')?.addEventListener('click', async () =>
       `${!r.here ? ` <button class="btn-outline btn-xs" data-move-host="${escapeHtml(r.h)}">Move here</button>` +
         ` <button class="btn-ghost btn-xs" data-wipe-host="${escapeHtml(r.h)}">Delete</button>` : ''}</li>`
     ).join('')}</ul>` +
-    `<div class="ai-comp-why">Storage is keyed by hostname, so the same client reached by a different URL is a different file — that is how mappings go missing. Nothing is ever applied to a site other than the one it is filed under.</div>`;
+    (junk.length
+      ? `<div class="ai-comp-why">${junk.length} other site${junk.length === 1 ? '' : 's'} hold an empty record with no mappings and no config — left behind by opening the panel there. ` +
+        `<button class="btn-outline btn-xs" data-purge-empty="1">Clear ${junk.length} empty record${junk.length === 1 ? '' : 's'}</button></div>`
+      : '') +
+    `<div class="ai-comp-why">Mappings live in the extension's local storage, one key per site: <code>mappings_&lt;hostname&gt;</code>. ` +
+    `Config is <code>config_&lt;hostname&gt;</code>. Nothing is ever read or applied across sites — but the same client reached by a different URL is a different key, which is how mappings appear to go missing.</div>`;
+  box.dataset.junk = junk.map(r => r.h).join(',');
 });
 
 // Recovering work filed under another hostname for the same client.
@@ -4961,6 +4986,16 @@ document.getElementById('mappingsList')?.addEventListener('click', async (e) => 
 
 // Clearing another site's mappings, on request only.
 document.getElementById('storedSites')?.addEventListener('click', async (e) => {
+  const purge = e.target.closest('[data-purge-empty]');
+  if (purge) {
+    const box = document.getElementById('storedSites');
+    const hosts = (box.dataset.junk || '').split(',').filter(Boolean);
+    const prefixes = U1Store.SITE_PREFIXES || ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject'];
+    await U1Store.remove(hosts.flatMap(h => prefixes.map(p => storageKey(p, h))));
+    document.getElementById('storedSitesBtn').click();
+    return;
+  }
+
   const mv = e.target.closest('[data-move-host]');
   if (mv) {
     const from = mv.dataset.moveHost;
@@ -5942,6 +5977,8 @@ async function onTabChanged(tab) {
   borrowedHost = false;
   renderHostWarning();
   const newHostname = getHostname(tab);
+  // Session-only detection must not follow you to the next site.
+  if (newHostname !== currentHostname) detectedSkipLinks = [];
   const hostnameChanged = newHostname !== currentHostname;
 
   currentHostname = newHostname;
