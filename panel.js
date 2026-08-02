@@ -1124,20 +1124,55 @@ async function applyMappingsBatch(items) {
               if (!moved) fieldsNoEffect.push(field);
             }
 
-            // Second chance for the case the pre-strip cannot help: U1 had
-            // already processed this element earlier in the page's life, so it
-            // will not look at it again. Calling once more costs nothing and
-            // occasionally lands when the first pass raced the markup.
-            if (changed === 0 && preStamped && !u1Touched) {
-              const before2 = snapAll(roots);
-              try { raw.fix[it.type](sel, it.config); } catch {}
-              changed = await waitForChange(before2, roots, 4000);
-              if (changed > 0) {
-                applied++;
-                details.push({ type: it.type, sel, status: 'ok', changed, unblocked: true, fieldsNoEffect });
-                continue;
+            // There used to be a second fix.* call here, on the theory that
+            // "calling once more costs nothing". It does not. U1 will not look
+            // at an element twice in a page load anyway — so the retry never
+            // rescued anything — while a second call into a live widget can
+            // double-initialise it and leave it half torn down. Removed.
+
+            // Did we make the page WORSE?
+            //
+            // A live menu came back with aria-hidden="true" on the <nav> and
+            // tabindex="-1" on every trigger: hidden from screen readers and
+            // removed from the tab order, reported as a success. An apply that
+            // leaves the page less usable than it found it is not a partial
+            // win, and the tool must never keep it. Measure, and undo.
+            const harm = [];
+            for (const root of roots) {
+              if (!root) continue;
+              if (root.getAttribute('aria-hidden') === 'true') {
+                harm.push(`${it.type}: the container ended up aria-hidden="true" — hidden from screen readers entirely`);
               }
-              target.setAttribute('u1st-avoid-change-detection', 'true'); // put it back
+            }
+            // Every item at tabindex="-1" is NOT harm by itself — that is the
+            // roving-tabindex pattern, where one item (or the container) holds
+            // the single tab stop and arrow keys move between the rest. It is
+            // only harm when nothing at all is left to reach it by.
+            const itemSel = sels.items || sels.options || sels.pageButtons || sels.slide;
+            if (itemSel) {
+              let els = [];
+              try { els = Array.from(document.querySelectorAll(itemSel)); } catch {}
+              const anyItemTabbable = els.some(e => e.getAttribute('tabindex') !== '-1');
+              const containerReachable = roots.some(r => r && (
+                r.getAttribute('tabindex') === '0' ||
+                r.hasAttribute('aria-activedescendant') ||
+                !!r.querySelector('[tabindex="0"]')));
+              if (els.length && !anyItemTabbable && !containerReachable) {
+                harm.push(`${it.type}: every item ended up tabindex="-1" with no tab stop anywhere — nothing is reachable by keyboard`);
+              }
+            }
+
+            if (changed > 0 && harm.length) {
+              // Put back exactly what we changed, then report it as a failure.
+              roots.forEach((root, i) => {
+                for (const rec of diffAdded(before[i] || new Map(), snap(root))) {
+                  for (const a of rec.added) { try { rec.el.removeAttribute(a); } catch {} }
+                }
+              });
+              failed++;
+              errs.push(harm[0]);
+              details.push({ type: it.type, sel, status: 'harmful', changed, harm, fieldsNoEffect });
+              continue;
             }
 
             if (changed > 0) {
@@ -5435,6 +5470,11 @@ function describeApply(res, m) {
       v.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted here so the fix could run — remove it from the markup or this will not work in production.`;
     }
     return v;
+  }
+  // The page came out worse and we put it back. Say so first and plainly —
+  // this outranks every other outcome.
+  if (d && d.status === 'harmful') {
+    return { ok: false, msg: `This mapping made the page LESS accessible, so it was undone. ${d.harm.join('; ')}. Nothing was left applied. Check the component type and the selectors — u1.fix may be treating this markup as a widget it is not.` };
   }
   if (d && d.status === 'error') {
     return { ok: false, msg: `u1.fix.${d.type} threw: ${(res.errs && res.errs[0]) || 'unknown error'}` };

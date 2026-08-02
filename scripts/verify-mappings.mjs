@@ -230,6 +230,28 @@ const badRes = await eval('(' + applyFnSrc + ')')([
 ]);
 const pitfallCaught = badRes.applied === 0 || badLog.some(l => l.includes('THREW'));
 
+// ── The regression seen live: a menu left hidden and unfocusable ────────────
+// The real page came back with aria-hidden="true" on the <nav> and
+// tabindex="-1" on every trigger — hidden from screen readers, out of the tab
+// order — and the panel called it a success. That must be caught and undone.
+const harmDom = new JSDOM(`<!doctype html><body>${CASES.menu.html}</body>`);
+const harmDoc = harmDom.window.document;
+global.window = harmDom.window; global.document = harmDoc;
+harmDom.window.u1 = { fix: { menu: (first, cfg) => {
+  const root = harmDoc.querySelector(cfg.selectors.menu);
+  root.setAttribute('aria-hidden', 'true');                       // hides it from AT
+  harmDoc.querySelectorAll(cfg.selectors.items).forEach(i => i.setAttribute('tabindex', '-1'));
+} } };
+const harmTpl = buildTemplate('menu', CASES.menu.primary, CASES.menu.fields, { menubar: false });
+const harmRes = await eval('(' + applyFnSrc + ')')([
+  { type: 'menu', primary: harmTpl.primary, firstArg: harmTpl.firstArg, config: harmTpl.config },
+]);
+const harmDetail = (harmRes.details || [])[0] || {};
+const navAfter = harmDoc.querySelector('#nav');
+const itemsFocusable = [...harmDoc.querySelectorAll('.lk,.ddlk')].filter(e => e.getAttribute('tabindex') !== '-1');
+const harmCaught = harmDetail.status === 'harmful' && harmRes.applied === 0;
+const harmUndone = navAfter.getAttribute('aria-hidden') !== 'true' && itemsFocusable.length > 0;
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -240,6 +262,11 @@ for (const r of results) {
 }
 console.log(`\n  ${pitfallCaught ? '✅' : '❌'} menubar:true + submenus is rejected by U1 (the config that broke the live menu)`);
 if (!pitfallCaught) failed++;
+console.log(`  ${harmCaught ? '✅' : '❌'} an apply that hides the page from screen readers is reported as harmful, not applied`);
+if (!harmCaught) failed++;
+console.log(`  ${harmUndone ? '✅' : '❌'} …and is undone — aria-hidden lifted, items focusable again`);
+if (!harmUndone) failed++;
 
-console.log(`\n  ${results.length - failed + (pitfallCaught ? 1 : 0)}/${results.length + 1} checks passed\n`);
+const total = results.length + 3;
+console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);
