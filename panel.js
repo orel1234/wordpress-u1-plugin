@@ -506,7 +506,13 @@ function sanitizeImport(raw) {
 // only by > + ~ combinators (NO spaces, NO descendant combinator), plus comma
 // groups. A selector like ".mainNav > li" (with spaces) is REJECTED and the fix
 // throws. We normalize away combinator spaces and can flag truly invalid ones.
-const U1_SELECTOR_RE = /^([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\])([>+~]?([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]))*(,([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\])([>+~]?([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]))*)*$/;
+// A pseudo-class is legal. U1's own menu documentation uses one:
+//   items: 'a.menu-item:not(.has-submenu), li.has-submenu'
+// This grammar rejected every `:pseudo`, so the selector printed in the vendor's
+// docs failed our validation and the auto-mapper could never propose it. What
+// U1 genuinely cannot take is a DESCENDANT SPACE — only > + ~ join compounds —
+// and that is still rejected.
+const U1_SELECTOR_RE = /^(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?)(?:[>+~]?(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?))*(?:,(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?)(?:[>+~]?(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?))*)*$/;
 
 function normalizeU1Selector(s) {
   return String(s == null ? '' : s).trim().replace(/\s*([>+~,])\s*/g, '$1');

@@ -353,6 +353,23 @@ const rebuiltDetected = rb.detail.rebuilt === true;
 const ct = await rebuildCase(false);
 const controlLeftAlone = ct.detail.rebuilt !== true;
 
+// ── The vendor's own documented selector must validate ─────────────────────
+// U1's fix.menu docs use a pseudo-class:
+//   items: 'a.menu-item:not(.has-submenu), li.has-submenu'
+// Our grammar rejected every :pseudo, so the selector printed in the vendor's
+// own documentation failed our validation and the auto-mapper could never
+// propose or save it. What U1 genuinely cannot take is a descendant space.
+const reSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8').match(/const U1_SELECTOR_RE = (\/.*\/);/)[1];
+const U1_RE = new Function('return ' + reSrc)();
+const normSel = (x) => String(x || '').trim().replace(/\s*,\s*/g, ',').replace(/\s*([>+~])\s*/g, '$1');
+const selCases = [
+  ['a.menu-item:not(.has-submenu), li.has-submenu', true],   // straight from the docs
+  ['li.has-submenu', true], ['.submenu', true], ['#menu', true],
+  ['li:first-child>a', true],
+  ['#nav a.link', false], ['.a .b', false],                  // descendant space still rejected
+];
+const selOk = selCases.every(([sel, want]) => U1_RE.test(normSel(sel)) === want);
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -379,7 +396,9 @@ console.log(`  ${rebuiltDetected ? '✅' : '❌'} a nav rebuilt by the site AFTE
 if (!rebuiltDetected) failed++;
 console.log(`  ${controlLeftAlone ? '✅' : '❌'} …and a nav that was NOT rebuilt is not re-applied`);
 if (!controlLeftAlone) failed++;
+console.log(`  ${selOk ? '✅' : '❌'} the selector in U1's own menu docs validates, and descendant spaces still do not`);
+if (!selOk) failed++;
 
-const total = results.length + 9;
+const total = results.length + 10;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

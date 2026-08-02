@@ -18,7 +18,13 @@
 
   // U1 validates selectors with a strict regex: compound simple-selectors joined
   // only by > + ~ combinators, plus comma groups. ".nav > li" is REJECTED.
-  const U1_SELECTOR_RE = /^([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\])([>+~]?([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]))*(,([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\])([>+~]?([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]))*)*$/;
+  // A pseudo-class is legal. U1's own menu documentation uses one:
+  //   items: 'a.menu-item:not(.has-submenu), li.has-submenu'
+  // This grammar rejected every `:pseudo`, so the selector printed in the vendor's
+  // docs failed our validation and the auto-mapper could never propose it. What
+  // U1 genuinely cannot take is a DESCENDANT SPACE — only > + ~ join compounds —
+  // and that is still rejected.
+  const U1_SELECTOR_RE = /^(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?)(?:[>+~]?(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?))*(?:,(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?)(?:[>+~]?(?:[\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]|::?[\w-]+(?:\([^)]*\))?))*)*$/;
 
   // Utility / framework / state classes — present on thousands of elements and
   // liable to change, so never the basis of a mapping.
