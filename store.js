@@ -23,7 +23,7 @@
   // Keys that belong to one site, namespaced as `<prefix>_<hostname>`. This is
   // the set that will eventually be served from the licence server; everything
   // else stays local forever.
-  const SITE_PREFIXES = ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject'];
+  const SITE_PREFIXES = ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject', 'u1Links'];
 
   // Session and scratch data. The "__" prefix is load-bearing: sanitizeImport()
   // rejects it and the backup export strips it, so a credential can never ride

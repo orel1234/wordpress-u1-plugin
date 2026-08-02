@@ -1398,6 +1398,29 @@ let detectedSkipLinks = [];
 
 // Moves any per-site data stored under "www.<host>" to "<host>" (once), so the
 // www-stripping change doesn't orphan previously saved mappings/config/etc.
+// The U1 CSS/JS links used to live under bare `cssLink`/`jsLink` keys shared by
+// every site. Give them back to the sites that actually used them — a site that
+// was injected already holds its own copy in manualInject_<host> — and then
+// remove the shared key so it cannot leak into another client again.
+async function migrateGlobalU1Links() {
+  const all = await U1Store.get(null);
+  if (all.cssLink === undefined && all.jsLink === undefined) return;
+
+  const updates = {};
+  for (const key of Object.keys(all)) {
+    const m = /^manualInject_(.+)$/.exec(key);
+    if (!m) continue;
+    const host = m[1];
+    if (all[storageKey('u1Links', host)]) continue;      // already has its own
+    const rec = all[key] || {};
+    const cssLink = rec.cssLink || all.cssLink || '';
+    const jsLink = rec.jsLink || all.jsLink || '';
+    if (cssLink || jsLink) updates[storageKey('u1Links', host)] = { cssLink, jsLink };
+  }
+  if (Object.keys(updates).length) await U1Store.set(updates);
+  await U1Store.remove(['cssLink', 'jsLink']);
+}
+
 async function migrateWwwHostname(host) {
   if (!host || host === 'unknown' || host.startsWith('www.')) return;
   const suffix = '_www.' + host;
@@ -1452,6 +1475,7 @@ async function init() {
   const h = getHostname(tab);
   if (h !== 'unknown') currentHostname = h;
   renderHostWarning();
+  try { await migrateGlobalU1Links(); } catch {}
 
   // Licence check happens before anything is loaded or applied. If it fails the
   // gate is on screen and we stop here — without deleting or altering a single
@@ -1516,7 +1540,10 @@ async function autoRunOnOpen(tab) {
 
 async function refreshSetupTab(tab) {
   // Load saved global links
-  const { cssLink, jsLink } = await U1Store.get(['cssLink', 'jsLink']);
+  const linkKey = storageKey('u1Links', currentHostname);
+  const injKey = storageKey('manualInject', currentHostname);
+  const got = await U1Store.get([linkKey, injKey]);
+  const { cssLink = '', jsLink = '' } = got[linkKey] || got[injKey] || {};
   if (cssLink) document.getElementById('cssLink').value = cssLink;
   if (jsLink)  document.getElementById('jsLink').value  = jsLink;
 
@@ -1772,7 +1799,12 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
     return;
   }
 
-  await U1Store.set({ cssLink, jsLink });
+  // Per site. These used to be stored under bare `cssLink`/`jsLink` keys with
+  // no hostname, so one client's U1 bundle was handed to every other site —
+  // which also means U1 loaded that client's PROJECT config there, skip links
+  // and all. That is the leak; the links belong to the site they were entered
+  // for.
+  await U1Store.set({ [storageKey('u1Links', currentHostname)]: { cssLink, jsLink } });
   const tab = await getTab();
   if (!isInjectable(tab)) { alert('Cannot inject on this page.'); return; }
 
@@ -5857,7 +5889,12 @@ document.getElementById('platformSelect').addEventListener('change', async (e) =
 });
 
 document.getElementById('exportBtn').addEventListener('click', async () => {
-  const { cssLink = '', jsLink = '' } = await U1Store.get(['cssLink', 'jsLink']);
+  // This goes to the client. Reading a global key here put another client's
+  // bundle URLs into the handover document.
+  const lk = storageKey('u1Links', currentHostname);
+  const ik = storageKey('manualInject', currentHostname);
+  const linkRec = await U1Store.get([lk, ik]);
+  const { cssLink = '', jsLink = '' } = linkRec[lk] || linkRec[ik] || {};
   const skipKey = storageKey('skipLinks', currentHostname);
   const cfgKey  = storageKey('config', currentHostname);
   const mKey    = storageKey('mappings', currentHostname);
