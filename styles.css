@@ -2806,3 +2806,54 @@ button.u1-readonly-off {
   cursor: pointer;
 }
 .ai-why-close:hover { color: var(--u1-danger, #ef4444); background: var(--u1-surface-2, rgba(127,127,127,0.15)); }
+
+/* ── The agent panel ──────────────────────────────────────────────────────── */
+
+/* The bar must animate wherever it is dropped, including inside a mapping row
+   where the surrounding rules are narrower. Stated explicitly so nothing
+   inherited flattens it into a static line. */
+.ai-why .ai-busy-bar,
+.ai-busy .ai-busy-bar {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+}
+.ai-why .ai-busy-bar > span,
+.ai-busy .ai-busy-bar > span {
+  position: absolute;
+  left: 0; top: 0;
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: var(--u1-primary);
+  border-radius: 2px;
+  animation: u1-track 1.05s ease-in-out infinite;
+}
+@keyframes u1-track {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}
+
+.ai-why-close {
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--u1-text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ai-why-close:hover { color: var(--u1-danger, #ef4444); }
+.ai-why-head .ai-conf { margin-left: auto; }
+
+/* The agent button sits like every other action on the row. */
+.mapping-actions .ask-btn {
+  font-size: 12px;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-why .ai-busy-bar > span, .ai-busy .ai-busy-bar > span { animation: none; width: 100%; }
+}

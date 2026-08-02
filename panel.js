@@ -3702,7 +3702,7 @@ function renderAiMapCard(idx, row, out, recorderActive) {
         <button class="btn-primary btn-sm" data-savecard="${idx}">✓ Approve &amp; apply</button>
         <button class="btn-ghost btn-sm" data-skipcard="${idx}">Skip</button>
         <button class="btn-ghost btn-sm" data-editcard="${idx}">Open in builder</button>
-        <button class="btn-ghost btn-sm" data-askwhy="${idx}">🤔 It isn't working — why?</button>
+        <button class="btn-ghost btn-sm" data-askwhy="${idx}">✨ Ask AI about this</button>
       </div>
       <div class="ai-why" id="aiWhy${idx}" style="display:none;"></div>
     </div>`;
@@ -4145,7 +4145,8 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
     const fixSel = (out.fix && out.fix.selectors) || [];
     box.innerHTML =
       `<div class="ai-why-head"><strong>${escapeHtml(out.verdict || '')}</strong>` +
-      `<span class="ai-conf" data-c="${escapeHtml(out.confidence || 'medium')}">${escapeHtml(out.confidence || '')}</span></div>` +
+      `<span class="ai-conf" data-c="${escapeHtml(out.confidence || 'medium')}">${escapeHtml(out.confidence || '')}</span>` +
+      `<button class="ai-why-close" data-closewhy title="Close">✕</button></div>` +
       `<div class="ai-comp-why">${escapeHtml(out.cause || '')}</div>` +
       (out.fix && out.fix.what ? `<div class="ai-why-fix"><strong>Fix:</strong> ${escapeHtml(out.fix.what)}</div>` : '') +
       fixSel.map(s => `<div class="ai-fix-sel"><strong>${escapeHtml(s.key)}</strong>: ${escapeHtml(s.value)}</div>`).join('') +
@@ -5404,6 +5405,15 @@ async function moveSiteData(from, to, { copy = false } = {}) {
   return { moved };
 }
 
+// Close the agent's answer. It also lives inside the mapping's body, so
+// collapsing the mapping puts it away.
+document.addEventListener('click', (e) => {
+  const x = e.target.closest('[data-closewhy]');
+  if (!x) return;
+  const box = x.closest('.ai-why');
+  if (box) box.style.display = 'none';
+});
+
 // The saved-mapping agent's two actions: take its corrected selectors, or ask
 // it for a change in words. Both write back to the saved mapping, so the fix
 // lands where the problem was noticed instead of in a fresh draft.
@@ -5921,7 +5931,7 @@ async function loadMappingsList() {
             <button class="edit-btn" data-idx="${idx}" data-tip="Edit" title="Edit this mapping"${legacy ? ' disabled' : ''}>✎</button>
             <button class="shot-btn" data-idx="${idx}" data-tip="Screenshot" title="Capture/refresh screenshot (open the element's page first)"${legacy ? ' disabled' : ''}>📷</button>
             <button class="img-btn" data-idx="${idx}" data-tip="Upload image" title="Upload your own image"${legacy ? ' disabled' : ''}>🖼️</button>
-            <button class="ask-btn" data-idx="${idx}" data-tip="Ask AI" title="Ask about this mapping — why it isn't working, or change it"${legacy ? ' disabled' : ''}>🤔</button>
+            <button class="ask-btn" data-idx="${idx}" data-tip="Ask AI" title="Ask AI about this mapping — why it isn't working, or change it in your own words"${legacy ? ' disabled' : ''}>✨</button>
             <button class="del-btn" data-idx="${idx}" data-tip="Remove" title="Remove">✕</button>
           </div>
         </div>
