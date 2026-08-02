@@ -294,12 +294,13 @@
     <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
 
     <!-- ── AI accessibility teacher ──────────────────────────────────────── -->
-    <details class="ai-box" id="aiBox" style="display:none;">
-      <summary class="ai-head">
+    <dialog class="ai-box" id="aiBox">
+      <div class="ai-head">
         <span class="ai-title">🎓 Accessibility assistant</span>
         <span class="ai-head-spacer"></span>
         <button class="btn-ghost btn-xs" id="aiKeyToggle" title="API key">🔑</button>
-      </summary>
+        <button class="btn-ghost btn-xs" id="aiBoxClose" title="Close">✕</button>
+      </div>
 
       <div class="ai-key-row" id="aiKeyRow" style="display:none;">
         <label class="ai-field-label" for="aiKeyInput">🔑 Anthropic API key — paste it here</label>
@@ -314,12 +315,15 @@
       <textarea id="aiInstruction" rows="2"
         placeholder="Leave empty to review the whole screen, or narrow it down: “only the header and the product filters”"></textarea>
 
-    </details>
+    </dialog>
 
-    <!-- Outside the accordion: this is the action, it should never be behind a
-         fold. The accordion holds the key and the optional prompt. -->
+    <!-- The action, and beside it the settings it uses. The key and the
+         optional prompt are occasional; the scan is the point. -->
     <div class="ai-run" id="aiRunRow" style="display:none;">
-      <button class="btn-primary" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
+      <div class="ai-run-line">
+        <button class="btn-primary" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
+        <button class="btn-outline" id="aiSettingsBtn" title="Narrow the scan, or set the API key">⚙</button>
+      </div>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
     </div>
 
@@ -358,7 +362,10 @@
     </div>
 
     <!-- What you have approved, kept below the carousel as it fills up. -->
-    <div class="ai-approved" id="aiApproved" style="display:none;"></div>
+    <details class="ai-approved" id="aiApproved" style="display:none;" open>
+      <summary class="ai-stage-head">3 · Approved and applied<span class="ai-approved-n" id="aiApprovedN"></span></summary>
+      <div id="aiApprovedList"></div>
+    </details>
 
     <!-- Manual-only controls. In Automatic mode you never type a type or a
          selector — the AI cards carry their own copies of this form — so the

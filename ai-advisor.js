@@ -250,6 +250,64 @@ Do not invent selectors: any you propose must be built from classes, ids and att
     });
   }
 
+  // ── The agent, as a conversation ──────────────────────────────────────────
+  // Not a report. You say what is wrong in your own words and it answers in
+  // its own — short. It holds the component's markup, the config in force, and
+  // what measurably happened, so it can answer without being told any of that.
+  const CHAT_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['reply', 'selectors'],
+    properties: {
+      reply: { type: 'string', description: 'Your answer. Two or three sentences at most. No preamble, no restating the question, no bullet lists unless genuinely listing.' },
+      selectors: {
+        type: 'array',
+        description: 'Only if you are proposing concrete field changes. Empty otherwise.',
+        items: {
+          type: 'object', additionalProperties: false, required: ['key', 'value'],
+          properties: { key: { type: 'string' }, value: { type: 'string' } },
+        },
+      },
+    },
+  };
+
+  const CHAT_PROMPT = `You are helping an accessibility specialist debug one User1st (u1) mapping. They are experienced; talk to them like a colleague.
+
+You have the component's real HTML, the exact config passed to u1.fix.*, and what measurably changed on the page when it last ran.
+
+HOW TO ANSWER
+- Short. Two or three sentences. They asked a question, not for a report.
+- No preamble ("Great question", "Let me analyse"), no restating what they said, no summary at the end.
+- Point at the actual evidence: a class in the markup, a field in the config, a field that changed nothing.
+- If you do not know, say so and name the one thing that would tell you.
+- Propose selectors only when that is genuinely the answer. Any you propose must be built from classes, ids and attributes present in the markup, and be u1-valid: compound simple selectors joined by > + ~ and commas, no descendant spaces, no pseudo-classes.
+
+WHAT "changed nothing" USUALLY MEANS
+- The selector matches elements u1 does not treat as part of the component (wrong level of the tree).
+- Wrong component type for this markup.
+- A required field missing, so u1 decorates the container and stops.
+- u1st-avoid-change-detection on the element tells u1 to skip it.
+- u1 already processed it this page load; it will not do so again until a reload.
+- The domain is not authorised for the project — but that silences EVERY component equally, so if others worked, it is not this.`;
+
+  async function chat({ u1Type, containerSel, config, markup, outcome, history }) {
+    const context =
+      `Component: ${u1Type} on ${containerSel}\n\n` +
+      `Config in force:\n${JSON.stringify(config, null, 2)}\n\n` +
+      `What happened when it last ran:\n${outcome}\n\n` +
+      `Descendants with click handlers or trigger attributes:\n${JSON.stringify(markup.interactive, null, 1)}\n\n` +
+      `The component's HTML:\n${markup.html}${markup.truncated ? '\n[truncated]' : ''}`;
+
+    const msgs = [];
+    (history || []).forEach((m, i) => {
+      msgs.push({
+        role: m.role,
+        content: [{ type: 'text', text: (i === 0 && m.role === 'user') ? context + '\n\n---\n\n' + m.text : m.text }],
+      });
+    });
+    return callClaude({ system: CHAT_PROMPT, schema: CHAT_SCHEMA, messages: msgs });
+  }
+
   // Drop the panel-only fields to keep the prompt small.
   const compactList = (cands) => (cands || []).map(c => ({
     mark: c.mark, tag: c.tag, role: c.role, name: c.name,
@@ -292,7 +350,8 @@ Do not invent selectors: any you propose must be built from classes, ids and att
   // ── Transport ──────────────────────────────────────────────────────────────
   // One request path for every stage: same auth, same structured-output setup,
   // same error handling. `screenshot` is optional (stage 2 sends markup only).
-  async function callClaude({ system, schema, text, screenshot }) {
+  // `messages` carries a whole conversation; `text` is the single-turn form.
+  async function callClaude({ system, schema, text, screenshot, messages }) {
     const key = await getKey();
     if (!key) return { err: 'No API key saved. Paste your Anthropic API key first.' };
 
@@ -303,14 +362,14 @@ Do not invent selectors: any you propose must be built from classes, ids and att
       const sub = m[1].toLowerCase() === 'jpg' ? 'jpeg' : m[1].toLowerCase();
       content.push({ type: 'image', source: { type: 'base64', media_type: 'image/' + sub, data: m[2] } });
     }
-    content.push({ type: 'text', text });
+    if (text) content.push({ type: 'text', text });
 
     const body = {
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system,
       output_config: { effort: 'high', format: { type: 'json_schema', schema } },
-      messages: [{ role: 'user', content }],
+      messages: (messages && messages.length) ? messages : [{ role: 'user', content }],
     };
 
     let res;
@@ -368,5 +427,5 @@ Do not invent selectors: any you propose must be built from classes, ids and att
     return (inTok * 3 + cached * 0.3 + out * 15) / 1e6;
   }
 
-  root.U1AI = { discover, mapComponent, diagnose, getKey, setKey, estimateCost, MODEL, U1_TYPES };
+  root.U1AI = { discover, mapComponent, diagnose, chat, getKey, setKey, estimateCost, MODEL, U1_TYPES };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

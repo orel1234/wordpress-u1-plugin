@@ -2857,3 +2857,128 @@ button.u1-readonly-off {
 @media (prefers-reduced-motion: reduce) {
   .ai-why .ai-busy-bar > span, .ai-busy .ai-busy-bar > span { animation: none; width: 100%; }
 }
+
+/* ── The assistant, as a dialog ────────────────────────────────────────────
+   It is settings for the scan, not part of it. */
+dialog.ai-box {
+  width: min(92vw, 460px);
+  max-height: 84vh;
+  padding: 14px 15px;
+  border: 1px solid var(--u1-primary);
+  border-radius: 10px;
+  background: var(--u1-surface, #17151f);
+  color: inherit;
+  overflow: auto;
+}
+dialog.ai-box::backdrop { background: rgba(0, 0, 0, 0.55); }
+dialog.ai-box .ai-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+dialog.ai-box textarea { width: 100%; box-sizing: border-box; }
+
+.ai-run-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+.ai-run-line .btn-primary { width: 100%; }
+.ai-run-line .btn-outline { padding: 10px 13px; font-size: 13px; }
+
+/* ── Approved: an accordion, with a count on the summary ──────────────────── */
+details.ai-approved > summary { cursor: pointer; list-style: none; }
+details.ai-approved > summary::-webkit-details-marker { display: none; }
+details.ai-approved > summary::before {
+  content: "▸";
+  margin-right: 6px;
+  font-size: 10px;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+details.ai-approved[open] > summary::before { transform: rotate(90deg); }
+.ai-approved-n {
+  margin-left: 7px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--u1-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* ── The agent, as a chat ─────────────────────────────────────────────────── */
+.ai-chat-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.ai-chat-head .ai-why-close { margin-left: auto; }
+
+.ai-chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.ai-chat-log:empty { display: none; }
+
+.ai-msg {
+  max-width: 92%;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-msg.you {
+  align-self: flex-end;
+  background: var(--u1-primary);
+  color: #fff;
+  border-bottom-right-radius: 3px;
+}
+.ai-msg.bot {
+  align-self: flex-start;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.14));
+  border-bottom-left-radius: 3px;
+}
+.ai-msg-fix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(127, 127, 127, 0.25);
+}
+.ai-msg-fix code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 10px;
+  word-break: break-all;
+}
+
+/* Three dots while it thinks. */
+.ai-msg.thinking { display: flex; gap: 4px; padding: 10px 11px; }
+.ai-msg.thinking span {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--u1-text-muted);
+  animation: u1-dot 1.2s ease-in-out infinite;
+}
+.ai-msg.thinking span:nth-child(2) { animation-delay: 0.18s; }
+.ai-msg.thinking span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes u1-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30%           { opacity: 1;    transform: translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-msg.thinking span { animation: none; opacity: 0.6; }
+}
