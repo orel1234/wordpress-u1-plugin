@@ -3782,7 +3782,19 @@ function slideTo(id, i, sel, onShow) {
   if (!cards.length) {
     if (head) head.style.display = 'none';
     const host = track.closest('.ai-results');
-    if (host && !all.some(c => c.dataset.done !== '1')) host.style.display = 'none';
+    if (host) host.style.display = 'none';
+    // Handling the last card must not strand you on an empty panel. If there
+    // is still an inventory to work through, go back to it — skipping one
+    // element is not a reason to end the run.
+    if (id === 'aiSlide') {
+      const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
+      if (left) {
+        const found = document.getElementById('aiResults');
+        if (found) found.style.display = 'block';
+        showCompSlide(carouselAt.aiComp || 0);
+        found?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    }
     return;
   }
   if (head) head.style.display = '';
@@ -5396,6 +5408,9 @@ async function moveSiteData(from, to, { copy = false } = {}) {
 // it for a change in words. Both write back to the saved mapping, so the fix
 // lands where the problem was noticed instead of in a fresh draft.
 document.getElementById('mappingsList')?.addEventListener('click', async (e) => {
+  const close = e.target.closest('[data-closewhy]');
+  if (close) { close.closest('.ai-why')?.remove(); return; }
+
   const key = storageKey('mappings', currentHostname);
 
   const useFix = e.target.closest('[data-savedfix]');
@@ -5964,13 +5979,18 @@ async function loadMappingsList() {
       const m = list[parseInt(btn.dataset.idx, 10)];
       if (!m || !m.type) return;
       const item = btn.closest('.mapping-item');
+      const body = item.querySelector('.mapping-body');
       let box = item.querySelector('.ai-why');
       if (!box) {
         box = document.createElement('div');
         box.className = 'ai-why';
-        item.appendChild(box);
+        // Inside the body, not beside it — collapsing the mapping should put
+        // the agent away with everything else about that mapping.
+        (body || item).appendChild(box);
       }
       box.style.display = 'block';
+      // Opening the agent opens the mapping, or the answer lands out of sight.
+      if (body && body.style.display === 'none') item.querySelector('.mapping-head')?.click();
       box.innerHTML = '<div class="ai-busy"><div class="ai-busy-bar"><span></span></div>' +
         '<div class="ai-busy-sub">Reading this component on the page and measuring what the mapping does.</div></div>';
 
@@ -6004,7 +6024,8 @@ async function loadMappingsList() {
       const fixSel = (out.fix && out.fix.selectors) || [];
       box.innerHTML =
         `<div class="ai-why-head"><strong>${escapeHtml(out.verdict || '')}</strong>` +
-        `<span class="ai-conf" data-c="${escapeHtml(out.confidence || 'medium')}">${escapeHtml(out.confidence || '')}</span></div>` +
+        `<span class="ai-conf" data-c="${escapeHtml(out.confidence || 'medium')}">${escapeHtml(out.confidence || '')}</span>` +
+        `<button class="ai-why-close" data-closewhy title="Close">✕</button></div>` +
         `<div class="ai-comp-why">${escapeHtml(out.cause || '')}</div>` +
         (out.fix && out.fix.what ? `<div class="ai-why-fix"><strong>Fix:</strong> ${escapeHtml(out.fix.what)}</div>` : '') +
         fixSel.map(s => `<div class="ai-fix-sel"><strong>${escapeHtml(s.key)}</strong>: ${escapeHtml(s.value)}</div>`).join('') +

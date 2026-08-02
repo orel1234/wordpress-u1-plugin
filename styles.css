@@ -2792,3 +2792,17 @@ button.u1-readonly-off {
 /* The agent on a saved mapping. */
 .mapping-item .ai-why { margin: 8px 10px 10px; }
 .mapping-actions .ask-btn { font-size: 13px; }
+
+.ai-why-close {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--u1-text-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.ai-why-close:hover { color: var(--u1-danger, #ef4444); background: var(--u1-surface-2, rgba(127,127,127,0.15)); }
