@@ -4862,7 +4862,7 @@ document.getElementById('storedSitesBtn')?.addEventListener('click', async () =>
     `<ul>${rows.map(r =>
       `<li>${r.here ? '<strong>' : ''}${escapeHtml(r.h)}${r.here ? '</strong> ← current' : ''}` +
       ` — ${r.n} mapping${r.n === 1 ? '' : 's'}${r.types ? ` (${escapeHtml(r.types)})` : ''}` +
-      `${r.n && !r.here ? ` <button class="btn-outline btn-xs" data-wipe-host="${escapeHtml(r.h)}">Delete all</button>` : ''}</li>`
+      `${r.n && !r.here ? ` <button class="btn-outline btn-xs" data-wipe-host="${escapeHtml(r.h)}">Delete this site's data</button>` : ''}</li>`
     ).join('')}</ul>` +
     `<div class="ai-comp-why">Mappings are only ever applied to the site they are filed under — background.js reads mappings_&lt;hostname&gt; for the page being loaded, and nothing else.</div>`;
 });
@@ -4873,7 +4873,9 @@ document.getElementById('storedSites')?.addEventListener('click', async (e) => {
   if (!btn) return;
   const host = btn.dataset.wipeHost;
   if (host === currentHostname) return;
-  await U1Store.remove([storageKey('mappings', host)]);
+  // Everything filed under that host, not just its mappings — leaving its
+  // config and skip links behind is what makes storage look haunted later.
+  await U1Store.remove((U1Store.SITE_PREFIXES || ['mappings']).map(p => storageKey(p, host)));
   btn.textContent = 'Deleted ✓';
   btn.disabled = true;
   refreshExportInfo();
@@ -4991,8 +4993,24 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
             .concat(/^u1st-/.test(el.id || '') ? ['generated id'] : [])).slice(0, 4).join(' ');
           return { tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls), attrs };
         });
+        // What U1 is actually holding at runtime. The extension presets
+        // window.u1.config before U1 initialises; if U1 ends up with skip
+        // links the extension never set, they came from U1's own project
+        // configuration for this domain. That is the difference between
+        // reasoning about it and knowing.
+        let runtimeSkipLinks = null, runtimeConfigKeys = [];
+        try {
+          const c = window.u1 && window.u1.config;
+          if (c && typeof c === 'object') {
+            runtimeConfigKeys = Object.keys(c);
+            if (Array.isArray(c.skipLinks)) runtimeSkipLinks = c.skipLinks.length;
+          }
+        } catch {}
+
         return {
           u1Present: !!(window.u1 && window.u1.fix),
+          runtimeSkipLinks,
+          runtimeConfigKeys,
           skipLinks: document.querySelectorAll('.u1st-skip-link').length,
           decorated: decorated.length,
           fromOurMappings: ours.size,
@@ -5028,9 +5046,15 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
     lines.push(`<div>· ${res.infra} are U1's own announcer regions, which the library creates on every page load. Not fixes, and nothing to remove.</div>`);
   }
   if (res.skipLinks) {
-    lines.push(configuredSkipLinks
-      ? `<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} on the page; this extension is configured to inject ${configuredSkipLinks}. Those come from the <strong>config</strong>, not from a mapping — clear them in Setup → Skip Links.</div>`
-      : `<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} on the page, and <strong>this extension has none configured for this site</strong>. So they are defined in the U1 project served for this domain, not here — they can only be changed in that project.</div>`);
+    lines.push(`<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} on the page. This extension is configured to inject <strong>${configuredSkipLinks}</strong> for ${escapeHtml(currentHostname)}` +
+      (res.runtimeSkipLinks == null
+        ? '.'
+        : `, and U1 is holding <strong>${res.runtimeSkipLinks}</strong> at runtime.`) + '</div>');
+    if (!configuredSkipLinks && res.runtimeSkipLinks) {
+      lines.push(`<div class="u1-warn">U1 has ${res.runtimeSkipLinks} skip link${res.runtimeSkipLinks === 1 ? '' : 's'} that this extension did not set — skip links are stored per site here, and this site has none. They come from the U1 project configuration served for this domain and can only be changed there.</div>`);
+    } else if (!configuredSkipLinks && res.skipLinks) {
+      lines.push(`<div class="u1-warn">This extension has no skip links for ${escapeHtml(currentHostname)}, so these were not injected from here. Either the site's own HTML contains them, or the U1 project for this domain defines them.</div>`);
+    }
   }
   if (res.optedOut && res.optedOut.length) {
     const viaSkip = res.optedOut.filter(o => o.skipTarget);
