@@ -163,6 +163,7 @@ The "interactive" list tells you which descendants have real click handlers or t
 COMPONENT RULES
 - menu: "items" = everything the arrow keys move between, top level AND inside drop-downs. "triggers" = only the items that open a drop-down. "submenus" = the drop-down panels themselves.
 - menu + submenus REQUIRES {"key":"menubar","value":"false"} in options — with menubar true u1 throws "Submenu must have a trigger element". Only a flat command bar with no drop-downs uses menubar true.
+- Know what menubar:false actually produces, and say so in "notes": u1 gives the container aria-hidden="false", puts tabindex on the items, and marks the container handled — but it does NOT add role="menu" or role="menuitem". Those come with menubar:true. So a drop-down nav mapped this way gets keyboard reachability, not menu semantics, and to someone checking the DOM for roles it looks as though nothing happened. If the specialist wants roles, the markup has to be a flat menubar, or the drop-downs have to be mapped as separate components. Never promise roles that menubar:false will not deliver.
 - listbox: "options" must be the individual option items, never the list container, or arrow keys and Escape do nothing.
 - Leave a field out entirely rather than filling it with a guess. Say so in "notes" and set confidence accordingly.`;
 

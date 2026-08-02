@@ -1041,17 +1041,20 @@ async function applyMappingsBatch(items) {
             const preStamped = target.hasAttribute('u1st-avoid-change-detection');
             const u1Touched = /^u1st-/.test(target.id || '') || !!target.querySelector('[id^="u1st-"]');
 
-            // Lift it BEFORE the call, not after a refused one.
+            // Lift it before the call — but ONLY when it is the site's own.
             //
-            // U1 decides about an element once per page load. By the time a
-            // fix has come back having done nothing, the skip is already
-            // recorded — removing the attribute then and calling again is too
-            // late, which is why the retry below never rescued anything. The
-            // attribute has to be gone for the one call that counts.
+            // A console probe settled what this attribute is: on a fresh load
+            // #mainNav did not carry it, the first u1.fix.menu worked, and U1
+            // then added it itself. So it is U1's "handled" marker, not a
+            // blocker in the markup — and removing one U1 wrote achieves
+            // nothing, because U1 tracks the element internally and will not
+            // look at it twice in a page load.
             //
-            // This is a live edit to the page, which is what apply IS, and a
-            // reload puts the site's own markup back.
-            if (preStamped) target.removeAttribute('u1st-avoid-change-detection');
+            // When U1 has left no fingerprints, the attribute really is the
+            // site author's and really does stop U1, so lifting it before the
+            // one call that counts is worth doing.
+            const siteAuthoredOptOut = preStamped && !u1Touched;
+            if (siteAuthoredOptOut) target.removeAttribute('u1st-avoid-change-detection');
 
             const before = snap(target);
 
@@ -1130,7 +1133,7 @@ async function applyMappingsBatch(items) {
               // attribute is still in the site's markup, so without this the
               // mapping looks fine here and does nothing in production.
               details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt,
-                             unblocked: preStamped || undefined });
+                             unblocked: siteAuthoredOptOut || undefined });
             } else {
               noEffect++;
               // Nothing happened. Before blaming the selector, ask whether U1
@@ -4074,7 +4077,15 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
         verdict = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
         if (d.fieldsNoEffect && d.fieldsNoEffect.length) {
           verdict.ok = false;
-          verdict.msg += ` But ${d.fieldsNoEffect.map(f => `"${f}"`).join(', ')} changed nothing — U1 decorated the container and left ${d.fieldsNoEffect.length === 1 ? 'that field' : 'those fields'} alone. Check the selector, or whether this component supports it.`;
+          // For a menu this is usually not a selector fault at all. With
+          // menubar:false — which u1 requires as soon as there are submenus —
+          // it gives tabindex and aria-hidden but no role="menu"/"menuitem",
+          // so the fields look untouched to anyone checking for roles.
+          const menubarFalse = tpl.type === 'menu' && tpl.config && tpl.config.menubar === false;
+          verdict.msg += ` But ${d.fieldsNoEffect.map(f => `"${f}"`).join(', ')} changed nothing — U1 decorated the container and left ${d.fieldsNoEffect.length === 1 ? 'that field' : 'those fields'} alone.`;
+          verdict.msg += menubarFalse
+            ? ` For a menu with submenus that is expected: menubar is false (U1 requires it, or it throws "Submenu must have a trigger element"), and with it off U1 adds tabindex and aria-hidden but no role="menu" or role="menuitem". The mapping is doing what it can; menu roles need a flat menubar.`
+            : ` Check the selector, or whether this component supports it.`;
         }
         if (d.unblocked) {
           verdict.ok = false;
