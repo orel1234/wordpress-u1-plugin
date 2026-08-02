@@ -1822,6 +1822,25 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
   const tab = await getTab();
   if (!isInjectable(tab)) { alert('Cannot inject on this page.'); return; }
 
+  // Inject sends ONLY these two URLs — no config, no skip links, nothing else.
+  // So anything that appears on the page afterwards came with the bundle, and
+  // the bundle is per PROJECT: prd.<project>.user1st.com. Loading one project's
+  // bundle on another client's site brings that project's configuration with
+  // it, which is how skip links nobody set turn up and cannot be removed.
+  const project = (u) => { try { return new URL(u).hostname.match(/^prd\.([^.]+)\.user1st\.com$/i)?.[1] || ''; } catch { return ''; } };
+  const proj = project(jsLink) || project(cssLink);
+  if (proj && currentHostname && !currentHostname.toLowerCase().includes(proj.toLowerCase())) {
+    const go = confirm(
+      `This is the U1 bundle for the "${proj}" project, and you are on ${currentHostname}.\n\n` +
+      `The bundle carries that project's own configuration — its skip links and settings will appear on this page ` +
+      `and cannot be removed from here.\n\nInject it anyway?`);
+    if (!go) {
+      const st = document.getElementById('statusText');
+      if (st) st.textContent = 'Not injected';
+      return;
+    }
+  }
+
   const statusText = document.getElementById('statusText');
   const statusDot  = document.getElementById('statusDot');
   if (statusText) statusText.textContent = 'Injecting…';
