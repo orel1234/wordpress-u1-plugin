@@ -1040,6 +1040,19 @@ async function applyMappingsBatch(items) {
             // generated u1st-<uuid> ids to what it decorates.
             const preStamped = target.hasAttribute('u1st-avoid-change-detection');
             const u1Touched = /^u1st-/.test(target.id || '') || !!target.querySelector('[id^="u1st-"]');
+
+            // Lift it BEFORE the call, not after a refused one.
+            //
+            // U1 decides about an element once per page load. By the time a
+            // fix has come back having done nothing, the skip is already
+            // recorded — removing the attribute then and calling again is too
+            // late, which is why the retry below never rescued anything. The
+            // attribute has to be gone for the one call that counts.
+            //
+            // This is a live edit to the page, which is what apply IS, and a
+            // reload puts the site's own markup back.
+            if (preStamped) target.removeAttribute('u1st-avoid-change-detection');
+
             const before = snap(target);
 
             // Snapshot each configured field's own elements too, so we can say
@@ -1085,13 +1098,11 @@ async function applyMappingsBatch(items) {
               if (!moved) fieldsNoEffect.push(field);
             }
 
-            // The attribute is the only thing standing between this mapping and
-            // a working one, and it is in the site's markup where we cannot
-            // edit it. We are already modifying this page — that is what apply
-            // IS — so lift the opt-out, retry once, and say plainly that we did.
-            // A reload restores the page's own markup, so nothing is destroyed.
+            // Second chance for the case the pre-strip cannot help: U1 had
+            // already processed this element earlier in the page's life, so it
+            // will not look at it again. Calling once more costs nothing and
+            // occasionally lands when the first pass raced the markup.
             if (changed === 0 && preStamped && !u1Touched) {
-              target.removeAttribute('u1st-avoid-change-detection');
               const before2 = snap(target);
               try { raw.fix[it.type](sel, it.config); } catch {}
               changed = await waitForChange(before2, target, 4000);
@@ -1115,7 +1126,11 @@ async function applyMappingsBatch(items) {
                 rec.el.setAttribute('data-u1-revert', t);
                 receipt.push({ token: t, added: rec.added });
               }
-              details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt });
+              // If it only worked because we took the opt-out off, say so — the
+              // attribute is still in the site's markup, so without this the
+              // mapping looks fine here and does nothing in production.
+              details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt,
+                             unblocked: preStamped || undefined });
             } else {
               noEffect++;
               // Nothing happened. Before blaming the selector, ask whether U1
