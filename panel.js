@@ -1168,21 +1168,19 @@ async function applyMappingsBatch(items) {
               }
             }
 
-            if (changed > 0 && harm.length) {
-              // Put back exactly what we changed, then report it as a failure.
-              roots.forEach((root, i) => {
-                for (const rec of diffAdded(before[i] || new Map(), snap(root))) {
-                  for (const a of rec.added) { try { rec.el.removeAttribute(a); } catch {} }
-                }
-              });
-              failed++;
-              errs.push(harm[0]);
-              details.push({ type: it.type, sel, status: 'harmful', changed, harm, fieldsNoEffect });
-              continue;
-            }
+            // NOTE: this REPORTS, it does not revert.
+            //
+            // It used to strip everything U1 had just written. That was built
+            // from a single observation of one page, and a heuristic that can
+            // silently undo a working mapping is far more expensive than one
+            // that merely warns: U1 may leave aria-hidden="true" on a container
+            // for reasons of its own, and the specialist knows the library
+            // better than this check does. So the mapping stays applied and the
+            // warning is loud.
 
             if (changed > 0) {
               applied++;
+              if (harm.length) errs.push(harm[0]);
               // Stamp a revert token on everything that gained U1 attributes,
               // and hand back the list. Deleting the mapping can then undo
               // precisely this, instead of asking for a page reload.
@@ -1206,7 +1204,8 @@ async function applyMappingsBatch(items) {
               // attribute is still in the site's markup, so without this the
               // mapping looks fine here and does nothing in production.
               details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt,
-                             unblocked: siteAuthoredOptOut || undefined });
+                             unblocked: siteAuthoredOptOut || undefined,
+                             harm: harm.length ? harm : undefined });
             } else {
               noEffect++;
               // Nothing happened. Before blaming the selector, ask whether U1
@@ -5511,10 +5510,11 @@ function describeApply(res, m) {
     }
     return v;
   }
-  // The page came out worse and we put it back. Say so first and plainly —
-  // this outranks every other outcome.
-  if (d && d.status === 'harmful') {
-    return { ok: false, msg: `This mapping made the page LESS accessible, so it was undone. ${d.harm.join('; ')}. Nothing was left applied. Check the component type and the selectors — u1.fix may be treating this markup as a widget it is not.` };
+  // Applied, but something about the result looks harmful. Say it loudly and
+  // above everything else — but the mapping IS applied, and undoing it on a
+  // heuristic would be worse than letting someone who knows the library look.
+  if (d && d.harm && d.harm.length) {
+    return { ok: false, msg: `Applied — but check this: ${d.harm.join('; ')}. The mapping is still in place; if that is wrong for this component, use Delete to undo it precisely.` };
   }
   if (d && d.status === 'error') {
     return { ok: false, msg: `u1.fix.${d.type} threw: ${(res.errs && res.errs[0]) || 'unknown error'}` };

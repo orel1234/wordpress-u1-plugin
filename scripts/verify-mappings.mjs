@@ -249,8 +249,9 @@ const harmRes = await eval('(' + applyFnSrc + ')')([
 const harmDetail = (harmRes.details || [])[0] || {};
 const navAfter = harmDoc.querySelector('#nav');
 const itemsFocusable = [...harmDoc.querySelectorAll('.lk,.ddlk')].filter(e => e.getAttribute('tabindex') !== '-1');
-const harmCaught = harmDetail.status === 'harmful' && harmRes.applied === 0;
-const harmUndone = navAfter.getAttribute('aria-hidden') !== 'true' && itemsFocusable.length > 0;
+const harmCaught = !!(harmDetail.harm && harmDetail.harm.length) && harmRes.applied === 1;
+// It must NOT revert: undoing U1's work on a heuristic is worse than warning.
+const harmKept = navAfter.getAttribute('aria-hidden') === 'true';
 
 // ── Defaults must agree with the documentation written beside them ──────────
 // menu.menubar shipped as `true` while its own desc said "Default false =
@@ -302,10 +303,10 @@ for (const r of results) {
 }
 console.log(`\n  ${pitfallCaught ? '✅' : '❌'} menubar:true + submenus is rejected by U1 (the config that broke the live menu)`);
 if (!pitfallCaught) failed++;
-console.log(`  ${harmCaught ? '✅' : '❌'} an apply that hides the page from screen readers is reported as harmful, not applied`);
+console.log(`  ${harmCaught ? '✅' : '❌'} an apply that hides the page from screen readers is flagged`);
 if (!harmCaught) failed++;
-console.log(`  ${harmUndone ? '✅' : '❌'} …and is undone — aria-hidden lifted, items focusable again`);
-if (!harmUndone) failed++;
+console.log(`  ${harmKept ? '✅' : '❌'} …and is NOT silently reverted — the warning is loud, the work stays`);
+if (!harmKept) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
