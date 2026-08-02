@@ -673,8 +673,24 @@
         box: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
       });
     }
+    // The heading outline, in document order. The screenshot shows how headings
+    // LOOK, which is no guide to what level they are — a skipped level is
+    // invisible until you read the markup. Rule 2 in a11y-rules.md needs this.
+    const headings = qsa(document, 'h1,h2,h3,h4,h5,h6,[role="heading"]')
+      .filter(h => {
+        const r = h.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && getComputedStyle(h).visibility !== 'hidden';
+      })
+      .slice(0, 60)
+      .map(h => ({
+        level: Number(h.getAttribute('aria-level')) || Number((h.tagName.match(/^H(\d)$/) || [])[1]) || null,
+        text: (h.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 70),
+        selector: robustSelector(h),
+      }));
+
     return {
       candidates: out,
+      headings,
       viewport: { w: vw(), h: vh() },
       title: document.title,
       url: (document.location && document.location.href) || '',

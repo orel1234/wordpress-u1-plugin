@@ -96,15 +96,35 @@ RULES
 - Set needsWork false for things that already look correct — a plain <a href> with visible text needs nothing. Do not pad the list.
 - Skip anything you cannot see in the screenshot.`;
 
+  // The scan's rules live in a11y-rules.md so they can be changed without
+  // touching code. Fetched once and appended to the prompt above; if it cannot
+  // be read the scan still runs on the built-in rules rather than failing.
+  let rulesText = null;
+  async function scanRules() {
+    if (rulesText !== null) return rulesText;
+    try {
+      const url = (root.chrome && chrome.runtime && chrome.runtime.getURL)
+        ? chrome.runtime.getURL('a11y-rules.md') : 'a11y-rules.md';
+      const res = await fetch(url);
+      rulesText = res.ok ? (await res.text()).trim() : '';
+    } catch { rulesText = ''; }
+    return rulesText;
+  }
+
   async function discover({ screenshot, context, scope }) {
+    const extra = await scanRules();
     return callClaude({
-      system: DISCOVER_PROMPT,
+      system: DISCOVER_PROMPT + (extra ? '\n\n---\n\n' + extra : ''),
       schema: DISCOVER_SCHEMA,
       screenshot,
       text:
         `Page: ${context.title || '(untitled)'}\nURL: ${context.url || ''}\n` +
         (scope ? `The specialist limited this to: ${scope}\n` : '') +
-        `\nThe numbered elements in the screenshot:\n${JSON.stringify(compactList(context.candidates), null, 1)}`,
+        `\nThe numbered elements in the screenshot:\n${JSON.stringify(compactList(context.candidates), null, 1)}` +
+        (context.headings && context.headings.length
+          ? `\n\nThe page's heading outline, in document order (for the heading-order rule):\n` +
+            JSON.stringify(context.headings, null, 1)
+          : `\n\nThe page has NO headings at all.`),
     });
   }
 

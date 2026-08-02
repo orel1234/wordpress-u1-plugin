@@ -2601,6 +2601,8 @@ button.u1-readonly-off {
 .ai-busy { padding: 4px 0 2px; }
 
 .ai-busy-bar {
+  display: block;
+  width: 100%;
   height: 3px;
   margin-bottom: 10px;
   border-radius: 2px;
@@ -2809,32 +2811,9 @@ button.u1-readonly-off {
 
 /* ── The agent panel ──────────────────────────────────────────────────────── */
 
-/* The bar must animate wherever it is dropped, including inside a mapping row
-   where the surrounding rules are narrower. Stated explicitly so nothing
-   inherited flattens it into a static line. */
-.ai-why .ai-busy-bar,
-.ai-busy .ai-busy-bar {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 3px;
-  overflow: hidden;
-}
-.ai-why .ai-busy-bar > span,
-.ai-busy .ai-busy-bar > span {
-  position: absolute;
-  left: 0; top: 0;
-  display: block;
-  width: 40%;
-  height: 100%;
-  background: var(--u1-primary);
-  border-radius: 2px;
-  animation: u1-track 1.05s ease-in-out infinite;
-}
-@keyframes u1-track {
-  0%   { left: -40%; }
-  100% { left: 100%; }
-}
+/* .ai-busy-bar is defined once, above. It used to be re-stated here with a
+   second animation, and two rules for one element is how an animation stops
+   silently — whichever loses the cascade takes its keyframes with it. */
 
 .ai-why-close {
   padding: 0 4px;
@@ -2854,9 +2833,6 @@ button.u1-readonly-off {
   line-height: 1;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ai-why .ai-busy-bar > span, .ai-busy .ai-busy-bar > span { animation: none; width: 100%; }
-}
 
 /* ── The assistant, as a dialog ────────────────────────────────────────────
    It is settings for the scan, not part of it. */
@@ -3097,3 +3073,105 @@ textarea:focus-visible {
 }
 
 .btn-row { align-items: center; }
+
+/* ═══ Layout corrections ═══════════════════════════════════════════════════ */
+
+/* The tab bar as its own card, matching every other box in the panel, instead
+   of a full-bleed strip welded to the header. */
+.tabs {
+  margin: 12px 14px 14px;
+  padding: 4px;
+  gap: 2px;
+  background: var(--u1-surface-2);
+  border: 1px solid var(--u1-border);
+  border-bottom: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-md);
+}
+.tab-btn {
+  padding: 9px 6px;
+  border-radius: var(--u1-radius-sm);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.tab-btn:hover:not(.active) { background: rgba(255, 255, 255, 0.04); }
+.tab-btn.active {
+  background: var(--u1-primary);
+  color: #fff;
+}
+/* The active tab was marked with a bottom rule that the pill now replaces. */
+.tab-btn.active::after { display: none; }
+
+/* Room between the scan action and the results it produces — they were flush,
+   so the panel read as one undifferentiated block. */
+.ai-run { margin-bottom: 16px; }
+#aiResults, #aiMappings, #aiApproved { margin-top: 14px; }
+
+/* Any remaining folded box gets the panel's own card look rather than the
+   browser's default disclosure styling. */
+details.auto-advanced,
+details.ai-map-code,
+details.ai-map-edit,
+details.ai-approved-code {
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-md);
+  background: var(--u1-surface-2);
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+details.auto-advanced > summary,
+details.ai-map-code > summary,
+details.ai-map-edit > summary,
+details.ai-approved-code > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--u1-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+details.auto-advanced > summary::-webkit-details-marker,
+details.ai-map-code > summary::-webkit-details-marker,
+details.ai-map-edit > summary::-webkit-details-marker,
+details.ai-approved-code > summary::-webkit-details-marker { display: none; }
+details.auto-advanced > summary::before,
+details.ai-map-code > summary::before,
+details.ai-map-edit > summary::before,
+details.ai-approved-code > summary::before {
+  content: "\25B8";
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+}
+details.auto-advanced[open] > summary::before,
+details.ai-map-code[open] > summary::before,
+details.ai-map-edit[open] > summary::before,
+details.ai-approved-code[open] > summary::before { transform: rotate(90deg); }
+details > summary:hover { color: var(--u1-text); }
+
+/* Skip sits beside the primary action without competing with it. */
+.ai-comp-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-comp-actions .btn-primary { flex: 1 1 auto; width: auto; }
+
+/* A button that is working says so where you are already looking — a moving
+   rule along its bottom edge, not just a changed label. */
+.btn-primary.is-working,
+.btn-outline.is-working { position: relative; overflow: hidden; }
+.btn-primary.is-working::after,
+.btn-outline.is-working::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: 0;
+  width: 40%;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.85;
+  animation: u1-slide 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary.is-working::after, .btn-outline.is-working::after { animation: none; width: 100%; }
+}

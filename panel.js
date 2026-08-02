@@ -3127,11 +3127,9 @@ function setMapMode(mode) {
   // actually makes this tab readable, rather than shrinking everything.
   const manualOnly = document.getElementById('manualOnly');
   if (manualOnly) manualOnly.style.display = isAuto ? 'none' : '';
-  const advanced = document.getElementById('autoAdvanced');
-  if (advanced) {
-    advanced.style.display = isAuto ? '' : 'none';
-    if (!isAuto) advanced.open = false;
-  }
+  // Analyze & fill writes into the manual form, so it belongs with it.
+  const analyzeRow = document.getElementById('autoAnalyzeRow');
+  if (analyzeRow) analyzeRow.style.display = isAuto ? 'none' : '';
   // The AI teacher lives in Automatic mode alongside the rule-based analyzer.
   // Everything AI, hidden together. Moving the scan button out of the box left
   // it visible in Manual mode, where it means nothing.
@@ -3176,13 +3174,6 @@ document.getElementById('aiBoxClose')?.addEventListener('click', () => {
 $modeManualBtn?.addEventListener('click', () => setMapMode('manual'));
 $modeAutoBtn?.addEventListener('click', () => setMapMode('auto'));
 
-// "Work the selectors out without AI" fills the manual form, so opening it has
-// to bring that form back — otherwise Analyze & fill writes into a hidden box.
-document.getElementById('autoAdvanced')?.addEventListener('toggle', (e) => {
-  const manualOnly = document.getElementById('manualOnly');
-  if (!manualOnly || mapMode !== 'auto') return;
-  manualOnly.style.display = e.target.open ? '' : 'none';
-});
 
 function hideAutoReview() {
   autoResult = null;
@@ -3676,8 +3667,9 @@ const clearMapBusy = () => document.getElementById('aiMapBusy')?.remove();
 function renderAiComponents(found) {
   const list = document.getElementById('aiComponentList');
   const comps = found.components || [];
+  // The model's prose description of the page told the specialist what they were
+  // already looking at. Only the count and what it cost are worth the space.
   document.getElementById('aiSummary').innerHTML =
-    escapeHtml(found.summary || '') +
     `<div class="ai-meta">${comps.length} component${comps.length === 1 ? '' : 's'} found` +
     ` · ${escapeHtml(found.model || '')} · ~$${aiCost.toFixed(3)} this session</div>`;
 
@@ -3724,6 +3716,7 @@ function renderAiComponents(found) {
              front of you started work on a different component entirely. -->
         <div class="ai-comp-actions">
           <button class="btn-primary" data-mapone="${i}" ${chk.ok ? '' : 'disabled'}>✨ Make this accessible</button>
+          <button class="btn-ghost btn-sm" data-skipcomp="${i}" title="Not needed — take it off the list">Skip</button>
         </div>
       </div>`;
   }).join('') || '<div class="advisor-note ok">✅ Nothing found that needs a mapping.</div>';
@@ -3815,6 +3808,23 @@ document.getElementById('aiComponentList')?.addEventListener('input', (e) => {
 // Map ONE component, on demand, from its own card. No ticking, no batch: the
 // button you press is about the element you are looking at.
 document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
+  // Skip: take this component off the list without mapping it. The scan is a
+  // suggestion, and a specialist who can see it is not needed should be able to
+  // say so in one click rather than working around it.
+  const skipBtn = e.target.closest('[data-skipcomp]');
+  if (skipBtn) {
+    const comp = skipBtn.closest('.ai-comp');
+    comp.dataset.done = '1';
+    const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
+    if (left) showCompSlide(Math.min(carouselAt.aiComp || 0, left - 1));
+    else {
+      document.getElementById('aiResults').style.display = 'none';
+      showNotice(document.getElementById('aiStatus'),
+        'Nothing left on the list. Scan again, or switch to Manual.', 'success', 5000);
+    }
+    return;
+  }
+
   const btn = e.target.closest('[data-mapone]');
   if (!btn) return;
   const status = document.getElementById('aiMapStatus');
@@ -5474,7 +5484,22 @@ async function applyAllMappings({ silent = false } = {}) {
   return { applied, failed, noEffect, u1Missing, details };
 }
 
-document.getElementById('applyAllBtn').addEventListener('click', () => applyAllMappings());
+// Apply All polls for up to 4s PER mapping, so a site with several can sit
+// there for a long time. It had no busy state at all — the button looked idle
+// while the panel was working, which reads as nothing having happened.
+document.getElementById('applyAllBtn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.classList.add('is-working');
+  btn.textContent = 'Applying…';
+  try { await applyAllMappings(); }
+  finally {
+    btn.disabled = false;
+    btn.classList.remove('is-working');
+    btn.textContent = label;
+  }
+});
 
 // ── Same client, different URL ──────────────────────────────────────────────
 //
