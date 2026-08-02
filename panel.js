@@ -3486,10 +3486,12 @@ function renderAiComponents(found) {
           <select class="ai-comp-type" id="aiCompType${i}">${typeOptions(c.u1Type)}</select>
         </div>
 
-        <label class="ai-comp-tickrow">
-          <input type="checkbox" class="ai-comp-tick" ${c.needsWork && chk.ok ? 'checked' : ''} ${chk.ok ? '' : 'disabled'}>
-          <span>Include this one</span>
-        </label>
+        <!-- One element, one action. A global tick plus a batch button counted
+             selections across the whole list, so pressing it from the card in
+             front of you started work on a different component entirely. -->
+        <div class="ai-comp-actions">
+          <button class="btn-primary" data-mapone="${i}" ${chk.ok ? '' : 'disabled'}>✨ Make this accessible</button>
+        </div>
       </div>`;
   }).join('') || '<div class="advisor-note ok">✅ Nothing found that needs a mapping.</div>';
 
@@ -3502,7 +3504,6 @@ function renderAiComponents(found) {
   document.getElementById('aiApproved').innerHTML = '';
   showCompSlide(0);
   paintAiRowStrength();
-  refreshTickCount();
 }
 
 const showCompSlide = (i) => slideTo('aiComp', i, '.ai-comp', () => paintAiRowStrength());
@@ -3524,19 +3525,6 @@ document.getElementById('aiApproved')?.addEventListener('click', async (e) => {
 
 // Keep the "Make these accessible" button honest about how many are ticked —
 // with one card on screen at a time, the count is the only way to know.
-function refreshTickCount() {
-  const btn = document.getElementById('aiMapBtn');
-  if (!btn) return;
-  const n = document.querySelectorAll('#aiComponentList .ai-comp-tick:checked').length;
-  btn.textContent = n ? `✨ Make these accessible (${n})` : '✨ Make these accessible';
-  btn.disabled = n === 0;
-}
-
-document.getElementById('aiComponentList')?.addEventListener('change', (e) => {
-  if (e.target.classList.contains('ai-comp-tick')) refreshTickCount();
-});
-
-// Grade each row's container selector with the same meter as the manual form.
 async function paintAiRowStrength() {
   const rows = [...document.querySelectorAll('#aiComponentList .ai-comp')];
   if (!rows.length) return;
@@ -3551,135 +3539,87 @@ async function paintAiRowStrength() {
   });
 }
 
+// Re-grade a container selector as it is edited — the badge is the fastest way
+// to see that a hand-typed selector matches nothing.
 document.getElementById('aiComponentList')?.addEventListener('input', (e) => {
-  if (e.target.classList.contains('ai-comp-sel')) {
-    clearTimeout(aiRowTimer);
-    aiRowTimer = setTimeout(paintAiRowStrength, 400);
-  }
+  if (!e.target.classList.contains('ai-comp-sel')) return;
+  clearTimeout(aiRowTimer);
+  aiRowTimer = setTimeout(paintAiRowStrength, 400);
 });
 
-document.getElementById('aiComponentList')?.addEventListener('click', async (e) => {
-  const eye = e.target.closest('.ai-comp-eye');
-  if (!eye) return;
-  const sel = eye.closest('.ai-comp').querySelector('.ai-comp-sel').value.trim();
-  if (!sel) return;
-  await highlightMatch(sel, 0, true);
-  renderSelectorTest(await testSelector(sel), sel);
-});
-
-document.getElementById('aiDismissBtn')?.addEventListener('click', () => {
-  aiFound = null;
-  document.getElementById('aiResults').style.display = 'none';
-  document.getElementById('aiMappings').style.display = 'none';
-  document.getElementById('aiApproved').style.display = 'none';
-  document.getElementById('aiApproved').innerHTML = '';
-  // Clear the CARDS, not the container: the carousel head and track are static
-  // markup now, and wiping innerHTML took them out with the cards.
-  document.getElementById('aiSlideTrack').innerHTML = '';
-  document.getElementById('aiCompTrack').innerHTML = '';
-});
-
-// Back to what was found, without losing the mappings already generated.
-document.getElementById('aiBackBtn')?.addEventListener('click', () => {
-  const found = document.getElementById('aiResults');
-  const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
-  if (!left) { showNotice(document.getElementById('aiMapStatus'), 'Everything found has been handled.', 'success', 3000); return; }
-  found.style.display = 'block';
-  document.getElementById('aiMappings').style.display = 'none';
-  showCompSlide(slideIndex('aiComp'));
-});
-
-// ── Stage 2: turn the ticked rows into real mappings ────────────────────────
-// For each ticked component: pull the container's markup + event data from the
-// page, ask Claude which selector belongs in which field, then render THE SAME
-// form Manual mode uses, pre-filled. Nothing is saved until the specialist
-// presses Save on a card.
-document.getElementById('aiMapBtn')?.addEventListener('click', async () => {
-  const btn = document.getElementById('aiMapBtn');
+// Map ONE component, on demand, from its own card. No ticking, no batch: the
+// button you press is about the element you are looking at.
+document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-mapone]');
+  if (!btn) return;
   const status = document.getElementById('aiMapStatus');
-  const rows = [...document.querySelectorAll('#aiComponentList .ai-comp')]
-    .filter(r => r.querySelector('.ai-comp-tick').checked)
-    .map(r => ({
-      type: r.querySelector('.ai-comp-type').value,
-      sel: r.querySelector('.ai-comp-sel').value.trim(),
-      label: r.querySelector('.ai-comp-label').textContent,
-      // Which found card this came from, so approving it can retire that card
-      // too — a component you have dealt with should not still be in the list
-      // of things to deal with.
-      compIndex: r.dataset.i,
-    }))
-    .filter(r => r.sel && COMPONENT_SCHEMAS[r.type]);
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
+    return;
+  }
 
-  if (!rows.length) { showNotice(status, 'Tick at least one component first.', 'error', 3500); return; }
+  const comp = btn.closest('.ai-comp');
+  const row = {
+    type: comp.querySelector('.ai-comp-type').value,
+    sel: comp.querySelector('.ai-comp-sel').value.trim(),
+    label: comp.querySelector('.ai-comp-label').textContent,
+    compIndex: comp.dataset.i,
+  };
+  if (!row.sel || !COMPONENT_SCHEMAS[row.type]) {
+    showNotice(status, 'Give this one a container selector and a component type first.', 'error', 4000);
+    return;
+  }
 
   const tab = await getTab();
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
   const host = document.getElementById('aiMappings');
-  host.style.display = 'block';
-  // One carousel on screen from the first moment. Hiding this only after the
-  // run meant both lists were up for the whole run, with independent positions
-  // — approving in one left the other sitting where it was.
-  document.getElementById('aiResults').style.display = 'none';
   const track = document.getElementById('aiSlideTrack');
-  track.innerHTML = '';
-  document.getElementById('aiApproved').style.display = 'none';
-  document.getElementById('aiApproved').innerHTML = '';
-  aiMapped = [];
-  carouselAt.aiSlide = 0;
+  host.style.display = 'block';
+  document.getElementById('aiResults').style.display = 'none';
 
-  const original = btn.textContent;
   btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Working…';
+  showMapBusy(row.label, 1, 1);
+
   try {
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      btn.textContent = `Mapping ${i + 1}/${rows.length}…`;
-      showMapBusy(row.label, i + 1, rows.length);
-      status.textContent = row.label;
-      status.className = 'map-mode-hint';
-      status.style.display = '';
-
-      const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
-      if (!markup || markup.error || markup.notFound) {
-        track.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error || 'that selector matches nothing on the page'));
-        continue;
-      }
-
-      const schema = COMPONENT_SCHEMAS[row.type];
-      const out = await U1AI.mapComponent({
-        u1Type: row.type,
-        containerSel: row.sel,
-        markup,
-        fields: schema.fields || [],
-        fieldDocs: schema.desc || {},
-        options: Object.keys(schema.rootFields || {}),
-      });
-      aiCost += U1AI.estimateCost(out.usage) || 0;
-      if (out.err) { track.insertAdjacentHTML('beforeend', aiMapCardError(row, out.err)); continue; }
-
-      const idx = aiMapped.length;
-      aiMapped.push({ row, result: out, markup });
-      track.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
-      // Build the real inputs with the shared renderer so this card behaves
-      // exactly like the manual form, then fill them.
+    const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
+    if (!markup || markup.error || markup.notFound) {
       clearMapBusy();
-      fillAiMapCard(idx, row, out);
-      // Re-slide on every insert. Without this the cards pile up visible for
-      // the whole run — which is a stack of eight full mapping forms while you
-      // are trying to read one.
-      showSlide(slideIndex('aiSlide'));
+      track.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error || 'that selector matches nothing on the page'));
+      showSlide(0);
+      return;
     }
-    status.style.display = 'none';
-    showSlide(0);
+
+    const schema = COMPONENT_SCHEMAS[row.type];
+    const out = await U1AI.mapComponent({
+      u1Type: row.type,
+      containerSel: row.sel,
+      markup,
+      fields: schema.fields || [],
+      fieldDocs: schema.desc || {},
+      options: Object.keys(schema.rootFields || {}),
+    });
+    aiCost += U1AI.estimateCost(out.usage) || 0;
+    clearMapBusy();
+    if (out.err) { track.insertAdjacentHTML('beforeend', aiMapCardError(row, out.err)); showSlide(0); return; }
+
+    const idx = aiMapped.length;
+    aiMapped.push({ row, result: out, markup });
+    track.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
+    fillAiMapCard(idx, row, out);
+    showSlide(slideIndex('aiSlide'));
+    document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${idx}"]`)
+      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   } catch (err) {
+    clearMapBusy();
     showNotice(status, 'Failed: ' + err.message, 'error', 6000);
   } finally {
     btn.disabled = false;
     btn.textContent = original;
   }
 });
-
-
 
 const aiMapCardError = (row, why) => `
   <div class="ai-map-card">
@@ -3699,10 +3639,12 @@ function renderAiMapCard(idx, row, out, recorderActive) {
       </div>
       ${out.notes ? `<div class="ai-comp-why">⚠️ ${escapeHtml(out.notes)}</div>` : ''}
 
-      <!-- The code is the thing to review. The selector form is the thing to
-           review it WITH, and only when something looks wrong — so it folds
-           away instead of burying the answer under twelve inputs. -->
-      <div class="code-preview" id="aiMapCode${idx}"></div>
+      <!-- Neither the code nor the form is what you came for: you came to
+           approve this element. Both are here when you want them, folded. -->
+      <details class="ai-map-code">
+        <summary>Show the code</summary>
+        <div class="code-preview" id="aiMapCode${idx}"></div>
+      </details>
 
       <details class="ai-map-edit">
         <summary>✍️ Edit the selectors</summary>
@@ -3716,7 +3658,9 @@ function renderAiMapCard(idx, row, out, recorderActive) {
         <button class="btn-primary btn-sm" data-savecard="${idx}">✓ Approve &amp; apply</button>
         <button class="btn-ghost btn-sm" data-skipcard="${idx}">Skip</button>
         <button class="btn-ghost btn-sm" data-editcard="${idx}">Open in builder</button>
+        <button class="btn-ghost btn-sm" data-askwhy="${idx}">🤔 It isn't working — why?</button>
       </div>
+      <div class="ai-why" id="aiWhy${idx}" style="display:none;"></div>
     </div>`;
 }
 
@@ -4050,6 +3994,78 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       }
       updateApproved(rowId, verdict);
     })();
+    return;
+  }
+
+  const why = e.target.closest('[data-askwhy]');
+  if (why) {
+    const idx = Number(why.dataset.askwhy);
+    const entry = aiMapped[idx];
+    const box = document.getElementById('aiWhy' + idx);
+    if (!entry || !box) return;
+    const tpl = aiCardTemplate(idx);
+    why.disabled = true;
+    const label = why.textContent;
+    why.textContent = 'Asking…';
+    box.style.display = 'block';
+    box.innerHTML = '<div class="ai-busy"><div class="ai-busy-bar"><span></span></div>' +
+      '<div class="ai-busy-sub">Reading the markup this mapping was built from, and what actually changed.</div></div>';
+
+    // Measure first, so the question carries evidence instead of a complaint.
+    const res = tpl ? await applyMappingsBatch([{
+      type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg, config: tpl.config,
+    }]) : null;
+    const d = (res && res.details || [])[0];
+    const outcome = !res ? 'The mapping could not be rebuilt from the form.'
+      : !res.ok ? (res.u1Missing ? 'window.u1 is not loaded on the page at all.' : 'Applying failed: ' + res.err)
+      : d && d.status === 'error' ? `u1.fix.${d.type} threw: ${(res.errs || [])[0] || 'unknown'}`
+      : d && d.status === 'no-match' ? `Nothing on the page matches ${d.sel}.`
+      : res.applied
+        ? `${d.changed} element(s) gained U1 attributes.` +
+          (d.fieldsNoEffect && d.fieldsNoEffect.length
+            ? ` These fields changed nothing at all: ${d.fieldsNoEffect.join(', ')}.`
+            : ' Every configured field changed something.')
+        : `Nothing changed at all. u1.fix ran without throwing and wrote no attributes.${d && d.reason ? ' Reason recorded: ' + d.reason + '.' : ''}`;
+
+    const out = await U1AI.diagnose({
+      u1Type: entry.row.type,
+      containerSel: entry.row.sel,
+      config: tpl ? tpl.config : entry.result,
+      markup: entry.markup,
+      outcome,
+    });
+    aiCost += U1AI.estimateCost(out.usage) || 0;
+    why.disabled = false;
+    why.textContent = label;
+
+    if (out.err) { box.innerHTML = `<div class="ai-sel-bad">${escapeHtml(out.err)}</div>`; return; }
+    const fixSel = (out.fix && out.fix.selectors) || [];
+    box.innerHTML =
+      `<div class="ai-why-head"><strong>${escapeHtml(out.verdict || '')}</strong>` +
+      `<span class="ai-conf" data-c="${escapeHtml(out.confidence || 'medium')}">${escapeHtml(out.confidence || '')}</span></div>` +
+      `<div class="ai-comp-why">${escapeHtml(out.cause || '')}</div>` +
+      (out.fix && out.fix.what ? `<div class="ai-why-fix"><strong>Fix:</strong> ${escapeHtml(out.fix.what)}</div>` : '') +
+      fixSel.map(s => `<div class="ai-fix-sel"><strong>${escapeHtml(s.key)}</strong>: ${escapeHtml(s.value)}</div>`).join('') +
+      (fixSel.length ? `<div class="ai-find-actions"><button class="btn-outline btn-xs" data-applywhy="${idx}">Use these selectors</button></div>` : '');
+    return;
+  }
+
+  const useFix = e.target.closest('[data-applywhy]');
+  if (useFix) {
+    const idx = Number(useFix.dataset.applywhy);
+    const form = document.getElementById('aiMapForm' + idx);
+    const box = document.getElementById('aiWhy' + idx);
+    if (!form || !box) return;
+    for (const row of box.querySelectorAll('.ai-fix-sel')) {
+      const key = row.querySelector('strong')?.textContent;
+      const val = row.textContent.replace(/^[^:]*:\s*/, '');
+      const inp = form.querySelector(`input[data-field="${CSS.escape(key)}"]`)
+        || (key === 'primary' ? form.querySelector('input[data-field="__primary"]') : null);
+      if (inp) inp.value = val;
+    }
+    await refreshAiCard(idx);
+    useFix.textContent = 'Applied to the form ✓';
+    useFix.disabled = true;
     return;
   }
 
@@ -6124,7 +6140,6 @@ const READONLY_DISABLED_IDS = [
   // AI mode creates and persists mappings too, and it also spends money on the
   // specialist's API key — both are exactly what an expired licence pauses.
   'aiDiscoverBtn',      // start a paid review
-  'aiMapBtn',           // generate mappings
 ];
 
 // The per-card Approve buttons are built at runtime, so an id list cannot reach

@@ -182,6 +182,65 @@ COMPONENT RULES
     });
   }
 
+  // ── "It isn't working — why?" ──────────────────────────────────────────────
+  // Same markup the mapping was built from, plus the config we generated and
+  // what measurably happened when it ran. Everything needed to answer without
+  // the specialist having to describe the symptom.
+  const WHY_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['verdict', 'cause', 'fix', 'confidence'],
+    properties: {
+      verdict: { type: 'string', description: 'One line: what is wrong.' },
+      cause: { type: 'string', description: 'Why it is happening, in plain English, referring to the actual markup and config given.' },
+      fix: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['what', 'selectors'],
+        properties: {
+          what: { type: 'string', description: 'What to change. If the answer is outside the mapping — an unauthorised domain, an attribute in the site HTML, the wrong component type — say that instead of inventing a selector change.' },
+          selectors: {
+            type: 'array',
+            description: 'Corrected fields, if the fix is a selector change. Empty otherwise.',
+            items: {
+              type: 'object', additionalProperties: false, required: ['key', 'value'],
+              properties: { key: { type: 'string' }, value: { type: 'string' } },
+            },
+          },
+        },
+      },
+      confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+    },
+  };
+
+  const WHY_PROMPT = `A User1st (u1) mapping was applied to a page and did not do what was expected. You are given the component's real HTML, the exact config that was passed to u1.fix.*, and what measurably changed on the page afterwards.
+
+Work out why, from that evidence. Be concrete and short.
+
+WHAT "changed nothing" USUALLY MEANS, in rough order of likelihood:
+- The selector for that field matches elements u1 does not treat as part of the component (wrong level of the tree — the wrapper instead of the link, or vice versa).
+- The component type is wrong for this markup: a nav bar mapped as listbox, a trigger+popup mapped as menu.
+- A required field is missing, so u1 decorates the container and stops.
+- The element carries u1st-avoid-change-detection, which tells u1 to skip it.
+- u1 is loaded but the domain is not authorised for the project, in which case fix.* returns silently and NOTHING is decorated — note that this affects every component on the page equally, so if other mappings did work, this is not the cause.
+- u1 already processed the element this page load and will not process it again until a reload.
+
+Do not invent selectors: any you propose must be built from classes, ids and attributes present in the markup shown, and must be u1-valid — compound simple selectors joined by > + ~ and commas only, no descendant spaces, no pseudo-classes.`;
+
+  async function diagnose({ u1Type, containerSel, config, markup, outcome }) {
+    return callClaude({
+      system: WHY_PROMPT,
+      schema: WHY_SCHEMA,
+      text:
+        `Component type: ${u1Type}\nContainer: ${containerSel}\n\n` +
+        `The config that was passed to u1.fix.${u1Type}:\n${JSON.stringify(config, null, 2)}\n\n` +
+        `What measurably happened:\n${outcome}\n\n` +
+        `Descendants with click handlers or trigger attributes:\n${JSON.stringify(markup.interactive, null, 1)}\n\n` +
+        `The container's HTML:\n${markup.html}` +
+        (markup.truncated ? '\n\n[HTML was truncated.]' : ''),
+    });
+  }
+
   // Drop the panel-only fields to keep the prompt small.
   const compactList = (cands) => (cands || []).map(c => ({
     mark: c.mark, tag: c.tag, role: c.role, name: c.name,
@@ -300,5 +359,5 @@ COMPONENT RULES
     return (inTok * 3 + cached * 0.3 + out * 15) / 1e6;
   }
 
-  root.U1AI = { discover, mapComponent, getKey, setKey, estimateCost, MODEL, U1_TYPES };
+  root.U1AI = { discover, mapComponent, diagnose, getKey, setKey, estimateCost, MODEL, U1_TYPES };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

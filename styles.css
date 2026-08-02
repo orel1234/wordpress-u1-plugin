@@ -2692,3 +2692,48 @@ button.u1-readonly-off {
   font-weight: 700;
 }
 .ai-next-hint { font-size: 10px; line-height: 1.45; color: var(--u1-text-muted); }
+
+/* One element, one action. */
+.ai-comp-actions {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--u1-border, rgba(127, 127, 127, 0.2));
+}
+.ai-comp-actions .btn-primary {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ai-comp-actions .btn-primary:disabled { opacity: 0.45; cursor: default; }
+
+.ai-found-actions { grid-template-columns: 1fr; justify-items: end; }
+
+/* Code, when asked for. */
+.ai-map-code { margin: 8px 0; }
+.ai-map-code > summary {
+  padding: 5px 0;
+  font-size: 11px;
+  color: var(--u1-text-muted);
+  cursor: pointer;
+}
+.ai-map-code > summary:hover { color: var(--u1-primary); }
+
+/* "It isn't working — why?" */
+.ai-why {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border: 1px solid var(--u1-primary);
+  border-radius: 6px;
+  background: var(--u1-surface-2, rgba(127, 127, 127, 0.06));
+  font-size: 11px;
+}
+.ai-why-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+.ai-why-head .ai-conf { margin-left: auto; }
+.ai-why-fix { margin: 6px 0 4px; line-height: 1.5; }
