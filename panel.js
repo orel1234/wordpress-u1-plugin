@@ -4893,9 +4893,16 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
   if (!isInjectable(tab)) { box.style.display = 'block'; box.className = 'selector-test-result error'; box.textContent = 'Cannot read this page.'; return; }
 
   const key = storageKey('mappings', currentHostname);
-  const mine = ((await U1Store.get([key]))[key] || [])
+  const cfgKey = storageKey('config', currentHostname);
+  const stored = await U1Store.get([key, cfgKey]);
+  const mine = (stored[key] || [])
     .filter(m => m && typeof m === 'object')
     .map(m => ({ type: m.type, sel: m.firstArg || m.primary }));
+  // How many skip links THIS extension is configured to inject. Without this
+  // the report was asserting that every skip link on the page came from here,
+  // which is false whenever the U1 project itself defines them.
+  const cfg = stored[cfgKey] || {};
+  const configuredSkipLinks = Array.isArray(cfg.skipLinks) ? cfg.skipLinks.length : 0;
 
   btn.disabled = true;
   const original = btn.textContent;
@@ -5021,10 +5028,9 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
     lines.push(`<div>· ${res.infra} are U1's own announcer regions, which the library creates on every page load. Not fixes, and nothing to remove.</div>`);
   }
   if (res.skipLinks) {
-    // Skip links are the extension's doing, but they come from the CONFIG, not
-    // the mapping list — which is exactly why emptying the mappings does not
-    // make them go away.
-    lines.push(`<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} injected from this site's saved <strong>config</strong>, not from a mapping. Clear them in Setup → Skip Links if you do not want them.</div>`);
+    lines.push(configuredSkipLinks
+      ? `<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} on the page; this extension is configured to inject ${configuredSkipLinks}. Those come from the <strong>config</strong>, not from a mapping — clear them in Setup → Skip Links.</div>`
+      : `<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} on the page, and <strong>this extension has none configured for this site</strong>. So they are defined in the U1 project served for this domain, not here — they can only be changed in that project.</div>`);
   }
   if (res.optedOut && res.optedOut.length) {
     const viaSkip = res.optedOut.filter(o => o.skipTarget);
@@ -5037,9 +5043,12 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
       // own skip links are what put the attribute there.
       lines.push(
         `<div class="u1-warn">${viaSkip.length} of ${res.optedOut.length === 1 ? 'them' : 'those'} ` +
-        `${viaSkip.length === 1 ? 'is a target' : 'are targets'} of your skip links. U1 stamps that attribute on an element when it wires a skip link to it — ` +
+        `${viaSkip.length === 1 ? 'is a target' : 'are targets'} of a skip link. U1 stamps that attribute on an element when it wires a skip link to it — ` +
         `so a skip link and a mapping aimed at the same element conflict, and the skip link wins. ` +
         `Point the skip link at a wrapper (or the mapping at an inner element) so they are not the same node.</div>`);
+      lines.push(
+        `<div>Until that changes, Apply lifts the attribute for you, runs the fix, and says so — the mapping works on the page but not on a fresh load, ` +
+        `because U1 re-stamps the element every time it wires the skip link again.</div>`);
     }
     lines.push(`<ul>${res.optedOut.map(o =>
       `<li><code>${escapeHtml(o.tag)}</code> — ${o.skipTarget ? 'a skip-link target: U1 stamped it when wiring the skip link'
