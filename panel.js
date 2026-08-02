@@ -1411,16 +1411,43 @@ async function migrateWwwHostname(host) {
   }
 }
 
+// True when the site we are reading and writing is NOT the tab in front of the
+// user. Everything here is stored per site, so working on one site while
+// looking at another is how a mapping ends up filed under the wrong host.
+let borrowedHost = false;
+
+// Say so, loudly, whenever that is the case — the small hostname badge is not
+// enough to notice before you have saved something to the wrong site.
+function renderHostWarning() {
+  let bar = document.getElementById('hostWarning');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'hostWarning';
+    bar.className = 'readonly-banner';
+    bar.style.display = 'none';
+    document.body.insertBefore(bar, document.body.firstChild);
+  }
+  if (!borrowedHost) { bar.style.display = 'none'; return; }
+  bar.style.display = 'block';
+  bar.innerHTML = `<strong>Showing ${escapeHtml(currentHostname)}</strong> — the tab in front of you is not a web page, ` +
+    `so this is another tab's site. Anything you save goes to <strong>${escapeHtml(currentHostname)}</strong>. ` +
+    `Switch to that site's tab before making changes.`;
+}
+
 async function init() {
   let tab = await getTab();
   // If the active tab is a non-web page (e.g. the report tab we opened), fall
-  // back to the most recent real web tab so the hostname isn't "unknown".
+  // back to the most recent real web tab so the hostname isn't "unknown" — but
+  // never silently: that fallback used to adopt an arbitrary tab's hostname,
+  // and every mapping saved afterwards was filed under that site.
   if (!tab || !isInjectable(tab)) {
     const tabs = await chrome.tabs.query({ currentWindow: true });
-    tab = tabs.reverse().find(isInjectable) || tab;
+    const fallback = tabs.reverse().find(isInjectable);
+    if (fallback) { tab = fallback; borrowedHost = true; }
   }
   const h = getHostname(tab);
   if (h !== 'unknown') currentHostname = h;
+  renderHostWarning();
 
   // Licence check happens before anything is loaded or applied. If it fails the
   // gate is on screen and we stop here — without deleting or altering a single
@@ -4808,6 +4835,50 @@ async function applyAllMappings({ silent = false } = {}) {
 
 document.getElementById('applyAllBtn').addEventListener('click', () => applyAllMappings());
 
+// ── Which site is each mapping actually filed under? ────────────────────────
+// Storage is per hostname, so "this looks like a mapping from another site" is
+// answerable — but only by showing all of it at once.
+document.getElementById('storedSitesBtn')?.addEventListener('click', async () => {
+  const box = document.getElementById('storedSites');
+  box.style.display = 'block';
+  const sites = await U1Store.listSites();
+  if (!sites.length) {
+    box.className = 'selector-test-result ok';
+    box.textContent = 'No site has any saved work.';
+    return;
+  }
+  const keys = sites.map(h => storageKey('mappings', h));
+  const all = await U1Store.get(keys);
+  const rows = sites.map(h => {
+    const list = all[storageKey('mappings', h)] || [];
+    const here = h === currentHostname;
+    const types = [...new Set(list.map(m => m && m.type).filter(Boolean))].join(', ');
+    return { h, n: list.length, here, types };
+  }).filter(r => r.n > 0 || r.here);
+
+  box.className = 'selector-test-result ' + (rows.length > 1 ? 'warn' : 'ok');
+  box.innerHTML =
+    `<div>Saved mappings by site — the one in bold is what this panel is reading and writing right now.</div>` +
+    `<ul>${rows.map(r =>
+      `<li>${r.here ? '<strong>' : ''}${escapeHtml(r.h)}${r.here ? '</strong> ← current' : ''}` +
+      ` — ${r.n} mapping${r.n === 1 ? '' : 's'}${r.types ? ` (${escapeHtml(r.types)})` : ''}` +
+      `${r.n && !r.here ? ` <button class="btn-outline btn-xs" data-wipe-host="${escapeHtml(r.h)}">Delete all</button>` : ''}</li>`
+    ).join('')}</ul>` +
+    `<div class="ai-comp-why">Mappings are only ever applied to the site they are filed under — background.js reads mappings_&lt;hostname&gt; for the page being loaded, and nothing else.</div>`;
+});
+
+// Clearing another site's mappings, on request only.
+document.getElementById('storedSites')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-wipe-host]');
+  if (!btn) return;
+  const host = btn.dataset.wipeHost;
+  if (host === currentHostname) return;
+  await U1Store.remove([storageKey('mappings', host)]);
+  btn.textContent = 'Deleted ✓';
+  btn.disabled = true;
+  refreshExportInfo();
+});
+
 // ── "The list is empty, but the site still behaves as if it is not" ─────────
 //
 // Three different things can decorate this page and they are indistinguishable
@@ -4887,8 +4958,11 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
               ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
             return {
               tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls),
-              // U1 stamps a generated id on what it decorates, so this tells us
-              // whether U1 put the attribute there or the site's author did.
+              // The decisive one: U1 stamps this attribute on an element when
+              // it wires a skip link to it. A target that already had an id
+              // gets no generated id, so "was a u1st-* id generated" misses it
+              // — being a skip target is the reliable signal.
+              skipTarget: skipTargets.has(el.id),
               touchedByU1: /^u1st-/.test(el.id || '') || !!el.querySelector('[id^="u1st-"]'),
             };
           });
@@ -4953,15 +5027,24 @@ document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () =>
     lines.push(`<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} injected from this site's saved <strong>config</strong>, not from a mapping. Clear them in Setup → Skip Links if you do not want them.</div>`);
   }
   if (res.optedOut && res.optedOut.length) {
-    const authored = res.optedOut.filter(o => !o.touchedByU1);
+    const viaSkip = res.optedOut.filter(o => o.skipTarget);
     lines.push(
       `<div class="u1-warn">⚠️ ${res.optedOut.length} element${res.optedOut.length === 1 ? '' : 's'} carry ` +
-      `<code>u1st-avoid-change-detection</code> — U1 skips ${res.optedOut.length === 1 ? 'it' : 'them'}, so a mapping pointed here does nothing.` +
-      (authored.length
-        ? ` ${authored.length} of them show no sign of U1 having run on them, so the attribute is in the site's own HTML and a reload will not clear it.`
-        : ' U1 stamped these itself after decorating them — a reload clears that.') +
-      `</div>` +
-      `<ul>${res.optedOut.map(o => `<li><code>${escapeHtml(o.tag)}</code>${o.touchedByU1 ? ' — U1 stamped this' : ' — in the site\'s markup'}</li>`).join('')}</ul>`);
+      `<code>u1st-avoid-change-detection</code>, which tells U1 to leave ${res.optedOut.length === 1 ? 'it' : 'them'} alone — ` +
+      `a mapping pointed at ${res.optedOut.length === 1 ? 'it' : 'one of them'} does nothing.</div>`);
+    if (viaSkip.length) {
+      // The self-inflicted case, and the reason this was so hard to see: your
+      // own skip links are what put the attribute there.
+      lines.push(
+        `<div class="u1-warn">${viaSkip.length} of ${res.optedOut.length === 1 ? 'them' : 'those'} ` +
+        `${viaSkip.length === 1 ? 'is a target' : 'are targets'} of your skip links. U1 stamps that attribute on an element when it wires a skip link to it — ` +
+        `so a skip link and a mapping aimed at the same element conflict, and the skip link wins. ` +
+        `Point the skip link at a wrapper (or the mapping at an inner element) so they are not the same node.</div>`);
+    }
+    lines.push(`<ul>${res.optedOut.map(o =>
+      `<li><code>${escapeHtml(o.tag)}</code> — ${o.skipTarget ? 'a skip-link target: U1 stamped it when wiring the skip link'
+        : o.touchedByU1 ? 'U1 stamped this after decorating it — a reload clears that'
+        : 'origin unclear: U1 from an earlier load, or the site\'s markup'}</li>`).join('')}</ul>`);
   }
   if (unexplained > 0) {
     lines.push(`<div class="u1-warn">⚠️ ${unexplained} element${unexplained === 1 ? '' : 's'} decorated by something else — either work U1 applied before your last change (a reload clears it) or U1's own project configuration for this domain, served by User1st. The extension cannot delete that; it has to change in the U1 project.</div>`);
@@ -5693,7 +5776,12 @@ document.getElementById('importDataBtn').addEventListener('click', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function onTabChanged(tab) {
-  if (!tab || !isInjectable(tab)) return;
+  // Moving to a non-web tab used to leave currentHostname pointing at the site
+  // you were last on, with nothing on screen saying so — save now and it lands
+  // on the previous site.
+  if (!tab || !isInjectable(tab)) { borrowedHost = true; renderHostWarning(); return; }
+  borrowedHost = false;
+  renderHostWarning();
   const newHostname = getHostname(tab);
   const hostnameChanged = newHostname !== currentHostname;
 
