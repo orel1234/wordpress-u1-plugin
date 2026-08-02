@@ -152,6 +152,19 @@
     </div>
   </div>
 
+  <!-- 1.1b DETECTION ─────────────────────────────────────────────────
+       Lives here with the other settings. It spent a while inside the AI
+       dialog, where its long explanation had nowhere to go and rendered as a
+       squeezed column of capitals. -->
+  <div class="section">
+    <div class="section-title">Detection<span class="dot">.</span></div>
+    <label class="root-toggle" id="preciseEventsRow">
+      <input type="checkbox" id="preciseEventsToggle">
+      <span><strong>Precise event detection</strong> — needs a page reload</span>
+    </label>
+    <div class="input-hint" style="display:block;">Off, a trigger is recognised from its tag, role, aria-* and data-* attributes. On, the real click handlers are recorded as the page loads, so detection is exact. Reload the page once after switching this on.</div>
+  </div>
+
   <!-- 1.2 SKIP LINKS ──────────────────────────────────────────────── -->
   <div class="section">
     <div class="section-title">Skip Links<span class="dot">.</span></div>
@@ -294,35 +307,28 @@
     <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
 
     <!-- ── AI accessibility teacher ──────────────────────────────────────── -->
+    <!-- One job: change the API key. The scan instruction and the event-recorder
+         toggle both lived in here and turned a one-field dialog into a cramped
+         column of squeezed text. -->
     <dialog class="ai-box" id="aiBox">
       <div class="ai-head">
-        <span class="ai-title">🎓 Accessibility assistant</span>
+        <span class="ai-title">🔑 Anthropic API key</span>
         <span class="ai-head-spacer"></span>
-        <button class="btn-ghost btn-xs" id="aiKeyToggle" title="API key">🔑</button>
         <button class="btn-ghost btn-xs" id="aiBoxClose" title="Close">✕</button>
       </div>
 
-      <!-- Opt-in: records addEventListener at document_start so "has a click
-           event" is measured rather than guessed. Needs one page reload. -->
-      <label class="root-toggle" id="preciseEventsRow">
-        <input type="checkbox" id="preciseEventsToggle">
-        <span><strong>Precise event detection</strong> — needs a page reload</span>
-        <div class="input-hint" style="display:block;">Off: a trigger is recognised from its tag, role, aria-* and data-* attributes. On: the real click handlers are recorded as the page loads, so detection is exact. Reload the page once after switching this on.</div>
-      </label>
-
-      <div class="ai-key-row" id="aiKeyRow" style="display:none;">
-        <label class="ai-field-label" for="aiKeyInput">🔑 Anthropic API key — paste it here</label>
-        <input type="password" id="aiKeyInput" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
-        <div class="btn-row" style="margin-top:6px;">
-          <button class="btn-primary btn-sm" id="aiKeySave">Save key</button>
+      <div class="ai-key-row" id="aiKeyRow">
+        <label class="ai-field-label" for="aiKeyInput">Paste your key</label>
+        <div class="key-line">
+          <input type="password" id="aiKeyInput" class="key-input" placeholder="sk-ant-…"
+                 autocomplete="off" spellcheck="false" autocapitalize="off">
+          <button class="btn-ghost btn-sm" id="aiKeyToggle" type="button" title="Show or hide the key">Show</button>
+        </div>
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="btn-primary" id="aiKeySave">Save key</button>
         </div>
         <div class="input-hint" style="display:block;">Stored on this machine only, and kept out of exported backups. It is sent straight to api.anthropic.com from this panel.</div>
       </div>
-
-      <label class="ai-field-label" for="aiInstruction">What to look at <span class="ai-optional">(optional)</span></label>
-      <textarea id="aiInstruction" rows="2"
-        placeholder="Leave empty to review the whole screen, or narrow it down: “only the header and the product filters”"></textarea>
-
     </dialog>
 
     <!-- The action, and beside it the settings it uses. The key and the
@@ -330,7 +336,7 @@
     <div class="ai-run" id="aiRunRow" style="display:none;">
       <div class="ai-run-line">
         <button class="btn-primary" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
-        <button class="btn-outline" id="aiSettingsBtn" title="Narrow the scan, or set the API key">⚙</button>
+        <button class="btn-outline" id="aiSettingsBtn" title="Change the API key">🔑</button>
       </div>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
     </div>

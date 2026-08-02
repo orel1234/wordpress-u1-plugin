@@ -3236,3 +3236,47 @@ details > summary:hover { color: var(--u1-text); }
   color: var(--u1-primary);
   padding: 2px 0 8px;
 }
+
+/* ── The key field ─────────────────────────────────────────────────────────
+   A password field you cannot read is the one place contrast matters most:
+   a key is 100 characters of noise and a single wrong one fails silently. */
+.key-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.key-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  background: #000;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+}
+.key-input::placeholder { color: rgba(255, 255, 255, 0.38); letter-spacing: 0; }
+.key-input:focus {
+  border-color: var(--u1-primary);
+  background: #000;
+  color: #fff;
+  outline: 2px solid var(--u1-primary);
+  outline-offset: 1px;
+}
+
+/* The dialog holds one field — let it breathe rather than filling the height. */
+dialog.ai-box { width: min(92vw, 420px); }
+dialog.ai-box .ai-key-row { margin-top: 4px; }
+dialog.ai-box .btn-row { display: flex; }
+dialog.ai-box .btn-row .btn-primary { width: 100%; }
+
+/* A long explanation in a narrow column is unreadable; keep hints normal-case
+   and full width wherever they land. */
+.input-hint {
+  text-transform: none;
+  letter-spacing: 0;
+  line-height: 1.5;
+}

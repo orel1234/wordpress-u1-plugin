@@ -3431,7 +3431,6 @@ document.getElementById('autoApplyBtn')?.addEventListener('click', async () => {
 const $aiBox = document.getElementById('aiBox');
 const $aiResults = document.getElementById('aiResults');
 const $aiStatus = document.getElementById('aiStatus');
-const $aiInstruction = document.getElementById('aiInstruction');
 const $aiKeyRow = document.getElementById('aiKeyRow');
 const $aiKeyInput = document.getElementById('aiKeyInput');
 
@@ -3469,10 +3468,15 @@ function checkAiSelector(value, context) {
   return { ok: true, value: norm };
 }
 
-document.getElementById('aiKeyToggle')?.addEventListener('click', async () => {
-  const showing = $aiKeyRow.style.display !== 'none';
-  $aiKeyRow.style.display = showing ? 'none' : '';
-  if (!showing) await markKeyState();
+// The dialog is only ever about the key, so the row is always there and this
+// button does the one thing you actually want beside a password field: let you
+// read back what you pasted before committing to it.
+document.getElementById('aiKeyToggle')?.addEventListener('click', (e) => {
+  if (!$aiKeyInput) return;
+  const hidden = $aiKeyInput.type === 'password';
+  $aiKeyInput.type = hidden ? 'text' : 'password';
+  e.currentTarget.textContent = hidden ? 'Hide' : 'Show';
+  $aiKeyInput.focus();
 });
 
 // Reflect whether a key is saved, without ever rendering the key back.
@@ -3480,8 +3484,8 @@ async function markKeyState() {
   if (!$aiKeyInput || !globalThis.U1AI) return false;
   const saved = await U1AI.getKey();
   $aiKeyInput.placeholder = saved ? '•••••••• saved — type to replace' : 'sk-ant-…';
-  const toggle = document.getElementById('aiKeyToggle');
-  if (toggle) toggle.title = saved ? 'API key saved' : 'No API key yet — click to add one';
+  const settings = document.getElementById('aiSettingsBtn');
+  if (settings) settings.title = saved ? 'Change the API key' : 'No API key yet — click to add one';
   return !!saved;
 }
 
@@ -3507,14 +3511,13 @@ async function markKeyState() {
 // rather than letting it sit there looking accepted.
 const LOOKS_LIKE_KEY = /\bsk-ant-[A-Za-z0-9_-]{10,}/;
 
-$aiInstruction?.addEventListener('input', () => {
-  const val = $aiInstruction.value;
-  if (!LOOKS_LIKE_KEY.test(val)) return;
-  const key = (val.match(LOOKS_LIKE_KEY) || [])[0];
-  $aiInstruction.value = val.replace(LOOKS_LIKE_KEY, '').trim();
-  $aiKeyRow.style.display = '';
-  if ($aiKeyInput) { $aiKeyInput.value = key; $aiKeyInput.focus(); }
-  showNotice($aiStatus, 'That looked like your API key — moved it to the key field above. Press “Save key”.', 'error', 7000);
+// A key pasted into the wrong field should still end up saved rather than sent
+// somewhere it does not belong. The instruction box is gone, so this now only
+// guards the key field: strip anything around the key and keep the key.
+$aiKeyInput?.addEventListener('input', () => {
+  const val = $aiKeyInput.value;
+  if (!LOOKS_LIKE_KEY.test(val) || LOOKS_LIKE_KEY.exec(val)[0] === val.trim()) return;
+  $aiKeyInput.value = (val.match(LOOKS_LIKE_KEY) || [])[0];
 });
 
 document.getElementById('aiKeySave')?.addEventListener('click', async () => {
@@ -3597,10 +3600,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     $aiStatus.className = 'map-mode-hint';
     $aiStatus.style.display = '';
 
-    // Belt and braces: never let a credential reach the prompt, whatever route
-    // it took into the box.
-    const scope = $aiInstruction.value.replace(LOOKS_LIKE_KEY, '[removed]').trim();
-    const out = await U1AI.discover({ screenshot: shot, context, scope });
+    const out = await U1AI.discover({ screenshot: shot, context });
     if (out.err) { showNotice($aiStatus, out.err, 'error', 8000); return; }
 
     // Deliberately NOT re-marking here. The 👁 buttons work off each row's
