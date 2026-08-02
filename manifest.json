@@ -3,8 +3,17 @@
   "name": "U1 Studio",
   "version": "3.0.0",
   "description": "Accessibility implementation helper for User1st (u1) library",
-  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "declarativeNetRequest"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "sidePanel",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_security_policy": {
     "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:3001 https://*.up.railway.app https://api.anthropic.com; base-uri 'none'; form-action 'none'"
   },

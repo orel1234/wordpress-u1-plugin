@@ -54,8 +54,32 @@
       return chrome.storage.local.get(keys);
     },
 
-    set(items) {
-      return chrome.storage.local.set(items);
+    /**
+     * Write, and make a failure impossible to miss.
+     *
+     * chrome.storage.local rejects when the quota is exhausted, and every
+     * mapping carries a screenshot as a data URL — so this is reachable, not
+     * theoretical. The rejection used to travel up as an unhandled error: the
+     * save silently did nothing and the work looked like it had vanished.
+     */
+    async set(items) {
+      try {
+        return await chrome.storage.local.set(items);
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        if (/quota|QUOTA_BYTES/i.test(msg)) {
+          const used = await this.bytesInUse().catch(() => 0);
+          throw new Error(
+            `Storage is full (${(used / 1e6).toFixed(1)} MB used) — nothing was saved. ` +
+            `Delete mappings you no longer need, or export a backup and clear old sites.`);
+        }
+        throw new Error('Could not save to local storage: ' + msg);
+      }
+    },
+
+    /** Bytes currently held, for showing how close to the limit we are. */
+    bytesInUse(keys) {
+      return chrome.storage.local.getBytesInUse(keys ?? null);
     },
 
     remove(keys) {

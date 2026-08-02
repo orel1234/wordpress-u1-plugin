@@ -3652,7 +3652,13 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
     const existing = (await U1Store.get([mkey]))[mkey] || [];
     const clashes = await overlappingMappings(tpl.primary, existing);
 
-    await saveMappingEntry(tpl);
+    try {
+      await saveMappingEntry(tpl);
+    } catch (e) {
+      save.disabled = false; save.textContent = '✓ Approve & apply';
+      showNotice(status, e.message, 'error', 12000);
+      return;
+    }
 
     // Approving applies it straight away, and reports what actually happened on
     // the page rather than "saved" — a mapping that saves but never takes is
@@ -4756,7 +4762,16 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   }
   const btn = document.getElementById('addMappingBtn');
   btn.textContent = 'Capturing…';
-  const { updated } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey });
+  let updated;
+  try {
+    ({ updated } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey }));
+  } catch (e) {
+    // A failed write used to travel up as an unhandled rejection: the button
+    // sat on "Capturing…" and the mapping was simply never saved.
+    btn.textContent = 'Add to Mapping';
+    showNotice(status, e.message, 'error', 12000);
+    return;
+  }
   const wasEditing = editingMappingKey != null || updated;
   editingMappingKey = null;
   btn.textContent = wasEditing ? 'Updated ✓' : 'Added ✓';
@@ -4962,7 +4977,8 @@ document.getElementById('storedSitesBtn')?.addEventListener('click', async () =>
       ? `<div class="ai-comp-why">${junk.length} other site${junk.length === 1 ? '' : 's'} hold an empty record with no mappings and no config — left behind by opening the panel there. ` +
         `<button class="btn-outline btn-xs" data-purge-empty="1">Clear ${junk.length} empty record${junk.length === 1 ? '' : 's'}</button></div>`
       : '') +
-    `<div class="ai-comp-why">Mappings live in the extension's local storage, one key per site: <code>mappings_&lt;hostname&gt;</code>. ` +
+    `<div class="ai-comp-why">Using ${(await U1Store.bytesInUse().catch(() => 0) / 1e6).toFixed(1)} MB of local storage. ` +
+    `Mappings live in the extension's local storage, one key per site: <code>mappings_&lt;hostname&gt;</code>. ` +
     `Config is <code>config_&lt;hostname&gt;</code>. Nothing is ever read or applied across sites — but the same client reached by a different URL is a different key, which is how mappings appear to go missing.</div>`;
   box.dataset.junk = junk.map(r => r.h).join(',');
 });
