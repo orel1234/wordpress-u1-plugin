@@ -272,6 +272,26 @@ const defaultsAgree = defaultMismatches.length === 0;
 const navTpl = buildTemplate('menu', CASES.menu.primary, CASES.menu.fields, {});
 const navSafe = navTpl.config.menubar !== true;
 
+// ── Mappings already saved with the fatal pair must be repaired, not left ───
+// Changing the schema default only helps NEW mappings. The one someone has
+// been staring at for hours is already in storage with menubar:true.
+const savedBad = {
+  type: 'menu', primary: '.main-nav',
+  config: { menubar: true, selectors: { menu: '.main-nav', items: '.main-nav__item', submenus: '.main-nav__item--has-dropdown' } },
+  code: 'stale',
+};
+const migSrc = panelSrc.slice(panelSrc.indexOf('async function migrateFatalMenubar'),
+                              panelSrc.indexOf('async function migrateWwwHostname'));
+const store = { 'mappings_x': [structuredClone(savedBad), { type: 'link', primary: 'a', config: {} }] };
+globalThis.storageKey = () => 'mappings_x';
+globalThis.U1Store = { get: async () => ({ mappings_x: store.mappings_x }), set: async (o) => Object.assign(store, o) };
+globalThis.buildTemplate = buildTemplate;
+const migrate = new Function(migSrc + '; return migrateFatalMenubar;')();
+const repaired = await migrate('x');
+const after = store.mappings_x[0];
+const migrated = repaired === 1 && after.config.menubar === false && !/menubar: true/.test(after.code);
+const leftAlone = store.mappings_x[1].type === 'link' && !('menubar' in store.mappings_x[1].config);
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -290,7 +310,11 @@ console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to wh
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
 if (!navSafe) failed++;
+console.log(`  ${migrated ? '✅' : '❌'} a menu ALREADY SAVED with the fatal pair is repaired and its code rebuilt`);
+if (!migrated) failed++;
+console.log(`  ${leftAlone ? '✅' : '❌'} …and other mappings are left untouched`);
+if (!leftAlone) failed++;
 
-const total = results.length + 5;
+const total = results.length + 7;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

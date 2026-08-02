@@ -1605,6 +1605,32 @@ async function migrateGlobalU1Links() {
   await U1Store.remove(['cssLink', 'jsLink']);
 }
 
+// Repair menu mappings already saved with the combination that cannot work.
+//
+// menubar:true together with submenus makes U1 throw "Submenu must have a
+// trigger element" and abort tagging — the mapping reports as applied and adds
+// nothing. Changing the schema default only helps mappings made after it;
+// anything already in storage keeps the setting that broke it, which is exactly
+// the mapping someone has been staring at. There is no configuration in which
+// this pair does something useful, so repair it and say so.
+async function migrateFatalMenubar(host) {
+  const key = storageKey('mappings', host);
+  const list = (await U1Store.get([key]))[key];
+  if (!Array.isArray(list) || !list.length) return 0;
+
+  let fixed = 0;
+  for (const m of list) {
+    if (!m || m.type !== 'menu' || !m.config || m.config.menubar !== true) continue;
+    if (!(m.config.selectors && m.config.selectors.submenus)) continue;
+    m.config.menubar = false;
+    const rebuilt = buildTemplate('menu', m.primary, m.config.selectors, m.config);
+    if (rebuilt) { m.code = rebuilt.code; m.firstArg = rebuilt.firstArg; m.config = rebuilt.config; }
+    fixed++;
+  }
+  if (fixed) await U1Store.set({ [key]: list });
+  return fixed;
+}
+
 async function migrateWwwHostname(host) {
   if (!host || host === 'unknown' || host.startsWith('www.')) return;
   const suffix = '_www.' + host;
@@ -1670,6 +1696,14 @@ async function init() {
   // hostname. Now that we strip "www.", move that data to the new key so saved
   // mappings / config / skip links aren't lost.
   await migrateWwwHostname(currentHostname);
+  try {
+    const repaired = await migrateFatalMenubar(currentHostname);
+    if (repaired) {
+      showNotice(document.getElementById('applyAllStatus'),
+        `Repaired ${repaired} menu mapping${repaired === 1 ? '' : 's'} that had menubar ON together with submenus — U1 throws on that pair and adds nothing. menubar is now off. Reload the page and press Apply All.`,
+        'success', 12000);
+    }
+  } catch {}
 
   document.querySelectorAll('#mappingsHostname, #exportHostname, #closeOutHostname').forEach(el => {
     el.textContent = currentHostname;
