@@ -2561,3 +2561,36 @@ button.u1-readonly-off {
   font-size: 10px;
   white-space: pre;
 }
+
+/* ── Mode switch: the two halves of one decision, at full width ────────────
+   It was an inline pill sized to its text, tucked in a corner of a panel it
+   governs entirely. Splitting the full width makes the choice as prominent as
+   its consequences, and gives each option a real target. */
+.map-mode.wide {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 3px;
+}
+
+.map-mode.wide .map-mode-btn {
+  padding: 9px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.map-mode.wide .map-mode-btn.active {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+/* The scan action matches: full width, and only ever in Automatic mode. */
+.ai-run { margin: 10px 0 0; }
+.ai-run .btn-primary {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}

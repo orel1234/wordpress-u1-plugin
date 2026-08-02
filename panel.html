@@ -287,7 +287,7 @@
     <!-- Manual    = fill every selector by hand (the original flow).
          Automatic = the rule-based analyzer proposes the selectors, and the AI
                      reviewer says what on this screen needs fixing at all. -->
-    <div class="map-mode" role="tablist" aria-label="Mapping mode">
+    <div class="map-mode wide" role="tablist" aria-label="Mapping mode">
       <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true">✍️ Manual</button>
       <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false">🤖 Automatic (AI)</button>
     </div>
@@ -318,10 +318,10 @@
 
     <!-- Outside the accordion: this is the action, it should never be behind a
          fold. The accordion holds the key and the optional prompt. -->
-    <div class="btn-row ai-run-row">
+    <div class="ai-run" id="aiRunRow" style="display:none;">
       <button class="btn-primary" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
+      <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
     </div>
-    <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
 
     <!-- Stage 1 result: the inventory. Each row's type and container are
          editable — the AI proposes, the specialist decides. -->

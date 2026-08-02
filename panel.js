@@ -1026,6 +1026,26 @@ async function applyMappingsBatch(items) {
             const u1Touched = /^u1st-/.test(target.id || '') || !!target.querySelector('[id^="u1st-"]');
             const before = snap(target);
 
+            // Snapshot each configured field's own elements too, so we can say
+            // WHICH parts U1 decorated. A menu whose container gains attributes
+            // while its items gain nothing is the common half-applied case, and
+            // reporting only a total hides it completely.
+            const fieldSnaps = {};
+            const sels = (it.config && it.config.selectors) || {};
+            for (const [field, fsel] of Object.entries(sels)) {
+              if (typeof fsel !== 'string' || !fsel.trim()) continue;
+              let els = [];
+              try { els = Array.from(document.querySelectorAll(fsel)); } catch { continue; }
+              if (!els.length) continue;
+              const m = new Map();
+              for (const el of els.slice(0, 300)) {
+                let s = '';
+                for (const a of el.attributes) if (U1_ATTR.test(a.name)) s += a.name + '=' + a.value + '|';
+                m.set(el, s);
+              }
+              fieldSnaps[field] = m;
+            }
+
             stripEmpty(it.config && it.config.selectors);
             raw.fix[it.type](sel, it.config);
 
@@ -1036,6 +1056,18 @@ async function applyMappingsBatch(items) {
             // which is worse than saying nothing at all. So watch until it
             // changes, and only give up after a real budget.
             let changed = await waitForChange(before, target, 4000);
+
+            // Which fields actually moved.
+            const fieldsNoEffect = [];
+            for (const [field, m] of Object.entries(fieldSnaps)) {
+              let moved = 0;
+              for (const [el, v] of m) {
+                let s = '';
+                for (const a of el.attributes) if (U1_ATTR.test(a.name)) s += a.name + '=' + a.value + '|';
+                if (s !== v) moved++;
+              }
+              if (!moved) fieldsNoEffect.push(field);
+            }
 
             // The attribute is the only thing standing between this mapping and
             // a working one, and it is in the site's markup where we cannot
@@ -1049,7 +1081,7 @@ async function applyMappingsBatch(items) {
               changed = await waitForChange(before2, target, 4000);
               if (changed > 0) {
                 applied++;
-                details.push({ type: it.type, sel, status: 'ok', changed, unblocked: true });
+                details.push({ type: it.type, sel, status: 'ok', changed, unblocked: true, fieldsNoEffect });
                 continue;
               }
               target.setAttribute('u1st-avoid-change-detection', 'true'); // put it back
@@ -1057,7 +1089,7 @@ async function applyMappingsBatch(items) {
 
             if (changed > 0) {
               applied++;
-              details.push({ type: it.type, sel, status: 'ok', changed });
+              details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect });
             } else {
               noEffect++;
               details.push({
@@ -2851,8 +2883,12 @@ function setMapMode(mode) {
     if (!isAuto) advanced.open = false;
   }
   // The AI teacher lives in Automatic mode alongside the rule-based analyzer.
-  const aiBox = document.getElementById('aiBox');
-  if (aiBox) aiBox.style.display = isAuto ? '' : 'none';
+  // Everything AI, hidden together. Moving the scan button out of the box left
+  // it visible in Manual mode, where it means nothing.
+  for (const id of ['aiBox', 'aiRunRow']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isAuto ? '' : 'none';
+  }
   // Show a results panel only when it holds actual results. #aiResults has a
   // fixed shell (summary, list, buttons), so testing its own innerHTML would
   // always be truthy and leave an empty box with a dead button sitting there.
@@ -3611,6 +3647,20 @@ function renderAiMapCard(idx, row, out, recorderActive) {
     </div>`;
 }
 
+// Replace a pending row's verdict once the page has actually been measured.
+function updateApproved(rowId, verdict) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const tick = row.querySelector('.ai-approved-tick');
+  if (tick) { tick.className = 'ai-approved-tick ' + (verdict.ok ? 'ok' : 'warn'); tick.textContent = verdict.ok ? '✓' : '!'; }
+  const why = row.querySelector('.ai-approved-why');
+  if (why) why.textContent = verdict.msg;
+  if (verdict.clashes && verdict.clashes.length) {
+    why?.insertAdjacentHTML('afterend', `<div class="ai-approved-why">${verdict.clashes.map(c =>
+      `<button class="btn-outline btn-xs" data-dropkey="${escapeHtml(c.key)}">Remove u1.fix.${escapeHtml(c.type)} on ${escapeHtml(c.sel)}</button>`).join(' ')}</div>`);
+  }
+}
+
 // ── Carousels ───────────────────────────────────────────────────────────────
 // One card at a time, for both stages. At side-panel width a stack of cards is
 // the wall of controls that made this unreadable; a card that gets the full
@@ -3664,9 +3714,11 @@ document.getElementById('tab-picker')?.addEventListener('click', (e) => {
 
 // Approved mappings collect here, each carrying whether it actually took effect
 // on the page — the same measured verdict the Apply button reports.
+let approvedSeq = 0;
+
 function addApproved(row, verdict, code) {
   const box = document.getElementById('aiApproved');
-  if (!box) return;
+  if (!box) return null;
   // The stage caption comes from CSS (#aiApproved::before), so this only needs
   // the list container.
   if (!box.children.length) box.innerHTML = '<div id="aiApprovedList"></div>';
@@ -3677,8 +3729,9 @@ function addApproved(row, verdict, code) {
   const clashBtns = (verdict.clashes || []).map(c =>
     `<button class="btn-outline btn-xs" data-dropkey="${escapeHtml(c.key)}">Remove u1.fix.${escapeHtml(c.type)} on ${escapeHtml(c.sel)}</button>`).join(' ');
 
+  const rowId = 'aiApproved' + (++approvedSeq);
   document.getElementById('aiApprovedList').insertAdjacentHTML('beforeend', `
-    <div class="ai-approved-row">
+    <div class="ai-approved-row" id="${rowId}">
       <span class="ai-approved-tick ${cls}">${verdict.ok ? '✓' : '!'}</span>
       <span class="ai-approved-label">${escapeHtml(row.label)}</span>
       <code>u1.fix.${escapeHtml(row.type)}</code>
@@ -3686,6 +3739,7 @@ function addApproved(row, verdict, code) {
       ${code ? `<details class="ai-approved-code"><summary>Show the code that was applied</summary><div class="code-preview">${escapeHtml(code)}</div></details>` : ''}
       ${clashBtns ? `<div class="ai-approved-why">${clashBtns}</div>` : ''}
     </div>`);
+  return rowId;
 }
 
 // Renders the standard sub-selector rows into a card and fills them with the
@@ -3811,12 +3865,6 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
 
     save.disabled = true; save.textContent = 'Saving…';
 
-    // Look for an older mapping fighting over the same elements before adding
-    // another one to the pile.
-    const mkey = storageKey('mappings', currentHostname);
-    const existing = (await U1Store.get([mkey]))[mkey] || [];
-    const clashes = await overlappingMappings(tpl.primary, existing);
-
     try {
       await saveMappingEntry(tpl);
     } catch (e) {
@@ -3825,65 +3873,63 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       return;
     }
 
-    // Approving applies it straight away, and reports what actually happened on
-    // the page rather than "saved" — a mapping that saves but never takes is
-    // the failure mode this whole flow exists to make visible.
-    save.textContent = 'Applying…';
-    const res = await applyMappingsBatch([{
-      type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg, config: tpl.config,
-    }]);
-    const d = (res.details || [])[0];
-    let verdict;
-    if (!res.ok) {
-      verdict = { ok: false, msg: res.u1Missing ? 'Saved. U1 is not loaded on this page, so nothing was applied.' : 'Saved, but applying failed: ' + (res.err || 'unknown') };
-    } else if (res.applied) {
-      verdict = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
-      if (d.unblocked) {
-        verdict.ok = false;   // it works here, but not yet on the real site
-        verdict.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted on this page so the fix could run — remove it from the markup or this will not work in production.`;
-      }
-    } else if (d && d.status === 'error') {
-      // u1.fix THREW. This used to fall through to "ran without error", which
-      // hid the one piece of information that explains the failure — U1's own
-      // message ("Submenu must have a trigger element", a rejected selector…).
-      verdict = { ok: false, msg: `Saved, but u1.fix.${d.type} threw: ${(res.errs && res.errs[0]) || 'unknown error'}` };
-    } else if (d && d.status === 'no-match') {
-      verdict = { ok: false, msg: `Saved, but nothing on the page matches ${d.sel}.` };
-    } else if (d && d.reason === 'source-opt-out') {
-      verdict = { ok: false, msg: `Saved, but ${d.sel} carries u1st-avoid-change-detection in the site's own HTML — U1 skips it. That attribute has to come out of the markup.` };
-    } else if (d && d.reason === 'already-processed') {
-      verdict = { ok: false, msg: 'Saved, but U1 had already processed this element this page load. Reload the page and press Apply All.' };
-    } else {
-      verdict = { ok: false, msg: 'Saved, but nothing changed on the page — u1.fix ran without error and wrote no attributes.' };
-    }
-
-    if (clashes.length) {
-      verdict.clashes = clashes;
-      verdict.ok = false;
-      verdict.msg += ` Also: ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} already targets these elements — two components on the same DOM fight, and the second wins.`;
-    }
-
+    // Move on NOW. Verifying what U1 did means waiting for U1, and that wait
+    // belongs to the report, not to you — blocking the carousel on it made
+    // approving feel like it took a minute.
     const card = save.closest('.ai-map-card');
     card.dataset.done = '1';
     const row = aiMapped[idx].row;
-
-    // Retire the found-card this came from as well. Something you have already
-    // approved should not still be sitting in the list of things to deal with.
     if (row.compIndex != null) {
       const comp = document.querySelector(`#aiCompTrack .ai-comp[data-i="${CSS.escape(row.compIndex)}"]`);
       if (comp) { comp.dataset.done = '1'; showCompSlide(slideIndex('aiComp')); }
     }
-
-    addApproved(row, verdict, tpl.code);
-
-    // Move on. The card just approved has left the carousel, so the current
-    // index now lands on the next one — and it is brought into view, because
-    // after scrolling down to the actions the next card starts off-screen.
+    const rowId = addApproved(row, { ok: true, msg: 'Saved. Applying…' }, tpl.code);
     showSlide(slideIndex('aiSlide'));
     const next = document.querySelector('#aiSlideTrack .ai-map-card:not([data-done])');
     if (next) next.scrollIntoView({ block: 'start', behavior: 'smooth' });
     else document.getElementById('aiApproved')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    showNotice(status, verdict.msg, verdict.ok ? 'success' : 'error', verdict.ok ? 4000 : 10000);
+
+    // ── everything below runs in the background ──
+    (async () => {
+      const mkey = storageKey('mappings', currentHostname);
+      const existing = (await U1Store.get([mkey]))[mkey] || [];
+      const clashes = await overlappingMappings(tpl.primary, existing);
+
+      const res = await applyMappingsBatch([{
+        type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg, config: tpl.config,
+      }]);
+      const d = (res.details || [])[0];
+      let verdict;
+      if (!res.ok) {
+        verdict = { ok: false, msg: res.u1Missing ? 'Saved. U1 is not loaded on this page, so nothing was applied.' : 'Saved, but applying failed: ' + (res.err || 'unknown') };
+      } else if (res.applied) {
+        verdict = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
+        if (d.fieldsNoEffect && d.fieldsNoEffect.length) {
+          verdict.ok = false;
+          verdict.msg += ` But ${d.fieldsNoEffect.map(f => `"${f}"`).join(', ')} changed nothing — U1 decorated the container and left ${d.fieldsNoEffect.length === 1 ? 'that field' : 'those fields'} alone. Check the selector, or whether this component supports it.`;
+        }
+        if (d.unblocked) {
+          verdict.ok = false;
+          verdict.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted here so the fix could run — remove it from the markup or this will not work in production.`;
+        }
+      } else if (d && d.status === 'error') {
+        verdict = { ok: false, msg: `Saved, but u1.fix.${d.type} threw: ${(res.errs && res.errs[0]) || 'unknown error'}` };
+      } else if (d && d.status === 'no-match') {
+        verdict = { ok: false, msg: `Saved, but nothing on the page matches ${d.sel}.` };
+      } else if (d && d.reason === 'source-opt-out') {
+        verdict = { ok: false, msg: `Saved, but ${d.sel} carries u1st-avoid-change-detection in the site's own HTML — U1 skips it.` };
+      } else if (d && d.reason === 'already-processed') {
+        verdict = { ok: false, msg: 'Saved, but U1 had already processed this element this page load. Reload the page and press Apply All.' };
+      } else {
+        verdict = { ok: false, msg: 'Saved, but nothing changed on the page — u1.fix ran without error and wrote no attributes.' };
+      }
+      if (clashes.length) {
+        verdict.clashes = clashes;
+        verdict.ok = false;
+        verdict.msg += ` Also: ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} already targets these elements — two components on the same DOM fight, and the second wins.`;
+      }
+      updateApproved(rowId, verdict);
+    })();
     return;
   }
 
