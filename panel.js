@@ -3985,6 +3985,8 @@ document.getElementById('aiApproved')?.addEventListener('click', (e) => {
 
 // Replace a pending row's verdict once the page has actually been measured.
 function updateApproved(rowId, verdict) {
+  // The verdict has arrived — stop the progress bar that stood in for it.
+  document.getElementById(rowId)?.querySelector('[data-pendingbar]')?.remove();
   const row = document.getElementById(rowId);
   if (!row) return;
   const tick = row.querySelector('.ai-approved-tick');
@@ -4099,6 +4101,7 @@ function addApproved(row, verdict, code) {
       <span class="ai-approved-tick ${cls}">${verdict.ok ? '✓' : '!'}</span>
       <span class="ai-approved-label">${escapeHtml(row.label)}</span>
       <code>u1.fix.${escapeHtml(row.type)}</code>
+      ${verdict.pending ? '<div class="ai-busy-bar" data-pendingbar><span></span></div>' : ''}
       <div class="ai-approved-why">${escapeHtml(verdict.msg)}</div>
       ${code ? `<details class="ai-approved-code"><summary>Show the code that was applied</summary><div class="code-preview">${escapeHtml(code)}</div></details>` : ''}
       ${clashBtns ? `<div class="ai-approved-why">${clashBtns}</div>` : ''}
@@ -4247,7 +4250,7 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       const comp = document.querySelector(`#aiCompTrack .ai-comp[data-i="${CSS.escape(row.compIndex)}"]`);
       if (comp) { comp.dataset.done = '1'; showCompSlide(slideIndex('aiComp')); }
     }
-    const rowId = addApproved(row, { ok: true, msg: 'Saved. Applying…' }, tpl.code);
+    const rowId = addApproved(row, { ok: true, msg: 'Saved. Applying…', pending: true }, tpl.code);
     showSlide(slideIndex('aiSlide'));
     const next = document.querySelector('#aiSlideTrack .ai-map-card:not([data-done])');
     if (next) next.scrollIntoView({ block: 'start', behavior: 'smooth' });

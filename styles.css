@@ -3175,3 +3175,64 @@ details > summary:hover { color: var(--u1-text); }
 @media (prefers-reduced-motion: reduce) {
   .btn-primary.is-working::after, .btn-outline.is-working::after { animation: none; width: 100%; }
 }
+
+/* ── The review card's actions ─────────────────────────────────────────────
+   These had no rule at all, so they stacked as bare centred text and read as
+   links rather than as the panel's buttons. Approve is the decision and takes
+   the width; the three secondary actions share a row beneath it. */
+.ai-find-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.ai-find-actions > .btn-primary {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+.ai-find-actions > .btn-ghost {
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  background: var(--u1-surface-2);
+  color: var(--u1-text-muted);
+  font-size: 10.5px;
+  padding: 0 6px;
+  min-height: 30px;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-find-actions > .btn-ghost:hover {
+  color: var(--u1-text);
+  border-color: var(--u1-primary);
+  background: var(--u1-primary-dim, rgba(108, 76, 241, 0.14));
+}
+
+/* The way back out of the carousel is a control, not a sentence. */
+#aiBackBtn {
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  background: var(--u1-surface-2);
+  white-space: nowrap;
+  text-decoration: none;
+}
+#aiBackBtn:hover { border-color: var(--u1-primary); color: var(--u1-text); }
+
+/* Nothing in the panel should render as an underlined pseudo-link. */
+.ai-find-actions button,
+.ai-carousel-head button,
+.ai-comp-actions button { text-decoration: none; }
+
+/* The pending bar inside an approved row sits under the label, full width. */
+.ai-approved-row .ai-busy-bar { margin: 6px 0 8px; }
+
+/* Stage captions were unstyled, which is why one rendered as a bare summary. */
+.ai-stage-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--u1-primary);
+  padding: 2px 0 8px;
+}
