@@ -4838,6 +4838,67 @@ document.getElementById('applyAllBtn').addEventListener('click', () => applyAllM
 // ── Which site is each mapping actually filed under? ────────────────────────
 // Storage is per hostname, so "this looks like a mapping from another site" is
 // answerable — but only by showing all of it at once.
+// ── Same client, different URL ──────────────────────────────────────────────
+//
+// Everything is filed under the bare hostname, so molina.com and
+// member.molina.com are two different sites as far as storage is concerned.
+// That is why mappings "disappear": they are filed under a hostname you are
+// not currently looking at. Rather than merging hostnames automatically —
+// which would fuse unrelated tenants on shared domains like *.railway.app —
+// find the likely siblings and offer to move the work.
+function hostRelation(a, b) {
+  if (!a || !b || a === b) return null;
+  // One is a subdomain of the other: member.molina.com ↔ molina.com.
+  if (a.endsWith('.' + b) || b.endsWith('.' + a)) return 'subdomain';
+  // Or they share a DISTINCTIVE label: molina.com ↔ molina.co.il.
+  //
+  // Shared hosting domains are not distinctive — two tenants on
+  // *.up.railway.app both contain "railway" and are completely unrelated
+  // clients, so those labels cannot count as evidence.
+  const GENERIC = new Set([
+    'com', 'net', 'org', 'co', 'www', 'app', 'dev', 'site', 'online', 'store', 'cloud',
+    'railway', 'vercel', 'netlify', 'herokuapp', 'github', 'gitlab', 'pages', 'azurewebsites',
+    'amazonaws', 'cloudfront', 'firebaseapp', 'myshopify', 'wixsite', 'squarespace',
+    'wordpress', 'webflow', 'onrender', 'surge', 'glitch', 'ngrok', 'localhost', 'local',
+    'staging', 'production', 'preview', 'test', 'demo',
+  ]);
+  const labels = (h) => h.split('.').filter(l => l.length >= 4 && !GENERIC.has(l));
+  const shared = labels(a).filter(l => labels(b).includes(l));
+  return shared.length ? 'sibling' : null;
+}
+
+// Move (or copy) every per-site key from one hostname to another. Used to
+// recover work filed under an old URL.
+async function moveSiteData(from, to, { copy = false } = {}) {
+  const prefixes = U1Store.SITE_PREFIXES || ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject'];
+  const fromKeys = prefixes.map(p => storageKey(p, from));
+  const src = await U1Store.get(fromKeys);
+  const writes = {};
+  let moved = 0;
+  for (const p of prefixes) {
+    const v = src[storageKey(p, from)];
+    if (v === undefined) continue;
+    // Never clobber work that already exists at the destination: mappings are
+    // concatenated (deduped by key), everything else only fills a gap.
+    if (p === 'mappings') {
+      const destKey = storageKey('mappings', to);
+      const dest = (await U1Store.get([destKey]))[destKey] || [];
+      const seen = new Set(dest.map(m => mappingKey(m)));
+      const add = (v || []).filter(m => !seen.has(mappingKey(m)));
+      if (!add.length && !dest.length) continue;
+      writes[destKey] = dest.concat(add);
+      moved += add.length;
+    } else {
+      const destKey = storageKey(p, to);
+      const dest = (await U1Store.get([destKey]))[destKey];
+      if (dest === undefined) writes[destKey] = v;
+    }
+  }
+  if (Object.keys(writes).length) await U1Store.set(writes);
+  if (!copy) await U1Store.remove(fromKeys);
+  return { moved };
+}
+
 document.getElementById('storedSitesBtn')?.addEventListener('click', async () => {
   const box = document.getElementById('storedSites');
   box.style.display = 'block';
@@ -4847,28 +4908,72 @@ document.getElementById('storedSitesBtn')?.addEventListener('click', async () =>
     box.textContent = 'No site has any saved work.';
     return;
   }
-  const keys = sites.map(h => storageKey('mappings', h));
-  const all = await U1Store.get(keys);
+  // Show EVERY site and every kind of saved work. A site with config or skip
+  // links but no mappings was invisible here, which is its own way of losing
+  // things.
+  const prefixes = U1Store.SITE_PREFIXES || ['mappings', 'config', 'skipLinks'];
+  const all = await U1Store.get(sites.flatMap(h => prefixes.map(p => storageKey(p, h))));
   const rows = sites.map(h => {
     const list = all[storageKey('mappings', h)] || [];
-    const here = h === currentHostname;
-    const types = [...new Set(list.map(m => m && m.type).filter(Boolean))].join(', ');
-    return { h, n: list.length, here, types };
-  }).filter(r => r.n > 0 || r.here);
+    const cfg = all[storageKey('config', h)];
+    const skips = (cfg && Array.isArray(cfg.skipLinks) ? cfg.skipLinks.length : 0)
+      || (all[storageKey('skipLinks', h)] || []).length;
+    return {
+      h,
+      n: list.length,
+      here: h === currentHostname,
+      rel: hostRelation(currentHostname, h),
+      types: [...new Set(list.map(m => m && m.type).filter(Boolean))].join(', '),
+      extras: [cfg ? 'config' : null, skips ? `${skips} skip link${skips === 1 ? '' : 's'}` : null].filter(Boolean).join(', '),
+    };
+  });
 
   box.className = 'selector-test-result ' + (rows.length > 1 ? 'warn' : 'ok');
   box.innerHTML =
-    `<div>Saved mappings by site — the one in bold is what this panel is reading and writing right now.</div>` +
+    `<div>Everything saved, by site. Bold is what this panel reads and writes right now.</div>` +
     `<ul>${rows.map(r =>
       `<li>${r.here ? '<strong>' : ''}${escapeHtml(r.h)}${r.here ? '</strong> ← current' : ''}` +
+      `${r.rel ? ' <span class="ai-sev" data-need="1">same client?</span>' : ''}` +
       ` — ${r.n} mapping${r.n === 1 ? '' : 's'}${r.types ? ` (${escapeHtml(r.types)})` : ''}` +
-      `${r.n && !r.here ? ` <button class="btn-outline btn-xs" data-wipe-host="${escapeHtml(r.h)}">Delete this site's data</button>` : ''}</li>`
+      `${r.extras ? ` · ${escapeHtml(r.extras)}` : ''}` +
+      `${!r.here ? ` <button class="btn-outline btn-xs" data-move-host="${escapeHtml(r.h)}">Move here</button>` +
+        ` <button class="btn-ghost btn-xs" data-wipe-host="${escapeHtml(r.h)}">Delete</button>` : ''}</li>`
     ).join('')}</ul>` +
-    `<div class="ai-comp-why">Mappings are only ever applied to the site they are filed under — background.js reads mappings_&lt;hostname&gt; for the page being loaded, and nothing else.</div>`;
+    `<div class="ai-comp-why">Storage is keyed by hostname, so the same client reached by a different URL is a different file — that is how mappings go missing. Nothing is ever applied to a site other than the one it is filed under.</div>`;
+});
+
+// Recovering work filed under another hostname for the same client.
+document.getElementById('mappingsList')?.addEventListener('click', async (e) => {
+  const move = e.target.closest('[data-adopt]');
+  const copy = e.target.closest('[data-adopt-copy]');
+  if (!move && !copy) return;
+  const from = (move || copy).dataset.adopt || (move || copy).dataset.adoptCopy;
+  const btn = move || copy;
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  const { moved } = await moveSiteData(from, currentHostname, { copy: !!copy });
+  await loadMappingsList();
+  refreshExportInfo();
+  showNotice(document.getElementById('applyAllStatus'),
+    `${copy ? 'Copied' : 'Moved'} ${moved} mapping${moved === 1 ? '' : 's'} from ${from} to ${currentHostname}.`,
+    'success', 6000);
 });
 
 // Clearing another site's mappings, on request only.
 document.getElementById('storedSites')?.addEventListener('click', async (e) => {
+  const mv = e.target.closest('[data-move-host]');
+  if (mv) {
+    const from = mv.dataset.moveHost;
+    mv.disabled = true; mv.textContent = 'Moving…';
+    const { moved } = await moveSiteData(from, currentHostname);
+    await loadMappingsList();
+    refreshExportInfo();
+    document.getElementById('storedSitesBtn').click();
+    showNotice(document.getElementById('applyAllStatus'),
+      `Moved ${moved} mapping${moved === 1 ? '' : 's'} from ${from} to ${currentHostname}.`, 'success', 6000);
+    return;
+  }
+
   const btn = e.target.closest('[data-wipe-host]');
   if (!btn) return;
   const host = btn.dataset.wipeHost;
@@ -5407,9 +5512,30 @@ async function loadMappingsList() {
   const toolbar = document.getElementById('mappingsToolbar');
 
   if (list.length === 0) {
+    // "The mappings disappeared" is almost always this: the work is filed
+    // under another hostname for the same client. Say so here, where the
+    // absence is noticed, instead of leaving an empty list to be believed.
     container.innerHTML = '<div class="empty-state">No mappings yet.</div>';
     if (applyAllRow) applyAllRow.style.display = 'none';
     if (toolbar) toolbar.style.display = 'none';
+    try {
+      const sites = (await U1Store.listSites()).filter(h => h !== currentHostname);
+      const others = await U1Store.get(sites.map(h => storageKey('mappings', h)));
+      const kin = sites
+        .map(h => ({ h, n: (others[storageKey('mappings', h)] || []).length, rel: hostRelation(currentHostname, h) }))
+        .filter(r => r.n > 0 && r.rel)
+        .sort((a, b) => b.n - a.n);
+      if (kin.length) {
+        container.innerHTML =
+          `<div class="advisor-note warn"><strong>Nothing is saved for ${escapeHtml(currentHostname)}</strong> — ` +
+          `but the same client looks to be saved under another address. Storage is keyed by hostname, so a different URL for the same site is a different file.` +
+          `<ul>${kin.map(r =>
+            `<li><code>${escapeHtml(r.h)}</code> — ${r.n} mapping${r.n === 1 ? '' : 's'} ` +
+            `<button class="btn-primary btn-xs" data-adopt="${escapeHtml(r.h)}">Move here</button> ` +
+            `<button class="btn-outline btn-xs" data-adopt-copy="${escapeHtml(r.h)}">Copy here</button></li>`).join('')}</ul>` +
+          `<div class="ai-comp-why">Move re-files that site's work under ${escapeHtml(currentHostname)} and leaves nothing behind. Copy keeps both.</div></div>`;
+      }
+    } catch {}
     return;
   }
   if (toolbar) toolbar.style.display = 'flex';
