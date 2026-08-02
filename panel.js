@@ -2925,15 +2925,18 @@ function setMapMode(mode) {
   // Count the CARDS, not the container. Both panels now hold a static carousel
   // shell, so testing the wrapper's children is always truthy and would leave
   // an empty carousel with dead arrows on screen.
-  const hasResults = {
-    aiResults: () => !!document.getElementById('aiCompTrack')?.children.length,
-    aiMappings: () => !!document.getElementById('aiSlideTrack')?.children.length,
-  };
-  for (const id of ['aiResults', 'aiMappings']) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    el.style.display = (isAuto && hasResults[id]()) ? 'block' : 'none';
-  }
+  // ONE stage on screen. Restoring both — which is what happened when each had
+  // content and they were toggled independently — puts the found list and the
+  // mapping cards up together: two carousels with two positions again.
+  // Whichever stage still has work to do is the one that comes back.
+  const found = document.getElementById('aiResults');
+  const maps = document.getElementById('aiMappings');
+  const approved = document.getElementById('aiApproved');
+  const pendingCards = document.querySelectorAll('#aiSlideTrack .ai-map-card:not([data-done])').length;
+  const pendingFound = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
+  if (found) found.style.display = (isAuto && !pendingCards && pendingFound) ? 'block' : 'none';
+  if (maps) maps.style.display = (isAuto && pendingCards) ? 'block' : 'none';
+  if (approved) approved.style.display = (isAuto && approved.children.length) ? 'block' : 'none';
   if (!isAuto) hideAutoReview();
 }
 
@@ -3717,6 +3720,48 @@ function renderAiMapCard(idx, row, out, recorderActive) {
     </div>`;
 }
 
+// What to do after approving: carry on with what is left, or start a new scan.
+// Rendered under the approved list and kept in step with what remains.
+function renderApprovedNext() {
+  const box = document.getElementById('aiApproved');
+  if (!box || !box.children.length) return;
+  const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
+  const cards = document.querySelectorAll('#aiSlideTrack .ai-map-card:not([data-done])').length;
+
+  let el = document.getElementById('aiNextRow');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'aiNextRow';
+    el.className = 'ai-next-row';
+    box.appendChild(el);
+  }
+  el.innerHTML = cards
+    ? `<button class="btn-primary btn-sm" data-ainext="cards">Next mapping →<span class="ai-next-count">${cards} left</span></button>`
+    : left
+      ? `<button class="btn-primary btn-sm" data-ainext="list">Next → back to what was found<span class="ai-next-count">${left} left</span></button>`
+      : `<button class="btn-primary btn-sm" data-ainext="scan">🔎 Scan this screen again</button>` +
+        `<span class="ai-next-hint">Everything found here has been handled. Scroll the page or open another one, then scan again.</span>`;
+}
+
+document.getElementById('aiApproved')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-ainext]');
+  if (!btn) return;
+  const what = btn.dataset.ainext;
+  if (what === 'cards') {
+    document.getElementById('aiMappings').style.display = 'block';
+    showSlide(slideIndex('aiSlide'));
+    document.querySelector('#aiSlideTrack .ai-map-card:not([data-done])')
+      ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  } else if (what === 'list') {
+    document.getElementById('aiResults').style.display = 'block';
+    document.getElementById('aiMappings').style.display = 'none';
+    showCompSlide(slideIndex('aiComp'));
+    document.getElementById('aiResults').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  } else {
+    document.getElementById('aiDiscoverBtn')?.click();
+  }
+});
+
 // Replace a pending row's verdict once the page has actually been measured.
 function updateApproved(rowId, verdict) {
   const row = document.getElementById(rowId);
@@ -3768,8 +3813,10 @@ function slideTo(id, i, sel, onShow) {
 }
 
 // Stage 2 keeps its own thin wrapper so the call sites stay readable.
-const showSlide = (i) => slideTo('aiSlide', i, '.ai-map-card',
-  (card) => refreshAiCard(Number(card.dataset.card)));
+const showSlide = (i) => {
+  slideTo('aiSlide', i, '.ai-map-card', (card) => refreshAiCard(Number(card.dataset.card)));
+  renderApprovedNext();
+};
 const slideIndex = (id) => carouselAt[id] || 0;
 
 // Delegated prev/next for every carousel on the tab.
@@ -3800,6 +3847,9 @@ function addApproved(row, verdict, code) {
     `<button class="btn-outline btn-xs" data-dropkey="${escapeHtml(c.key)}">Remove u1.fix.${escapeHtml(c.type)} on ${escapeHtml(c.sel)}</button>`).join(' ');
 
   const rowId = 'aiApproved' + (++approvedSeq);
+  // Approving the last card leaves this list on screen with nothing to do
+  // next, which reads as being stuck. Give the run somewhere to go.
+  queueMicrotask(renderApprovedNext);
   document.getElementById('aiApprovedList').insertAdjacentHTML('beforeend', `
     <div class="ai-approved-row" id="${rowId}">
       <span class="ai-approved-tick ${cls}">${verdict.ok ? '✓' : '!'}</span>

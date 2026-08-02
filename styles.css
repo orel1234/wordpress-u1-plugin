@@ -2648,3 +2648,47 @@ button.u1-readonly-off {
 @media (prefers-reduced-motion: reduce) {
   .ai-busy-bar > span, .ai-skel { animation: none; }
 }
+
+/* The action that ends stage 1: full width, with Clear kept out of its way.
+   In a plain flex row it was squeezed to a blob by the label and the hint. */
+.ai-found-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.ai-found-actions .btn-primary {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Where a finished run goes next. */
+.ai-next-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--u1-border, rgba(127, 127, 127, 0.2));
+}
+.ai-next-row .btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  font-weight: 600;
+}
+.ai-next-count {
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.22);
+  font-size: 10px;
+  font-weight: 700;
+}
+.ai-next-hint { font-size: 10px; line-height: 1.45; color: var(--u1-text-muted); }
