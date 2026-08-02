@@ -1754,7 +1754,12 @@ function createSkipRow(label = '', target = '') {
   row.querySelector('.skip-remove-btn').addEventListener('click', () => {
     row.remove();
     renumberSkipRows();
+    // Removing the last one leaves the empty state, not another blank row.
+    if (!container.querySelector('.skiplink-row')) showSkipEmptyState();
   });
+  // Adding a row clears the empty-state placeholder.
+  const empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
   container.appendChild(row);
   renumberSkipRows();
   return row;
@@ -1765,6 +1770,15 @@ function renumberSkipRows() {
     .forEach((el, i) => { el.textContent = `Skip Link ${i + 1}`; });
 }
 
+// With nothing saved this used to render one blank row, numbered "Skip Link 1"
+// and carrying a ✕ — indistinguishable from a saved entry. Deleting it worked,
+// but reopening the form built it again, so it read as a skip link that would
+// not delete. An empty list should look empty.
+function showSkipEmptyState() {
+  const container = document.getElementById('skipLinksContainer');
+  container.innerHTML = '<div class="empty-state">No skip links for this site. Use “+ Add skip link” to create one.</div>';
+}
+
 function populateSkipRows(saved) {
   const container = document.getElementById('skipLinksContainer');
   container.innerHTML = '';
@@ -1772,7 +1786,7 @@ function populateSkipRows(saved) {
     // Show the original selector the user typed (falls back to the resolved id)
     saved.forEach(s => createSkipRow(s.label || '', s.selector || s.target || ''));
   } else {
-    createSkipRow();
+    showSkipEmptyState();
   }
 }
 
