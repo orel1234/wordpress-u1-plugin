@@ -2788,3 +2788,7 @@ button.u1-readonly-off {
 @media (prefers-reduced-motion: reduce) {
   .ai-comp.is-working::after, .ai-map-card.is-working::after { animation: none; }
 }
+
+/* The agent on a saved mapping. */
+.mapping-item .ai-why { margin: 8px 10px 10px; }
+.mapping-actions .ask-btn { font-size: 13px; }

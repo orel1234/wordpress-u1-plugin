@@ -5392,6 +5392,86 @@ async function moveSiteData(from, to, { copy = false } = {}) {
   return { moved };
 }
 
+// The saved-mapping agent's two actions: take its corrected selectors, or ask
+// it for a change in words. Both write back to the saved mapping, so the fix
+// lands where the problem was noticed instead of in a fresh draft.
+document.getElementById('mappingsList')?.addEventListener('click', async (e) => {
+  const key = storageKey('mappings', currentHostname);
+
+  const useFix = e.target.closest('[data-savedfix]');
+  if (useFix) {
+    const list = (await U1Store.get([key]))[key] || [];
+    const m = list[parseInt(useFix.dataset.savedfix, 10)];
+    if (!m) return;
+    const box = useFix.closest('.ai-why');
+    for (const row of box.querySelectorAll('.ai-fix-sel')) {
+      const k = row.querySelector('strong')?.textContent;
+      const v = row.textContent.replace(/^[^:]*:\s*/, '').trim();
+      if (!k) continue;
+      if (k === 'primary') m.primary = v;
+      else { m.config = m.config || {}; m.config.selectors = m.config.selectors || {}; m.config.selectors[k] = v; }
+    }
+    const rebuilt = buildTemplate(m.type, m.primary, m.config.selectors || {}, m.config);
+    if (rebuilt) { m.code = rebuilt.code; m.firstArg = rebuilt.firstArg; m.config = rebuilt.config; }
+    await U1Store.set({ [key]: list });
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(document.getElementById('applyAllStatus'), 'Mapping updated. Apply it to see the difference.', 'success', 5000);
+    return;
+  }
+
+  const go = e.target.closest('[data-savedaskgo]');
+  if (!go) return;
+  const idx = parseInt(go.dataset.savedaskgo, 10);
+  const input = document.querySelector(`[data-savedask="${idx}"]`);
+  const instruction = (input?.value || '').trim();
+  if (!instruction) { input?.focus(); return; }
+
+  const list = (await U1Store.get([key]))[key] || [];
+  const m = list[idx];
+  const schema = m && COMPONENT_SCHEMAS[m.type];
+  if (!schema) return;
+
+  const box = go.closest('.ai-why');
+  go.disabled = true; go.textContent = 'Asking…';
+  const tab = await getTab();
+  const sel = m.firstArg || m.primary;
+  const markup = isInjectable(tab)
+    ? await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [sel])
+    : null;
+  if (!markup || markup.error || markup.notFound) {
+    go.disabled = false; go.textContent = 'Ask';
+    box.insertAdjacentHTML('beforeend', `<div class="ai-sel-bad">Cannot read ${escapeHtml(sel)} on this page.</div>`);
+    return;
+  }
+
+  const out = await U1AI.mapComponent({
+    u1Type: m.type, containerSel: sel, markup,
+    fields: schema.fields || [], fieldDocs: schema.desc || {},
+    options: Object.keys(schema.rootFields || {}),
+    instruction, current: m.config,
+  });
+  aiCost += U1AI.estimateCost(out.usage) || 0;
+  go.disabled = false; go.textContent = 'Ask';
+  if (out.err) { box.insertAdjacentHTML('beforeend', `<div class="ai-sel-bad">${escapeHtml(out.err)}</div>`); return; }
+
+  const selectors = {};
+  for (const f of (out.fields || [])) selectors[f.key] = f.value;
+  const roots = {};
+  for (const o of (out.options || [])) roots[o.key] = /^(false|no|off|0)$/i.test(String(o.value).trim()) ? false : (o.value === 'true' ? true : o.value);
+  const rebuilt = buildTemplate(m.type, out.primary || m.primary, selectors, roots);
+  if (!rebuilt) { box.insertAdjacentHTML('beforeend', '<div class="ai-sel-bad">It did not return a usable config.</div>'); return; }
+
+  const before = JSON.stringify(m.config);
+  Object.assign(m, { primary: rebuilt.primary, firstArg: rebuilt.firstArg, config: rebuilt.config, code: rebuilt.code });
+  await U1Store.set({ [key]: list });
+  await loadMappingsList();
+  refreshExportInfo();
+  showNotice(document.getElementById('applyAllStatus'),
+    before === JSON.stringify(rebuilt.config) ? 'It kept the same selectors.' : 'Mapping updated. Apply it to see the difference.',
+    'success', 5000);
+});
+
 // Recovering work filed under another hostname for the same client.
 document.getElementById('mappingsList')?.addEventListener('click', async (e) => {
   const move = e.target.closest('[data-adopt]');
@@ -5826,6 +5906,7 @@ async function loadMappingsList() {
             <button class="edit-btn" data-idx="${idx}" data-tip="Edit" title="Edit this mapping"${legacy ? ' disabled' : ''}>✎</button>
             <button class="shot-btn" data-idx="${idx}" data-tip="Screenshot" title="Capture/refresh screenshot (open the element's page first)"${legacy ? ' disabled' : ''}>📷</button>
             <button class="img-btn" data-idx="${idx}" data-tip="Upload image" title="Upload your own image"${legacy ? ' disabled' : ''}>🖼️</button>
+            <button class="ask-btn" data-idx="${idx}" data-tip="Ask AI" title="Ask about this mapping — why it isn't working, or change it"${legacy ? ' disabled' : ''}>🤔</button>
             <button class="del-btn" data-idx="${idx}" data-tip="Remove" title="Remove">✕</button>
           </div>
         </div>
@@ -5871,6 +5952,68 @@ async function loadMappingsList() {
       e.stopPropagation();
       const img = thumb.querySelector('.mh-img');
       if (img) openImageDialog(img.src);
+    });
+  });
+
+  // The agent, on a mapping that is already saved — which is where you find out
+  // it is not doing what you wanted. It re-reads the component's markup from
+  // the page, measures what the mapping actually does, and answers about THIS
+  // mapping: why it is not working, or a change you ask for in words.
+  container.querySelectorAll('.ask-btn:not([disabled])').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const m = list[parseInt(btn.dataset.idx, 10)];
+      if (!m || !m.type) return;
+      const item = btn.closest('.mapping-item');
+      let box = item.querySelector('.ai-why');
+      if (!box) {
+        box = document.createElement('div');
+        box.className = 'ai-why';
+        item.appendChild(box);
+      }
+      box.style.display = 'block';
+      box.innerHTML = '<div class="ai-busy"><div class="ai-busy-bar"><span></span></div>' +
+        '<div class="ai-busy-sub">Reading this component on the page and measuring what the mapping does.</div></div>';
+
+      const sel = m.firstArg || m.primary;
+      const tab = await getTab();
+      if (!isInjectable(tab)) { box.innerHTML = '<div class="ai-sel-bad">Cannot read this page.</div>'; return; }
+
+      const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [sel]);
+      if (!markup || markup.error || markup.notFound) {
+        box.innerHTML = `<div class="ai-sel-bad">Nothing on this page matches ${escapeHtml(sel)}, so there is nothing to look at.</div>`;
+        return;
+      }
+
+      const res = await applyMappingsBatch([{ type: m.type, primary: m.primary, firstArg: m.firstArg, config: m.config }]);
+      const d = (res.details || [])[0];
+      const outcome = !res.ok
+        ? (res.u1Missing ? 'window.u1 is not loaded on the page at all.' : 'Applying failed: ' + res.err)
+        : d && d.status === 'error' ? `u1.fix.${d.type} threw: ${(res.errs || [])[0] || 'unknown'}`
+        : d && d.status === 'no-match' ? `Nothing on the page matches ${d.sel}.`
+        : res.applied
+          ? `${d.changed} element(s) gained U1 attributes.` +
+            (d.fieldsNoEffect && d.fieldsNoEffect.length
+              ? ` These fields changed nothing at all: ${d.fieldsNoEffect.join(', ')}.`
+              : ' Every configured field changed something.')
+          : `Nothing changed at all. u1.fix ran without throwing and wrote no attributes.${d && d.reason ? ' Reason recorded: ' + d.reason + '.' : ''}`;
+
+      const out = await U1AI.diagnose({ u1Type: m.type, containerSel: sel, config: m.config, markup, outcome });
+      aiCost += U1AI.estimateCost(out.usage) || 0;
+      if (out.err) { box.innerHTML = `<div class="ai-sel-bad">${escapeHtml(out.err)}</div>`; return; }
+
+      const fixSel = (out.fix && out.fix.selectors) || [];
+      box.innerHTML =
+        `<div class="ai-why-head"><strong>${escapeHtml(out.verdict || '')}</strong>` +
+        `<span class="ai-conf" data-c="${escapeHtml(out.confidence || 'medium')}">${escapeHtml(out.confidence || '')}</span></div>` +
+        `<div class="ai-comp-why">${escapeHtml(out.cause || '')}</div>` +
+        (out.fix && out.fix.what ? `<div class="ai-why-fix"><strong>Fix:</strong> ${escapeHtml(out.fix.what)}</div>` : '') +
+        fixSel.map(s => `<div class="ai-fix-sel"><strong>${escapeHtml(s.key)}</strong>: ${escapeHtml(s.value)}</div>`).join('') +
+        (fixSel.length ? `<div class="ai-find-actions"><button class="btn-outline btn-xs" data-savedfix="${btn.dataset.idx}">Apply these to the mapping</button></div>` : '') +
+        `<div class="ai-ask">
+           <input type="text" class="ai-ask-input" data-savedask="${btn.dataset.idx}"
+                  placeholder="Or tell it what to change — e.g. “submenus should be the parent div”">
+           <button class="btn-outline btn-sm" data-savedaskgo="${btn.dataset.idx}">Ask</button>
+         </div>`;
     });
   });
 
