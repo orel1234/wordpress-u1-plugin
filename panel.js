@@ -3190,6 +3190,10 @@ async function markKeyState() {
     if (!$aiKeyRow || !globalThis.U1AI) return;
     const hasKey = await markKeyState();
     if (!hasKey) $aiKeyRow.style.display = '';
+    // Open the assistant only when there is something to do in it — a first
+    // run needs the key and the prompt; afterwards the button is one click
+    // away inside a closed accordion and the screen belongs to the results.
+    if ($aiBox) $aiBox.open = !hasKey;
   } catch {}
 })();
 
@@ -3301,6 +3305,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     aiCost += U1AI.estimateCost(out.usage) || 0;
     renderAiComponents(aiFound);
     $aiStatus.style.display = 'none';
+    if ($aiBox) $aiBox.open = false;   // the results are the screen now
   } catch (err) {
     showNotice($aiStatus, 'Failed: ' + err.message, 'error', 6000);
   } finally {
@@ -3572,15 +3577,24 @@ function renderAiMapCard(idx, row, out, recorderActive) {
         <span class="ai-conf" data-c="${conf}">${conf} confidence</span>
       </div>
       ${out.notes ? `<div class="ai-comp-why">⚠️ ${escapeHtml(out.notes)}</div>` : ''}
-      <div class="ai-comp-why">${recorderActive
-        ? '✓ Triggers were identified from the real click handlers recorded on this page.'
-        : 'Triggers were worked out from tags and attributes. For measured handlers, switch on precise event detection and reload the page.'}</div>
-      <div class="ai-map-form" id="aiMapForm${idx}"></div>
+
+      <!-- The code is the thing to review. The selector form is the thing to
+           review it WITH, and only when something looks wrong — so it folds
+           away instead of burying the answer under twelve inputs. -->
       <div class="code-preview" id="aiMapCode${idx}"></div>
+
+      <details class="ai-map-edit">
+        <summary>✍️ Edit the selectors</summary>
+        <div class="ai-comp-why">${recorderActive
+          ? '✓ Triggers identified from the real click handlers recorded on this page.'
+          : 'Triggers were worked out from tags and attributes. For measured handlers, switch on precise event detection and reload the page.'}</div>
+        <div class="ai-map-form" id="aiMapForm${idx}"></div>
+      </details>
+
       <div class="ai-find-actions">
-        <button class="btn-ghost btn-xs" data-skipcard="${idx}">Skip</button>
-        <button class="btn-outline btn-xs" data-editcard="${idx}">✍️ Builder</button>
-        <button class="btn-primary btn-xs" data-savecard="${idx}">✓ Approve &amp; apply</button>
+        <button class="btn-primary btn-sm" data-savecard="${idx}">✓ Approve &amp; apply</button>
+        <button class="btn-ghost btn-sm" data-skipcard="${idx}">Skip</button>
+        <button class="btn-ghost btn-sm" data-editcard="${idx}">Open in builder</button>
       </div>
     </div>`;
 }
@@ -4995,9 +5009,6 @@ async function applyAllMappings({ silent = false } = {}) {
 
 document.getElementById('applyAllBtn').addEventListener('click', () => applyAllMappings());
 
-// ── Which site is each mapping actually filed under? ────────────────────────
-// Storage is per hostname, so "this looks like a mapping from another site" is
-// answerable — but only by showing all of it at once.
 // ── Same client, different URL ──────────────────────────────────────────────
 //
 // Everything is filed under the bare hostname, so molina.com and
@@ -5059,68 +5070,6 @@ async function moveSiteData(from, to, { copy = false } = {}) {
   return { moved };
 }
 
-document.getElementById('storedSitesBtn')?.addEventListener('click', async () => {
-  const box = document.getElementById('storedSites');
-  box.style.display = 'block';
-  const sites = await U1Store.listSites();
-  if (!sites.length) {
-    box.className = 'selector-test-result ok';
-    box.textContent = 'No site has any saved work.';
-    return;
-  }
-  // Show EVERY site and every kind of saved work. A site with config or skip
-  // links but no mappings was invisible here, which is its own way of losing
-  // things.
-  const prefixes = U1Store.SITE_PREFIXES || ['mappings', 'config', 'skipLinks'];
-  const all = await U1Store.get(sites.flatMap(h => prefixes.map(p => storageKey(p, h))));
-  const rows = sites.map(h => {
-    const list = all[storageKey('mappings', h)] || [];
-    const cfg = all[storageKey('config', h)];
-    const skips = (cfg && Array.isArray(cfg.skipLinks) ? cfg.skipLinks.length : 0)
-      || (all[storageKey('skipLinks', h)] || []).length;
-    return {
-      h,
-      n: list.length,
-      here: h === currentHostname,
-      rel: hostRelation(currentHostname, h),
-      types: [...new Set(list.map(m => m && m.type).filter(Boolean))].join(', '),
-      hasConfig: !!cfg,
-      extras: [cfg ? 'config' : null, skips ? `${skips} skip link${skips === 1 ? '' : 's'}` : null].filter(Boolean).join(', '),
-    };
-  });
-
-  // A site with no mappings and no real config is a record the tool created by
-  // being opened there, not work anyone did. Separate them out and offer to
-  // clear the lot in one go, rather than making the list look like a mess you
-  // caused.
-  // Saving skip links through the UI always writes config_<host> as well (see
-  // saveConfig in the skip-link save path), so a site holding ONLY a skipLinks
-  // record — no mappings, no config — was never saved by anyone. That is the
-  // footprint of the auto-write this build removed.
-  const junk = rows.filter(r => !r.here && !r.n && !r.hasConfig);
-  const real = rows.filter(r => r.here || r.n || r.hasConfig);
-
-  box.className = 'selector-test-result ' + (real.length > 1 ? 'warn' : 'ok');
-  box.innerHTML =
-    `<div>Everything saved, by site. Bold is what this panel reads and writes right now.</div>` +
-    `<ul>${real.map(r =>
-      `<li>${r.here ? '<strong>' : ''}${escapeHtml(r.h)}${r.here ? '</strong> ← current' : ''}` +
-      `${r.rel ? ' <span class="ai-sev" data-need="1">same client?</span>' : ''}` +
-      ` — ${r.n} mapping${r.n === 1 ? '' : 's'}${r.types ? ` (${escapeHtml(r.types)})` : ''}` +
-      `${r.extras ? ` · ${escapeHtml(r.extras)}` : ''}` +
-      `${!r.here ? ` <button class="btn-outline btn-xs" data-move-host="${escapeHtml(r.h)}">Move here</button>` +
-        ` <button class="btn-ghost btn-xs" data-wipe-host="${escapeHtml(r.h)}">Delete</button>` : ''}</li>`
-    ).join('')}</ul>` +
-    (junk.length
-      ? `<div class="ai-comp-why">${junk.length} other site${junk.length === 1 ? '' : 's'} hold an empty record with no mappings and no config — left behind by opening the panel there. ` +
-        `<button class="btn-outline btn-xs" data-purge-empty="1">Clear ${junk.length} empty record${junk.length === 1 ? '' : 's'}</button></div>`
-      : '') +
-    `<div class="ai-comp-why">Using ${(await U1Store.bytesInUse().catch(() => 0) / 1e6).toFixed(1)} MB of local storage. ` +
-    `Mappings live in the extension's local storage, one key per site: <code>mappings_&lt;hostname&gt;</code>. ` +
-    `Config is <code>config_&lt;hostname&gt;</code>. Nothing is ever read or applied across sites — but the same client reached by a different URL is a different key, which is how mappings appear to go missing.</div>`;
-  box.dataset.junk = junk.map(r => r.h).join(',');
-});
-
 // Recovering work filed under another hostname for the same client.
 document.getElementById('mappingsList')?.addEventListener('click', async (e) => {
   const move = e.target.closest('[data-adopt]');
@@ -5136,274 +5085,6 @@ document.getElementById('mappingsList')?.addEventListener('click', async (e) => 
   showNotice(document.getElementById('applyAllStatus'),
     `${copy ? 'Copied' : 'Moved'} ${moved} mapping${moved === 1 ? '' : 's'} from ${from} to ${currentHostname}.`,
     'success', 6000);
-});
-
-// Clearing another site's mappings, on request only.
-document.getElementById('storedSites')?.addEventListener('click', async (e) => {
-  const purge = e.target.closest('[data-purge-empty]');
-  if (purge) {
-    const box = document.getElementById('storedSites');
-    const hosts = (box.dataset.junk || '').split(',').filter(Boolean);
-    const prefixes = U1Store.SITE_PREFIXES || ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject'];
-    await U1Store.remove(hosts.flatMap(h => prefixes.map(p => storageKey(p, h))));
-    document.getElementById('storedSitesBtn').click();
-    return;
-  }
-
-  const mv = e.target.closest('[data-move-host]');
-  if (mv) {
-    const from = mv.dataset.moveHost;
-    mv.disabled = true; mv.textContent = 'Moving…';
-    const { moved } = await moveSiteData(from, currentHostname);
-    await loadMappingsList();
-    refreshExportInfo();
-    document.getElementById('storedSitesBtn').click();
-    showNotice(document.getElementById('applyAllStatus'),
-      `Moved ${moved} mapping${moved === 1 ? '' : 's'} from ${from} to ${currentHostname}.`, 'success', 6000);
-    return;
-  }
-
-  const btn = e.target.closest('[data-wipe-host]');
-  if (!btn) return;
-  const host = btn.dataset.wipeHost;
-  if (host === currentHostname) return;
-  // Everything filed under that host, not just its mappings — leaving its
-  // config and skip links behind is what makes storage look haunted later.
-  await U1Store.remove((U1Store.SITE_PREFIXES || ['mappings']).map(p => storageKey(p, host)));
-  btn.textContent = 'Deleted ✓';
-  btn.disabled = true;
-  refreshExportInfo();
-});
-
-// ── "The list is empty, but the site still behaves as if it is not" ─────────
-//
-// Three different things can decorate this page and they are indistinguishable
-// by eye: mappings this extension holds, work left over in the DOM from before
-// (nothing un-does it but a reload), and U1's OWN project configuration served
-// from User1st for this domain — which the extension neither owns nor can
-// delete. Guessing between them wastes hours, so measure and attribute.
-document.getElementById('whatsOnPageBtn')?.addEventListener('click', async () => {
-  const box = document.getElementById('whatsOnPage');
-  const btn = document.getElementById('whatsOnPageBtn');
-  const tab = await getTab();
-  if (!isInjectable(tab)) { box.style.display = 'block'; box.className = 'selector-test-result error'; box.textContent = 'Cannot read this page.'; return; }
-
-  const key = storageKey('mappings', currentHostname);
-  const cfgKey = storageKey('config', currentHostname);
-  const stored = await U1Store.get([key, cfgKey]);
-  const mine = (stored[key] || [])
-    .filter(m => m && typeof m === 'object')
-    .map(m => ({ type: m.type, sel: m.firstArg || m.primary }));
-  // How many skip links THIS extension is configured to inject. Without this
-  // the report was asserting that every skip link on the page came from here,
-  // which is false whenever something else on the page defines them.
-  const cfg = stored[cfgKey] || {};
-  const configuredSkipLinks = Array.isArray(cfg.skipLinks) ? cfg.skipLinks.length : 0;
-
-  btn.disabled = true;
-  const original = btn.textContent;
-  btn.textContent = 'Checking…';
-  let res = null;
-  try {
-    const out = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: 'MAIN',
-      // async: it fetches the page's own served HTML. executeScript awaits a
-      // promise returned by the injected function.
-      func: async (saved) => {
-        // ONLY U1's own fingerprints count as evidence.
-        //
-        // role, tabindex and aria-* are ordinary HTML that authors write by
-        // hand — this very site ships tabindex="0" on every nav link — so
-        // treating them as proof of U1 flagged twelve untouched nav items as
-        // mystery decoration on the first real page it was pointed at. There
-        // is no way to attribute those without a before/after, and guessing is
-        // worse than saying nothing.
-        //
-        // What only U1 produces: u1st-* attributes, generated u1st-<uuid> ids,
-        // and u1st-* classes. u1st-avoid-change-detection is excluded — it is
-        // routinely authored into a site's markup, and is reported separately.
-        const isEvidence = (a) => /^u1st-/.test(a.name) && a.name !== 'u1st-avoid-change-detection';
-        const u1Marked = (el) =>
-          Array.from(el.attributes).some(isEvidence) ||
-          /^u1st-/.test(el.id || '') ||
-          (typeof el.className === 'string' && /\bu1st-/.test(el.className));
-        const decorated = [];
-        document.querySelectorAll('*').forEach(el => {
-          if (decorated.length >= 400) return;
-          if (u1Marked(el)) decorated.push(el);
-        });
-        // U1's own plumbing, which it creates on every load whatever you have
-        // mapped: the screen-reader announcer regions and the status element.
-        // These are not fixes and there is nothing to remove — counting them as
-        // "unexplained" sends people hunting for a mapping that never existed.
-        // Skip links point at their target by id, and U1 generates a
-        // u1st-<uuid> id on any target that had none. That id is the config's
-        // doing, not a stray mapping, so attribute it to the config.
-        const skipTargets = new Set(
-          Array.from(document.querySelectorAll('.u1st-skip-link'))
-            .map(a => (a.getAttribute('href') || '').replace(/^#/, ''))
-            .filter(Boolean));
-        const isInfra = (el) =>
-          skipTargets.has(el.id) ||
-          el.id === 'u1-status-element' ||
-          el.classList.contains('u1st-sr-only') ||
-          el.classList.contains('u1st-skip-link') ||
-          (el.getAttribute('role') === 'status' && el.hasAttribute('aria-live')) ||
-          el.getAttribute('aria-live') === 'polite' && el.getAttribute('aria-atomic') === 'true';
-        const infra = decorated.filter(isInfra);
-
-        // Reported separately, because it is neither decoration nor noise: an
-        // element carrying u1st-avoid-change-detection is one U1 has been told
-        // to leave alone. Counting it as decorated is a false positive; saying
-        // nothing hides the single most common reason a mapping does nothing.
-        const optedOut = Array.from(document.querySelectorAll('[u1st-avoid-change-detection]'))
-          .slice(0, 12).map(el => {
-            const cls = (el.className && typeof el.className === 'string')
-              ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
-            return {
-              tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls),
-              // The decisive one: U1 stamps this attribute on an element when
-              // it wires a skip link to it. A target that already had an id
-              // gets no generated id, so "was a u1st-* id generated" misses it
-              // — being a skip target is the reliable signal.
-              skipTarget: skipTargets.has(el.id),
-              touchedByU1: /^u1st-/.test(el.id || '') || !!el.querySelector('[id^="u1st-"]'),
-            };
-          });
-
-        // Which of them does a mapping we hold actually account for?
-        const ours = new Set();
-        for (const m of saved) {
-          let els = [];
-          try { els = Array.from(document.querySelectorAll(m.sel)); } catch {}
-          for (const root of els) {
-            if (decorated.includes(root)) ours.add(root);
-            root.querySelectorAll('*').forEach(d => { if (decorated.includes(d)) ours.add(d); });
-          }
-        }
-        const orphans = decorated.filter(el => !ours.has(el) && !isInfra(el)).slice(0, 12).map(el => {
-          const cls = (el.className && typeof el.className === 'string')
-            ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
-          const attrs = (Array.from(el.attributes).filter(isEvidence).map(a => a.name)
-            .concat(/^u1st-/.test(el.id || '') ? ['generated id'] : [])).slice(0, 4).join(' ');
-          return { tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls), attrs };
-        });
-        // Are the skip links in the HTML the SERVER sent, or created by script
-        // after load? Fetching the page's own URL is same-origin and returns
-        // the served markup, which separates "the site's author wrote them"
-        // from "something on this page injected them" — instead of guessing.
-        let inServedHtml = null;
-        try {
-          const res = await fetch(location.href, { credentials: 'same-origin' });
-          if (res.ok) {
-            const html = await res.text();
-            inServedHtml = (html.match(/u1st-skip-link/g) || []).length;
-          }
-        } catch {}
-
-        // What U1 is actually holding at runtime. The extension presets
-        // window.u1.config before U1 initialises; if U1 ends up with skip
-        // links the extension never set, they came from U1's own project
-        // configuration for this domain. That is the difference between
-        // reasoning about it and knowing.
-        let runtimeSkipLinks = null, runtimeConfigKeys = [];
-        try {
-          const c = window.u1 && window.u1.config;
-          if (c && typeof c === 'object') {
-            runtimeConfigKeys = Object.keys(c);
-            if (Array.isArray(c.skipLinks)) runtimeSkipLinks = c.skipLinks.length;
-          }
-        } catch {}
-
-        return {
-          u1Present: !!(window.u1 && window.u1.fix),
-          runtimeSkipLinks,
-          runtimeConfigKeys,
-          inServedHtml,
-          skipLinks: document.querySelectorAll('.u1st-skip-link').length,
-          decorated: decorated.length,
-          fromOurMappings: ours.size,
-          infra: infra.length,
-          optedOut,
-          orphans,
-        };
-      },
-      args: [mine],
-    });
-    res = out && out[0] ? out[0].result : null;
-  } catch (e) {
-    res = { err: e.message };
-  }
-  btn.disabled = false;
-  btn.textContent = original;
-
-  box.style.display = 'block';
-  if (!res || res.err) {
-    box.className = 'selector-test-result error';
-    box.textContent = 'Could not read the page: ' + ((res && res.err) || 'no result');
-    return;
-  }
-
-  const unexplained = res.orphans.length;
-  box.className = 'selector-test-result ' + (unexplained > 0 ? 'warn' : 'ok');
-
-  const lines = [
-    `<div><strong>${res.decorated}</strong> element${res.decorated === 1 ? '' : 's'} on this page carry U1's own fingerprints (u1st-* ids, classes or attributes).</div>`,
-    `<div>· ${res.fromOurMappings} from the ${mine.length} mapping${mine.length === 1 ? '' : 's'} this extension holds${res.u1Present ? '' : ' — note window.u1 is not loaded'}</div>`,
-  ];
-  if (res.infra) {
-    lines.push(`<div>· ${res.infra} are U1's own announcer regions, which the library creates on every page load. Not fixes, and nothing to remove.</div>`);
-  }
-  if (res.skipLinks) {
-    lines.push(`<div>· ${res.skipLinks} skip link${res.skipLinks === 1 ? '' : 's'} on the page. This extension is configured to inject <strong>${configuredSkipLinks}</strong> for ${escapeHtml(currentHostname)}` +
-      (res.runtimeSkipLinks == null
-        ? '.'
-        : `, and U1 is holding <strong>${res.runtimeSkipLinks}</strong> at runtime.`) + '</div>');
-    if (res.inServedHtml) {
-      lines.push(`<div class="u1-warn">${res.inServedHtml} of them are in the HTML the server sent, before any script ran — they are written into the site's own pages, and nothing in this extension put them there.</div>`);
-    } else if (res.inServedHtml === 0) {
-      lines.push(`<div class="u1-warn">None are in the served HTML, so script on this page created them after it loaded — U1 from a config it was handed, or the site's own code.</div>`);
-    }
-    if (!configuredSkipLinks && res.runtimeSkipLinks) {
-      lines.push(`<div class="u1-warn">U1 is holding ${res.runtimeSkipLinks} skip link${res.runtimeSkipLinks === 1 ? '' : 's'} that this extension did not set — skip links are stored per site here, and this site has none. Something else on the page put them into window.u1.config.</div>`);
-    } else if (!configuredSkipLinks && res.skipLinks) {
-      lines.push(`<div class="u1-warn">This extension has no skip links for ${escapeHtml(currentHostname)}, so it did not inject them.</div>`);
-    }
-  }
-  if (res.optedOut && res.optedOut.length) {
-    const viaSkip = res.optedOut.filter(o => o.skipTarget);
-    lines.push(
-      `<div class="u1-warn">⚠️ ${res.optedOut.length} element${res.optedOut.length === 1 ? '' : 's'} carry ` +
-      `<code>u1st-avoid-change-detection</code>, which tells U1 to leave ${res.optedOut.length === 1 ? 'it' : 'them'} alone — ` +
-      `a mapping pointed at ${res.optedOut.length === 1 ? 'it' : 'one of them'} does nothing.</div>`);
-    if (viaSkip.length) {
-      // The self-inflicted case, and the reason this was so hard to see: your
-      // own skip links are what put the attribute there.
-      lines.push(
-        `<div class="u1-warn">${viaSkip.length} of ${res.optedOut.length === 1 ? 'them' : 'those'} ` +
-        `${viaSkip.length === 1 ? 'is a target' : 'are targets'} of a skip link. U1 stamps that attribute on an element when it wires a skip link to it — ` +
-        `so a skip link and a mapping aimed at the same element conflict, and the skip link wins. ` +
-        `Point the skip link at a wrapper (or the mapping at an inner element) so they are not the same node.</div>`);
-      lines.push(
-        `<div>Until that changes, Apply lifts the attribute for you, runs the fix, and says so — the mapping works on the page but not on a fresh load, ` +
-        `because U1 re-stamps the element every time it wires the skip link again.</div>`);
-    }
-    lines.push(`<ul>${res.optedOut.map(o =>
-      `<li><code>${escapeHtml(o.tag)}</code> — ${o.skipTarget ? 'a skip-link target: U1 stamped it when wiring the skip link'
-        : o.touchedByU1 ? 'U1 stamped this after decorating it — a reload clears that'
-        : 'origin unclear: U1 from an earlier load, or the site\'s markup'}</li>`).join('')}</ul>`);
-  }
-  if (unexplained > 0) {
-    lines.push(`<div class="u1-warn">⚠️ ${unexplained} element${unexplained === 1 ? '' : 's'} decorated by something this extension did not do — most likely work U1 applied before your last change, which a reload clears.</div>`);
-    lines.push(`<ul>${res.orphans.map(o => `<li><code>${escapeHtml(o.tag)}</code> — ${escapeHtml(o.attrs)}</li>`).join('')}</ul>`);
-    lines.push(`<div><button class="btn-outline btn-xs" data-reload-tab>↻ Reload the page</button> then press this again: whatever survives a reload with an empty mapping list is not coming from this extension.</div>`);
-  } else {
-    lines.push('<div>✅ Nothing here is left over from a deleted mapping.</div>');
-  }
-  // Say what this cannot tell you, rather than letting silence imply it did.
-  lines.push('<div class="ai-comp-why" style="margin-top:6px;">Ordinary role, tabindex and aria-* attributes are not counted: sites write those by hand, so they cannot be attributed to U1 without comparing the page before and after.</div>');
-  box.innerHTML = lines.join('');
 });
 
 // The keyboard-grid engine lives in grid-nav.js. For DEPLOYMENT we inline its

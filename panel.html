@@ -294,11 +294,12 @@
     <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
 
     <!-- ── AI accessibility teacher ──────────────────────────────────────── -->
-    <div class="ai-box" id="aiBox" style="display:none;">
-      <div class="ai-head">
+    <details class="ai-box" id="aiBox" style="display:none;">
+      <summary class="ai-head">
         <span class="ai-title">🎓 Accessibility assistant</span>
+        <span class="ai-head-spacer"></span>
         <button class="btn-ghost btn-xs" id="aiKeyToggle" title="API key">🔑</button>
-      </div>
+      </summary>
 
       <div class="ai-key-row" id="aiKeyRow" style="display:none;">
         <label class="ai-field-label" for="aiKeyInput">🔑 Anthropic API key — paste it here</label>
@@ -317,7 +318,7 @@
         <button class="btn-primary btn-sm" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
         <span class="map-mode-hint" id="aiStatus" style="margin:0;"></span>
       </div>
-    </div>
+    </details>
 
     <!-- Stage 1 result: the inventory. Each row's type and container are
          editable — the AI proposes, the specialist decides. -->
@@ -481,19 +482,6 @@
     </div>
     <div id="mappingsList"><div class="empty-state">No mappings yet.</div></div>
 
-    <!-- "The list is empty but the site still looks fixed" has several possible
-         causes and no way to tell them apart by eye. This asks the page. -->
-    <div class="btn-row" style="margin-top:8px;">
-      <button class="btn-ghost btn-sm" id="whatsOnPageBtn">🩺 What is applied on this page?</button>
-    </div>
-    <div id="whatsOnPage" class="selector-test-result" style="display:none;"></div>
-
-    <!-- Everything is stored per site. When something looks like it came from
-         somewhere else, the way to settle it is to look at all of it. -->
-    <div class="btn-row" style="margin-top:6px;">
-      <button class="btn-ghost btn-sm" id="storedSitesBtn">🗄 Mappings stored per site</button>
-    </div>
-    <div id="storedSites" class="selector-test-result" style="display:none;"></div>
     <div class="btn-row" id="applyAllRow" style="display:none;">
       <button class="btn-outline" id="applyAllBtn">Apply All Mappings on Page</button>
       <button class="btn-outline" id="copyAllBtn">Copy All</button>
