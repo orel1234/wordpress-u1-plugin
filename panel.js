@@ -1575,17 +1575,22 @@ async function refreshSetupTab(tab) {
     // client's bundle as the default everywhere, and the next site's Setup
     // form, Export and handover DOCX picked it up. That is the leak, and it
     // needed no action from anyone to happen.
-    if (detected.cssHref || detected.jsSrc) {
+    // Only remember a bundle THIS SITE is set up to use. Filing whatever
+    // happens to be on the page re-created the record the moment Stop cleared
+    // it, because our own injected tag was still sitting there.
+    const armedHere = !!miStored[`manualInject_${currentHostname}`];
+    if (armedHere && (detected.cssHref || detected.jsSrc)) {
       const merged = {
         cssLink: cssLink || detected.cssHref || '',
         jsLink: jsLink || detected.jsSrc || '',
       };
       if (merged.cssLink !== cssLink || merged.jsLink !== jsLink) {
         await U1Store.set({ [storageKey('u1Links', currentHostname)]: merged });
-        document.getElementById('cssLink').value = merged.cssLink;
-        document.getElementById('jsLink').value = merged.jsLink;
       }
     }
+    // The form always shows what is on the page, saved or not.
+    if (detected.cssHref) document.getElementById('cssLink').value = cssLink || detected.cssHref;
+    if (detected.jsSrc) document.getElementById('jsLink').value = jsLink || detected.jsSrc;
   } else {
     detectedSec.style.display = 'none';
     inputsSec.style.display   = 'block';
@@ -1972,14 +1977,30 @@ document.getElementById('replaceU1Btn').addEventListener('click', () => {
 });
 
 document.getElementById('stopAutoInjectBtn').addEventListener('click', async () => {
-  // Clear the remembered bundle as well, or Setup re-fills the form with the
-  // same URLs and the next Inject arms exactly what was just stopped.
+  // Stop has to actually stop. Clearing storage alone left the injected
+  // <script id="u1Js"> running on the page, so U1 kept doing what it was
+  // doing, and the panel's own detection then saw that tag and filed the same
+  // URLs straight back — the form refilled and nothing appeared to change.
+  //
+  // So: forget the bundle, take the tags off the page, and reload, which is
+  // the only way to unwind what an already-running U1 has done.
   await U1Store.remove([`manualInject_${currentHostname}`, storageKey('u1Links', currentHostname)]);
   document.getElementById('autoInjectBadge').style.display = 'none';
   const owner = document.getElementById('bundleOwner');
   if (owner) owner.style.display = 'none';
   document.getElementById('cssLink').value = '';
   document.getElementById('jsLink').value = '';
+
+  const tab = await getTab();
+  if (isInjectable(tab)) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => { ['u1Js', 'u1Css'].forEach(id => document.getElementById(id)?.remove()); },
+      });
+      chrome.tabs.reload(tab.id);
+    } catch {}
+  }
 });
 
 document.getElementById('addSkipLinkBtn').addEventListener('click', () => {
