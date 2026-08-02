@@ -5318,6 +5318,23 @@ async function moveSiteData(from, to, { copy = false } = {}) {
   return { moved };
 }
 
+// Put the run's "approved" record back to empty. Used when the site has no
+// saved mappings left, so the panel cannot claim to have applied any.
+function resetApprovedRun() {
+  const box = document.getElementById('aiApproved');
+  if (box) {
+    const list = box.querySelector('#aiApprovedList');
+    if (list) list.innerHTML = '';
+    const n = box.querySelector('#aiApprovedN');
+    if (n) n.textContent = '';
+    box.style.display = 'none';
+  }
+  approvedSeq = 0;
+  for (const key of [...agentThreads.keys()]) {
+    if (key.startsWith('saved:')) agentThreads.delete(key);
+  }
+}
+
 // ── The agent, as a conversation ────────────────────────────────────────────
 // One thread per mapping. Context (markup, config, what measurably happened)
 // is gathered once and rides with every turn, so the specialist can just say
@@ -5807,6 +5824,10 @@ async function loadMappingsList() {
     container.innerHTML = '<div class="empty-state">No mappings yet.</div>';
     if (applyAllRow) applyAllRow.style.display = 'none';
     if (toolbar) toolbar.style.display = 'none';
+    // Nothing is saved, so "approved and applied" is describing mappings that
+    // no longer exist. Clear it, and drop the agent threads that were about
+    // them — a conversation about a deleted mapping has nothing to be about.
+    resetApprovedRun();
     try {
       const sites = (await U1Store.listSites()).filter(h => h !== currentHostname);
       const others = await U1Store.get(sites.map(h => storageKey('mappings', h)));
