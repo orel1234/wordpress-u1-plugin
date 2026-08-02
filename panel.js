@@ -3652,7 +3652,7 @@ document.getElementById('tab-picker')?.addEventListener('click', (e) => {
 
 // Approved mappings collect here, each carrying whether it actually took effect
 // on the page — the same measured verdict the Apply button reports.
-function addApproved(row, verdict) {
+function addApproved(row, verdict, code) {
   const box = document.getElementById('aiApproved');
   if (!box) return;
   // The stage caption comes from CSS (#aiApproved::before), so this only needs
@@ -3671,6 +3671,7 @@ function addApproved(row, verdict) {
       <span class="ai-approved-label">${escapeHtml(row.label)}</span>
       <code>u1.fix.${escapeHtml(row.type)}</code>
       <div class="ai-approved-why">${escapeHtml(verdict.msg)}</div>
+      ${code ? `<details class="ai-approved-code"><summary>Show the code that was applied</summary><div class="code-preview">${escapeHtml(code)}</div></details>` : ''}
       ${clashBtns ? `<div class="ai-approved-why">${clashBtns}</div>` : ''}
     </div>`);
 }
@@ -3861,8 +3862,15 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       if (comp) { comp.dataset.done = '1'; showCompSlide(slideIndex('aiComp')); }
     }
 
-    addApproved(row, verdict);
+    addApproved(row, verdict, tpl.code);
+
+    // Move on. The card just approved has left the carousel, so the current
+    // index now lands on the next one — and it is brought into view, because
+    // after scrolling down to the actions the next card starts off-screen.
     showSlide(slideIndex('aiSlide'));
+    const next = document.querySelector('#aiSlideTrack .ai-map-card:not([data-done])');
+    if (next) next.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    else document.getElementById('aiApproved')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     showNotice(status, verdict.msg, verdict.ok ? 'success' : 'error', verdict.ok ? 4000 : 10000);
     return;
   }

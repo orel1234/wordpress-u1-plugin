@@ -2539,3 +2539,25 @@ button.u1-readonly-off {
 }
 .ai-find-actions .btn-primary { flex: 1; }
 .ai-find-actions .btn-ghost { flex: none; }
+
+/* The scan button is the action of this screen, not a detail of the prompt. */
+.ai-run-row { margin: 10px 0 0; }
+.ai-run-row .btn-primary { width: 100%; }
+
+/* What was applied, as code, on the approved row. */
+.ai-approved-code { grid-column: 1 / -1; margin-top: 5px; }
+.ai-approved-code > summary {
+  font-size: 10px;
+  color: var(--u1-text-muted);
+  cursor: pointer;
+  padding: 3px 0;
+}
+.ai-approved-code > summary:hover { color: var(--u1-primary); }
+.ai-approved-code .code-preview {
+  margin-top: 4px;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 10px;
+  white-space: pre;
+}

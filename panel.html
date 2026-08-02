@@ -314,11 +314,14 @@
       <textarea id="aiInstruction" rows="2"
         placeholder="Leave empty to review the whole screen, or narrow it down: “only the header and the product filters”"></textarea>
 
-      <div class="btn-row" style="margin-top:8px;gap:8px;align-items:center;">
-        <button class="btn-primary btn-sm" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
-        <span class="map-mode-hint" id="aiStatus" style="margin:0;"></span>
-      </div>
     </details>
+
+    <!-- Outside the accordion: this is the action, it should never be behind a
+         fold. The accordion holds the key and the optional prompt. -->
+    <div class="btn-row ai-run-row">
+      <button class="btn-primary" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
+    </div>
+    <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
 
     <!-- Stage 1 result: the inventory. Each row's type and container are
          editable — the AI proposes, the specialist decides. -->
