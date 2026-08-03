@@ -381,6 +381,22 @@ validator('a'.repeat(200) + '!');
 validator('.main-nav__item--has-dropdown!'.repeat(20));
 const selFast = (Date.now() - t0) < 50;
 
+// ── A selector must not be built on a class that changes every deploy ──────
+// css-1x2y3z, sc-bdVaJa, a7Fk2p: a mapping built on one works today and breaks
+// at the next release, silently. Being conservative matters as much — throwing
+// away a real class like `col2` costs more than keeping a doubtful one.
+const intelSrc = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+const looksGenerated = new Function(
+  intelSrc.slice(intelSrc.indexOf('const looksGenerated'), intelSrc.indexOf('function compound')) +
+  '; return looksGenerated;')();
+const classCases = [
+  ['css-1x2y3z', true], ['sc-bdVaJa', true], ['a7Fk2p', true], ['_btn_1a2b3', true],
+  ['jsx-2841', true], ['card-9f8e7d', true], ['ab1c2d3e4f', true],
+  ['main-nav__link', false], ['btn-primary', false], ['category-tile', false],
+  ['col2', false], ['h1', false], ['main-nav__item--has-dropdown', false], ['slide2', false],
+];
+const classOk = classCases.every(([c, want]) => looksGenerated(c) === want);
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -411,7 +427,9 @@ console.log(`  ${selOk ? '✅' : '❌'} the selector in U1's own menu docs valid
 if (!selOk) failed++;
 console.log(`  ${selFast ? '✅' : '❌'} …and validation is linear — no catastrophic backtracking on a long non-match`);
 if (!selFast) failed++;
+console.log(`  ${classOk ? '✅' : '❌'} build-generated classes are rejected, hand-written ones kept`);
+if (!classOk) failed++;
 
-const total = results.length + 11;
+const total = results.length + 12;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

@@ -144,6 +144,24 @@
   const countOf = (s) => { try { return document.querySelectorAll(s).length; } catch { return -1; } };
   const uniqueOnPage = (s) => countOf(s) === 1;
 
+  // A class emitted by a build tool rather than written by a person.
+  //
+  // NOISE catches the prefixes we know, but a hashed name has no prefix to
+  // match: `.a7Fk2p` looks like an ordinary class and changes on the next
+  // deploy, so a mapping built on it works today and breaks silently at the
+  // next release. Judge the SHAPE — and be conservative, because throwing away
+  // a real class (`col2`, `h1`) costs more than keeping a doubtful one.
+  const looksGenerated = (c) =>
+    // Known CSS-in-JS emitters.
+    /^(css|sc|jsx|emotion|styled|chakra|mui)-/i.test(c)
+    // mixedCase together with digits. Hand-written classes are kebab or snake
+    // case, so the three together is essentially only ever a hash: a7Fk2p.
+    || (/[a-z]/.test(c) && /[A-Z]/.test(c) && /\d/.test(c))
+    // A hash suffix bolted onto a real name: btn_1a2b3, card-9f8e7d.
+    || /[-_][0-9][a-z0-9]{3,}$/i.test(c)
+    // All hash: ab1c2d3e4f.
+    || /^[a-z]{0,3}[0-9a-f]{6,}$/i.test(c);
+
   function compound(node) {
     if (!node || node.nodeType !== 1) return '';
     if (node.id && idOk(node.id)) return '#' + node.id;
@@ -154,7 +172,12 @@
     if (al && al.length < 40 && !al.includes('"')) return `${tag}[aria-label="${al}"]`;
     const nm = node.getAttribute('name');
     if (nm && !nm.includes('"')) return `${tag}[name="${nm}"]`;
-    const classes = classesOf(node).filter(c => !NOISE.test(c));
+    // Prefer classes a person named. Fall back to generated ones only if that
+    // is genuinely all there is — a bad selector still beats no selector.
+    const named = classesOf(node).filter(c => !NOISE.test(c));
+    const classes = named.filter(c => !looksGenerated(c)).length
+      ? named.filter(c => !looksGenerated(c))
+      : named;
     if (classes.length) {
       for (const c of classes) {
         try { if (document.getElementsByClassName(c).length === 1) return '.' + c; } catch {}

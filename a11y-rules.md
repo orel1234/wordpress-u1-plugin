@@ -61,6 +61,26 @@ A short, correct list is worth more than a long one. Every row costs the
 specialist a decision. If a screen genuinely has three things worth fixing, list
 three.
 
+## 6. Never build a selector on a machine-generated class
+
+Build tools emit class names that change on every deploy — `css-1x2y3z`,
+`sc-bdVaJa`, `jsx-2841`, `_btn_1a2b3`, `a7Fk2p`. A mapping built on one works
+today and breaks at the next release, silently.
+
+Prefer, in this order: `#id` · `[data-testid]` or any deliberate `data-*` ·
+`[aria-label]` · `[name]` · a **meaningful** class the developers named
+(`.main-nav__link`) · a structural chain (`nav>div>a`).
+
+A class is machine-generated if it mixes letters and digits with no word you
+could say aloud, or carries a hash-looking suffix. When in doubt, prefer
+structure — a chain of tags is ugly but it survives a deploy.
+
+## 7. Say when you had nothing good to work with
+
+If the only thing available was a generated class or a deep structural chain,
+say so in the row's reason. The specialist can then add a `data-*` attribute to
+the site and re-map, which is the durable fix.
+
 ---
 
 <!-- Add new rules below. Number them, keep them short, and prefer a concrete

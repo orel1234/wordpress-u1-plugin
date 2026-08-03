@@ -3280,3 +3280,26 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   letter-spacing: 0;
   line-height: 1.5;
 }
+
+/* The countdown scan sits under the main action as a quieter alternative. */
+.ai-delayed {
+  width: 100%;
+  margin-top: 6px;
+  border: 1px dashed var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  color: var(--u1-text-muted);
+}
+.ai-delayed:hover:not(:disabled) { border-color: var(--u1-primary); color: var(--u1-text); }
+.ai-delayed:disabled { border-style: solid; border-color: var(--u1-primary); color: var(--u1-text); opacity: 1; }
+
+/* What the scan could not see. */
+.ai-hint-line {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--u1-primary);
+  background: var(--u1-surface-2);
+  border-radius: 0 var(--u1-radius-sm) var(--u1-radius-sm) 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--u1-text-muted);
+}

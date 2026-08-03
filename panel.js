@@ -3558,6 +3558,23 @@ function scaleShot(dataUrl, maxEdge) {
 }
 
 // ── Stage 1: discover what is on the screen ─────────────────────────────────
+// Scan after a countdown, so a dialog or menu can be opened and LEFT open.
+// Pressing anything in this panel moves focus off the page, and a great many
+// widgets close on focus-out — which is why "just open it first" does not work
+// on its own. The countdown hands the page back to you before the capture.
+document.getElementById('aiDelayedBtn')?.addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const original = btn.textContent;
+  btn.disabled = true;
+  for (let n = 5; n > 0; n--) {
+    btn.textContent = `⏱ Scanning in ${n}\u2026 open it now`;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  btn.textContent = original;
+  btn.disabled = false;
+  document.getElementById('aiDiscoverBtn')?.click();
+});
+
 document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('aiDiscoverBtn');
   const tab = await getTab();
@@ -3671,7 +3688,11 @@ function renderAiComponents(found) {
   // already looking at. Only the count and what it cost are worth the space.
   document.getElementById('aiSummary').innerHTML =
     `<div class="ai-meta">${comps.length} component${comps.length === 1 ? '' : 's'} found` +
-    ` · ${escapeHtml(found.model || '')} · ~$${aiCost.toFixed(3)} this session</div>`;
+    ` · ${escapeHtml(found.model || '')} · ~$${aiCost.toFixed(3)} this session</div>` +
+    // A closed dialog is not in the page at all — there is nothing to read. The
+    // scan can only ever see what is on screen, and nothing said so.
+    `<div class="ai-hint-line">Only what is on screen was scanned. A dialog, dropdown or datepicker
+      that is closed does not exist in the page yet — open one and use <strong>⏱ Scan in 5s</strong>.</div>`;
 
   const typeOptions = (sel) => U1AI.U1_TYPES
     .map(t => `<option value="${t}"${t === sel ? ' selected' : ''}>${t}</option>`).join('');

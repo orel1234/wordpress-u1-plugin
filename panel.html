@@ -338,6 +338,11 @@
         <button class="btn-primary" id="aiDiscoverBtn">🔎 Find what's on this screen</button>
         <button class="btn-outline" id="aiSettingsBtn" title="Change the API key">🔑</button>
       </div>
+      <!-- Clicking in the panel takes focus off the page, and a great many
+           dropdowns and dialogs close on focus-out. This gives you the seconds
+           you need to open one and leave it open. -->
+      <button class="btn-ghost btn-sm ai-delayed" id="aiDelayedBtn"
+              title="Press, open a dialog or menu on the page, and it captures while it is open">⏱ Scan in 5s — time to open a dialog</button>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
     </div>
 
