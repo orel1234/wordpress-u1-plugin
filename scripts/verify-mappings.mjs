@@ -397,6 +397,28 @@ const classCases = [
 ];
 const classOk = classCases.every(([c, want]) => looksGenerated(c) === want);
 
+// ── A scan must not pay for empty structure ────────────────────────────────
+// Every candidate used to carry all thirteen fields whether or not they held
+// anything, pretty-printed. This tool is used by scanning the same page section
+// by section, so that waste is paid on every pass.
+const aiSrc = readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8');
+const compactList = new Function(
+  aiSrc.slice(aiSrc.indexOf('const compactList'), aiSrc.indexOf('// ── Key storage')) +
+  '; return compactList;')();
+const sample = { mark: 1, tag: 'button', role: '', name: 'Search', selector: 'button[aria-label="x"]',
+  matches: 1, alt: null, ariaLabel: 'x', ariaHidden: '', tabindex: null, disabled: false,
+  labelled: false, signals: ['tag'], box: { x: 1, y: 2, w: 3, h: 4 } };
+const lean = compactList([sample])[0];
+const leanOk =
+  lean.mark === 1 && lean.tag === 'button' && lean.selector && lean.name === 'Search' &&
+  lean.ariaLabel === 'x' &&                       // kept: real values survive
+  !('role' in lean) && !('alt' in lean) && !('disabled' in lean) && !('matches' in lean) &&
+  !('box' in lean) &&                             // dropped: empty, default, or redundant
+  'alt' in compactList([{ ...sample, alt: '' }])[0] &&      // "" on an img is meaningful
+  compactList([{ ...sample, matches: 7 }])[0].matches === 7;
+const bulk = Array.from({ length: 60 }, (_, i) => ({ ...sample, mark: i + 1 }));
+const shrank = JSON.stringify(compactList(bulk)).length < JSON.stringify(bulk, null, 1).length * 0.5;
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -429,7 +451,11 @@ console.log(`  ${selFast ? '✅' : '❌'} …and validation is linear — no cat
 if (!selFast) failed++;
 console.log(`  ${classOk ? '✅' : '❌'} build-generated classes are rejected, hand-written ones kept`);
 if (!classOk) failed++;
+console.log(`  ${leanOk ? '✅' : '❌'} the scan payload drops empty fields and keeps every real one`);
+if (!leanOk) failed++;
+console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
+if (!shrank) failed++;
 
-const total = results.length + 12;
+const total = results.length + 14;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

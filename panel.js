@@ -3624,7 +3624,11 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     let shot = null;
     try {
       const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
-      shot = await scaleShot(raw, 1568);
+      // 1568 is the size Anthropic recommends for maximum image fidelity, and
+      // this task does not need it: the model is reading two-digit pink numbers,
+      // not fine detail. 1280 keeps them perfectly legible and costs about a
+      // third fewer vision tokens on every scan.
+      shot = await scaleShot(raw, 1280);
     } finally {
       await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
     }
@@ -4047,7 +4051,12 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
     const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
     if (!markup || markup.error || markup.notFound) {
       clearMapBusy();
-      track.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error || 'that selector matches nothing on the page'));
+      // Almost always the same cause: the scan was taken on one section and the
+      // page has since moved on — another tab, a closed dialog, a re-render.
+      // Saying "matches nothing" invites a hunt for a typo in a selector that
+      // was correct when it was written.
+      track.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error ||
+        `${row.sel} is not on the page right now. Scan results go stale as soon as you switch tab or section, or close what you had open — go back to that view, or scan this section again.`));
       showSlide(0);
       return;
     }
@@ -4466,7 +4475,7 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       if (clashes.length) {
         verdict.clashes = clashes;
         verdict.ok = false;
-        verdict.msg += ` Also: ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} already targets these elements — two components on the same DOM fight, and the second wins.`;
+        verdict.msg += ` Also mapped by ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} — two on the same elements fight, and the second wins.`;
       }
       updateApproved(rowId, verdict);
     })();
@@ -5804,8 +5813,12 @@ function describeApply(res, m) {
       // untouched to anyone checking the DOM for roles.
       const menubarFalse = m && m.type === 'menu' && m.config && m.config.menubar === false;
       v.msg += ` But ${d.fieldsNoEffect.map(f => `"${f}"`).join(', ')} changed nothing — U1 decorated the container and left ${d.fieldsNoEffect.length === 1 ? 'that field' : 'those fields'} alone.`;
+      // Short, and accurate. With menubar:false U1 DOES give the triggers
+      // role="button" and the submenu containers role="menu" — only
+      // role="menuitem" is exclusive to menubar:true. The old wording said
+      // otherwise and ran to four sentences.
       v.msg += menubarFalse
-        ? ` For a menu with submenus that is expected: menubar is false (U1 requires it, or it throws "Submenu must have a trigger element"), and with it off U1 adds tabindex and aria-hidden but no role="menu" or role="menuitem". The mapping is doing what it can; menu roles need a flat menubar.`
+        ? ` With menubar off, only "triggers" and "submenus" get roles — items stay plain links. Fill those two fields if they are empty.`
         : ` Check the selector, or whether this component supports it.`;
     }
     if (d.unblocked) {
@@ -5833,7 +5846,7 @@ function describeApply(res, m) {
   // The one we chased all day. Say the whole thing, because no amount of
   // selector work can help and the fix is not in this panel.
   if (d && d.rebuilt) {
-    return { ok: false, msg: `Nothing changed, and the selectors are not the problem. ${d.sel} is built by the site's own JavaScript after the page loads — it ships empty. U1 processed the empty container first, marked it handled, and will not look at an element twice in one page load, so the items created afterwards can never be decorated. Lifting U1's marker does not help: it tracks the element itself. The site has to render this component in the HTML, or call u1.fix.* itself after it finishes building it.` };
+    return { ok: false, msg: `Nothing changed — not the selectors. ${d.sel} is built by the site's JavaScript after load, so U1 had already finished with the empty container. It never looks at an element twice in one page load. The site has to render this in the HTML, or call u1.fix.* itself once it has built it.` };
   }
   if (res.u1State && res.u1State.decoratedOnPage === 0) {
     return { ok: false, msg: 'U1 is loaded but has decorated nothing anywhere on this page — it never started up for this domain. No mapping can apply until that is fixed, and the selectors are not the problem.' };

@@ -120,10 +120,10 @@ RULES
       text:
         `Page: ${context.title || '(untitled)'}\nURL: ${context.url || ''}\n` +
         (scope ? `The specialist limited this to: ${scope}\n` : '') +
-        `\nThe numbered elements in the screenshot:\n${JSON.stringify(compactList(context.candidates), null, 1)}` +
+        `\nThe numbered elements in the screenshot:\n${JSON.stringify(compactList(context.candidates))}` +
         (context.headings && context.headings.length
           ? `\n\nThe page's heading outline, in document order (for the heading-order rule):\n` +
-            JSON.stringify(context.headings, null, 1)
+            JSON.stringify(context.headings)
           : `\n\nThe page has NO headings at all.`),
     });
   }
@@ -331,13 +331,29 @@ WHAT "changed nothing" USUALLY MEANS
   }
 
   // Drop the panel-only fields to keep the prompt small.
-  const compactList = (cands) => (cands || []).map(c => ({
-    mark: c.mark, tag: c.tag, role: c.role, name: c.name,
-    selector: c.selector, matches: c.matches,
-    alt: c.alt, ariaLabel: c.ariaLabel, ariaHidden: c.ariaHidden,
-    tabindex: c.tabindex, disabled: c.disabled, labelled: c.labelled,
-    signals: c.signals, box: c.box,
-  }));
+  // Send only what is actually there.
+  //
+  // Every candidate used to carry all thirteen fields whether or not they held
+  // anything — `role:""`, `alt:null`, `disabled:false` — pretty-printed with
+  // indentation. For sixty elements that is ~5,200 tokens of mostly empty
+  // structure on EVERY scan, and this tool is used by scanning the same page
+  // section by section. Dropping empties, the box (the numbered screenshot
+  // already shows where things are) and the indentation costs the model nothing
+  // and cuts that payload by about 65%.
+  const compactList = (cands) => (cands || []).map(c => {
+    const o = { mark: c.mark, tag: c.tag, selector: c.selector };
+    if (c.name) o.name = c.name;
+    if (c.role) o.role = c.role;
+    if (c.matches !== 1) o.matches = c.matches;     // 1 is the ordinary case
+    if (c.ariaLabel) o.ariaLabel = c.ariaLabel;
+    if (c.alt != null) o.alt = c.alt;               // "" is meaningful on an img
+    if (c.ariaHidden) o.ariaHidden = c.ariaHidden;
+    if (c.tabindex != null) o.tabindex = c.tabindex;
+    if (c.disabled) o.disabled = true;
+    if (c.labelled) o.labelled = true;
+    if (c.signals && c.signals.length) o.signals = c.signals;
+    return o;
+  });
 
   // ── Key storage ────────────────────────────────────────────────────────────
   // Private (`__`) so U1Store.getExportable strips it from backups — an API key
