@@ -343,6 +343,14 @@
            you need to open one and leave it open. -->
       <button class="btn-ghost btn-sm ai-delayed" id="aiDelayedBtn"
               title="Press, open a dialog or menu on the page, and it captures while it is open">⏱ Scan in 5s — time to open a dialog</button>
+      <!-- Scanning the whole screen is the wrong tool for one widget: a
+           datepicker's forty cells blow past the candidate limit and get
+           summarised away. Point at it instead. -->
+      <div class="ai-scope-line">
+        <input type="text" id="aiScopeInput" class="ai-scope-input"
+               placeholder="Or scan just one part: #datepicker, .cart-drawer…">
+        <button class="btn-outline btn-sm" id="aiScopeBtn">Scan it</button>
+      </div>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
     </div>
 

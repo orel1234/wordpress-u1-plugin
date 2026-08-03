@@ -3590,9 +3590,28 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   try {
     showAiBusy('Reading the page…', 'Looking at what is on screen.');
     btn.textContent = 'Reading the page…';
-    const context = await inPage(tab.id, () => window.__u1SelectorIntel.collectCandidates(60));
+    const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
+    const context = await inPage(tab.id,
+      (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
     if (!context || !context.candidates || !context.candidates.length) {
-      showNotice($aiStatus, 'Nothing reviewable in the viewport — scroll to the part you want.', 'error', 5000);
+      showNotice($aiStatus, scopeSel
+        ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
+        : 'Nothing reviewable in the viewport — scroll to the part you want.', 'error', 5000);
+      return;
+    }
+
+    // Drop what this site has already settled. The same page gets scanned again
+    // and again to reach things that only exist while open, and re-listing what
+    // was skipped or already mapped is how that becomes tedious. Filtering here
+    // rather than after the answer also means no tokens are spent on them.
+    const handled = await alreadyHandled();
+    const before = context.candidates.length;
+    context.candidates = context.candidates.filter(c => !c.selector || !handled.has(c.selector));
+    const skipped = before - context.candidates.length;
+    if (!context.candidates.length) {
+      showNotice($aiStatus,
+        `Everything on screen has already been mapped or skipped. Open something that was hidden, or press Reset below to start the list again.`,
+        'success', 7000);
       return;
     }
 
@@ -3618,6 +3637,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     $aiStatus.style.display = '';
 
     const out = await U1AI.discover({ screenshot: shot, context });
+    if (out && !out.err) out.skipped = skipped;
     if (out.err) { showNotice($aiStatus, out.err, 'error', 8000); return; }
 
     // Deliberately NOT re-marking here. The 👁 buttons work off each row's
@@ -3667,17 +3687,31 @@ function showAiBusy(title, sub) {
 
 function showMapBusy(label, n, total) {
   const track = document.getElementById('aiSlideTrack');
-  if (!track || track.querySelector('.ai-map-card')) return;   // real cards already in
-  track.innerHTML = `
+  if (!track) return;
+  // It used to bail whenever a card was already in the track, which meant the
+  // FIRST component showed progress and every one after it left the panel
+  // standing empty — an outlined box with a heading and nothing in it. The
+  // placeholder is its own element, so it can sit alongside finished cards.
+  clearMapBusy();
+  const holder = document.createElement('div');
+  holder.id = 'aiMapBusyHost';
+  track.appendChild(holder);
+  holder.innerHTML = `
     <div class="ai-busy" id="aiMapBusy">
       <div class="ai-busy-bar"><span></span></div>
       <div class="ai-busy-title">Working out ${escapeHtml(label)} (${n} of ${total})</div>
       <div class="ai-busy-sub">Reading its markup and its click handlers.</div>
       ${[0, 1, 2, 3].map(() => '<div class="ai-skel"></div>').join('')}
     </div>`;
+  // Existing cards are hidden while this runs, or the placeholder appears below
+  // a card and nobody scrolls to it.
+  track.querySelectorAll('.ai-map-card').forEach(c => { c.style.display = 'none'; });
 }
 
-const clearMapBusy = () => document.getElementById('aiMapBusy')?.remove();
+function clearMapBusy() {
+  document.getElementById('aiMapBusyHost')?.remove();
+  document.getElementById('aiMapBusy')?.remove();
+}
 
 // The inventory. Every row's component type and container selector are inputs,
 // not labels — a wrong guess is corrected here rather than worked around later.
@@ -3692,7 +3726,10 @@ function renderAiComponents(found) {
     // A closed dialog is not in the page at all — there is nothing to read. The
     // scan can only ever see what is on screen, and nothing said so.
     `<div class="ai-hint-line">Only what is on screen was scanned. A dialog, dropdown or datepicker
-      that is closed does not exist in the page yet — open one and use <strong>⏱ Scan in 5s</strong>.</div>`;
+      that is closed does not exist in the page yet — open one and use <strong>⏱ Scan in 5s</strong>.` +
+    (found.skipped ? ` <strong>${found.skipped}</strong> already mapped or skipped on this site were left out —
+      <button class="btn-ghost btn-xs" id="aiResetDismissed">show them again</button>.` : '') +
+    `</div>`;
 
   const typeOptions = (sel) => U1AI.U1_TYPES
     .map(t => `<option value="${t}"${t === sel ? ' selected' : ''}>${t}</option>`).join('');
@@ -3730,6 +3767,22 @@ function renderAiComponents(found) {
         <div class="ai-comp-fields">
           <label for="aiCompType${i}">Component type</label>
           <select class="ai-comp-type" id="aiCompType${i}">${typeOptions(c.u1Type)}</select>
+        </div>
+
+        <!-- Switch a found element to a type whose first argument is a TRIGGER
+             and the element stops being the component: the help button IS the
+             thing you click, but the thing to map is the panel it opens. So ask
+             for that panel, and file the found element as the trigger. Without
+             this the only way through was to give up on the card and start
+             again by hand. -->
+        <div class="ai-comp-trigger" id="aiCompTrig${i}" style="display:none;">
+          <label for="aiCompCont${i}">Selector of the <strong>thing it opens</strong></label>
+          <div class="ai-comp-cont-line">
+            <input type="text" class="ai-comp-cont" id="aiCompCont${i}" placeholder="#help-panel, .modal…">
+            <button class="btn-ghost btn-sm ai-comp-conteye" title="Show it on the page">👁</button>
+          </div>
+          <div class="input-hint" style="display:block;">The element above becomes the trigger. Open it on the page first — a closed panel is not there to point at.</div>
+          <div class="ai-comp-hit" id="aiCompContHit${i}"></div>
         </div>
 
         <!-- One element, one action. A global tick plus a batch button counted
@@ -3826,6 +3879,99 @@ document.getElementById('aiComponentList')?.addEventListener('input', (e) => {
   aiRowTimer = setTimeout(paintAiRowStrength, 400);
 });
 
+// Types whose fix() first argument is a TRIGGER rather than the component: the
+// element you click is not the element that gets decorated. Read from the
+// schemas so a new type cannot be forgotten here.
+const triggerFirstType = (type) => {
+  const sc = COMPONENT_SCHEMAS[type];
+  return !!sc && sc.firstArgFrom === 'trigger' && (sc.fields || []).includes('trigger');
+};
+
+// Show the container field only when the chosen type needs one, and re-check on
+// every change — the type is a dropdown the specialist is expected to correct.
+document.getElementById('aiCompTrack')?.addEventListener('change', (e) => {
+  const sel = e.target.closest('.ai-comp-type');
+  if (!sel) return;
+  const comp = sel.closest('.ai-comp');
+  const trig = comp.querySelector('.ai-comp-trigger');
+  if (!trig) return;
+  const wants = triggerFirstType(sel.value);
+  trig.style.display = wants ? '' : 'none';
+  const btn = comp.querySelector('[data-mapone]');
+  if (btn) btn.textContent = wants ? '✨ Make this accessible' : '✨ Make this accessible';
+});
+
+// 👁 for the container field.
+document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
+  const eye = e.target.closest('.ai-comp-conteye');
+  if (!eye) return;
+  const comp = eye.closest('.ai-comp');
+  const sel = (comp.querySelector('.ai-comp-cont').value || '').trim();
+  const hit = comp.querySelector('[id^="aiCompContHit"]');
+  if (!sel || !hit) return;
+  eye.disabled = true;
+  try {
+    const res = await testSelector(sel);
+    const n = res && typeof res.count === 'number' ? res.count : null;
+    hit.className = 'ai-comp-hit ' + (n === 1 ? 'ok' : n ? 'warn' : 'bad');
+    hit.textContent = res && res.err ? res.err
+      : n === 0 ? 'Matches nothing — if it only exists while open, open it first.'
+      : n === 1 ? '1 match — highlighted on the page.'
+      : `${n} matches — highlighted. u1.fix decorates only one of them.`;
+    if (n) { await highlightMatch(sel, 0, true); setTimeout(() => highlightMatch(sel, 0, false), 2500); }
+  } finally { eye.disabled = false; }
+});
+
+// Selectors the specialist has already dealt with on this site, either by
+// skipping them or by mapping them. Kept per site, like everything else.
+async function dismissedSelectors() {
+  try {
+    const key = storageKey('dismissed', currentHostname);
+    return (await U1Store.get([key]))[key] || [];
+  } catch { return []; }
+}
+
+async function rememberDismissed(sel) {
+  if (!sel) return;
+  try {
+    const key = storageKey('dismissed', currentHostname);
+    const list = (await U1Store.get([key]))[key] || [];
+    if (list.includes(sel)) return;
+    list.push(sel);
+    await U1Store.set({ [key]: list.slice(-300) });
+  } catch {}
+}
+
+// Everything already settled on this site: skipped, or already mapped.
+async function alreadyHandled() {
+  const out = new Set(await dismissedSelectors());
+  try {
+    const key = storageKey('mappings', currentHostname);
+    for (const m of (await U1Store.get([key]))[key] || []) {
+      if (m && m.primary) out.add(m.primary);
+      if (m && m.firstArg) out.add(m.firstArg);
+    }
+  } catch {}
+  return out;
+}
+
+// Scan just one part of the page, and reset the skipped list.
+document.getElementById('aiScopeBtn')?.addEventListener('click', () => {
+  document.getElementById('aiDiscoverBtn')?.click();
+});
+document.getElementById('aiScopeInput')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('aiDiscoverBtn')?.click(); }
+});
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('#aiResetDismissed')) return;
+  try {
+    await U1Store.remove([storageKey('dismissed', currentHostname)]);
+    showNotice(document.getElementById('aiStatus'),
+      'Skipped items are back on the list. Mapped ones stay out — delete the mapping to see them again.', 'success', 5000);
+  } catch {}
+});
+
 // Map ONE component, on demand, from its own card. No ticking, no batch: the
 // button you press is about the element you are looking at.
 document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
@@ -3836,6 +3982,10 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   if (skipBtn) {
     const comp = skipBtn.closest('.ai-comp');
     comp.dataset.done = '1';
+    // Remember it. The same page gets scanned repeatedly — that is how you
+    // reach a dialog or a datepicker that only exists while open — and without
+    // this every pass hands back the same rows to dismiss again.
+    rememberDismissed((comp.querySelector('.ai-comp-sel')?.value || '').trim());
     const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
     if (left) showCompSlide(Math.min(carouselAt.aiComp || 0, left - 1));
     else {
@@ -3855,12 +4005,25 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   }
 
   const comp = btn.closest('.ai-comp');
+  const type = comp.querySelector('.ai-comp-type').value;
+  const found = comp.querySelector('.ai-comp-sel').value.trim();
+  const container = (comp.querySelector('.ai-comp-cont')?.value || '').trim();
+  // For a trigger-first type the found element is the TRIGGER, and the mapping
+  // is rooted on what it opens. Everything downstream expects `sel` to be that
+  // root, so swap them here rather than teaching each step about the exception.
+  const wantsTrigger = triggerFirstType(type);
   const row = {
-    type: comp.querySelector('.ai-comp-type').value,
-    sel: comp.querySelector('.ai-comp-sel').value.trim(),
+    type,
+    sel: wantsTrigger && container ? container : found,
+    trigger: wantsTrigger && container ? found : undefined,
     label: comp.querySelector('.ai-comp-label').textContent,
     compIndex: comp.dataset.i,
   };
+  if (wantsTrigger && !container) {
+    showNotice(status, `A ${type} needs the element it opens. Open it on the page, then paste its selector.`, 'error', 6000);
+    comp.querySelector('.ai-comp-cont')?.focus();
+    return;
+  }
   if (!row.sel || !COMPONENT_SCHEMAS[row.type]) {
     showNotice(status, 'Give this one a container selector and a component type first.', 'error', 4000);
     return;
@@ -3894,6 +4057,9 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
       u1Type: row.type,
       containerSel: row.sel,
       markup,
+      instruction: row.trigger
+        ? `The specialist identified "${row.trigger}" as the element that opens this ${row.type}. Use it for the trigger field and do not look for another.`
+        : undefined,
       fields: schema.fields || [],
       fieldDocs: schema.desc || {},
       options: Object.keys(schema.rootFields || {}),
@@ -3901,6 +4067,15 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
     aiCost += U1AI.estimateCost(out.usage) || 0;
     clearMapBusy();
     if (out.err) { track.insertAdjacentHTML('beforeend', aiMapCardError(row, out.err)); showSlide(0); return; }
+
+    // The specialist already told us which element opens this, and that is
+    // better evidence than a guess from markup — so it wins over whatever the
+    // model put in `trigger`.
+    if (row.trigger) {
+      out.fields = (out.fields || []).filter(f => f.key !== 'trigger');
+      out.fields.unshift({ key: 'trigger', value: row.trigger,
+                           why: 'The element you started from — you identified it as what opens this.' });
+    }
 
     const idx = aiMapped.length;
     aiMapped.push({ row, result: out, markup });

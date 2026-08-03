@@ -56,8 +56,15 @@
   // Grade one compound segment (e.g. `.a.b`, `#id`, `div[name="x"]`).
   function gradeSegment(seg) {
     if (/^#[\w-]+$/.test(seg)) return 'strong';
-    // Stable, semantic attribute selectors are as good as an id.
-    if (/\[(data-testid|data-test|id|name|aria-label|role)\s*[=~|^$*]?=?/.test(seg)) return 'strong';
+    // Identifiers a developer chose so the element could be addressed.
+    if (/\[(data-testid|data-test|data-cy|data-qa|id|name)\s*[=~|^$*]?=?/.test(seg)) return 'strong';
+    // aria-label is USER-FACING TEXT, not an identifier. It gets translated, a
+    // copywriter rewrites it, and on a multilingual site the same button reads
+    // differently per locale — so a mapping anchored on it breaks without any
+    // developer touching the markup. It is usable, not dependable.
+    if (/\[aria-label\s*[=~|^$*]?=?/.test(seg)) return 'medium';
+    // A role says what KIND of thing it is, not which one. Rarely unique.
+    if (/\[role\s*[=~|^$*]?=?/.test(seg)) return 'weak';
     if (/\[[^\]]+\]/.test(seg)) return 'medium';
     if (/\.[\w-]+/.test(seg)) return 'medium';
     return 'weak'; // bare tag, or *
@@ -68,6 +75,12 @@
     const raw = String(sel == null ? '' : sel);
     const norm = normalize(raw);
     const reasons = [];
+    if (/\[aria-label\s*[=~|^$*]?=?/.test(norm)) {
+      reasons.push('Built on aria-label — that is text for the user, so it changes when the wording or the language changes.');
+    }
+    if (/\[role\s*[=~|^$*]?=?/.test(norm)) {
+      reasons.push('Built on role — that says what kind of element it is, not which one.');
+    }
 
     if (!norm) return { level: 'empty', label: '', reasons: [] };
 
@@ -653,13 +666,21 @@
     '[class*="carousel"]', '[class*="slider"]', '[class*="accordion"]',
   ].join(',');
 
-  function collectCandidates(limit) {
+  // `within` confines the scan to one element's subtree. Scanning the whole
+  // screen is the wrong tool for "this datepicker" — a widget with forty cells
+  // blows past the candidate limit and gets summarised away, and the answer
+  // covers the header instead of the thing being asked about.
+  function collectCandidates(limit, within) {
     clearMarks();
     const max = limit || 60;
     const seen = new Set();
     const out = [];
 
-    for (const el of qsa(document, CANDIDATE_SEL)) {
+    let scope = document;
+    if (within) {
+      try { scope = document.querySelector(within) || document; } catch { scope = document; }
+    }
+    for (const el of qsa(scope, CANDIDATE_SEL)) {
       if (out.length >= max) break;
       if (seen.has(el)) continue;
       if (el.closest('#' + MARK_LAYER)) continue;   // never mark our own overlay
@@ -699,7 +720,7 @@
     // The heading outline, in document order. The screenshot shows how headings
     // LOOK, which is no guide to what level they are — a skipped level is
     // invisible until you read the markup. Rule 2 in a11y-rules.md needs this.
-    const headings = qsa(document, 'h1,h2,h3,h4,h5,h6,[role="heading"]')
+    const headings = qsa(scope, 'h1,h2,h3,h4,h5,h6,[role="heading"]')
       .filter(h => {
         const r = h.getBoundingClientRect();
         return r.width > 0 && r.height > 0 && getComputedStyle(h).visibility !== 'hidden';
@@ -714,6 +735,7 @@
     return {
       candidates: out,
       headings,
+      scopedTo: within || null,
       viewport: { w: vw(), h: vh() },
       title: document.title,
       url: (document.location && document.location.href) || '',

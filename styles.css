@@ -3303,3 +3303,44 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   line-height: 1.5;
   color: var(--u1-text-muted);
 }
+
+/* Scan one part of the page instead of all of it. */
+.ai-scope-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ai-scope-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+/* Re-cast a found element as a trigger and name what it opens. */
+.ai-comp-trigger {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--u1-primary);
+  border-radius: var(--u1-radius-sm);
+  background: var(--u1-surface-2);
+}
+.ai-comp-trigger > label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--u1-text);
+}
+.ai-comp-cont-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+.ai-comp-cont {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
