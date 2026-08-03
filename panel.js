@@ -3127,6 +3127,23 @@ function setMapMode(mode) {
   // actually makes this tab readable, rather than shrinking everything.
   const manualOnly = document.getElementById('manualOnly');
   if (manualOnly) manualOnly.style.display = isAuto ? 'none' : '';
+  // The sub-selector form and the preview are manual-route panels too, but they
+  // sit OUTSIDE #manualOnly in the markup — so hiding that block left them on
+  // screen. Open a type in Manual, switch to Automatic, and its Selectors form
+  // and Generate Template button stayed under the AI cards. Their display is
+  // stashed on the way out and restored on the way back, because which of them
+  // was open depends on how far the manual flow had got.
+  for (const el of [document.getElementById('subSelectorsSection'),
+                    document.getElementById('previewSection')]) {
+    if (!el) continue;
+    if (isAuto) {
+      if (el.dataset.manualDisplay === undefined) el.dataset.manualDisplay = el.style.display || '';
+      el.style.display = 'none';
+    } else if (el.dataset.manualDisplay !== undefined) {
+      el.style.display = el.dataset.manualDisplay;
+      delete el.dataset.manualDisplay;
+    }
+  }
   // Analyze & fill writes into the manual form, so it belongs with it.
   const analyzeRow = document.getElementById('autoAnalyzeRow');
   if (analyzeRow) analyzeRow.style.display = isAuto ? 'none' : '';
@@ -3780,12 +3797,12 @@ function renderAiComponents(found) {
              this the only way through was to give up on the card and start
              again by hand. -->
         <div class="ai-comp-trigger" id="aiCompTrig${i}" style="display:none;">
-          <label for="aiCompCont${i}">Selector of the <strong>thing it opens</strong></label>
+          <label class="ai-comp-cont-label" for="aiCompCont${i}"></label>
           <div class="ai-comp-cont-line">
             <input type="text" class="ai-comp-cont" id="aiCompCont${i}" placeholder="#help-panel, .modal…">
             <button class="btn-ghost btn-sm ai-comp-conteye" title="Show it on the page">👁</button>
           </div>
-          <div class="input-hint" style="display:block;">The element above becomes the trigger. Open it on the page first — a closed panel is not there to point at.</div>
+          <div class="input-hint ai-comp-cont-hint" style="display:block;"></div>
           <div class="ai-comp-hit" id="aiCompContHit${i}"></div>
         </div>
 
@@ -3806,6 +3823,7 @@ function renderAiComponents(found) {
   document.getElementById('aiSlideTrack').innerHTML = '';
   document.getElementById('aiApproved').style.display = 'none';
   document.getElementById('aiApproved').innerHTML = '';
+  syncAllTriggerFields();
   showCompSlide(0);
   paintAiRowStrength();
 }
@@ -3891,18 +3909,69 @@ const triggerFirstType = (type) => {
   return !!sc && sc.firstArgFrom === 'trigger' && (sc.fields || []).includes('trigger');
 };
 
-// Show the container field only when the chosen type needs one, and re-check on
-// every change — the type is a dropdown the specialist is expected to correct.
+// Every type whose schema declares a trigger at all — not just the three that
+// swap it into first position. tooltip and keyboard-grid take one too, and the
+// card used to offer no way to give it, so the only route was to abandon the
+// card and rebuild it by hand in Manual.
+const acceptsTrigger = (type) => {
+  const sc = COMPONENT_SCHEMAS[type];
+  return !!sc && (sc.fields || []).includes('trigger');
+};
+
+// Required is the schema's own req list, not "has a trigger". dialog declares a
+// trigger but does not require one — a dialog with no opener is a real mapping,
+// and the card used to refuse it.
+const triggerRequired = (type) => {
+  const sc = COMPONENT_SCHEMAS[type];
+  return !!sc && (sc.req || []).includes('trigger');
+};
+
+// Show the container field only when the chosen type needs one. Driven off the
+// <select>'s own value rather than the type the scan proposed, because the two
+// can differ: a type the AI returns that is not in U1_TYPES leaves the dropdown
+// showing its first option instead.
+function syncTriggerField(comp) {
+  const sel = comp?.querySelector('.ai-comp-type');
+  const trig = comp?.querySelector('.ai-comp-trigger');
+  if (!sel || !trig) return;
+  const type = sel.value;
+  trig.style.display = acceptsTrigger(type) ? '' : 'none';
+  if (!acceptsTrigger(type)) return;
+
+  // The wording comes from the schema because the relationship is not the same
+  // in both directions: for a listbox the entered selector is what the found
+  // element OPENS, while for a tooltip it is the element that opens the found
+  // one. A single hand-written label was wrong for half of them.
+  const sc = COMPONENT_SCHEMAS[type] || {};
+  const required = triggerRequired(type);
+  const label = trig.querySelector('.ai-comp-cont-label');
+  if (label) {
+    label.textContent = (sc.desc && sc.desc.trigger) || 'Selector of the trigger element';
+    if (required) label.insertAdjacentHTML('beforeend', ' <span class="req-star">*</span>');
+  }
+  const hint = trig.querySelector('.ai-comp-cont-hint');
+  if (hint) {
+    hint.textContent = triggerFirstType(type)
+      ? 'The element above becomes the trigger. Open it on the page first — a closed panel is not there to point at.'
+      : 'The element above stays the component; this is what drives it.';
+  }
+}
+
+// Every card needs this on first paint, not only after someone touches the
+// dropdown. When the scan already classified a component as a trigger-first
+// type — a listbox, a modal — no change event ever fired, so the field stayed
+// hidden and "Make this accessible" failed on a selector the card gave you no
+// way to enter. The error even focused the hidden input.
+function syncAllTriggerFields() {
+  document.querySelectorAll('#aiCompTrack .ai-comp').forEach(syncTriggerField);
+}
+
+// Re-check on every change — the type is a dropdown the specialist is expected
+// to correct.
 document.getElementById('aiCompTrack')?.addEventListener('change', (e) => {
   const sel = e.target.closest('.ai-comp-type');
   if (!sel) return;
-  const comp = sel.closest('.ai-comp');
-  const trig = comp.querySelector('.ai-comp-trigger');
-  if (!trig) return;
-  const wants = triggerFirstType(sel.value);
-  trig.style.display = wants ? '' : 'none';
-  const btn = comp.querySelector('[data-mapone]');
-  if (btn) btn.textContent = wants ? '✨ Make this accessible' : '✨ Make this accessible';
+  syncTriggerField(sel.closest('.ai-comp'));
 });
 
 // 👁 for the container field.
@@ -4015,15 +4084,19 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   // For a trigger-first type the found element is the TRIGGER, and the mapping
   // is rooted on what it opens. Everything downstream expects `sel` to be that
   // root, so swap them here rather than teaching each step about the exception.
-  const wantsTrigger = triggerFirstType(type);
+  // Any other type that accepts a trigger keeps the found element as the
+  // component and files what was entered as the trigger — no swap.
+  const swap = triggerFirstType(type) && !!container;
   const row = {
     type,
-    sel: wantsTrigger && container ? container : found,
-    trigger: wantsTrigger && container ? found : undefined,
+    sel: swap ? container : found,
+    trigger: swap ? found : (acceptsTrigger(type) && container ? container : undefined),
     label: comp.querySelector('.ai-comp-label').textContent,
     compIndex: comp.dataset.i,
   };
-  if (wantsTrigger && !container) {
+  // Block only on what the schema actually requires. dialog declares a trigger
+  // but does not require one, and this used to refuse it anyway.
+  if (triggerRequired(type) && !container) {
     showNotice(status, `A ${type} needs the element it opens. Open it on the page, then paste its selector.`, 'error', 6000);
     comp.querySelector('.ai-comp-cont')?.focus();
     return;
@@ -4462,6 +4535,11 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
     else document.getElementById('aiApproved')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 
     // ── everything below runs in the background ──
+    // The catch is what ends the progress bar when the measurement itself
+    // fails. Without it a rejection here left the row spinning "Applying…"
+    // forever, which reads as the tool still working on something it has
+    // already given up on. The mapping IS saved at this point — only the
+    // verdict is missing, so say exactly that.
     (async () => {
       const mkey = storageKey('mappings', currentHostname);
       const existing = (await U1Store.get([mkey]))[mkey] || [];
@@ -4478,7 +4556,12 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
         verdict.msg += ` Also mapped by ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} — two on the same elements fight, and the second wins.`;
       }
       updateApproved(rowId, verdict);
-    })();
+    })().catch((err) => {
+      updateApproved(rowId, {
+        ok: false,
+        msg: `Saved, but applying it could not be measured: ${err?.message || err}. Reload the page and re-run Apply to check it took effect.`,
+      });
+    });
     return;
   }
 
