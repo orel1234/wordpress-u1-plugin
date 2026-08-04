@@ -354,17 +354,39 @@ window.__u1MakeClickable = function (opts) {
   // wrapper must fire its own input; a document-wide lookup would send every
   // row's Enter to the first input on the page. The document fallback is for
   // the case where the target genuinely lives elsewhere.
+  // Counts how often `activates` found nothing, so a selector that matches
+  // nothing is reported rather than silently degrading. Falling back to the
+  // wrapper looks identical to working until you notice nothing happens.
+  let missCount = 0;
   const targetOf = (el) => {
     if (!activates) return el;
     let t = null;
     try { t = el.querySelector(activates) || document.querySelector(activates); } catch (e) { return el; }
-    return t || el;
+    if (!t) { missCount++; return el; }
+    return t;
   };
 
+  // A real click is a SEQUENCE. el.click() dispatches only the click event, so a
+  // widget that listens on pointerdown or mousedown — which plenty of custom
+  // file pickers, menus and toggles do — sees nothing at all and looks broken.
+  // Dispatching the whole sequence is closer to what a mouse actually does, not
+  // further from it: a browser fires every one of these on a genuine click.
   const fire = (el) => {
     const t = targetOf(el);
+    const opts = { bubbles: true, cancelable: true, view: window, button: 0, composed: true };
+    const send = (Ctor, type, extra) => {
+      try { t.dispatchEvent(new Ctor(type, Object.assign({}, opts, extra || {}))); } catch (e) {}
+    };
+    const hasPointer = typeof window.PointerEvent === 'function';
+    if (hasPointer) send(PointerEvent, 'pointerdown', { pointerType: 'mouse', isPrimary: true });
+    send(MouseEvent, 'mousedown');
+    if (hasPointer) send(PointerEvent, 'pointerup', { pointerType: 'mouse', isPrimary: true });
+    send(MouseEvent, 'mouseup');
+    // .click() last and preferred: on a native control it also performs the
+    // default action (ticking a checkbox, opening a file dialog), which a
+    // synthetic MouseEvent does not always do.
     if (typeof t.click === 'function') { try { t.click(); return; } catch (e) {} }
-    t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    send(MouseEvent, 'click');
   };
 
   const wire = () => {
@@ -394,6 +416,32 @@ window.__u1MakeClickable = function (opts) {
   };
 
   const wired = wire();
+
+  // Check the activates selector NOW, while there is somebody to tell. Left to
+  // discovery-by-keypress this reports as "the mapping does nothing", which
+  // sends people looking at the wrapper, the role and the tabindex — anywhere
+  // but the one selector that is wrong.
+  let activatesFound = null;
+  if (activates) {
+    activatesFound = 0;
+    let bad = false;
+    try {
+      document.querySelectorAll(sel).forEach(el => {
+        if (el.querySelector(activates) || document.querySelector(activates)) activatesFound++;
+      });
+    } catch (e) { bad = true; }
+    if (bad) {
+      return { ok: false, wired, role, err: `"${activates}" is not a valid selector.` };
+    }
+    if (!activatesFound) {
+      return { ok: false, wired, role, activatesFound: 0,
+        err: `Marked ${wired} element${wired === 1 ? '' : 's'}, but "${activates}" matches nothing — ` +
+             `Enter/Space would fall back to clicking the marked element itself. ` +
+             `Check the selector: ".a.b" means one element carrying BOTH classes, ".a .b" is a descendant, ` +
+             `and a class containing a hyphen is one name, not two.` };
+    }
+  }
+
   // Keep it applied across framework re-renders.
   window.__u1ClickWatchers = window.__u1ClickWatchers || {};
   if (!window.__u1ClickWatchers[sel]) {
@@ -405,5 +453,5 @@ window.__u1MakeClickable = function (opts) {
     mo.observe(document.documentElement, { childList: true, subtree: true });
     window.__u1ClickWatchers[sel] = mo;
   }
-  return { ok: true, wired, role };
+  return { ok: true, wired, role, activatesFound, missedActivates: missCount };
 };

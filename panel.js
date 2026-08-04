@@ -354,18 +354,19 @@ const COMPONENT_SCHEMAS = {
     fields:[],
     rootFields:{role:'button', label:'', activates:''},
     selectorRoots:['activates'],
+    placeholders:{ activates: 'input[type="checkbox"]' },
     req:['target'],
     labels:{
       target:'Element(s) to make keyboard-operable — ALL matches are handled',
       role:'Announce as: button or link',
       label:'Accessible name (optional — leave empty to keep the text)',
-      activates:'Click this instead (optional) — e.g. the real input inside',
+      activates:'Click this instead',
     },
     desc:{
       target:'Every element matching this becomes focusable (Tab) and activates on Enter (plus Space for buttons). Native <button>/<a href> are skipped — they already work.',
       role:'“button” for something that performs an action; “link” for something that navigates. Buttons also activate on Space, links on Enter only (ARIA spec).',
       label:'Sets aria-label on each match. Usually leave empty so each element keeps its own visible text as its name.',
-      activates:'For a fake control: the element you can see is not the one that works. Give the selector of the real one — a hidden <input>, say — and the visible element becomes focusable while Enter/Space clicks the real one. Looked for inside each match first, so a list of rows each fires its own; falls back to a page-wide match.',
+      activates:'When the thing you can see is not the thing that works — a styled box with a hidden <input> inside it. Name the real control here and Enter/Space will click that instead. Searched inside each match first, so every row fires its own.',
     },
   },
 
@@ -862,6 +863,9 @@ async function applyKeyboardClickable(target, config) {
     selector: (config && config.selectors && config.selectors.target) || target,
     role: (config && config.role) || 'button',
     label: (config && config.label) || '',
+    // Without this the live Apply silently ignores "Click this instead" while
+    // the exported code honours it, so the preview and the page disagree.
+    activates: (config && config.activates) || '',
   };
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['grid-nav.js'] });
@@ -2974,7 +2978,9 @@ function renderSubSelectorInputs(type, into, opts) {
         const row = document.createElement('div');
         row.className = 'root-text';
         const isSelRoot = (schema.selectorRoots || []).includes(k);
-        const inputHtml = `<input type="text" data-root="${escapeHtml(k)}" value="${escapeHtml(String(defaultVal || ''))}">`;
+        const ph = (schema.placeholders && schema.placeholders[k]) || '';
+        const inputHtml = `<input type="text" data-root="${escapeHtml(k)}" value="${escapeHtml(String(defaultVal || ''))}"` +
+          (ph ? ` placeholder="${escapeHtml(ph)}"` : '') + `>`;
         row.innerHTML = `
           <label>${escapeHtml(labelOf(k))} <span class="root-tag">(option)</span></label>
           ${isSelRoot
