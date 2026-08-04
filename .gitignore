@@ -21,3 +21,6 @@ u1-studio-extension/
 
 # Local snapshot of an older build, kept for reference — not part of the repo
 wordpress-u1-plugin-1 copy/
+
+# Chrome extension signing key — pins the extension ID. Never commit.
+u1-studio-key.pem

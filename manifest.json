@@ -3,6 +3,7 @@
   "name": "U1 Studio",
   "version": "3.1.0",
   "description": "Accessibility implementation helper for User1st (u1) library",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0a+Qtw4Edu02PJrh1w47eWZW01s+lN+fOkb6mNGufDIwhGNah+fNoACNw6pucph46yVsj1h2umOdsvF2SAvsMes6MRSHBxiJE+9PdBN3v8ejV0SMhSyWN7qJASJpD0f6vPCdJ3+p2kZlRua4sDI5rvb6DV0PxDwkD/U8khzXwMZ3sjMtUp2DLFijS1UPr0ZeQ5J5kVBS491hDQfisJDQf2XZoSlOiGvHrE9yvTu3j5jX+rl2F44MbxizePUxot50gltk3XVMTFEDA8Fzjm+X2CoADLA0Im26SsnVxRlbr2kBjl8ZqMQE1qx3OXbRvRrA/VXk/TriCKRyJBuXLWO92wIDAQAB",
   "permissions": [
     "activeTab",
     "scripting",
