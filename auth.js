@@ -148,8 +148,17 @@ const U1Auth = (() => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-    } catch {
-      throw new Error('Could not reach the licence server. Check your connection.');
+    } catch (e) {
+      // Name the server, and say what actually failed. "Check your connection"
+      // sent people to look at their wi-fi when the answer was almost always
+      // that this build points somewhere other than they think: an unpacked
+      // load of the repo root still says localhost, and now that the extension
+      // id is pinned it is indistinguishable from the packaged build in
+      // chrome://extensions.
+      throw new Error(
+        `Could not reach the licence server at ${U1_CONFIG.SERVER_URL} — ${e?.message || 'network error'}. ` +
+        `If that is not the address you expect, this copy was built for a different server.`,
+      );
     }
 
     const body = await res.json().catch(() => ({}));
