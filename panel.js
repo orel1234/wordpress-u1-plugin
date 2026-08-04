@@ -3432,7 +3432,7 @@ document.getElementById('autoApplyBtn')?.addEventListener('click', async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 //  AI MODE — two stages, and the specialist decides at both.
 //
-//  Stage 1  "Find what's on this screen": screenshot with a number drawn on
+//  Stage 1  "Find what's on this page": screenshot with a number drawn on
 //           every candidate element + the matching element list → an inventory
 //           of components. Each row's TYPE and CONTAINER are editable inputs,
 //           because a wrong guess must be correctable before it costs anything.
@@ -3605,16 +3605,32 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   const original = btn.textContent;
   btn.disabled = true;
   try {
-    showAiBusy('Reading the page…', 'Looking at what is on screen.');
+    showAiBusy('Reading the page…', 'Measuring how far it goes.');
     btn.textContent = 'Reading the page…';
     const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
-    const context = await inPage(tab.id,
-      (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
-    if (!context || !context.candidates || !context.candidates.length) {
-      showNotice($aiStatus, scopeSel
-        ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
-        : 'Nothing reviewable in the viewport — scroll to the part you want.', 'error', 5000);
-      return;
+
+    // The unit of a scan is a PAGE. Chrome's captureVisibleTab can only
+    // photograph what is on screen, so covering a page means scrolling through
+    // it a screenful at a time — but that is plumbing, not something to make
+    // the specialist think about. They asked for this page; they get this page.
+    const passes = scopeSel
+      ? [{ y: null }] // a scoped scan targets one widget, wherever it currently sits
+      : await inPage(tab.id, () => {
+          const vh = window.innerHeight || document.documentElement.clientHeight;
+          const total = Math.max(document.documentElement.scrollHeight, vh);
+          const startY = window.scrollY;
+          // A little overlap so a component sitting on a screen boundary is
+          // whole in at least one pass.
+          const step = Math.max(1, Math.round(vh * 0.88));
+          const ys = [];
+          for (let y = 0; y < total; y += step) ys.push(Math.min(y, total - vh));
+          return { ys: [...new Set(ys)], vh, total, startY };
+        });
+
+    const scrollYs = scopeSel ? [null] : passes.ys;
+    const originalScrollY = scopeSel ? null : passes.startY;
+    if (!scopeSel) {
+      console.log(`[U1] page ${passes.total}px / viewport ${passes.vh}px → ${scrollYs.length} pass(es)`);
     }
 
     // Drop what this site has already settled. The same page gets scanned again
@@ -3622,44 +3638,99 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // was skipped or already mapped is how that becomes tedious. Filtering here
     // rather than after the answer also means no tokens are spent on them.
     const handled = await alreadyHandled();
-    const before = context.candidates.length;
-    context.candidates = context.candidates.filter(c => !c.selector || !handled.has(c.selector));
-    const skipped = before - context.candidates.length;
-    if (!context.candidates.length) {
-      showNotice($aiStatus,
-        `Everything on screen has already been mapped or skipped. Open something that was hidden, or press Reset below to start the list again.`,
-        'success', 7000);
+
+    // One pass per screenful, merged into one page-level answer. Components are
+    // keyed by selector so a card that straddles two passes — or a header that
+    // is on screen for all of them — is reported once, not once per pass.
+    const merged = new Map();
+    const mergedContext = { candidates: [] };
+    let skipped = 0;
+    let totalUsage = null;
+    let lastErr = null;
+    let emptyPasses = 0;
+
+    for (let i = 0; i < scrollYs.length; i++) {
+      const label = scrollYs.length > 1 ? ` (${i + 1}/${scrollYs.length})` : '';
+      if (scrollYs[i] !== null) {
+        await inPage(tab.id, (y) => window.scrollTo(0, y), [scrollYs[i]]);
+        await new Promise(r => setTimeout(r, 350)); // let lazy content and sticky headers settle
+      }
+
+      showAiBusy('Reading the page…', `Looking at the whole page${label}.`);
+      btn.textContent = `Reading${label}…`;
+
+      const context = await inPage(tab.id,
+        (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
+      if (!context || !context.candidates || !context.candidates.length) { emptyPasses++; continue; }
+
+      const before = context.candidates.length;
+      context.candidates = context.candidates.filter(c => !c.selector || !handled.has(c.selector));
+      skipped += before - context.candidates.length;
+      // Anything already answered for in an earlier pass is not worth paying to
+      // look at again — the overlap between passes is deliberate and would
+      // otherwise be billed on every one of them.
+      context.candidates = context.candidates.filter(c => !c.selector || !merged.has(c.selector));
+      if (!context.candidates.length) { emptyPasses++; continue; }
+
+      // Draw the numbers, capture, then clear them again immediately so the page
+      // is left as it was even if the request fails.
+      showAiBusy('Capturing the page…', `Numbering every element so the answer can point at real ones${label}.`);
+      btn.textContent = `Capturing${label}…`;
+      await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
+      await new Promise(r => setTimeout(r, 250)); // let the overlay paint
+      let shot = null;
+      try {
+        const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
+        // 1568 is the size Anthropic recommends for maximum image fidelity, and
+        // this task does not need it: the model is reading two-digit pink numbers,
+        // not fine detail. 1280 keeps them perfectly legible and costs about a
+        // third fewer vision tokens on every scan.
+        shot = await scaleShot(raw, 1280);
+      } finally {
+        await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+      }
+      if (!shot) { lastErr = 'Could not capture the page.'; continue; }
+
+      showAiBusy('Claude is looking…', `Usually 10–30 seconds per part of the page${label}.`);
+      btn.textContent = `Looking${label}…`;
+      $aiStatus.textContent = `Usually 10–30 seconds${label}.`;
+      $aiStatus.className = 'map-mode-hint';
+      $aiStatus.style.display = '';
+
+      const part = await U1AI.discover({ screenshot: shot, context });
+      // A failed pass must not throw away the passes that already succeeded —
+      // partial coverage of a long page still beats nothing, as long as it says so.
+      if (!part || part.err) { lastErr = part?.err || 'no answer'; continue; }
+
+      aiCost += U1AI.estimateCost(part.usage) || 0;
+      totalUsage = mergeUsage(totalUsage, part.usage);
+      mergedContext.candidates.push(...context.candidates);
+      for (const c of (part.components || [])) {
+        const key = c.containerSelector || c.selector || JSON.stringify(c);
+        if (!merged.has(key)) merged.set(key, c);
+      }
+    }
+
+    // Put the page back where the specialist left it.
+    if (originalScrollY !== null) {
+      await inPage(tab.id, (y) => window.scrollTo(0, y), [originalScrollY]).catch(() => {});
+    }
+
+    const out = { components: [...merged.values()], usage: totalUsage, skipped };
+    if (!out.components.length) {
+      showNotice($aiStatus, lastErr
+        ? `Scan failed: ${lastErr}`
+        : (scopeSel
+            ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
+            : 'Nothing reviewable on this page that has not already been mapped or skipped.'),
+        lastErr ? 'error' : 'success', 7000);
       return;
     }
-
-    // Draw the numbers, capture, then clear them again immediately so the page
-    // is left as it was even if the request fails.
-    showAiBusy('Capturing the screen…', 'Numbering every element so the answer can point at real ones.');
-    btn.textContent = 'Capturing…';
-    await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
-    await new Promise(r => setTimeout(r, 250)); // let the overlay paint
-    let shot = null;
-    try {
-      const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
-      // 1568 is the size Anthropic recommends for maximum image fidelity, and
-      // this task does not need it: the model is reading two-digit pink numbers,
-      // not fine detail. 1280 keeps them perfectly legible and costs about a
-      // third fewer vision tokens on every scan.
-      shot = await scaleShot(raw, 1280);
-    } finally {
-      await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+    if (lastErr) {
+      showNotice($aiStatus,
+        `Part of the page could not be scanned (${lastErr}) — the list below covers the rest.`, 'error', 8000);
     }
-    if (!shot) { showNotice($aiStatus, 'Could not capture the screen.', 'error', 4000); return; }
-
-    showAiBusy('Claude is looking…', 'Usually 10–30 seconds.');
-    btn.textContent = 'Looking…';
-    $aiStatus.textContent = 'Usually 10–30 seconds.';
-    $aiStatus.className = 'map-mode-hint';
-    $aiStatus.style.display = '';
-
-    const out = await U1AI.discover({ screenshot: shot, context });
-    if (out && !out.err) out.skipped = skipped;
-    if (out.err) { showNotice($aiStatus, out.err, 'error', 8000); return; }
+    const context = mergedContext;
 
     // Deliberately NOT re-marking here. The 👁 buttons work off each row's
     // container selector, so they need nothing on the page — and re-marking
@@ -3684,6 +3755,17 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     } catch {}
   }
 });
+
+// Adds one pass's token usage onto the running total for the page, so the cost
+// line reports what the whole scan cost rather than only its last part.
+function mergeUsage(total, part) {
+  if (!part) return total;
+  if (!total) return { ...part };
+  const keys = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'];
+  const out = { ...total };
+  for (const k of keys) out[k] = (total[k] || 0) + (part[k] || 0);
+  return out;
+}
 
 // Something to look at while it works. A panel that sits still for thirty
 // seconds reads as broken, and the two slow steps here are a screenshot and a
@@ -3744,9 +3826,10 @@ function renderAiComponents(found) {
   document.getElementById('aiSummary').innerHTML =
     `<div class="ai-meta">${comps.length} component${comps.length === 1 ? '' : 's'} found` +
     ` · ${escapeHtml(found.model || '')} · ~$${aiCost.toFixed(3)} this session</div>` +
-    // A closed dialog is not in the page at all — there is nothing to read. The
-    // scan can only ever see what is on screen, and nothing said so.
-    `<div class="ai-hint-line">Only what is on screen was scanned. A dialog, dropdown or datepicker
+    // The whole page is covered now, so the only thing still genuinely out of
+    // reach is markup that does not exist yet. Say that, and nothing more —
+    // how many screenfuls it took to get here is not the specialist's problem.
+    `<div class="ai-hint-line">The whole page was scanned. A dialog, dropdown or datepicker
       that is closed does not exist in the page yet — open one and use <strong>⏱ Scan in 5s</strong>.` +
     (found.skipped ? ` <strong>${found.skipped}</strong> already mapped or skipped on this site were left out —
       <button class="btn-ghost btn-xs" id="aiResetDismissed">show them again</button>.` : '') +
@@ -4238,8 +4321,8 @@ function renderApprovedNext() {
     ? `<button class="btn-primary btn-sm" data-ainext="cards">Next mapping →<span class="ai-next-count">${cards} left</span></button>`
     : left
       ? `<button class="btn-primary btn-sm" data-ainext="list">Next → back to what was found<span class="ai-next-count">${left} left</span></button>`
-      : `<button class="btn-primary btn-sm" data-ainext="scan">🔎 Scan this screen again</button>` +
-        `<span class="ai-next-hint">Everything found here has been handled. Scroll the page or open another one, then scan again.</span>`;
+      : `<button class="btn-primary btn-sm" data-ainext="scan">🔎 Scan this page again</button>` +
+        `<span class="ai-next-hint">Everything on this page has been handled. Open a dialog or go to another page, then scan again.</span>`;
 }
 
 document.getElementById('aiApproved')?.addEventListener('click', (e) => {
