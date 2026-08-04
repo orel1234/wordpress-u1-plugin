@@ -5712,6 +5712,317 @@ document.getElementById('scanResults')?.addEventListener('click', async (e) => {
   setTimeout(() => highlightMatch(r.selector, 0, false), 3000);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Element scan — the 🧪 test, run over every saved mapping
+//
+//  Deliberately ON DEMAND ONLY. It moves real focus and synthesises real key
+//  presses on the client's page, so it must never be wired into
+//  loadMappingsList() or the auto-apply on panel open (search: applyAllMappings
+//  ({ silent: true })) — that is exactly where it would look natural and be
+//  wrong. The only entry points are #elemScanBtn and #elemScanReportBtn.
+//
+//  Needs no API key: nothing here touches U1AI.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let elemScanResults = [];
+let elemScanActiveStatus = '*';
+let elemScanRunning = false;
+let elemScanAbort = false;
+
+// Ordered worst-first, so the chip row reads the way the work should be done.
+const ELEM_STATUS_META = {
+  fail:    { label: 'Failed',      chip: 'sev-critical' },
+  warn:    { label: 'Warnings',    chip: 'sev-medium' },
+  pass:    { label: 'Passed',      chip: 'sev-low' },
+  absent:  { label: 'Not on page', chip: '' },
+  skipped: { label: 'Skipped',     chip: '' },
+  error:   { label: 'Errors',      chip: 'sev-high' },
+};
+
+function elemScanFiltered() {
+  return elemScanResults.filter(r => elemScanActiveStatus === '*' || r.status === elemScanActiveStatus);
+}
+
+function renderElemScanFilters() {
+  const el = document.getElementById('elemScanFilters');
+  if (!el) return;
+  const counts = {};
+  for (const r of elemScanResults) counts[r.status] = (counts[r.status] || 0) + 1;
+  const chip = (s, label, n) =>
+    `<button class="scan-chip ${s === '*' ? '' : (ELEM_STATUS_META[s]?.chip || '')} ${elemScanActiveStatus === s ? 'active' : ''}" data-elem-status="${escapeHtml(s)}">${escapeHtml(label)} <span class="n">${n}</span></button>`;
+  const chips = Object.keys(ELEM_STATUS_META)
+    .filter(s => counts[s])
+    .map(s => chip(s, ELEM_STATUS_META[s].label, counts[s]))
+    .join('');
+  el.innerHTML = `<div class="scan-filter-row">${chip('*', 'All', elemScanResults.length)}${chips}</div>`;
+}
+
+function renderElemScanResults() {
+  const wrap = document.getElementById('elemScanResults');
+  if (!wrap) return;
+  const list = elemScanFiltered();
+  if (!list.length) { wrap.innerHTML = '<div class="empty-state">Nothing matches this filter.</div>'; return; }
+  wrap.innerHTML = list.map(r => {
+    const gi = elemScanResults.indexOf(r);
+    const meta = ELEM_STATUS_META[r.status] || { label: r.status, chip: '' };
+    const testable = r.status === 'pass' || r.status === 'warn' || r.status === 'fail';
+    return `
+    <div class="scan-item ${meta.chip}" data-elem-idx="${gi}">
+      <div class="scan-item-main">
+        <span class="scan-sev-badge ${meta.chip}">${escapeHtml(meta.label)}</span>
+        <span class="scan-issue-title">Fix #${escapeHtml(String(r.fixNo ?? '—'))} · ${escapeHtml(r.label || r.type)}</span>
+        <code>u1.fix.${escapeHtml(r.type)}</code>
+        ${r.primary ? `<button class="btn-ghost btn-xs scan-hl" title="Highlight on page">🔍</button>` : ''}
+      </div>
+      <div class="scan-context">
+        ${escapeHtml(r.primary || '')}
+        ${testable ? ` · <span class="pills">${testPillsHtml([...r.staticSteps, ...r.keyboardSteps])}</span>` : ''}
+      </div>
+      ${r.reason ? `<div class="scan-context">${escapeHtml(r.reason)}</div>` : ''}
+      ${testable ? `
+      <details class="scan-why">
+        <summary>What was tested</summary>
+        <div class="test-section-title">🏷️ Accessibility (code) <span class="pills">${testPillsHtml(r.staticSteps)}</span></div>
+        <ul class="test-steps">${testStepListHtml(r.staticSteps)}</ul>
+        <div class="test-section-title">⌨️ Keyboard navigation <span class="pills">${testPillsHtml(r.keyboardSteps)}</span></div>
+        <ul class="test-steps">${testStepListHtml(r.keyboardSteps)}</ul>
+      </details>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// The engine streams a step the moment it happens. A run of eleven mappings is
+// two minutes of the page driving itself; without this the panel just sits.
+function elemScanLiveStep(msg) {
+  const box = document.getElementById('elemScanProgress');
+  if (!box) return;
+  if (msg.type === 'u1-test-start') {
+    const ul = box.querySelector('#elemScanLiveSteps');
+    if (ul) ul.innerHTML = '';
+  } else if (msg.type === 'u1-test-step' && msg.step) {
+    const ul = box.querySelector('#elemScanLiveSteps');
+    if (ul) { ul.insertAdjacentHTML('beforeend', testStepRowHtml(msg.step)); ul.lastElementChild?.scrollIntoView({ block: 'nearest' }); }
+  }
+}
+
+function elemScanProgressHtml(n, total, m) {
+  return `
+    <div class="test-head">
+      <strong>Testing ${n} of ${total}</strong>
+      <code>${escapeHtml(m.primary || m.firstArg || '')}</code>
+      <span class="test-live-tag">${escapeHtml(m.type)}</span>
+    </div>
+    <ul class="test-steps" id="elemScanLiveSteps"></ul>`;
+}
+
+async function runElementScan() {
+  const status = document.getElementById('elemScanStatus');
+  const btn = document.getElementById('elemScanBtn');
+  const stopBtn = document.getElementById('elemScanStopBtn');
+  const progress = document.getElementById('elemScanProgress');
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot run on this page.', 'error', 4000); return; }
+
+  const key = storageKey('mappings', currentHostname);
+  const all = (await U1Store.get([key]))[key] || [];
+  if (!all.length) {
+    showNotice(status, 'No saved mappings for this site yet — add some in the Picker tab.', 'info', 5000);
+    return;
+  }
+
+  // A custom aria-label mapping has no widget behaviour to drive, and a legacy
+  // string entry has no type at all. Report them rather than pretending.
+  const results = [];
+  const candidates = [];
+  for (const m of all) {
+    if (typeof m !== 'object' || !m.type) {
+      results.push({ type: 'legacy', primary: String(m), status: 'skipped',
+        reason: 'Legacy mapping — re-add it to test it.', staticSteps: [], keyboardSteps: [] });
+    } else if (m.custom) {
+      results.push({ ...pickMappingFields(m), status: 'skipped',
+        reason: 'Custom mapping — nothing for the keyboard test to drive.', staticSteps: [], keyboardSteps: [] });
+    } else {
+      candidates.push(m);
+    }
+  }
+
+  // One probe for the whole list. Without this, a site with thirty mappings
+  // spends minutes driving elements that are not on the page being looked at.
+  const present = new Set(await selectorsPresentOnPage(candidates.map(m => m.primary || m.firstArg || '')));
+  const toTest = [];
+  for (const m of candidates) {
+    const sel = m.primary || m.firstArg || '';
+    if (!present.has(sel)) {
+      results.push({ ...pickMappingFields(m), status: 'absent',
+        reason: 'Not on this page right now — open the page or the dialog it belongs to, then run this again.',
+        staticSteps: [], keyboardSteps: [] });
+    } else {
+      toTest.push(m);
+    }
+  }
+
+  elemScanRunning = true;
+  elemScanAbort = false;
+  btn.disabled = true;
+  stopBtn.style.display = '';
+  document.getElementById('elemScanSection').style.display = 'block';
+  document.getElementById('elemScanReportRow').style.display = 'none';
+  progress.style.display = toTest.length ? 'block' : 'none';
+
+  try {
+    for (let i = 0; i < toTest.length; i++) {
+      if (elemScanAbort) break;
+      const m = toTest[i];
+      progress.innerHTML = elemScanProgressHtml(i + 1, toTest.length, m);
+      showNotice(status, `Testing ${i + 1} of ${toTest.length} — watch the page.`, 'warn', 0);
+
+      const t0 = Date.now();
+      let res = null;
+      let errMsg = '';
+      try {
+        // A widget that never settles must not hold the whole run. The engine's
+        // own waits are per-assertion; this is the ceiling for the mapping.
+        res = await Promise.race([
+          callTestEngine('runTest', [m.type, m.primary || m.firstArg || '',
+            (m.config && typeof m.config === 'object') ? m.config : { selectors: {} }]),
+          new Promise(r => setTimeout(() => r({ __timeout: true }), 30000)),
+        ]);
+      } catch (e) {
+        errMsg = e?.message || String(e);
+      }
+
+      if (res && res.__timeout) {
+        results.push({ ...pickMappingFields(m), status: 'error', reason: 'Timed out after 30 seconds.',
+          staticSteps: [], keyboardSteps: [], ms: Date.now() - t0 });
+      } else if (!res || !res.static) {
+        results.push({ ...pickMappingFields(m), status: 'error',
+          reason: errMsg || 'Could not run the test — the page may have changed while testing.',
+          staticSteps: [], keyboardSteps: [], ms: Date.now() - t0 });
+      } else {
+        const staticSteps = res.static.steps || [];
+        const keyboardSteps = (res.keyboard && res.keyboard.steps) || [];
+        const all2 = [...staticSteps, ...keyboardSteps];
+        const fail = all2.filter(s => s.status === 'fail').length;
+        const warn = all2.filter(s => s.status === 'warn').length;
+        results.push({
+          ...pickMappingFields(m),
+          status: fail ? 'fail' : warn ? 'warn' : 'pass',
+          reason: '', staticSteps, keyboardSteps, inspect: res.inspect,
+          counts: { pass: all2.length - fail - warn, fail, warn },
+          ms: Date.now() - t0,
+        });
+      }
+
+      // Leave the page as we found it before the next mapping. The dialog branch
+      // closes what it opens, but menu/listbox/combobox can leave a popup open —
+      // and an open menu swallows the next mapping's key presses.
+      await callTestEngine('removeHud', []).catch(() => {});
+      await inPage(tab.id, () => {
+        const el = document.activeElement;
+        if (el) {
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          if (typeof el.blur === 'function') el.blur();
+        }
+      }).catch(() => {});
+      await new Promise(r => setTimeout(r, 200));
+    }
+  } finally {
+    elemScanRunning = false;
+    elemScanAbort = false;
+    btn.disabled = false;
+    stopBtn.style.display = 'none';
+    stopBtn.disabled = false;
+    stopBtn.textContent = '■ Stop';
+    progress.style.display = 'none';
+    progress.innerHTML = '';
+    await callTestEngine('removeHud', []).catch(() => {});
+  }
+
+  elemScanResults = results;
+  elemScanActiveStatus = '*';
+  const tested = results.filter(r => ['pass', 'warn', 'fail'].includes(r.status)).length;
+  const failed = results.filter(r => r.status === 'fail').length;
+  document.getElementById('elemScanCount').textContent =
+    `${tested} tested · ${failed} failing`;
+  renderElemScanFilters();
+  renderElemScanResults();
+  document.getElementById('elemScanClearBtn').style.display = '';
+  document.getElementById('elemScanReportRow').style.display = results.length ? '' : 'none';
+  showNotice(status, tested
+    ? `Tested ${tested} mapping${tested === 1 ? '' : 's'}. ${failed} need${failed === 1 ? 's' : ''} work.`
+    : 'Nothing could be tested on this page — see the list below for why.',
+    failed ? 'warn' : 'success', 6000);
+}
+
+// The fields the element scan carries forward from a saved mapping.
+function pickMappingFields(m) {
+  return {
+    key: mappingKey(m), fixNo: m.fixNo, id: m.id, type: m.type,
+    primary: m.primary || m.firstArg || '', label: m.type,
+    screenshot: m.screenshot || null,
+  };
+}
+
+document.getElementById('elemScanBtn')?.addEventListener('click', () => {
+  runElementScan().catch(err => {
+    elemScanRunning = false;
+    showNotice(document.getElementById('elemScanStatus'), 'Failed: ' + err.message, 'error', 6000);
+  });
+});
+
+document.getElementById('elemScanStopBtn')?.addEventListener('click', () => {
+  elemScanAbort = true;
+  const b = document.getElementById('elemScanStopBtn');
+  b.disabled = true;
+  b.textContent = 'Stopping…';
+});
+
+document.getElementById('elemScanClearBtn')?.addEventListener('click', () => {
+  elemScanResults = [];
+  document.getElementById('elemScanSection').style.display = 'none';
+  document.getElementById('elemScanClearBtn').style.display = 'none';
+});
+
+document.getElementById('elemScanFilters')?.addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-elem-status]');
+  if (!chip) return;
+  elemScanActiveStatus = chip.dataset.elemStatus;
+  renderElemScanFilters();
+  renderElemScanResults();
+});
+
+document.getElementById('elemScanResults')?.addEventListener('click', async (e) => {
+  if (e.target.closest('.scan-why')) return;
+  const item = e.target.closest('.scan-item');
+  if (!item) return;
+  const r = elemScanResults[Number(item.dataset.elemIdx)];
+  if (!r || !r.primary) return;
+  const found = await highlightMatch(r.primary, 0, true);
+  if (found === false) {
+    showNotice(document.getElementById('elemScanStatus'), `Couldn't find "${r.primary}" on the page right now.`, 'warn', 3000);
+    return;
+  }
+  setTimeout(() => highlightMatch(r.primary, 0, false), 3000);
+});
+
+document.getElementById('elemScanReportBtn')?.addEventListener('click', async () => {
+  const status = document.getElementById('elemScanReportStatus');
+  const btn = document.getElementById('elemScanReportBtn');
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Building…';
+  try {
+    const tab = await getTab();
+    await generateElementScanReport(currentHostname, elemScanResults, tab?.url || '', tab?.title || '');
+    showNotice(status, 'Report opened in a new tab.', 'success', 4000);
+  } catch (err) {
+    showNotice(status, 'Could not build the report: ' + err.message, 'error', 6000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
 document.getElementById('copyTemplateBtn').addEventListener('click', () => {
   const text = $templatePreview.textContent;
   navigator.clipboard.writeText(text).then(() => {
@@ -6499,6 +6810,10 @@ function testStepRowHtml(step) {
 }
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || typeof msg !== 'object') return;
+  // During an element scan the specialist is looking at the Scan tab, and
+  // #testResults lives in Picker where they cannot see it. Send the live steps
+  // where they are actually watching.
+  if (elemScanRunning) { elemScanLiveStep(msg); return; }
   const box = document.getElementById('testResults');
   if (!box) return;
   if (msg.type === 'u1-test-start') {
@@ -6528,11 +6843,11 @@ function codeSection(inspect) {
     </div>`;
 }
 
-function renderTestResults(m, res) {
-  const box = document.getElementById('testResults');
-  if (!box) return;
+// Shared by the single-mapping panel and the element scan, so the two views of
+// the same test can never drift apart.
+function testStepListHtml(steps) {
   const icon = (s) => s === 'pass' ? '✓' : s === 'fail' ? '✗' : '⚠';
-  const stepRows = (steps) => (steps || []).map(s => {
+  return (steps || []).map(s => {
     const isIssue = s.status === 'fail' || s.status === 'warn';
     const why = s.why || s.message || '';
     // For a pass we just show the (optional) short message; for a warn/fail we
@@ -6547,13 +6862,24 @@ function renderTestResults(m, res) {
       ${detail}
     </li>`;
   }).join('');
+}
+
+// Pass / fail / warn tally for a step list, in the shared pill style.
+function testPillsHtml(steps) {
+  const list = steps || [];
+  const f = list.filter(s => s.status === 'fail').length;
+  const w = list.filter(s => s.status === 'warn').length;
+  const p = list.length - f - w;
+  return `<span class="pill pass">${p}✓</span><span class="pill fail${f ? '' : ' zero'}">${f}✗</span><span class="pill warn${w ? '' : ' zero'}">${w}⚠</span>`;
+}
+
+function renderTestResults(m, res) {
+  const box = document.getElementById('testResults');
+  if (!box) return;
+  const stepRows = testStepListHtml;
   const staticSteps = (res.static && res.static.steps) || [];
   const kbSteps = (res.keyboard && res.keyboard.steps) || [];
-  const count = (steps, st) => steps.filter(s => s.status === st).length;
-  const pills = (steps) => {
-    const f = count(steps, 'fail'), w = count(steps, 'warn'), p = steps.length - f - w;
-    return `<span class="pill pass">${p}✓</span><span class="pill fail${f ? '' : ' zero'}">${f}✗</span><span class="pill warn${w ? '' : ' zero'}">${w}⚠</span>`;
-  };
+  const pills = testPillsHtml;
   box.style.display = 'block';
   box.innerHTML = `
     <div class="test-head">

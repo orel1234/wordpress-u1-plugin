@@ -420,6 +420,135 @@ async function generateStaticIssuesReport(hostname, items, pageUrl, pageTitle) {
   return { issues: items.length };
 }
 
+// ── Element-scan report ─────────────────────────────────────────────────────
+// One section per mapping: what was tested and what it did. Uses the screenshot
+// already stored with the mapping — unlike the static report there is no
+// capture pass here, because the elements were photographed when they were
+// mapped, and re-shooting them would mean scrolling the whole page again.
+
+const ELEM_STATUS_LABEL = {
+  pass: 'Passed', warn: 'Warnings', fail: 'Failed',
+  absent: 'Not on page', skipped: 'Skipped', error: 'Error',
+};
+
+function buildElementScanHtml(hostname, items, pageUrl, pageTitle) {
+  const generatedAt = new Date().toLocaleString();
+  const tally = {};
+  for (const it of items) tally[it.status] = (tally[it.status] || 0) + 1;
+
+  const stepList = (steps) => (steps || []).length
+    ? `<ul class="steps">${steps.map(s => `
+        <li class="step ${reportEsc(s.status)}">
+          <span class="si">${s.status === 'pass' ? '✓' : s.status === 'fail' ? '✗' : '⚠'}</span>
+          <div>
+            <div class="sl">${reportEsc(s.label || '')}${s.wcag ? ` <span class="wcag">WCAG ${reportEsc(s.wcag)}</span>` : ''}</div>
+            ${(s.why || s.message) ? `<div class="sm">${reportEsc(s.why || s.message)}</div>` : ''}
+          </div>
+        </li>`).join('')}</ul>`
+    : '<p class="content">Nothing ran.</p>';
+
+  const rows = items.map(it => {
+    const shot = reportSafeImg(it.screenshot);
+    const img = shot
+      ? `<img src="${shot}" alt="Screenshot">`
+      : `<div class="no-shot">No screenshot<br><span>(captured when the mapping was made)</span></div>`;
+    const tested = it.status === 'pass' || it.status === 'warn' || it.status === 'fail';
+    return `
+      <div class="issue st-${reportEsc(it.status)}">
+        <div class="issue-info">
+          <h3><span class="badge">Fix #${reportEsc(String(it.fixNo ?? '—'))}</span>
+            <span class="lvl st-${reportEsc(it.status)}">${reportEsc(ELEM_STATUS_LABEL[it.status] || it.status)}</span>
+            <span class="lvl">u1.fix.${reportEsc(it.type || '')}</span></h3>
+          ${it.primary ? `<p class="sel"><code>${reportEsc(it.primary)}</code></p>` : ''}
+          ${it.reason ? `<p class="content">${reportEsc(it.reason)}</p>` : ''}
+          ${tested ? `
+            <p class="problem">🏷️ Accessibility (code)</p>${stepList(it.staticSteps)}
+            <p class="problem">⌨️ Keyboard navigation</p>${stepList(it.keyboardSteps)}` : ''}
+        </div>
+        <div class="issue-shot">${img}</div>
+      </div>`;
+  }).join('');
+
+  const summary = Object.keys(ELEM_STATUS_LABEL)
+    .filter(s => tally[s])
+    .map(s => `${tally[s]} ${ELEM_STATUS_LABEL[s].toLowerCase()}`)
+    .join(' · ');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>U1 Mapping Test Results</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #1a1a2e; background: #f5f6fa; margin: 0; padding: 32px; }
+  .report { max-width: 960px; margin: 0 auto; }
+  .report-head { border-bottom: 3px solid #6c4cf1; padding-bottom: 16px; margin-bottom: 24px; }
+  .report-head h1 { margin: 0 0 6px; font-size: 26px; color: #1f1147; }
+  .report-head .meta { color: #666; font-size: 13px; }
+  .report-head .u1 { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg,#6c4cf1,#a06cff); color:#fff; font-weight:800; margin-right:8px; vertical-align:middle; }
+  .issue { display: grid; grid-template-columns: 1fr 320px; gap: 20px; background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,.08); padding:18px 22px; margin-bottom:18px; align-items:start; border-left:4px solid #bbb; }
+  .issue.st-fail { border-left-color:#d93025; }
+  .issue.st-warn { border-left-color:#f0a500; }
+  .issue.st-pass { border-left-color:#1e8e3e; }
+  .issue.st-error { border-left-color:#8b1a10; }
+  .issue-info h3 { margin:0 0 8px; font-size:15px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .badge { background:#6c4cf1; color:#fff; font-size:11px; padding:2px 8px; border-radius:20px; text-transform:uppercase; letter-spacing:.4px; }
+  .lvl { color:#888; font-size:12px; font-weight:600; }
+  .lvl.st-fail { color:#d93025; } .lvl.st-warn { color:#b8860b; } .lvl.st-pass { color:#1e8e3e; }
+  .problem { margin:12px 0 6px; font-size:13px; font-weight:700; color:#1f1147; }
+  .content { margin:0 0 6px; font-size:13px; color:#444; }
+  .sel { margin:0 0 8px; }
+  .sel code { background:#f0eefb; color:#4b32c3; padding:2px 6px; border-radius:5px; font-size:12px; word-break:break-all; }
+  .steps { list-style:none; margin:0 0 4px; padding:0; }
+  .step { display:grid; grid-template-columns:18px 1fr; gap:8px; padding:4px 0; border-bottom:1px solid #f0f0f4; font-size:13px; }
+  .step:last-child { border-bottom:0; }
+  .step .si { font-weight:700; text-align:center; }
+  .step.pass .si { color:#1e8e3e; } .step.fail .si { color:#d93025; } .step.warn .si { color:#b8860b; }
+  .step .sm { color:#666; font-size:12px; margin-top:2px; }
+  .wcag { color:#4b32c3; font-size:11px; font-weight:600; }
+  .issue-shot img { width:100%; height:auto; border:1px solid #ddd; border-radius:8px; }
+  .no-shot { border:1px dashed #ccc; border-radius:8px; padding:24px 12px; text-align:center; color:#999; font-size:12px; }
+  .empty { text-align:center; color:#888; padding:60px 20px; }
+  @media print { body { background:#fff; padding:0; } .issue { box-shadow:none; break-inside:avoid; } }
+  @media (max-width: 640px) { .issue { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <div class="report">
+    <div class="report-head">
+      <h1><span class="u1">u</span>Mapping Test Results</h1>
+      <div class="meta">${reportEsc(summary || 'nothing tested')} on
+        ${pageTitle ? reportEsc(pageTitle) + ' — ' : ''}
+        ${pageUrl ? `<a href="${reportEsc(pageUrl)}">${reportEsc(pageUrl)}</a>` : reportEsc(hostname)}
+        · Generated ${reportEsc(generatedAt)}</div>
+    </div>
+    ${items.length ? rows : '<div class="empty">No mappings were tested.</div>'}
+  </div>
+</body>
+</html>`;
+}
+
+// Public: store + open + download a mapping-test report.
+async function generateElementScanReport(hostname, items, pageUrl, pageTitle) {
+  const html = buildElementScanHtml(hostname, items, pageUrl, pageTitle);
+  await U1Store.set({ __closeOutReportHtml: html });
+  try { await chrome.tabs.create({ url: chrome.runtime.getURL('report.html') }); } catch {}
+  try {
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `U1-Mapping-Tests-${hostname || 'site'}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch {}
+  return { mappings: items.length };
+}
+
 // Public: build the report for one site, store it and open it in a real tab.
 async function generateCloseOutReport(onlyHostname) {
   const allStorage = await U1Store.get(null);

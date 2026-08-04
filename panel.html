@@ -524,20 +524,37 @@
   </div>
 
   <div class="section">
-    <p style="font-size:12px;color:var(--u1-text-muted);margin-bottom:12px;">
-      Scans the page for accessibility <strong>faults</strong> and lists only the
-      problems — each with its WCAG criterion, severity (Critical→Low), a
-      plain-language explanation and a suggested fix. Covers titles &amp; language,
-      headings, landmarks &amp; skip links, images, links &amp; buttons, forms,
-      tables, iframes, focus order (positive tabindex, aria-hidden focus traps),
-      duplicate ids, zoom, media, and ARIA widget states. Filter by severity or
-      category, highlight any element on the page, and export a report.
-    </p>
-    <div class="btn-row">
-      <button class="btn-primary" id="scanBtn">🔎 Scan this page</button>
-      <button class="btn-outline" id="scanClearBtn" style="display:none;">Clear</button>
+    <!-- Two different questions, so two scans. The first asks what is wrong with
+         the page's own markup; the second asks whether the fixes already made
+         actually work. Neither needs an API key. -->
+    <div class="scan-choice">
+      <div class="scan-choice-card">
+        <div class="scan-choice-title">Page content</div>
+        <p class="scan-choice-sub">
+          Headings, alt text, labels, landmarks, focus order, ARIA states — the
+          faults in the page's own markup. Each with its WCAG criterion,
+          severity and a suggested fix.
+        </p>
+        <div class="btn-row">
+          <button class="btn-primary" id="scanBtn">🔎 Scan this page</button>
+          <button class="btn-outline" id="scanClearBtn" style="display:none;">Clear</button>
+        </div>
+      </div>
+      <div class="scan-choice-card">
+        <div class="scan-choice-title">Saved mappings</div>
+        <p class="scan-choice-sub">
+          Runs the keyboard test on every mapping for this site, one at a time —
+          the same test the 🧪 button runs, for all of them at once.
+        </p>
+        <div class="btn-row">
+          <button class="btn-primary" id="elemScanBtn">🧪 Test every mapping</button>
+          <button class="btn-outline" id="elemScanStopBtn" style="display:none;">■ Stop</button>
+          <button class="btn-outline" id="elemScanClearBtn" style="display:none;">Clear</button>
+        </div>
+      </div>
     </div>
     <div class="notice" id="scanStatus"></div>
+    <div class="notice" id="elemScanStatus"></div>
   </div>
 
   <div class="section" id="scanResultsSection" style="display:none;">
@@ -551,6 +568,20 @@
     </div>
     <div class="notice" id="scanReportStatus"></div>
     <div id="scanResults"></div>
+  </div>
+
+  <div class="section" id="elemScanSection" style="display:none;">
+    <div class="section-title">
+      Mapping results<span class="dot">.</span>
+      <span class="hostname-badge" id="elemScanCount"></span>
+    </div>
+    <div id="elemScanProgress" class="test-results" style="display:none;"></div>
+    <div id="elemScanFilters" class="scan-filters"></div>
+    <div class="btn-row" id="elemScanReportRow" style="display:none; margin-bottom:12px;">
+      <button class="btn-primary" id="elemScanReportBtn">📄 Export mapping test report</button>
+    </div>
+    <div class="notice" id="elemScanReportStatus"></div>
+    <div id="elemScanResults" class="elem-scan"></div>
   </div>
 </div>
 

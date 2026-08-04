@@ -1801,7 +1801,28 @@ button {
 .mapping-item .test-btn:hover { color: var(--u1-primary); border-color: var(--u1-primary); }
 .mapping-item .test-btn[disabled] { opacity: 0.3; cursor: not-allowed; }
 
+/* Two scans, side by side — one asks what is wrong with the page's own markup,
+   the other whether the fixes already made still work. Equal weight, so neither
+   reads as the afterthought. */
+.scan-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 420px) { .scan-choice { grid-template-columns: 1fr; } }
+.scan-choice-card {
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.scan-choice-title { font-size: 12.5px; font-weight: 700; color: var(--u1-text); }
+.scan-choice-sub { font-size: 11px; color: var(--u1-text-muted); margin: 0; flex: 1; line-height: 1.5; }
+.scan-choice-card .btn-row { margin: 0; }
+
 /* ── Test results panel ─────────────────────────────────────────────────── */
+/* The container chrome is for the single-mapping panel only. In the element
+   scan each mapping is already a .scan-item card, so a second border round the
+   whole list would box a box. The step rules below are shared by both. */
 .test-results {
   margin-top: 10px;
   border: 1px solid var(--u1-border);
@@ -1809,7 +1830,8 @@ button {
   background: rgba(0, 0, 0, 0.3);
   overflow: hidden;
 }
-.test-results .test-head {
+.elem-scan .test-steps { padding-left: 0; }
+.test-results .test-head, .elem-scan .test-head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1817,7 +1839,7 @@ button {
   border-bottom: 1px solid var(--u1-border);
   font-size: 12px;
 }
-.test-results .test-live-tag {
+.test-results .test-live-tag, .elem-scan .test-live-tag {
   margin-left: auto;
   font-size: 10px;
   font-weight: 700;
@@ -1825,7 +1847,7 @@ button {
   animation: u1-pulse 1s ease-in-out infinite;
 }
 @keyframes u1-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-.test-results .test-head code {
+.test-results .test-head code, .elem-scan .test-head code {
   font-family: "Consolas", monospace;
   font-size: 10px;
   color: var(--u1-info);
@@ -1834,37 +1856,37 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.test-results .test-tally { font-size: 11px; color: var(--u1-text-muted); white-space: nowrap; }
+.test-results .test-tally, .elem-scan .test-tally { font-size: 11px; color: var(--u1-text-muted); white-space: nowrap; }
 
 /* Summary verdict bar */
-.test-results .test-summary {
+.test-results .test-summary, .elem-scan .test-summary {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--u1-border);
 }
-.test-results .test-summary .verdict { font-weight: 700; font-size: 13px; }
-.test-results .test-summary.pass .verdict { color: var(--u1-success); }
-.test-results .test-summary.fail .verdict { color: var(--u1-danger); }
-.test-results .test-summary.warn .verdict { color: #e0a500; }
-.test-results .test-summary .pills { margin-left: auto; }
+.test-results .test-summary .verdict, .elem-scan .test-summary .verdict { font-weight: 700; font-size: 13px; }
+.test-results .test-summary.pass .verdict, .elem-scan .test-summary.pass .verdict { color: var(--u1-success); }
+.test-results .test-summary.fail .verdict, .elem-scan .test-summary.fail .verdict { color: var(--u1-danger); }
+.test-results .test-summary.warn .verdict, .elem-scan .test-summary.warn .verdict { color: #e0a500; }
+.test-results .test-summary .pills, .elem-scan .test-summary .pills { margin-left: auto; }
 
 /* Status count pills */
-.test-results .pills { display: inline-flex; gap: 4px; }
-.test-results .pill {
+.test-results .pills, .elem-scan .pills { display: inline-flex; gap: 4px; }
+.test-results .pill, .elem-scan .pill {
   font-size: 10px;
   font-weight: 700;
   padding: 1px 7px;
   border-radius: 10px;
   white-space: nowrap;
 }
-.test-results .pill.pass { color: #0b3d1a; background: var(--u1-success); }
-.test-results .pill.fail { color: #fff; background: var(--u1-danger); }
-.test-results .pill.warn { color: #3d2f00; background: #e0a500; }
-.test-results .pill.zero { opacity: .35; }
+.test-results .pill.pass, .elem-scan .pill.pass { color: #0b3d1a; background: var(--u1-success); }
+.test-results .pill.fail, .elem-scan .pill.fail { color: #fff; background: var(--u1-danger); }
+.test-results .pill.warn, .elem-scan .pill.warn { color: #3d2f00; background: #e0a500; }
+.test-results .pill.zero, .elem-scan .pill.zero { opacity: .35; }
 
-.test-results .test-section-title {
+.test-results .test-section-title, .elem-scan .test-section-title {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1875,9 +1897,9 @@ button {
   letter-spacing: .4px;
   color: var(--u1-primary);
 }
-.test-results .test-section-title .pills { margin-left: auto; }
-.test-results .test-steps { list-style: none; margin: 0; padding: 2px 8px 6px; }
-.test-results .test-step {
+.test-results .test-section-title .pills, .elem-scan .test-section-title .pills { margin-left: auto; }
+.test-results .test-steps, .elem-scan .test-steps { list-style: none; margin: 0; padding: 2px 8px 6px; }
+.test-results .test-step, .elem-scan .test-step {
   display: grid;
   grid-template-columns: 18px 1fr;
   gap: 6px;
@@ -1889,15 +1911,15 @@ button {
   border-left: 3px solid transparent;
   background: rgba(255, 255, 255, 0.03);
 }
-.test-results .test-step.pass { border-left-color: var(--u1-success); }
-.test-results .test-step.fail { border-left-color: var(--u1-danger); background: rgba(239, 68, 68, 0.08); }
-.test-results .test-step.warn { border-left-color: #e0a500; background: rgba(224, 165, 0, 0.07); }
-.test-results .test-step .ti { font-weight: 700; text-align: center; }
-.test-results .test-step.pass .ti { color: var(--u1-success); }
-.test-results .test-step.fail .ti { color: var(--u1-danger); }
-.test-results .test-step.warn .ti { color: #e0a500; }
-.test-results .test-step .tl { color: var(--u1-text); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.test-results .test-step .tl .wcag-chip {
+.test-results .test-step.pass, .elem-scan .test-step.pass { border-left-color: var(--u1-success); }
+.test-results .test-step.fail, .elem-scan .test-step.fail { border-left-color: var(--u1-danger); background: rgba(239, 68, 68, 0.08); }
+.test-results .test-step.warn, .elem-scan .test-step.warn { border-left-color: #e0a500; background: rgba(224, 165, 0, 0.07); }
+.test-results .test-step .ti, .elem-scan .test-step .ti { font-weight: 700; text-align: center; }
+.test-results .test-step.pass .ti, .elem-scan .test-step.pass .ti { color: var(--u1-success); }
+.test-results .test-step.fail .ti, .elem-scan .test-step.fail .ti { color: var(--u1-danger); }
+.test-results .test-step.warn .ti, .elem-scan .test-step.warn .ti { color: #e0a500; }
+.test-results .test-step .tl, .elem-scan .test-step .tl { color: var(--u1-text); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.test-results .test-step .tl .wcag-chip, .elem-scan .test-step .tl .wcag-chip {
   font-size: 9px;
   font-weight: 600;
   color: var(--u1-text-muted);
@@ -1906,18 +1928,18 @@ button {
   padding: 0 5px;
   white-space: nowrap;
 }
-.test-results .test-step .tm { grid-column: 2; color: var(--u1-text-muted); font-size: 11px; margin-top: 2px; }
-.test-results .test-step .test-why { grid-column: 2; margin-top: 3px; }
-.test-results .test-step .test-why summary {
+.test-results .test-step .tm, .elem-scan .test-step .tm { grid-column: 2; color: var(--u1-text-muted); font-size: 11px; margin-top: 2px; }
+.test-results .test-step .test-why, .elem-scan .test-step .test-why { grid-column: 2; margin-top: 3px; }
+.test-results .test-step .test-why summary, .elem-scan .test-step .test-why summary {
   cursor: pointer;
   font-size: 11px;
   font-weight: 600;
   color: var(--u1-accent, #a99cff);
   list-style: none;
 }
-.test-results .test-step .test-why summary::before { content: "▸ "; }
-.test-results .test-step .test-why[open] summary::before { content: "▾ "; }
-.test-results .test-step .test-why .tm { margin-top: 3px; }
+.test-results .test-step .test-why summary::before, .elem-scan .test-step .test-why summary::before { content: "▸ "; }
+.test-results .test-step .test-why[open] summary::before, .elem-scan .test-step .test-why[open] summary::before { content: "▾ "; }
+.test-results .test-step .test-why .tm, .elem-scan .test-step .test-why .tm { margin-top: 3px; }
 
 /* Segmented filter control above the mappings list */
 .mappings-toolbar { display: flex; margin-bottom: 8px; }
