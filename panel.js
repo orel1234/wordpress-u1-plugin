@@ -354,7 +354,21 @@ const COMPONENT_SCHEMAS = {
     fields:[],
     rootFields:{role:'auto', label:'', activates:''},
     selectorRoots:['activates'],
-    placeholders:{ activates: 'input[type="checkbox"]', role: 'auto' },
+    placeholders:{ activates: 'input[type="checkbox"]' },
+    options:{ role: [
+      { value:'auto',     text:'Auto — copy it from what it clicks' },
+      { value:'button',   text:'Button — performs an action' },
+      { value:'link',     text:'Link — navigates somewhere' },
+      { value:'checkbox', text:'Checkbox — on / off' },
+      { value:'radio',    text:'Radio — one of a set' },
+      { value:'switch',   text:'Switch — on / off toggle' },
+      { value:'combobox', text:'Combobox — a select / dropdown' },
+      { value:'listbox',  text:'Listbox — a multi-select list' },
+      { value:'textbox',  text:'Text field — typed into' },
+      { value:'slider',   text:'Slider — a range' },
+      { value:'tab',      text:'Tab — one of a tab strip' },
+      { value:'menuitem', text:'Menu item — a row in a menu' },
+    ] },
     req:['target'],
     labels:{
       target:'Element(s) to make keyboard-operable — ALL matches are handled',
@@ -2986,13 +3000,25 @@ function renderSubSelectorInputs(type, into, opts) {
       } else {
         const row = document.createElement('div');
         const isSelRoot = (schema.selectorRoots || []).includes(k);
+        const choices = (schema.options && schema.options[k]) || null;
         // A selector needs the whole width — it holds things like
         // 'input[type="checkbox"].toggle' and a 110px label column plus a
         // strength badge leaves a box too small to read what you typed.
-        row.className = isSelRoot ? 'root-text root-wide' : 'root-text';
+        // Dropdowns stack too: their option text is a sentence, and a <select>
+        // clips rather than wraps, so a narrow column hides the choice you made.
+        row.className = (isSelRoot || choices) ? 'root-text root-wide' : 'root-text';
         const ph = (schema.placeholders && schema.placeholders[k]) || '';
-        const inputHtml = `<input type="text" data-root="${escapeHtml(k)}" value="${escapeHtml(String(defaultVal || ''))}"` +
-          (ph ? ` placeholder="${escapeHtml(ph)}"` : '') + `>`;
+        // A closed set of valid values is a dropdown. Typed free-text here only
+        // ever produced silent typos — "checkbox " or "Checkbox" fell through to
+        // the fallback role with nothing to say it had.
+        const inputHtml = choices
+          ? `<select data-root="${escapeHtml(k)}">` + choices.map(c => {
+              const val = typeof c === 'string' ? c : c.value;
+              const txt = typeof c === 'string' ? c : c.text;
+              return `<option value="${escapeHtml(val)}"${val === String(defaultVal || '') ? ' selected' : ''}>${escapeHtml(txt)}</option>`;
+            }).join('') + `</select>`
+          : `<input type="text" data-root="${escapeHtml(k)}" value="${escapeHtml(String(defaultVal || ''))}"` +
+            (ph ? ` placeholder="${escapeHtml(ph)}"` : '') + `>`;
         row.innerHTML = `
           <label>${escapeHtml(labelOf(k))} <span class="root-tag">(option)</span></label>
           ${isSelRoot
@@ -5317,8 +5343,16 @@ function loadMappingIntoForm(m) {
     for (const k of Object.keys(schema.rootFields)) {
       const inp = $subSelArea.querySelector('[data-root="' + k + '"]');
       if (!inp) continue;
-      if (inp.type === 'checkbox') inp.checked = !!(m.config && m.config[k]);
-      else inp.value = (m.config && m.config[k] != null) ? String(m.config[k]) : '';
+      if (inp.type === 'checkbox') { inp.checked = !!(m.config && m.config[k]); continue; }
+      const saved = (m.config && m.config[k] != null) ? String(m.config[k]) : '';
+      // A <select> given a value it has no option for goes blank, which reads as
+      // "nothing chosen" for a field that always has a value. Fall back to the
+      // schema default — what a mapping saved before this field existed meant.
+      if (inp.tagName === 'SELECT' && !Array.from(inp.options).some(o => o.value === saved)) {
+        inp.value = String(schema.rootFields[k] || '');
+      } else {
+        inp.value = saved;
+      }
     }
   }
 

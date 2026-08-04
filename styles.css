@@ -1842,9 +1842,29 @@ button {
 /* An option label is a narrow column. A long one wraps to four lines and
    squeezes its own input into a square — cap it so the field keeps its width. */
 .root-text > label { max-width: 100%; overflow-wrap: break-word; }
-.root-text .selector-test-row { min-width: 0; }
-.root-text .selector-test-row .sel-strength-wrap { flex: 1 1 auto; min-width: 0; }
+/* Grid, not flex. The wrap is display:block holding a width:100% input, so
+   under `flex: 1 1 auto` the basis resolves from content — content that has no
+   intrinsic width — and the field collapses to a square. A minmax(0,1fr)
+   column has a width of its own to give. */
+.root-text .selector-test-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+.root-text .selector-test-row .sel-strength-wrap { min-width: 0; }
 .root-text .selector-test-row input { width: 100%; box-sizing: border-box; }
+
+/* The dropdown reads as a control, not as a disabled text box. */
+.root-text select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--u1-border, #2b3444);
+  background: var(--u1-input-bg, #131a26);
+  color: inherit;
+  font: inherit;
+}
 
 .type-guide-pop {
   position: relative;
