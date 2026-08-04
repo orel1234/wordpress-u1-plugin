@@ -4114,6 +4114,39 @@ const triggerRequired = (type) => {
   return !!sc && (sc.req || []).includes('trigger');
 };
 
+/**
+ * Reads one discovery card into the row shape the mapping step expects, and
+ * says why if it cannot. Shared by the per-card button and the bulk run so the
+ * two can never disagree about what a trigger-first type means.
+ */
+function rowFromCompCard(comp) {
+  const type = comp.querySelector('.ai-comp-type').value;
+  const found = comp.querySelector('.ai-comp-sel').value.trim();
+  const container = (comp.querySelector('.ai-comp-cont')?.value || '').trim();
+  // For a trigger-first type the found element is the TRIGGER, and the mapping
+  // is rooted on what it opens. Everything downstream expects `sel` to be that
+  // root, so swap them here rather than teaching each step about the exception.
+  // Any other type that accepts a trigger keeps the found element as the
+  // component and files what was entered as the trigger — no swap.
+  const swap = triggerFirstType(type) && !!container;
+  const row = {
+    type,
+    sel: swap ? container : found,
+    trigger: swap ? found : (acceptsTrigger(type) && container ? container : undefined),
+    label: comp.querySelector('.ai-comp-label').textContent,
+    compIndex: comp.dataset.i,
+  };
+  // Block only on what the schema actually requires. dialog declares a trigger
+  // but does not require one, and this used to refuse it anyway.
+  if (triggerRequired(type) && !container) {
+    return { err: `A ${type} needs the element it opens. Open it on the page, then paste its selector.`, focusTrigger: true };
+  }
+  if (!row.sel || !COMPONENT_SCHEMAS[row.type]) {
+    return { err: 'Give this one a container selector and a component type first.' };
+  }
+  return { row };
+}
+
 // Show the container field only when the chosen type needs one. Driven off the
 // <select>'s own value rather than the type the scan proposed, because the two
 // can differ: a type the AI returns that is not in U1_TYPES leaves the dropdown
@@ -4266,33 +4299,13 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   }
 
   const comp = btn.closest('.ai-comp');
-  const type = comp.querySelector('.ai-comp-type').value;
-  const found = comp.querySelector('.ai-comp-sel').value.trim();
-  const container = (comp.querySelector('.ai-comp-cont')?.value || '').trim();
-  // For a trigger-first type the found element is the TRIGGER, and the mapping
-  // is rooted on what it opens. Everything downstream expects `sel` to be that
-  // root, so swap them here rather than teaching each step about the exception.
-  // Any other type that accepts a trigger keeps the found element as the
-  // component and files what was entered as the trigger — no swap.
-  const swap = triggerFirstType(type) && !!container;
-  const row = {
-    type,
-    sel: swap ? container : found,
-    trigger: swap ? found : (acceptsTrigger(type) && container ? container : undefined),
-    label: comp.querySelector('.ai-comp-label').textContent,
-    compIndex: comp.dataset.i,
-  };
-  // Block only on what the schema actually requires. dialog declares a trigger
-  // but does not require one, and this used to refuse it anyway.
-  if (triggerRequired(type) && !container) {
-    showNotice(status, `A ${type} needs the element it opens. Open it on the page, then paste its selector.`, 'error', 6000);
-    comp.querySelector('.ai-comp-cont')?.focus();
+  const built = rowFromCompCard(comp);
+  if (built.err) {
+    showNotice(status, built.err, 'error', built.focusTrigger ? 6000 : 4000);
+    if (built.focusTrigger) comp.querySelector('.ai-comp-cont')?.focus();
     return;
   }
-  if (!row.sel || !COMPONENT_SCHEMAS[row.type]) {
-    showNotice(status, 'Give this one a container selector and a component type first.', 'error', 4000);
-    return;
-  }
+  const row = built.row;
 
   const tab = await getTab();
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
@@ -6118,7 +6131,10 @@ async function overlappingMappings(primary, list) {
 // existing entry with the same key (or the one being edited). Shared by the
 // manual "Add to Mapping" button and the AI mapping cards, so a mapping made
 // either way is byte-for-byte the same record.
-async function saveMappingEntry(template, { editingKey = null } = {}) {
+// `refreshUi:false` suppresses the list + export re-render. Saving one mapping
+// should repaint; saving twelve in a row should repaint once at the end, not
+// twelve times — each loadMappingsList() runs an executeScript against the page.
+async function saveMappingEntry(template, { editingKey = null, refreshUi = true } = {}) {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
@@ -6153,8 +6169,10 @@ async function saveMappingEntry(template, { editingKey = null } = {}) {
   else list.push(entry);
   await U1Store.set({ [key]: list });
 
-  loadMappingsList();
-  refreshExportInfo();
+  if (refreshUi) {
+    loadMappingsList();
+    refreshExportInfo();
+  }
   return { updated: existingIdx >= 0 };
 }
 
@@ -6375,14 +6393,24 @@ function resetApprovedRun() {
 // it: no per-field report, no explanation of what menubar:false does. Applying
 // is applying — the mode you built the mapping in should not change what you
 // are told about it.
-function describeApply(res, m) {
-  const d = (res.details || [])[0];
+/**
+ * Turns one item's apply result into a sentence.
+ *
+ * `i` is which item of the batch to describe. This used to be hardcoded to 0,
+ * which was invisible while every call passed a one-item array — and would have
+ * reported a twelve-mapping batch as twelve copies of the first item's verdict.
+ * The per-item `status` is the authority here, not the batch-wide `res.applied`:
+ * the in-page loop increments that counter exactly when it pushes status 'ok',
+ * so for a single item the two agree, and for a batch only the former is right.
+ */
+function describeApply(res, m, i = 0) {
+  const d = (res.details || [])[i];
   if (!res.ok) {
     return { ok: false, msg: res.u1Missing
       ? 'U1 is not loaded on this page, so nothing was applied.'
       : 'Applying failed: ' + (res.err || 'unknown') };
   }
-  if (res.applied) {
+  if (d && d.status === 'ok') {
     const v = { ok: true, msg: `Applied — ${d.changed} element${d.changed === 1 ? '' : 's'} changed on the page.` };
     if (d.rebuilt) {
       v.msg += ' Note: this component is built by the site\u2019s own JavaScript after the page loads, so U1 had already finished with the empty container before these elements existed.';
