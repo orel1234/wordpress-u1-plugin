@@ -341,8 +341,101 @@ window.__u1InstallGridFromMapping = function (primary, config) {
 window.__u1MakeClickable = function (opts) {
   const sel = opts && opts.selector;
   if (!sel) return { ok: false, err: 'selector is required' };
-  const role = (opts.role === 'link') ? 'link' : 'button';
+  // 'auto' (the default) reads the role off whatever `activates` points at, so a
+  // wrapper around a checkbox announces as a checkbox and not as a button. An
+  // explicit value always wins — the page author has seen the widget.
+  const wantRole = String(opts.role || 'auto').toLowerCase();
+  const role = (wantRole === 'auto' && !opts.activates) ? 'button'
+             : (wantRole === 'auto' ? 'auto' : wantRole);
   const label = opts.label || '';
+
+  // What a target IS, in ARIA terms. A styled wrapper is a stand-in for the
+  // control inside it, so it has to inherit that control's role, its state and
+  // its keyboard contract — a checkbox that says "button" and never reports
+  // checked is not accessible, it is only reachable.
+  const kindOf = (t) => {
+    if (!t) return 'button';
+    const explicit = (t.getAttribute('role') || '').toLowerCase();
+    if (explicit) return explicit;
+    const tag = t.tagName;
+    if (tag === 'INPUT') {
+      const ty = (t.getAttribute('type') || 'text').toLowerCase();
+      if (ty === 'checkbox') return 'checkbox';
+      if (ty === 'radio') return 'radio';
+      if (ty === 'range') return 'slider';
+      if (ty === 'file' || ty === 'button' || ty === 'submit' || ty === 'reset' || ty === 'image') return 'button';
+      return 'textbox';
+    }
+    if (tag === 'TEXTAREA') return 'textbox';
+    if (tag === 'SELECT') return t.multiple ? 'listbox' : 'combobox';
+    if (tag === 'A' && t.hasAttribute('href')) return 'link';
+    if (tag === 'SUMMARY') return 'button';
+    return 'button';
+  };
+
+  // Roles whose value the user changes rather than whose action they trigger.
+  // These need the real control focused, not clicked: you cannot type into a
+  // wrapper, and clicking a <select> from script does not open it.
+  const DELEGATES = { textbox: 1, combobox: 1, listbox: 1, slider: 1, spinbutton: 1 };
+  // Roles that carry a checked state we have to mirror and keep mirrored.
+  const CHECKED = { checkbox: 1, radio: 1, switch: 1, menuitemcheckbox: 1, menuitemradio: 1 };
+
+  // The accessible name of the control, for when the wrapper has none of its
+  // own. Without this a row of identical styled boxes all announce as
+  // "checkbox" with nothing to tell them apart.
+  const nameOf = (t) => {
+    if (!t) return '';
+    const aria = t.getAttribute('aria-label');
+    if (aria) return aria.trim();
+    const by = t.getAttribute('aria-labelledby');
+    if (by) {
+      const txt = by.split(/\s+/).map(id => {
+        const n = document.getElementById(id);
+        return n ? n.textContent : '';
+      }).join(' ').trim();
+      if (txt) return txt;
+    }
+    try {
+      const labs = t.labels;
+      if (labs && labs.length && labs[0].textContent.trim()) return labs[0].textContent.trim();
+    } catch (e) {}
+    return (t.getAttribute('title') || t.getAttribute('placeholder') ||
+            (t.tagName === 'INPUT' && /^(button|submit|reset)$/i.test(t.type) ? t.value : '') || '').trim();
+  };
+
+  // Mirror the control's live state onto the wrapper. Called on wiring, after
+  // every activation, and on every change the page makes itself — a checkbox
+  // ticked by the site's own JS has to update the announcement too.
+  const syncState = (el, t, r) => {
+    if (!t || t === el) return;
+    if (CHECKED[r]) {
+      el.setAttribute('aria-checked', t.indeterminate ? 'mixed' : (t.checked ? 'true' : 'false'));
+    }
+    if (r === 'combobox' || r === 'listbox') {
+      const v = t.selectedOptions && t.selectedOptions[0];
+      if (v) el.setAttribute('aria-valuetext', v.textContent.trim());
+    }
+    if (r === 'slider') {
+      if (t.value !== undefined) el.setAttribute('aria-valuenow', t.value);
+      if (t.min !== '') el.setAttribute('aria-valuemin', t.min);
+      if (t.max !== '') el.setAttribute('aria-valuemax', t.max);
+    }
+    if (t.disabled) el.setAttribute('aria-disabled', 'true'); else el.removeAttribute('aria-disabled');
+    if (t.required) el.setAttribute('aria-required', 'true');
+  };
+
+  // A hidden-but-focusable input behind a wrapper is a duplicate tab stop that
+  // announces nothing useful. Once the wrapper speaks for it, take it out of
+  // the tab order — but only when it really is invisible, never when both are
+  // on screen and the user may want either.
+  const isVisuallyHidden = (t) => {
+    try {
+      const r = t.getBoundingClientRect();
+      if (r.width <= 1 || r.height <= 1) return true;
+      const st = getComputedStyle(t);
+      return st.opacity === '0' || st.visibility === 'hidden' || st.clipPath === 'inset(50%)';
+    } catch (e) { return false; }
+  };
   // `activates` splits WHAT THE USER REACHES from WHAT ACTUALLY FIRES. The
   // common case is a styled wrapper with the real <input> hidden inside it: the
   // wrapper is what you can see and tab to, the input is what has to be clicked.
@@ -371,8 +464,16 @@ window.__u1MakeClickable = function (opts) {
   // file pickers, menus and toggles do — sees nothing at all and looks broken.
   // Dispatching the whole sequence is closer to what a mouse actually does, not
   // further from it: a browser fires every one of these on a genuine click.
-  const fire = (el) => {
-    const t = targetOf(el);
+  const fire = (el, t, r) => {
+    t = t || targetOf(el);
+    // Value controls want focus, not a click. Enter on a wrapper around a text
+    // field should put the caret in the field; clicking it would do nothing a
+    // screen-reader user could perceive.
+    if (DELEGATES[r]) {
+      try { t.focus(); } catch (e) {}
+      if (t !== el && typeof t.click === 'function' && r !== 'textbox') { try { t.click(); } catch (e) {} }
+      return;
+    }
     const opts = { bubbles: true, cancelable: true, view: window, button: 0, composed: true };
     const send = (Ctor, type, extra) => {
       try { t.dispatchEvent(new Ctor(type, Object.assign({}, opts, extra || {}))); } catch (e) {}
@@ -403,12 +504,39 @@ window.__u1MakeClickable = function (opts) {
                      (el.tagName === 'A' && el.hasAttribute('href'));
       if (native && !activates) return;
       el.__u1Click = true;
-      if (!el.hasAttribute('role')) el.setAttribute('role', role);
+      const t = targetOf(el);
+      const r = (role === 'auto') ? kindOf(t) : role;
+      el.setAttribute('role', r);
       if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
-      if (label && !el.getAttribute('aria-label')) el.setAttribute('aria-label', label);
+      const name = label || nameOf(t);
+      if (name && !el.getAttribute('aria-label') && !el.textContent.trim()) el.setAttribute('aria-label', name);
+      syncState(el, t, r);
+
+      if (t !== el && isVisuallyHidden(t)) {
+        t.setAttribute('tabindex', '-1');
+        // tabindex first, then aria-hidden — hiding a focusable element from the
+        // accessibility tree while it can still be tabbed to is itself a defect.
+        t.setAttribute('aria-hidden', 'true');
+      }
+      // The site can change the control without going through us. Mirror that.
+      if (t !== el && !t.__u1Sync) {
+        t.__u1Sync = true;
+        const back = () => syncState(el, t, r);
+        t.addEventListener('change', back);
+        t.addEventListener('input', back);
+      }
+
       el.addEventListener('keydown', (e) => {
-        // Buttons activate on Enter AND Space; links on Enter only (ARIA spec).
-        if (e.key === 'Enter' || (role === 'button' && e.key === ' ')) { e.preventDefault(); fire(el); }
+        // Links activate on Enter only; everything else on Enter and Space.
+        // Space is what a checkbox user reaches for first, so it must not scroll.
+        const enter = e.key === 'Enter';
+        const space = e.key === ' ' || e.key === 'Spacebar';
+        if (!enter && !(space && r !== 'link')) return;
+        e.preventDefault();
+        fire(el, t, r);
+        // After our own activation too — a native checkbox flips its `checked`
+        // property, which reflects to no attribute and fires no event we see.
+        syncState(el, t, r);
       });
       n++;
     });

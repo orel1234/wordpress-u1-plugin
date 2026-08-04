@@ -352,21 +352,21 @@ const COMPONENT_SCHEMAS = {
     custom:'keyboardClickable',
     selectors:{target:'PRIMARY'},
     fields:[],
-    rootFields:{role:'button', label:'', activates:''},
+    rootFields:{role:'auto', label:'', activates:''},
     selectorRoots:['activates'],
-    placeholders:{ activates: 'input[type="checkbox"]' },
+    placeholders:{ activates: 'input[type="checkbox"]', role: 'auto' },
     req:['target'],
     labels:{
       target:'Element(s) to make keyboard-operable — ALL matches are handled',
-      role:'Announce as: button or link',
-      label:'Accessible name (optional — leave empty to keep the text)',
-      activates:'Click this instead',
+      role:'Announce as',
+      label:'Accessible name (leave empty to keep the visible text)',
+      activates:'Really clicks',
     },
     desc:{
-      target:'Every element matching this becomes focusable (Tab) and activates on Enter (plus Space for buttons). Native <button>/<a href> are skipped — they already work.',
-      role:'“button” for something that performs an action; “link” for something that navigates. Buttons also activate on Space, links on Enter only (ARIA spec).',
-      label:'Sets aria-label on each match. Usually leave empty so each element keeps its own visible text as its name.',
-      activates:'When the thing you can see is not the thing that works — a styled box with a hidden <input> inside it. Name the real control here and Enter/Space will click that instead. Searched inside each match first, so every row fires its own.',
+      target:'Every element matching this becomes focusable (Tab) and activates on Enter (plus Space). Native <button>/<a href> are skipped — they already work.',
+      role:'Leave as “auto” and the role is read off whatever “Really clicks” points at — a wrapper around a checkbox announces as a checkbox, keeps aria-checked in step, and toggles on Space. Override with button, link, checkbox, radio, switch, combobox, textbox or slider only if auto reads it wrong.',
+      label:'Sets aria-label on each match. Usually leave empty: the visible text is used, and failing that the hidden control\u2019s own name or its <label>.',
+      activates:'When the thing you can see is not the thing that works — a styled box with a hidden <input> inside it. Name the real control (checkbox, radio, select, file, text field, range …) and it inherits that control\u2019s role, name and state. Searched inside each match first, so every row fires its own.',
     },
   },
 
@@ -572,6 +572,10 @@ ${headBlock}  var parts = [ownText, ${JSON.stringify(middleText.trim())}, headin
 });`;
 }
 
+// One place that answers "did the user name a target?", used before `activates`
+// is in scope during role resolution.
+function activatesOf(rootValues) { return !!(rootValues && rootValues.activates); }
+
 function buildTemplate(type, primary, fieldValues, rootValues) {
   const schema = COMPONENT_SCHEMAS[type];
   if (!schema) return null;
@@ -589,11 +593,16 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
   // Custom: make elements keyboard-operable (no U1).
   if (schema.custom === 'keyboardClickable') {
     const target = primary.trim();
-    const role = ((rootValues && rootValues.role) || 'button').toLowerCase() === 'link' ? 'link' : 'button';
+    // Anything the engine understands passes through. Collapsing to button|link
+    // here is what used to make "auto" impossible and a checkbox announce wrong.
+    const ROLES = ['auto','button','link','checkbox','radio','switch','combobox','listbox','textbox','slider','tab','menuitem'];
+    const asked = String((rootValues && rootValues.role) || 'auto').trim().toLowerCase();
+    const role = ROLES.includes(asked) ? asked : (activatesOf(rootValues) ? 'auto' : 'button');
     const label = (rootValues && rootValues.label) || '';
     const activates = (rootValues && rootValues.activates) || '';
     const config = { selectors: { target }, role, label, activates };
-    const code = `/* Make every match keyboard-operable (role="${role}" + tabindex + Enter${role === 'button' ? '/Space' : ''}).\n` +
+    const code = `/* Make every match keyboard-operable (role="${role}" + tabindex + Enter/Space).\n` +
+      (role === 'auto' ? `   role="auto": each match takes the role, name and state of what it activates.\n` : '') +
       `   Standalone: needs neither U1 nor the extension. Engine is included in the export. */\n` +
       `window.__u1MakeClickable(${JSON.stringify({ selector: target, role, label, activates })});`;
     return { type, primary: target, firstArg: target, config, code, custom: 'keyboardClickable' };
@@ -861,7 +870,7 @@ async function applyKeyboardClickable(target, config) {
   if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
   const opts = {
     selector: (config && config.selectors && config.selectors.target) || target,
-    role: (config && config.role) || 'button',
+    role: (config && config.role) || 'auto',
     label: (config && config.label) || '',
     // Without this the live Apply silently ignores "Click this instead" while
     // the exported code honours it, so the preview and the page disagree.
@@ -1546,7 +1555,7 @@ function mappingToCode(m) {
            `window.__u1InstallGridFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
   if (m.custom === 'keyboardClickable') {
-    return `window.__u1MakeClickable(${formatJsObject({ selector: m.primary, role: (m.config && m.config.role) || 'button', label: (m.config && m.config.label) || '', activates: (m.config && m.config.activates) || '' })});`;
+    return `window.__u1MakeClickable(${formatJsObject({ selector: m.primary, role: (m.config && m.config.role) || 'auto', label: (m.config && m.config.label) || '', activates: (m.config && m.config.activates) || '' })});`;
   }
   if (m.custom === 'ariaLabel') {
     return buildAriaLabelCode(m.primary, sel.middleText || (m.config && m.config.middleText) || '', sel.headingSelector || (m.config && m.config.headingSelector) || '');
@@ -2976,8 +2985,11 @@ function renderSubSelectorInputs(type, into, opts) {
         $subSelArea.appendChild(row);
       } else {
         const row = document.createElement('div');
-        row.className = 'root-text';
         const isSelRoot = (schema.selectorRoots || []).includes(k);
+        // A selector needs the whole width — it holds things like
+        // 'input[type="checkbox"].toggle' and a 110px label column plus a
+        // strength badge leaves a box too small to read what you typed.
+        row.className = isSelRoot ? 'root-text root-wide' : 'root-text';
         const ph = (schema.placeholders && schema.placeholders[k]) || '';
         const inputHtml = `<input type="text" data-root="${escapeHtml(k)}" value="${escapeHtml(String(defaultVal || ''))}"` +
           (ph ? ` placeholder="${escapeHtml(ph)}"` : '') + `>`;

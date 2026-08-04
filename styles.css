@@ -755,6 +755,22 @@ button {
   text-align: right;
 }
 
+/* Selector roots stack instead: label on its own line, input across the full
+   width. The two-column form is right for "button" or a short name, but a CSS
+   selector is long and the label for one is a sentence. */
+.root-wide {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.root-wide label {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--u1-muted, #9aa4b2);
+}
+
 .root-tag,
 .root-toggle span strong + em { font-weight: 400; }
 
