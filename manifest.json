@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "U1 Studio",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Accessibility implementation helper for User1st (u1) library",
   "permissions": [
     "activeTab",
