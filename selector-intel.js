@@ -54,10 +54,20 @@
   const down = (lvl) => LEVELS[Math.max(0, LEVELS.indexOf(lvl) - 1)];
 
   // Grade one compound segment (e.g. `.a.b`, `#id`, `div[name="x"]`).
+  // Graded in CSS specificity order — id, then class/attribute, then element —
+  // but this is a meter of DURABILITY, not of which rule wins the cascade. Two
+  // selectors of identical specificity are not equally dependable: [id="x"] and
+  // [aria-label="Submit"] both score (0,1,0), and only one of them survives the
+  // page being translated. Where the two disagree, durability decides.
   function gradeSegment(seg) {
+    // Specificity 0 — contributes nothing at all, matches everything.
+    if (/^\*$/.test(seg)) return 'weak';
+    // (1,0,0) — an id, the strongest ordinary selector there is.
     if (/^#[\w-]+$/.test(seg)) return 'strong';
-    // Identifiers a developer chose so the element could be addressed.
+    // (0,1,0) by specificity, but these are identifiers a developer chose so the
+    // element could be addressed, so they are as dependable as an id.
     if (/\[(data-testid|data-test|data-cy|data-qa|id|name)\s*[=~|^$*]?=?/.test(seg)) return 'strong';
+    // Also (0,1,0), and this is where specificity and durability part company.
     // aria-label is USER-FACING TEXT, not an identifier. It gets translated, a
     // copywriter rewrites it, and on a multilingual site the same button reads
     // differently per locale — so a mapping anchored on it breaks without any
@@ -65,9 +75,9 @@
     if (/\[aria-label\s*[=~|^$*]?=?/.test(seg)) return 'medium';
     // A role says what KIND of thing it is, not which one. Rarely unique.
     if (/\[role\s*[=~|^$*]?=?/.test(seg)) return 'weak';
-    if (/\[[^\]]+\]/.test(seg)) return 'medium';
-    if (/\.[\w-]+/.test(seg)) return 'medium';
-    return 'weak'; // bare tag, or *
+    if (/\[[^\]]+\]/.test(seg)) return 'medium';   // (0,1,0) attribute
+    if (/\.[\w-]+/.test(seg)) return 'medium';     // (0,1,0) class
+    return 'weak';                                 // (0,0,1) bare tag
   }
 
   function selectorStrength(sel, opts) {
@@ -80,6 +90,11 @@
     }
     if (/\[role\s*[=~|^$*]?=?/.test(norm)) {
       reasons.push('Built on role — that says what kind of element it is, not which one.');
+    }
+    // A combinator joins segments; it adds no weight of its own. Worth saying,
+    // because a long chain reads as precision and is not.
+    if (/\*/.test(norm)) {
+      reasons.push('Contains * — the universal selector matches anything and adds no weight.');
     }
 
     if (!norm) return { level: 'empty', label: '', reasons: [] };

@@ -352,18 +352,20 @@ const COMPONENT_SCHEMAS = {
     custom:'keyboardClickable',
     selectors:{target:'PRIMARY'},
     fields:[],
-    rootFields:{role:'button', label:''},
-    selectorRoots:[],
+    rootFields:{role:'button', label:'', activates:''},
+    selectorRoots:['activates'],
     req:['target'],
     labels:{
       target:'Element(s) to make keyboard-operable — ALL matches are handled',
       role:'Announce as: button or link',
       label:'Accessible name (optional — leave empty to keep the text)',
+      activates:'Click this instead (optional) — e.g. the real input inside',
     },
     desc:{
       target:'Every element matching this becomes focusable (Tab) and activates on Enter (plus Space for buttons). Native <button>/<a href> are skipped — they already work.',
       role:'“button” for something that performs an action; “link” for something that navigates. Buttons also activate on Space, links on Enter only (ARIA spec).',
       label:'Sets aria-label on each match. Usually leave empty so each element keeps its own visible text as its name.',
+      activates:'For a fake control: the element you can see is not the one that works. Give the selector of the real one — a hidden <input>, say — and the visible element becomes focusable while Enter/Space clicks the real one. Looked for inside each match first, so a list of rows each fires its own; falls back to a page-wide match.',
     },
   },
 
@@ -588,10 +590,11 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
     const target = primary.trim();
     const role = ((rootValues && rootValues.role) || 'button').toLowerCase() === 'link' ? 'link' : 'button';
     const label = (rootValues && rootValues.label) || '';
-    const config = { selectors: { target }, role, label };
+    const activates = (rootValues && rootValues.activates) || '';
+    const config = { selectors: { target }, role, label, activates };
     const code = `/* Make every match keyboard-operable (role="${role}" + tabindex + Enter${role === 'button' ? '/Space' : ''}).\n` +
       `   Standalone: needs neither U1 nor the extension. Engine is included in the export. */\n` +
-      `window.__u1MakeClickable(${JSON.stringify({ selector: target, role, label })});`;
+      `window.__u1MakeClickable(${JSON.stringify({ selector: target, role, label, activates })});`;
     return { type, primary: target, firstArg: target, config, code, custom: 'keyboardClickable' };
   }
 
@@ -1539,7 +1542,7 @@ function mappingToCode(m) {
            `window.__u1InstallGridFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
   if (m.custom === 'keyboardClickable') {
-    return `window.__u1MakeClickable(${formatJsObject({ selector: m.primary, role: (m.config && m.config.role) || 'button', label: (m.config && m.config.label) || '' })});`;
+    return `window.__u1MakeClickable(${formatJsObject({ selector: m.primary, role: (m.config && m.config.role) || 'button', label: (m.config && m.config.label) || '', activates: (m.config && m.config.activates) || '' })});`;
   }
   if (m.custom === 'ariaLabel') {
     return buildAriaLabelCode(m.primary, sel.middleText || (m.config && m.config.middleText) || '', sel.headingSelector || (m.config && m.config.headingSelector) || '');
@@ -2761,11 +2764,18 @@ const TYPE_GUIDE = {
 };
 
 // Renders the guide for the chosen type (or hides it when nothing is selected).
+// Builds the explainer but does NOT show it. It is reference material — read
+// once when you meet a type, then permanently in the way. It opens from the (i)
+// beside the type picker instead, and the button hides itself for a type that
+// has nothing to say.
 function renderTypeGuide(type) {
   const box = document.getElementById('typeGuide');
+  const btn = document.getElementById('typeGuideBtn');
   if (!box) return;
   const g = TYPE_GUIDE[type];
-  if (!g) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  closeTypeGuide();
+  if (btn) btn.style.display = g ? '' : 'none';
+  if (!g) { box.innerHTML = ''; return; }
   const chips = g.wcag.map(([num, name]) =>
     `<a class="wcag-link" target="_blank" rel="noopener"
         href="https://www.w3.org/WAI/WCAG22/Understanding/${encodeURIComponent(name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))}.html"
@@ -2783,6 +2793,33 @@ function renderTypeGuide(type) {
     (variants ? `<details class="tg-variants"><summary>Which kind is it? (${g.variants.length})</summary><ul>${variants}</ul></details>` : '') +
     `<div class="tg-links">${chips}${apg}</div>`;
 }
+
+function closeTypeGuide() {
+  const box = document.getElementById('typeGuide');
+  const btn = document.getElementById('typeGuideBtn');
+  if (box) box.style.display = 'none';
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+document.getElementById('typeGuideBtn')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const box = document.getElementById('typeGuide');
+  const btn = document.getElementById('typeGuideBtn');
+  if (!box || !box.innerHTML) return;
+  const open = box.style.display !== 'none';
+  box.style.display = open ? 'none' : 'block';
+  btn.setAttribute('aria-expanded', String(!open));
+});
+
+// Click-away and Escape. A panel this narrow cannot afford a popover that needs
+// hunting for its own close button.
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#typeGuide') || e.target.closest('#typeGuideBtn')) return;
+  closeTypeGuide();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeTypeGuide();
+});
 
 // Currently built template (set by Generate, consumed by Apply / Add to Mapping)
 let currentTemplate = null;
@@ -3119,9 +3156,6 @@ let autoResult = null;
 const $modeManualBtn = document.getElementById('modeManualBtn');
 const $modeAutoBtn = document.getElementById('modeAutoBtn');
 const $modeHint = document.getElementById('modeHint');
-const $autoAnalyzeRow = document.getElementById('autoAnalyzeRow');
-const $autoReviewSection = document.getElementById('autoReviewSection');
-const $autoReviewList = document.getElementById('autoReviewList');
 const $preciseEventsRow = document.getElementById('preciseEventsRow');
 const $preciseEventsToggle = document.getElementById('preciseEventsToggle');
 
@@ -3162,9 +3196,6 @@ function setMapMode(mode) {
       delete el.dataset.manualDisplay;
     }
   }
-  // Analyze & fill writes into the manual form, so it belongs with it.
-  const analyzeRow = document.getElementById('autoAnalyzeRow');
-  if (analyzeRow) analyzeRow.style.display = isAuto ? 'none' : '';
   // The AI teacher lives in Automatic mode alongside the rule-based analyzer.
   // Everything AI, hidden together. Moving the scan button out of the box left
   // it visible in Manual mode, where it means nothing.
@@ -3195,7 +3226,6 @@ function setMapMode(mode) {
   // when it had nothing to report.
   const approvedRows = document.querySelectorAll('#aiApprovedList .ai-approved-row').length;
   if (approved) approved.style.display = (isAuto && approvedRows) ? 'block' : 'none';
-  if (!isAuto) hideAutoReview();
 }
 
 document.getElementById('aiSettingsBtn')?.addEventListener('click', () => {
@@ -3210,242 +3240,6 @@ $modeManualBtn?.addEventListener('click', () => setMapMode('manual'));
 $modeAutoBtn?.addEventListener('click', () => setMapMode('auto'));
 
 
-function hideAutoReview() {
-  autoResult = null;
-  if ($autoReviewSection) $autoReviewSection.style.display = 'none';
-  if ($autoReviewList) $autoReviewList.innerHTML = '';
-}
-
-document.getElementById('autoDismissBtn')?.addEventListener('click', hideAutoReview);
-
-// ── The analyzer bridge ─────────────────────────────────────────────────────
-// Pass 1 (isolated world): selector-intel.js walks the container's subtree,
-// proposes candidates, and stamps the matched elements with data-u1-idx.
-// Pass 2 (MAIN world): if the opt-in recorder is installed it reports the REAL
-// listener types per stamped element; without it we keep the heuristic silently.
-// Pass 3: clear the stamps so the page is left exactly as it was.
-async function autoAnalyze(type, primary) {
-  const tab = await getTab();
-  if (!isInjectable(tab)) return { err: 'Cannot run on this page.' };
-  try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
-    const res = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (t, p) => window.__u1SelectorIntel.analyze(t, p),
-      args: [type, primary],
-    });
-    const out = (res && res[0] && res[0].result) || { err: 'No result' };
-
-    if (out && out.stampCount) {
-      let verified = null;
-      try {
-        const vr = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          world: 'MAIN',
-          func: () => {
-            if (!window.__u1EventMap) return null; // recorder not installed
-            const map = {};
-            document.querySelectorAll('[data-u1-idx]').forEach(el => {
-              const types = window.__u1EventMap.types(el);
-              if (types.length) map[el.getAttribute('data-u1-idx')] = types;
-            });
-            return map;
-          },
-        });
-        verified = (vr && vr[0]) ? vr[0].result : null;
-      } catch { verified = null; }
-      out.verified = verified;   // null = recorder absent → heuristic stands
-    }
-
-    // Always clear the stamps, even if the MAIN pass threw.
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => window.__u1SelectorIntel && window.__u1SelectorIntel.clearStamps(),
-      });
-    } catch {}
-    return out;
-  } catch (err) { return { err: err.message }; }
-}
-
-document.getElementById('autoAnalyzeBtn')?.addEventListener('click', async () => {
-  const status = document.getElementById('applyStatus');
-  const type = $componentType.value;
-  const primary = $primarySelectorInput.value.trim();
-  if (!type) { showNotice(status, 'Pick a component type first.', 'error', 3000); return; }
-  if (!primary) { showNotice(status, 'Enter the parent element’s selector first.', 'error', 3000); return; }
-
-  const btn = document.getElementById('autoAnalyzeBtn');
-  const original = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Analyzing…';
-  const res = await autoAnalyze(type, primary);
-  btn.disabled = false; btn.textContent = original;
-
-  if (!res || res.err) { showNotice(status, res?.err || 'Analysis failed.', 'error', 4000); return; }
-  if (res.error) { showNotice(status, 'That selector is not valid CSS: ' + res.error, 'error', 4000); return; }
-  if (res.notFound) { showNotice(status, 'Nothing on this page matches that selector.', 'error', 4000); return; }
-
-  // Step 0 — does this even look like the component that was chosen? The
-  // listbox-vs-menu distinction in particular is easy to get wrong, and U1
-  // throws "Submenu must have a trigger element" when it is.
-  let typeNote = null;
-  try {
-    const profile = await analyzeElement(primary);
-    const rec = recommendComponent(profile);
-    if (rec && rec.type !== type) {
-      typeNote = `This looks more like a “${rec.type}” than a “${type}”. ` +
-        (rec.notes && rec.notes[0] ? rec.notes[0].msg : '') +
-        ' Change the Component Type above if you agree — the suggestions below assume ' + type + '.';
-    }
-  } catch {}
-
-  autoResult = res;
-  renderAutoReview(type, res, typeNote);
-});
-
-// One review row per field. A field with several plausible readings becomes a
-// question with radio options instead of a pre-ticked answer.
-function renderAutoReview(type, res, typeNote) {
-  if (!$autoReviewList || !$autoReviewSection) return;
-  const schema = COMPONENT_SCHEMAS[type] || {};
-  const desc = schema.desc || {};
-  const req = schema.req || [];
-  const fields = res.fields || {};
-  const keys = Object.keys(fields);
-
-  let html = '';
-  if (typeNote) html += `<div class="advisor-note warn" style="margin-bottom:10px;">⚠️ ${escapeHtml(typeNote)}</div>`;
-
-  if (!res.hasRules) {
-    html += `<div class="advisor-note warn">⚠️ There is no auto-fill recipe for “${escapeHtml(type)}” yet — fill the selectors by hand below.</div>`;
-  } else if (!keys.length) {
-    html += `<div class="advisor-note warn">⚠️ Nothing could be worked out inside that element. Check the parent selector points at the whole component, then fill the selectors by hand.</div>`;
-  }
-
-  for (const f of keys) {
-    const list = fields[f];
-    const ask = list.length > 1;
-    const question = AUTO_QUESTIONS[type + '.' + f] || desc[f] || `Selector for “${f}”`;
-    const isReq = req.includes(f);
-
-    const cands = list.map((c, i) => {
-      // A boolean option (e.g. menu's `menubar`) has no selector to grade or
-      // highlight — show the value it should be set to and why.
-      if (typeof c.bool === 'boolean') {
-        return `
-          <div class="auto-cand">
-            <input type="checkbox" data-field="${escapeHtml(f)}" data-cand="${i}" checked>
-            <code>${escapeHtml(f)} = ${c.bool ? 'on' : 'off'}</code>
-          </div>
-          <div class="auto-why">${escapeHtml(c.why || '')}</div>`;
-      }
-      const s = strengthOf(c.selector, { count: c.count, unique: SINGULAR_FIELDS.has(f) });
-      const sig = signalLabel(c, res.verified);
-      // `optIn` candidates are guesses the markup cannot settle (does hovering
-      // open this menu?), so they start UNticked — a wrong guess there rewires
-      // the widget to the wrong event.
-      const control = ask
-        ? `<input type="radio" name="auto-${escapeHtml(f)}" data-field="${escapeHtml(f)}" data-cand="${i}" ${i === 0 && !c.optIn ? 'checked' : ''}>`
-        : `<input type="checkbox" data-field="${escapeHtml(f)}" data-cand="${i}" ${c.optIn ? '' : 'checked'}>`;
-      return `
-        <div class="auto-cand">
-          ${control}
-          <code>${escapeHtml(c.selector)}</code>
-          <span class="auto-count">${c.count} match${c.count === 1 ? '' : 'es'}</span>
-          <span class="sel-strength" data-level="${s.level}" style="position:static;transform:none;">${escapeHtml(s.label)}</span>
-          <button class="btn-ghost auto-eye" data-eye="${escapeHtml(c.selector)}" title="Show on the page">👁</button>
-        </div>
-        <div class="auto-why">${escapeHtml(c.why || '')}${sig}</div>`;
-    }).join('');
-
-    html += `
-      <div class="auto-row ${ask ? 'ask' : ''}" data-row="${escapeHtml(f)}">
-        <div class="auto-q">
-          <span>${ask ? '❓ ' : ''}${escapeHtml(question)}${isReq ? ' <span class="req-star">*</span>' : ''}</span>
-          <span class="auto-field">${escapeHtml(f)}</span>
-        </div>
-        ${cands}
-        ${ask ? `<div class="auto-why">Two readings fit — pick the one that matches what you see on the page (use 👁).</div>` : ''}
-      </div>`;
-  }
-
-  // Fields with no suggestion at all: say so, rather than leaving them silent.
-  const missing = (schema.fields || []).filter(f => !fields[f] && req.includes(f));
-  for (const f of missing) {
-    html += `
-      <div class="auto-row skipped">
-        <div class="auto-q"><span>${escapeHtml(AUTO_QUESTIONS[type + '.' + f] || f)}</span><span class="auto-field">${escapeHtml(f)}</span></div>
-        <div class="auto-why">Could not be worked out automatically — this one is required, so fill it in by hand below.</div>
-      </div>`;
-  }
-
-  $autoReviewList.innerHTML = html;
-  $autoReviewSection.style.display = keys.length || typeNote || !res.hasRules ? 'block' : 'none';
-  $autoReviewSection.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-}
-
-// "has a click event" badge: `verified` only when the opt-in recorder saw the
-// real addEventListener call; otherwise the heuristic signals, labelled as such.
-function signalLabel(c, verified) {
-  if (verified) {
-    const types = [];
-    for (const i of (c.idxs || [])) {
-      const t = verified[String(i)];
-      if (t) for (const x of t) if (!types.includes(x)) types.push(x);
-    }
-    const clickish = types.filter(t => /^(click|mousedown|mouseup|mouseenter|mouseover|keydown|touchstart|pointerdown)$/.test(t));
-    if (clickish.length) return `<span class="auto-sig verified" title="Recorded as the page loaded">✓ real handler: ${escapeHtml(clickish.join(', '))}</span>`;
-  }
-  const sigs = (c.signals || []).filter(Boolean);
-  if (!sigs.length) return '';
-  const first = sigs[0].split(' ').slice(0, 3).join(' ');
-  return `<span class="auto-sig" title="Worked out from the markup, not measured">looks clickable: ${escapeHtml(first)}</span>`;
-}
-
-// Highlight a proposed selector on the page (reuses the inspect overlay).
-$autoReviewList?.addEventListener('click', async (e) => {
-  const eye = e.target.closest('.auto-eye');
-  if (!eye) return;
-  const sel = eye.dataset.eye;
-  const on = eye.dataset.on !== '1';
-  // Toggle: a second click clears the overlay.
-  $autoReviewList.querySelectorAll('.auto-eye').forEach(b => { b.dataset.on = '0'; });
-  eye.dataset.on = on ? '1' : '0';
-  await highlightMatch(sel, 0, on);
-  const result = await testSelector(sel);
-  renderSelectorTest(result, sel);
-});
-
-// Write the ticked suggestions into the real form inputs, then run the existing
-// Generate path so validation + preview behave exactly as in Manual mode.
-document.getElementById('autoApplyBtn')?.addEventListener('click', async () => {
-  const status = document.getElementById('applyStatus');
-  if (!autoResult || !autoResult.fields) { hideAutoReview(); return; }
-
-  let filled = 0;
-  $autoReviewList.querySelectorAll('input[data-field]').forEach(ctrl => {
-    if (!ctrl.checked) return;
-    const f = ctrl.dataset.field;
-    const cand = (autoResult.fields[f] || [])[parseInt(ctrl.dataset.cand, 10)];
-    if (!cand) return;
-    const input = $subSelArea.querySelector(`input[data-field="${CSS.escape(f)}"]`) ||
-                  $subSelArea.querySelector(`[data-root="${CSS.escape(f)}"]`);
-    if (!input) return;
-    if (typeof cand.bool === 'boolean') {
-      if (input.type !== 'checkbox') return;
-      input.checked = cand.bool;
-    } else {
-      input.value = cand.selector;
-    }
-    filled++;
-  });
-
-  await highlightMatch('', 0, false);
-  hideAutoReview();
-  await refreshStrength();
-  showNotice(status, filled ? `Filled ${filled} selector${filled === 1 ? '' : 's'} — check them, then Generate.` : 'Nothing was ticked, so nothing changed.', filled ? 'success' : 'error', 4000);
-  if (filled) document.getElementById('generateBtn')?.click();
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  AI MODE — two stages, and the specialist decides at both.
@@ -3714,7 +3508,8 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
 
     aiCost += U1AI.estimateCost(part.usage) || 0;
     const mergedContext = { candidates: collected.candidates };
-    const out = { components: part.components || [], usage: part.usage, skipped: collected.skipped };
+    const out = { components: part.components || [], usage: part.usage,
+                  skipped: collected.skipped, scope: scopeSel || '' };
     if (!out.components.length) {
       showNotice($aiStatus, scopeSel
         ? `Nothing worth mapping inside ${scopeSel}.`
@@ -3863,14 +3658,17 @@ function renderAiComponents(found) {
   document.getElementById('aiSummary').innerHTML =
     `<div class="ai-meta">${comps.length} component${comps.length === 1 ? '' : 's'} found` +
     ` · ${escapeHtml(found.model || '')} · ~$${aiCost.toFixed(3)} this session</div>` +
-    // The whole page is covered now, so the only thing still genuinely out of
-    // reach is markup that does not exist yet. Say that, and nothing more —
-    // how many screenfuls it took to get here is not the specialist's problem.
-    `<div class="ai-hint-line">The whole page was scanned. A dialog, dropdown or datepicker
-      that is closed does not exist in the page yet — open one and use <strong>⏱ Scan in 5s</strong>.` +
+    // Folded away. It is the same paragraph on every scan, it is read once, and
+    // sitting above the results it is only something to scroll past. How many
+    // rows were left out earns a place on the summary; the explanation does not.
+    `<details class="ai-hint-fold"><summary>What wasn't scanned` +
+    (found.skipped ? ` · ${found.skipped} left out` : '') + `</summary>` +
+    `<div class="ai-hint-line">Only ${found.scope ? `<code>${escapeHtml(found.scope)}</code>` : 'what was on screen'}` +
+    ` was scanned. A dialog, dropdown or datepicker that is closed does not exist in the page
+      yet — open one and use <strong>⏱ Scan in 5s</strong>, or name it in the container box.` +
     (found.skipped ? ` <strong>${found.skipped}</strong> already mapped or skipped on this site were left out —
       <button class="btn-ghost btn-xs" id="aiResetDismissed">show them again</button>.` : '') +
-    `</div>`;
+    `</div></details>`;
 
   const typeOptions = (sel) => U1AI.U1_TYPES
     .map(t => `<option value="${t}"${t === sel ? ' selected' : ''}>${t}</option>`).join('');
@@ -4182,6 +3980,13 @@ async function alreadyHandled() {
 }
 
 // Scan just one part of the page, and reset the skipped list.
+// This button was in the markup from the start and wired to nothing — pressing
+// it did exactly nothing, with no feedback to say so.
+document.getElementById('aiDismissBtn')?.addEventListener('click', () => {
+  resetAiWorkspace();
+  showNotice($aiStatus, 'Cleared.', 'success', 2500);
+});
+
 document.getElementById('aiScopeBtn')?.addEventListener('click', () => {
   document.getElementById('aiDiscoverBtn')?.click();
 });
@@ -5535,7 +5340,6 @@ function resetPicker() {
   if (testBox) { testBox.style.display = 'none'; testBox.innerHTML = ''; }
   const applyStatus = document.getElementById('applyStatus');
   if (applyStatus) applyStatus.style.display = 'none';
-  hideAutoReview();
   const primaryBadge = $primarySelectorInput.parentElement?.querySelector('.sel-strength');
   if (primaryBadge) paintStrength(primaryBadge, { level: 'empty', label: '', reasons: [] });
   $primarySelectorInput.focus();
@@ -6975,7 +6779,7 @@ async function buildDeployableCode(list, hostname) {
     const calls = grids.map(g =>
       header(g) + `\nwindow.__u1InstallGridFromMapping(${JSON.stringify(g.primary)}, ${JSON.stringify(g.config, null, 2)});`
     ).concat(clickables.map(c =>
-      header(c) + `\nwindow.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '' }, null, 2)});`
+      header(c) + `\nwindow.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' }, null, 2)});`
     )).join('\n\n');
     parts.push(
       `/* ---- 3. Accessible grid / datepicker ----\n` +
@@ -7999,8 +7803,43 @@ async function signOut() {
   await U1Auth.logout();
   await init();
 }
-document.getElementById('gateSignOutBlocked').addEventListener('click', signOut);
-document.getElementById('signOutBtn').addEventListener('click', signOut);
+
+// Ten seconds, counted down, cancellable. Sign out is one click from every tab
+// and sits right beside the email address, so it gets pressed by accident — and
+// the cost is re-authenticating from the middle of a piece of work.
+let signOutTimer = null;
+function stopSignOutCountdown() {
+  if (signOutTimer) { clearInterval(signOutTimer); signOutTimer = null; }
+  document.getElementById('signOutDialog')?.close();
+}
+function askSignOut() {
+  const dlg = document.getElementById('signOutDialog');
+  const out = document.getElementById('signOutCountdown');
+  // No <dialog> support: do what was asked rather than trapping them signed in.
+  if (!dlg || typeof dlg.showModal !== 'function') { signOut(); return; }
+  let left = 10;
+  const tick = () => {
+    out.textContent = `Signing out in ${left} second${left === 1 ? '' : 's'}.`;
+    if (left-- <= 0) { stopSignOutCountdown(); signOut(); }
+  };
+  tick();
+  signOutTimer = setInterval(tick, 1000);
+  if (!dlg.open) dlg.showModal();
+  document.getElementById('signOutCancelBtn')?.focus();
+}
+document.getElementById('signOutCancelBtn')?.addEventListener('click', stopSignOutCountdown);
+document.getElementById('signOutNowBtn')?.addEventListener('click', () => {
+  stopSignOutCountdown();
+  signOut();
+});
+// Escape closes a <dialog> natively. The interval has to die with it, or the
+// countdown runs on and signs out from behind a dialog nobody can see.
+document.getElementById('signOutDialog')?.addEventListener('close', () => {
+  if (signOutTimer) { clearInterval(signOutTimer); signOutTimer = null; }
+});
+
+document.getElementById('gateSignOutBlocked').addEventListener('click', askSignOut);
+document.getElementById('signOutBtn').addEventListener('click', askSignOut);
 
 // The session closes after a spell of inactivity, and the server only learns
 // the worker is still here when the panel calls it. Mapping fixes on one page

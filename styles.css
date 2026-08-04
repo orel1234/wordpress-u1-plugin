@@ -1801,6 +1801,51 @@ button {
 .mapping-item .test-btn:hover { color: var(--u1-primary); border-color: var(--u1-primary); }
 .mapping-item .test-btn[disabled] { opacity: 0.3; cursor: not-allowed; }
 
+/* "What is this element?" — reference material, so it opens on request from the
+   (i) beside the type picker rather than sitting under it permanently. */
+.type-info-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; margin-inline-start: 6px; padding: 0;
+  border: 1px solid var(--u1-border); border-radius: 50%;
+  background: transparent; color: var(--u1-text-muted);
+  font-size: 10px; font-weight: 700; font-style: italic; line-height: 1;
+  cursor: pointer; vertical-align: middle;
+}
+.type-info-btn:hover { color: var(--u1-primary); border-color: var(--u1-primary); }
+.type-info-btn:focus-visible { outline: 2px solid var(--u1-primary); outline-offset: 2px; }
+
+.type-guide-pop {
+  position: relative;
+  margin-top: 6px;
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  background: var(--u1-bg-raised, rgba(0, 0, 0, 0.45));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  padding: 10px 12px;
+  z-index: 5;
+}
+/* The little arrow pointing back at the (i) it came from. */
+.type-guide-pop::before {
+  content: ''; position: absolute; top: -5px; inset-inline-start: 14px;
+  width: 8px; height: 8px; transform: rotate(45deg);
+  background: var(--u1-bg-raised, rgba(0, 0, 0, 0.45));
+  border-left: 1px solid var(--u1-border); border-top: 1px solid var(--u1-border);
+}
+
+/* The same paragraph on every scan. Folded, so the results start at the top. */
+.ai-hint-fold { margin-top: 6px; }
+.ai-hint-fold > summary {
+  cursor: pointer; font-size: 11px; color: var(--u1-text-muted);
+  list-style: none; padding: 2px 0;
+}
+.ai-hint-fold > summary::-webkit-details-marker { display: none; }
+.ai-hint-fold > summary::before { content: '▸ '; }
+.ai-hint-fold[open] > summary::before { content: '▾ '; }
+.ai-hint-fold > summary:hover { color: var(--u1-text); }
+
+/* Ends a piece of work, so it looks like a control rather than a footnote. */
+.picker-reset { margin-inline-start: auto; }
+
 /* Turning a client's protection off is not a routine control, so it does not
    look like one: bordered, warm-toned, and explained in place. */
 .csp-toggle {
@@ -2915,6 +2960,29 @@ dialog.ai-box {
   overflow: auto;
 }
 dialog.ai-box::backdrop { background: rgba(0, 0, 0, 0.66); }
+
+/* Confirmation dialog. Shares the ai-box chrome so the panel has one modal
+   look, not two. */
+dialog.u1-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(92vw, 400px);
+  padding: 16px 18px;
+  border: 1px solid var(--u1-border);
+  border-radius: 10px;
+  background: var(--u1-bg-base, #0A0A0F);
+  background-image: linear-gradient(var(--u1-surface-2), var(--u1-surface-2));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+  color: inherit;
+}
+dialog.u1-dialog::backdrop { background: rgba(0, 0, 0, 0.66); }
+dialog.u1-dialog .dialog-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+dialog.u1-dialog .dialog-sub {
+  font-size: 12px; color: var(--u1-text-muted); line-height: 1.55; margin: 0 0 10px;
+}
+dialog.u1-dialog #signOutCountdown { color: var(--u1-text); font-weight: 600; }
+dialog.u1-dialog .btn-row { margin-top: 4px; gap: 8px; }
 dialog.ai-box .ai-head {
   display: flex;
   align-items: center;

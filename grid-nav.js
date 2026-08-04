@@ -343,10 +343,28 @@ window.__u1MakeClickable = function (opts) {
   if (!sel) return { ok: false, err: 'selector is required' };
   const role = (opts.role === 'link') ? 'link' : 'button';
   const label = opts.label || '';
+  // `activates` splits WHAT THE USER REACHES from WHAT ACTUALLY FIRES. The
+  // common case is a styled wrapper with the real <input> hidden inside it: the
+  // wrapper is what you can see and tab to, the input is what has to be clicked.
+  // Without this the two cannot be reconciled — decorating the input leaves
+  // nothing visible to focus, and decorating the wrapper toggles nothing.
+  const activates = opts.activates || '';
+
+  // Resolve inside the marked element FIRST. On a list of fifty rows each
+  // wrapper must fire its own input; a document-wide lookup would send every
+  // row's Enter to the first input on the page. The document fallback is for
+  // the case where the target genuinely lives elsewhere.
+  const targetOf = (el) => {
+    if (!activates) return el;
+    let t = null;
+    try { t = el.querySelector(activates) || document.querySelector(activates); } catch (e) { return el; }
+    return t || el;
+  };
 
   const fire = (el) => {
-    if (typeof el.click === 'function') { try { el.click(); return; } catch (e) {} }
-    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    const t = targetOf(el);
+    if (typeof t.click === 'function') { try { t.click(); return; } catch (e) {} }
+    t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
   };
 
   const wire = () => {
@@ -356,9 +374,12 @@ window.__u1MakeClickable = function (opts) {
     els.forEach(el => {
       if (el.__u1Click) return;
       // A native control (or an <a href>) is already keyboard-operable — leave it.
+      // A native control is already keyboard-operable — leave it. But when an
+      // `activates` target is named the marked element is by definition a
+      // stand-in for something else, so this bail-out must not apply to it.
       const native = /^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(el.tagName) ||
                      (el.tagName === 'A' && el.hasAttribute('href'));
-      if (native) return;
+      if (native && !activates) return;
       el.__u1Click = true;
       if (!el.hasAttribute('role')) el.setAttribute('role', role);
       if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');

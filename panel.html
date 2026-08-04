@@ -76,6 +76,22 @@
     </div>
   </div>
 
+  <!-- Sign out sits one click from every tab, beside the email — which is also
+       one slip away from the middle of a mapping. The countdown turns it into
+       something you can walk away from rather than something you must catch. -->
+  <dialog id="signOutDialog" class="u1-dialog">
+    <div class="dialog-title">Signing out</div>
+    <p class="dialog-sub">
+      Your mappings stay on this computer — signing out removes none of them.
+      You will need to sign in again to carry on working.
+    </p>
+    <p class="dialog-sub" id="signOutCountdown" aria-live="polite"></p>
+    <div class="btn-row">
+      <button class="btn-outline" id="signOutCancelBtn">Stay signed in</button>
+      <button class="btn-primary" id="signOutNowBtn">Sign out now</button>
+    </div>
+  </dialog>
+
   <div class="tabs">
     <button class="tab-btn active" data-tab="setup">Setup</button>
     <button class="tab-btn" data-tab="config">Config</button>
@@ -433,7 +449,11 @@
          whole block is hidden rather than competing for attention. -->
     <div id="manualOnly">
     <div class="field-group">
-      <label for="componentType">Component Type</label>
+      <label for="componentType">Component Type
+        <button type="button" class="type-info-btn" id="typeGuideBtn"
+                aria-expanded="false" aria-controls="typeGuide"
+                title="What is this element?">i</button>
+      </label>
       <select id="componentType">
         <option value="">— Select type —</option>
         <option value="button">button</option>
@@ -461,7 +481,8 @@
       </select>
     </div>
 
-    <div id="typeGuide" class="type-guide" style="display:none;"></div>
+    <div id="typeGuide" class="type-guide type-guide-pop" role="dialog"
+         aria-label="What this component type is" style="display:none;"></div>
 
     <div class="field-group">
       <label for="primarySelectorInput" id="primaryLabel">CSS Selector</label>
@@ -475,34 +496,16 @@
       <div class="input-hint input-hint-primary" id="primaryHint" style="display:none;"></div>
     </div>
 
-    <!-- The rule-based analyzer lives on the Manual form's own button now, and
-         the event recorder moved into the ⚙ dialog. A folded box holding a
-         second route to the same result was most of what made this tab feel
-         crowded, and it rendered as a bare "Details" accordion. -->
-    <div id="autoAnalyzeRow" style="display:none;">
-      <button class="btn-outline btn-sm" id="autoAnalyzeBtn">✨ Analyze &amp; fill</button>
-    </div>
-
     <div id="selectorTestResult" class="selector-test-result" style="display:none;"></div>
 
 
     <div class="btn-row right" style="gap:8px;">
-      <button class="btn-ghost btn-sm" id="resetPickerBtn" title="Clear the form to start a new element">↺ Reset — new element</button>
+      <button class="btn-outline btn-sm picker-reset" id="resetPickerBtn"
+              title="Clear the form and start on another element">↺ Start another element</button>
     </div>
 
     <div class="advisor-box" id="advisorBox" style="display:none;"></div>
     </div><!-- /#manualOnly -->
-  </div>
-
-  <!-- Auto-fill review: one question per selector, nothing is written until the
-       specialist confirms. Populated by renderAutoReview() in panel.js. -->
-  <div class="section" id="autoReviewSection" style="display:none;">
-    <div class="section-title">Confirm the suggestions<span class="dot">.</span></div>
-    <div id="autoReviewList"></div>
-    <div class="btn-row" style="margin-top:14px; gap:8px;">
-      <button class="btn-primary btn-sm" id="autoApplyBtn">Fill the ticked selectors</button>
-      <button class="btn-ghost btn-sm" id="autoDismissBtn">Dismiss</button>
-    </div>
   </div>
 
   <!-- Sub-selector inputs (dynamically populated by panel.js) -->
