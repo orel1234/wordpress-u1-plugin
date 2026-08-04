@@ -1801,6 +1801,14 @@ button {
 .mapping-item .test-btn:hover { color: var(--u1-primary); border-color: var(--u1-primary); }
 .mapping-item .test-btn[disabled] { opacity: 0.3; cursor: not-allowed; }
 
+/* One row of the bulk approval screen. Reuses the approved-row look so the
+   before and after of an approval read as the same object. */
+.ai-bulk-row { display: flex; align-items: flex-start; gap: 8px; }
+.ai-bulk-row .ai-bulk-body { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-bulk-row .ai-bulk-body .ai-approved-why,
+.ai-bulk-row .ai-bulk-body .ai-approved-code { flex-basis: 100%; }
+.ai-bulk-row .ai-bulk-tick { margin-top: 3px; flex: none; }
+
 /* Two scans, side by side — one asks what is wrong with the page's own markup,
    the other whether the fixes already made still work. Equal weight, so neither
    reads as the afterthought. */

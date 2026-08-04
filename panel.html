@@ -371,9 +371,23 @@
         <div id="aiCompTrack"></div>
       </div>
       <div class="ai-found-actions">
+        <button class="btn-primary" id="aiMapAllBtn">✨ Make all of these accessible</button>
+        <button class="btn-outline" id="aiMapAllStopBtn" style="display:none;">■ Stop</button>
         <button class="btn-ghost btn-sm" id="aiDismissBtn">Clear</button>
       </div>
       <div class="map-mode-hint" id="aiMapStatus" style="margin:4px 0 0;"></div>
+    </div>
+
+    <!-- One approval screen for the whole batch. Everything on it is named and
+         previewed, and nothing reaches the client's site until this is pressed. -->
+    <div class="ai-results" id="aiBulkReview" style="display:none;">
+      <div class="ai-summary" id="aiBulkSummary"></div>
+      <div id="aiBulkList"></div>
+      <div class="btn-row">
+        <button class="btn-primary" id="aiBulkApproveBtn">✓ Approve &amp; apply all</button>
+        <button class="btn-ghost btn-sm" id="aiBulkBackBtn">↩ Review them one at a time</button>
+      </div>
+      <div class="notice" id="aiBulkStatus"></div>
     </div>
 
     <!-- Stage 2 result: the same mapping form as Manual mode, pre-filled, shown

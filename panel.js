@@ -4322,50 +4322,15 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   showMapBusy(row.label, 1, 1);
 
   try {
-    const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
-    if (!markup || markup.error || markup.notFound) {
-      clearMapBusy();
-      // Almost always the same cause: the scan was taken on one section and the
-      // page has since moved on — another tab, a closed dialog, a re-render.
-      // Saying "matches nothing" invites a hunt for a typo in a selector that
-      // was correct when it was written.
-      track.insertAdjacentHTML('beforeend', aiMapCardError(row, markup?.error ||
-        `${row.sel} is not on the page right now. Scan results go stale as soon as you switch tab or section, or close what you had open — go back to that view, or scan this section again.`));
+    const prepared = await prepareOne(row, tab);
+    clearMapBusy();
+    if (prepared.err) {
+      track.insertAdjacentHTML('beforeend', aiMapCardError(row, prepared.err));
       showSlide(0);
       return;
     }
-
-    const schema = COMPONENT_SCHEMAS[row.type];
-    const out = await U1AI.mapComponent({
-      u1Type: row.type,
-      containerSel: row.sel,
-      markup,
-      instruction: row.trigger
-        ? `The specialist identified "${row.trigger}" as the element that opens this ${row.type}. Use it for the trigger field and do not look for another.`
-        : undefined,
-      fields: schema.fields || [],
-      fieldDocs: schema.desc || {},
-      options: Object.keys(schema.rootFields || {}),
-    });
-    aiCost += U1AI.estimateCost(out.usage) || 0;
-    clearMapBusy();
-    if (out.err) { track.insertAdjacentHTML('beforeend', aiMapCardError(row, out.err)); showSlide(0); return; }
-
-    // The specialist already told us which element opens this, and that is
-    // better evidence than a guess from markup — so it wins over whatever the
-    // model put in `trigger`.
-    if (row.trigger) {
-      out.fields = (out.fields || []).filter(f => f.key !== 'trigger');
-      out.fields.unshift({ key: 'trigger', value: row.trigger,
-                           why: 'The element you started from — you identified it as what opens this.' });
-    }
-
-    const idx = aiMapped.length;
-    aiMapped.push({ row, result: out, markup });
-    track.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
-    fillAiMapCard(idx, row, out);
     showSlide(slideIndex('aiSlide'));
-    document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${idx}"]`)
+    document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${prepared.idx}"]`)
       ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   } catch (err) {
     clearMapBusy();
@@ -4374,6 +4339,332 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
     btn.disabled = false;
     btn.textContent = original;
     comp.classList.remove('is-working');
+  }
+});
+
+/**
+ * Turns one discovery row into a mapping card: reads the element's markup, asks
+ * the model to fill the component's fields, and renders the card.
+ *
+ * This is the paid step — one network round trip per component — and it is
+ * shared by the per-card button and the bulk run so both spend the same way and
+ * produce identical cards. The card must land in the DOM: aiCardTemplate reads
+ * its values back out of #aiMapForm<idx>, and every per-card affordance (edit a
+ * selector, Ask AI, Open in builder) works off it.
+ *
+ * Returns { idx } or { err }; it never throws for an expected failure, so a
+ * bulk loop can record one bad selector and keep going.
+ */
+async function prepareOne(row, tab) {
+  const track = document.getElementById('aiSlideTrack');
+  const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
+  if (!markup || markup.error || markup.notFound) {
+    // Almost always the same cause: the scan was taken on one section and the
+    // page has since moved on — another tab, a closed dialog, a re-render.
+    // Saying "matches nothing" invites a hunt for a typo in a selector that
+    // was correct when it was written.
+    return { err: markup?.error ||
+      `${row.sel} is not on the page right now. Scan results go stale as soon as you switch tab or section, or close what you had open — go back to that view, or scan this section again.` };
+  }
+
+  const schema = COMPONENT_SCHEMAS[row.type];
+  const out = await U1AI.mapComponent({
+    u1Type: row.type,
+    containerSel: row.sel,
+    markup,
+    instruction: row.trigger
+      ? `The specialist identified "${row.trigger}" as the element that opens this ${row.type}. Use it for the trigger field and do not look for another.`
+      : undefined,
+    fields: schema.fields || [],
+    fieldDocs: schema.desc || {},
+    options: Object.keys(schema.rootFields || {}),
+  });
+  aiCost += U1AI.estimateCost(out.usage) || 0;
+  if (out.err) return { err: out.err };
+
+  // The specialist already told us which element opens this, and that is
+  // better evidence than a guess from markup — so it wins over whatever the
+  // model put in `trigger`.
+  if (row.trigger) {
+    out.fields = (out.fields || []).filter(f => f.key !== 'trigger');
+    out.fields.unshift({ key: 'trigger', value: row.trigger,
+                         why: 'The element you started from — you identified it as what opens this.' });
+  }
+
+  const idx = aiMapped.length;
+  aiMapped.push({ row, result: out, markup });
+  track.insertAdjacentHTML('beforeend', renderAiMapCard(idx, row, out, markup.recorderActive));
+  fillAiMapCard(idx, row, out);
+  return { idx };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Make all of these accessible
+//
+//  Prepare every found component, then ONE approval screen, then one press that
+//  saves and applies the lot. The per-card path is untouched and both coexist —
+//  this is not the old global tick counter, which was removed because it counted
+//  selections across a list while showing you a single card. Every row here is
+//  named, previewed and individually un-tickable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let aiBulk = { running: false, abort: false, failed: [], armed: false };
+
+const chunksOf = (arr, n) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+};
+
+function setBulkStatus(msg, kind = 'info', ms = 0) {
+  showNotice(document.getElementById('aiBulkStatus'), msg, kind, ms);
+}
+
+document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('aiMapAllBtn');
+  const stopBtn = document.getElementById('aiMapAllStopBtn');
+  const status = document.getElementById('aiMapStatus');
+  if (aiBulk.running) return;
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
+    return;
+  }
+
+  const cards = [...document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])')];
+  const rows = [];
+  const blocked = [];
+  for (const comp of cards) {
+    const built = rowFromCompCard(comp);
+    if (built.err) blocked.push({ comp, err: built.err });
+    else rows.push({ comp, row: built.row });
+  }
+  if (!rows.length) {
+    showNotice(status, blocked.length
+      ? `None of these can be prepared automatically — ${blocked.length} still need a selector or a trigger. Handle them one at a time.`
+      : 'Nothing left to prepare.', 'error', 6000);
+    return;
+  }
+
+  // Spend nothing on the first press. One call per component is the whole cost
+  // of this feature, and it should be a number the specialist saw before it was
+  // charged, not one they find on a bill.
+  if (!aiBulk.armed) {
+    aiBulk.armed = true;
+    const per = aiCost > 0 ? aiCost / Math.max(1, aiMapped.length) : 0;
+    const estimate = per ? ` Roughly $${(per * rows.length).toFixed(2)} more, on top of $${aiCost.toFixed(3)} this session.` : '';
+    btn.textContent = `Yes — prepare all ${rows.length}`;
+    showNotice(status,
+      `${rows.length} component${rows.length === 1 ? '' : 's'} means ${rows.length} model call${rows.length === 1 ? '' : 's'}.${estimate} Press again to start.` +
+      (blocked.length ? ` (${blocked.length} will be left for you to do by hand.)` : ''),
+      'warn', 12000);
+    setTimeout(() => {
+      if (!aiBulk.running) { aiBulk.armed = false; btn.textContent = '✨ Make all of these accessible'; }
+    }, 12000);
+    return;
+  }
+
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
+
+  aiBulk = { running: true, abort: false, failed: [], armed: false };
+  btn.disabled = true;
+  stopBtn.style.display = '';
+  document.getElementById('aiMappings').style.display = 'block';
+  document.getElementById('aiResults').style.display = 'none';
+
+  try {
+    for (let i = 0; i < rows.length; i++) {
+      if (aiBulk.abort) break;
+      const { comp, row } = rows[i];
+      btn.textContent = `Preparing ${i + 1} of ${rows.length}…`;
+      showMapBusy(row.label, i + 1, rows.length);
+      comp.classList.add('is-working');
+      try {
+        const prepared = await prepareOne(row, tab);
+        // One dead selector must not cost the other eleven their turn.
+        if (prepared.err) aiBulk.failed.push({ label: row.label, err: prepared.err });
+      } catch (err) {
+        aiBulk.failed.push({ label: row.label, err: err.message });
+      } finally {
+        comp.classList.remove('is-working');
+      }
+    }
+  } finally {
+    clearMapBusy();
+    aiBulk.running = false;
+    btn.disabled = false;
+    btn.textContent = '✨ Make all of these accessible';
+    stopBtn.style.display = 'none';
+    stopBtn.disabled = false;
+    stopBtn.textContent = '■ Stop';
+  }
+
+  renderBulkReview();
+});
+
+document.getElementById('aiMapAllStopBtn')?.addEventListener('click', () => {
+  aiBulk.abort = true;
+  const b = document.getElementById('aiMapAllStopBtn');
+  b.disabled = true;
+  b.textContent = 'Stopping…';
+});
+
+// Everything prepared and not yet approved, as one list to say yes to.
+function renderBulkReview() {
+  const wrap = document.getElementById('aiBulkReview');
+  const list = document.getElementById('aiBulkList');
+  const summary = document.getElementById('aiBulkSummary');
+  if (!wrap || !list) return;
+
+  const pending = aiMapped
+    .map((entry, idx) => ({ entry, idx }))
+    .filter(({ idx }) => !document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${idx}"]`)?.dataset.done);
+
+  if (!pending.length && !aiBulk.failed.length) { wrap.style.display = 'none'; return; }
+
+  document.getElementById('aiMappings').style.display = 'none';
+  wrap.style.display = 'block';
+
+  summary.innerHTML =
+    `<div class="ai-meta">${pending.length} ready to apply` +
+    (aiBulk.failed.length ? ` · ${aiBulk.failed.length} could not be prepared` : '') +
+    ` · ~$${aiCost.toFixed(3)} spent preparing these</div>`;
+
+  const rows = pending.map(({ entry, idx }) => {
+    const conf = ['high', 'medium', 'low'].includes(entry.result.confidence) ? entry.result.confidence : 'medium';
+    // Read the template fresh so the row shows what would actually be applied,
+    // including any edit made in the carousel after this screen was opened.
+    const tpl = aiCardTemplate(idx);
+    return `
+      <div class="ai-approved-row ai-bulk-row" data-bulk-idx="${idx}">
+        <input type="checkbox" class="ai-bulk-tick" checked aria-label="Apply ${escapeHtml(entry.row.label)}">
+        <div class="ai-bulk-body">
+          <span class="ai-approved-label">${escapeHtml(entry.row.label)}</span>
+          <code>u1.fix.${escapeHtml(entry.row.type)}</code>
+          <span class="ai-conf" data-c="${conf}">${conf}</span>
+          <button class="btn-ghost btn-xs" data-bulk-edit="${idx}">Edit</button>
+          <div class="ai-approved-why">${escapeHtml(tpl?.primary || entry.row.sel || '')}</div>
+          ${tpl ? `<details class="ai-approved-code"><summary>Show the code</summary><div class="code-preview">${escapeHtml(tpl.code)}</div></details>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  const fails = aiBulk.failed.map(f => `
+      <div class="ai-approved-row ai-bulk-row">
+        <span class="ai-approved-tick warn">!</span>
+        <div class="ai-bulk-body">
+          <span class="ai-approved-label">${escapeHtml(f.label)}</span>
+          <div class="ai-approved-why">${escapeHtml(f.err)}</div>
+        </div>
+      </div>`).join('');
+
+  list.innerHTML = rows + fails;
+}
+
+document.getElementById('aiBulkBackBtn')?.addEventListener('click', () => {
+  document.getElementById('aiBulkReview').style.display = 'none';
+  document.getElementById('aiMappings').style.display = 'block';
+  showSlide(slideIndex('aiSlide'));
+});
+
+document.getElementById('aiBulkList')?.addEventListener('click', (e) => {
+  const edit = e.target.closest('[data-bulk-edit]');
+  if (!edit) return;
+  const idx = Number(edit.dataset.bulkEdit);
+  document.getElementById('aiBulkReview').style.display = 'none';
+  document.getElementById('aiMappings').style.display = 'block';
+  showSlide(slideIndex('aiSlide'));
+  document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${idx}"]`)
+    ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+});
+
+document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('aiBulkApproveBtn');
+  if (isReadonly()) {
+    setBulkStatus('Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
+    return;
+  }
+  const ticked = [...document.querySelectorAll('#aiBulkList .ai-bulk-row[data-bulk-idx]')]
+    .filter(r => r.querySelector('.ai-bulk-tick')?.checked)
+    .map(r => Number(r.dataset.bulkIdx));
+  const items = ticked.map(i => ({ i, tpl: aiCardTemplate(i) })).filter(x => x.tpl);
+  if (!items.length) { setBulkStatus('Nothing is ticked.', 'error', 4000); return; }
+
+  btn.disabled = true;
+  const original = btn.textContent;
+
+  try {
+    // ── Phase A: save, strictly one at a time ────────────────────────────────
+    // saveMappingEntry reads the list, mutates it and writes it back with no
+    // locking, so running these concurrently would have each write clobber the
+    // others and silently drop mappings. This loop is load-bearing, not style.
+    const saved = [];
+    for (let n = 0; n < items.length; n++) {
+      const it = items[n];
+      btn.textContent = `Saving ${n + 1} of ${items.length}…`;
+      setBulkStatus(`Saving ${n + 1} of ${items.length} — ${it.tpl.primary}`, 'info', 0);
+      try {
+        await saveMappingEntry(it.tpl, { refreshUi: false });
+        saved.push(it);
+      } catch (err) {
+        aiBulk.failed.push({ label: it.tpl.primary, err: err.message });
+      }
+    }
+    loadMappingsList();
+    refreshExportInfo();
+
+    // ── Phase B: apply, in chunks ────────────────────────────────────────────
+    // applyMappingsBatch already takes an array and loops in-page, but each item
+    // polls for up to 4s before concluding no-effect, so one big call would sit
+    // silent for a minute. Five at a time keeps progress visible.
+    const details = [];
+    for (const chunk of chunksOf(saved, 5)) {
+      const from = details.length + 1;
+      const to = details.length + chunk.length;
+      btn.textContent = `Applying ${from}–${to} of ${saved.length}…`;
+      setBulkStatus(`Applying ${from}–${to} of ${saved.length}…`, 'info', 0);
+      const res = await applyMappingsBatch(chunk.map(x => ({
+        type: x.tpl.type, primary: x.tpl.primary, firstArg: x.tpl.firstArg, config: x.tpl.config,
+      })));
+      chunk.forEach((x, j) => details.push({ x, verdict: describeApply(res, x.tpl, j) }));
+      // Saving succeeded even when applying could not run, and the panel
+      // re-applies everything on open — so this is not work to do again.
+      if (!res.ok && res.u1Missing) {
+        setBulkStatus('Saved. U1 is not loaded on this page so nothing was applied — it will apply next time the panel opens on a page that has U1.', 'error', 12000);
+      }
+    }
+
+    // ── Phase C: report into the same approved list the single flow uses ─────
+    const key = storageKey('mappings', currentHostname);
+    const existing = (await U1Store.get([key]))[key] || [];
+    for (const { x, verdict } of details) {
+      const entry = aiMapped[x.i];
+      const clashes = await overlappingMappings(x.tpl.primary, existing);
+      if (clashes.length) {
+        verdict.clashes = clashes;
+        verdict.ok = false;
+        verdict.msg += ` Also mapped by ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} — two on the same elements fight, and the second wins.`;
+      }
+      const card = document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${x.i}"]`);
+      if (card) card.dataset.done = '1';
+      if (entry?.row?.compIndex != null) {
+        const comp = document.querySelector(`#aiCompTrack .ai-comp[data-i="${CSS.escape(entry.row.compIndex)}"]`);
+        if (comp) comp.dataset.done = '1';
+      }
+      addApproved(entry.row, verdict, x.tpl.code);
+    }
+
+    document.getElementById('aiBulkReview').style.display = 'none';
+    const bad = details.filter(d => !d.verdict.ok).length;
+    showNotice(document.getElementById('aiMapStatus'),
+      `${details.length} mapping${details.length === 1 ? '' : 's'} saved and applied` +
+      (bad ? `, ${bad} with something to look at — see the list below.` : '.'),
+      bad ? 'error' : 'success', 9000);
+  } catch (err) {
+    setBulkStatus('Failed: ' + err.message, 'error', 8000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 });
 
