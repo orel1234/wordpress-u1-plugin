@@ -3472,6 +3472,50 @@ const $aiKeyInput = document.getElementById('aiKeyInput');
 
 let aiFound = null;     // stage 1 result + the element context it was based on
 let aiMapped = [];      // stage 2 cards, index-aligned with the DOM cards
+// The site the results on screen belong to. Everything in this workspace is
+// selectors from ONE page; carrying it to another site is how one client's
+// mappings end up filed under another client's hostname.
+let aiWorkspaceHost = null;
+
+/**
+ * Throws away every AI result on screen and in memory.
+ *
+ * Called whenever the panel changes site. The panel outlives the tab: switch
+ * from one client to the next and the previous scan stayed on screen, still
+ * actionable — and "Make all of these accessible" would have saved a whole
+ * page of one client's selectors into the other client's mappings file, then
+ * auto-applied them there on every panel open.
+ */
+/**
+ * True when the results on screen were scanned on the site now being looked at.
+ *
+ * The last line of defence before anything is written. A stale workspace is not
+ * a cosmetic problem: these selectors would be saved under whatever hostname is
+ * current, which is a different client's file.
+ */
+function aiWorkspaceMatchesSite() {
+  return !aiWorkspaceHost || aiWorkspaceHost === currentHostname;
+}
+
+function warnWrongSite(statusEl) {
+  showNotice(statusEl,
+    `These results were scanned on ${aiWorkspaceHost}, and you are now on ${currentHostname}. ` +
+    `Saving them here would file one site's components under the other. Scan this page instead.`,
+    'error', 10000);
+  resetAiWorkspace();
+}
+
+function resetAiWorkspace() {
+  aiFound = null;
+  aiMapped = [];
+  aiBulk = { running: false, abort: false, failed: [], armed: false };
+  aiWorkspaceHost = null;
+  const hide = (id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
+  const empty = (id) => { const el = document.getElementById(id); if (el) el.innerHTML = ''; };
+  hide('aiResults'); hide('aiMappings'); hide('aiApproved'); hide('aiBulkReview');
+  empty('aiCompTrack'); empty('aiSlideTrack'); empty('aiApproved');
+  empty('aiBulkList'); empty('aiBulkSummary'); empty('aiSummary');
+}
 let aiCost = 0;         // running spend for this panel session, in USD
 let aiScanAbort = false; // set by the Stop button; read between scan steps
 let aiRowTimer = null;
@@ -3724,6 +3768,10 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // pollutes what the specialist is inspecting and lands in any markup they
     // copy out of DevTools.
     aiFound = { ...out, context };
+    // Stamp the site these selectors came from. onTabChanged clears the
+    // workspace on a switch, but the panel can also be looking at a tab that
+    // changed under it — so the act of saving checks this again.
+    aiWorkspaceHost = currentHostname;
     // Cost is accumulated per part inside the loop above — adding the merged
     // total here as well would report every scan at double what it cost.
     renderAiComponents(aiFound);
@@ -4308,6 +4356,8 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
     return;
   }
 
+  if (!aiWorkspaceMatchesSite()) { warnWrongSite(status); return; }
+
   const comp = btn.closest('.ai-comp');
   const built = rowFromCompCard(comp);
   if (built.err) {
@@ -4439,6 +4489,8 @@ document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
     showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
     return;
   }
+
+  if (!aiWorkspaceMatchesSite()) { warnWrongSite(status); return; }
 
   const cards = [...document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])')];
   const rows = [];
@@ -4594,6 +4646,7 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
     setBulkStatus('Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
     return;
   }
+  if (!aiWorkspaceMatchesSite()) { warnWrongSite(document.getElementById('aiBulkStatus')); return; }
   const ticked = [...document.querySelectorAll('#aiBulkList .ai-bulk-row[data-bulk-idx]')]
     .filter(r => r.querySelector('.ai-bulk-tick')?.checked)
     .map(r => Number(r.dataset.bulkIdx));
@@ -5008,6 +5061,7 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
       return;
     }
+    if (!aiWorkspaceMatchesSite()) { warnWrongSite(status); return; }
     if (!tpl) { showNotice(status, 'Nothing to save — the selector is empty.', 'error', 3500); return; }
 
     save.disabled = true; save.textContent = 'Saving…';
@@ -7770,6 +7824,10 @@ async function onTabChanged(tab) {
   if (hostnameChanged && !(await enforceLicence(currentHostname))) return;
 
   if (hostnameChanged) {
+    // Before anything else. Scan results are selectors from the site you just
+    // left; leaving them on screen invites approving one client's components
+    // into another client's file.
+    resetAiWorkspace();
     await loadConfigForm();
     await refreshConfigSkipList();
     updateConfigPreview();
