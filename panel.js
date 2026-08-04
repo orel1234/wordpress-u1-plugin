@@ -2252,7 +2252,17 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
       if (statusDot) statusDot.className = 'status-dot inactive';
       const notice = document.getElementById('injectNotice');
       if (notice) {
-        notice.textContent = 'The page\'s Content Security Policy blocks loading external scripts. Add the U1 script domain to the site\'s CSP, or ask your developer to embed the U1 links directly in the page HTML.';
+        // The old wording ended "…or ask your developer to embed the U1 links
+        // directly in the page HTML", which does not work: CSP governs every
+        // script load, whether the tag was injected or hand-written into the
+        // page. A developer following that advice loses a day and comes back
+        // still blocked. Both options below are ones that actually pass CSP.
+        notice.textContent =
+          'This page\'s Content-Security-Policy blocks scripts from other domains, so U1 cannot load. ' +
+          'Writing the <script> tag into the page HTML will NOT help — CSP applies either way. ' +
+          'Two things do work: host the U1 files on the site\'s own domain, which its existing ' +
+          'script-src \'self\' already allows and needs no CSP change; or have the site add the U1 ' +
+          'domain to script-src and style-src.';
         notice.style.display = 'block';
       }
     } else {
