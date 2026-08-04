@@ -2621,6 +2621,13 @@ button.u1-readonly-off {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(320%); }
 }
+/* A scan that visits twenty screenfuls knows how far along it is, so it says so
+   rather than sliding forever. The width is set inline by showAiBusy. */
+.ai-busy-bar.determinate > span {
+  animation: none;
+  transform: none;
+  transition: width .3s ease;
+}
 
 .ai-busy-title { font-size: 12px; font-weight: 600; }
 .ai-busy-sub {
@@ -2649,6 +2656,8 @@ button.u1-readonly-off {
 
 @media (prefers-reduced-motion: reduce) {
   .ai-busy-bar > span, .ai-skel { animation: none; }
+  /* The determinate bar still reports progress; it just jumps instead of easing. */
+  .ai-busy-bar.determinate > span { transition: none; }
 }
 
 /* The action that ends stage 1: full width, with Clear kept out of its way.

@@ -3449,11 +3449,21 @@ const $aiBox = document.getElementById('aiBox');
 const $aiResults = document.getElementById('aiResults');
 const $aiStatus = document.getElementById('aiStatus');
 const $aiKeyRow = document.getElementById('aiKeyRow');
+const $aiScanStopBtn = document.getElementById('aiScanStopBtn');
+
+// Stopping is free during the sweep and costs at most the request already in
+// flight during the analysis. Either way the work done so far is kept.
+$aiScanStopBtn?.addEventListener('click', () => {
+  aiScanAbort = true;
+  $aiScanStopBtn.disabled = true;
+  $aiScanStopBtn.textContent = 'Stopping…';
+});
 const $aiKeyInput = document.getElementById('aiKeyInput');
 
 let aiFound = null;     // stage 1 result + the element context it was based on
 let aiMapped = [];      // stage 2 cards, index-aligned with the DOM cards
 let aiCost = 0;         // running spend for this panel session, in USD
+let aiScanAbort = false; // set by the Stop button; read between scan steps
 let aiRowTimer = null;
 let aiCardTimer = null;
 
@@ -3609,113 +3619,75 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     btn.textContent = 'Reading the page…';
     const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
 
-    // The unit of a scan is a PAGE. Chrome's captureVisibleTab can only
-    // photograph what is on screen, so covering a page means scrolling through
-    // it a screenful at a time — but that is plumbing, not something to make
-    // the specialist think about. They asked for this page; they get this page.
-    const passes = scopeSel
-      ? [{ y: null }] // a scoped scan targets one widget, wherever it currently sits
-      : await inPage(tab.id, () => {
-          const vh = window.innerHeight || document.documentElement.clientHeight;
-          const total = Math.max(document.documentElement.scrollHeight, vh);
-          const startY = window.scrollY;
-          // A little overlap so a component sitting on a screen boundary is
-          // whole in at least one pass.
-          const step = Math.max(1, Math.round(vh * 0.88));
-          const ys = [];
-          for (let y = 0; y < total; y += step) ys.push(Math.min(y, total - vh));
-          return { ys: [...new Set(ys)], vh, total, startY };
-        });
-
-    const scrollYs = scopeSel ? [null] : passes.ys;
-    const originalScrollY = scopeSel ? null : passes.startY;
-    if (!scopeSel) {
-      console.log(`[U1] page ${passes.total}px / viewport ${passes.vh}px → ${scrollYs.length} pass(es)`);
-    }
-
     // Drop what this site has already settled. The same page gets scanned again
     // and again to reach things that only exist while open, and re-listing what
     // was skipped or already mapped is how that becomes tedious. Filtering here
     // rather than after the answer also means no tokens are spent on them.
     const handled = await alreadyHandled();
 
-    // One pass per screenful, merged into one page-level answer. Components are
-    // keyed by selector so a card that straddles two passes — or a header that
-    // is on screen for all of them — is reported once, not once per pass.
+    aiScanAbort = false;
+    $aiScanStopBtn.style.display = '';
+
+    // ── Phase A: one continuous scroll, no model calls ────────────────────────
+    //
+    // Chrome's captureVisibleTab can only photograph what is on screen, so
+    // covering a page means visiting it a screenful at a time. Scrolling and
+    // screenshotting are local and free; the model calls are neither. Doing all
+    // the scrolling FIRST means the page sweeps past once in a few seconds and
+    // then sits still, instead of creeping downward for minutes between calls.
+    const batches = await collectPageBatches(tab, scopeSel, handled, btn);
+    if (batches.err) { showNotice($aiStatus, batches.err, 'error', 5000); return; }
+    if (!batches.list.length) {
+      showNotice($aiStatus, scopeSel
+        ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
+        : 'Nothing reviewable on this page that has not already been mapped or skipped.',
+        'success', 7000);
+      return;
+    }
+
+    // ── Phase B: analyse what was collected. The page does not move again. ────
     const merged = new Map();
     const mergedContext = { candidates: [] };
-    let skipped = 0;
+    let skipped = batches.skipped;
     let totalUsage = null;
     let lastErr = null;
-    let emptyPasses = 0;
+    let doneParts = 0;
+    const partMs = [];
 
-    for (let i = 0; i < scrollYs.length; i++) {
-      const label = scrollYs.length > 1 ? ` (${i + 1}/${scrollYs.length})` : '';
-      if (scrollYs[i] !== null) {
-        await inPage(tab.id, (y) => window.scrollTo(0, y), [scrollYs[i]]);
-        await new Promise(r => setTimeout(r, 350)); // let lazy content and sticky headers settle
-      }
-
-      showAiBusy('Reading the page…', `Looking at the whole page${label}.`);
-      btn.textContent = `Reading${label}…`;
-
-      const context = await inPage(tab.id,
-        (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
-      if (!context || !context.candidates || !context.candidates.length) { emptyPasses++; continue; }
-
-      const before = context.candidates.length;
-      context.candidates = context.candidates.filter(c => !c.selector || !handled.has(c.selector));
-      skipped += before - context.candidates.length;
-      // Anything already answered for in an earlier pass is not worth paying to
-      // look at again — the overlap between passes is deliberate and would
-      // otherwise be billed on every one of them.
-      context.candidates = context.candidates.filter(c => !c.selector || !merged.has(c.selector));
-      if (!context.candidates.length) { emptyPasses++; continue; }
-
-      // Draw the numbers, capture, then clear them again immediately so the page
-      // is left as it was even if the request fails.
-      showAiBusy('Capturing the page…', `Numbering every element so the answer can point at real ones${label}.`);
-      btn.textContent = `Capturing${label}…`;
-      await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
-      await new Promise(r => setTimeout(r, 250)); // let the overlay paint
-      let shot = null;
-      try {
-        const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
-        // 1568 is the size Anthropic recommends for maximum image fidelity, and
-        // this task does not need it: the model is reading two-digit pink numbers,
-        // not fine detail. 1280 keeps them perfectly legible and costs about a
-        // third fewer vision tokens on every scan.
-        shot = await scaleShot(raw, 1280);
-      } finally {
-        await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
-      }
-      if (!shot) { lastErr = 'Could not capture the page.'; continue; }
-
-      showAiBusy('Claude is looking…', `Usually 10–30 seconds per part of the page${label}.`);
+    for (let i = 0; i < batches.list.length; i++) {
+      if (aiScanAbort) break;
+      const b = batches.list[i];
+      const label = batches.list.length > 1 ? ` ${i + 1} of ${batches.list.length}` : '';
+      // The denominator is known — every batch was collected before this loop
+      // started — so unlike a live crawl this count cannot drift.
+      const left = partMs.length
+        ? ` · about ${humanMs(median(partMs) * (batches.list.length - i))} left`
+        : '';
+      showAiBusy('Claude is looking…', `Part${label || ' 1'}${left}.`,
+        Math.round(100 * i / batches.list.length));
       btn.textContent = `Looking${label}…`;
-      $aiStatus.textContent = `Usually 10–30 seconds${label}.`;
+      $aiStatus.textContent = `Usually 10–30 seconds per part.`;
       $aiStatus.className = 'map-mode-hint';
       $aiStatus.style.display = '';
 
-      const part = await U1AI.discover({ screenshot: shot, context });
-      // A failed pass must not throw away the passes that already succeeded —
-      // partial coverage of a long page still beats nothing, as long as it says so.
+      const t0 = Date.now();
+      const part = await U1AI.discover({ screenshot: b.shot, context: { candidates: b.candidates } });
+      partMs.push(Date.now() - t0);
+      // Merge an answer that has already been paid for even if Stop was pressed
+      // while it was in flight — throwing it away spends the money twice.
       if (!part || part.err) { lastErr = part?.err || 'no answer'; continue; }
 
+      doneParts++;
       aiCost += U1AI.estimateCost(part.usage) || 0;
       totalUsage = mergeUsage(totalUsage, part.usage);
-      mergedContext.candidates.push(...context.candidates);
+      mergedContext.candidates.push(...b.candidates);
       for (const c of (part.components || [])) {
         const key = c.containerSelector || c.selector || JSON.stringify(c);
         if (!merged.has(key)) merged.set(key, c);
       }
     }
 
-    // Put the page back where the specialist left it.
-    if (originalScrollY !== null) {
-      await inPage(tab.id, (y) => window.scrollTo(0, y), [originalScrollY]).catch(() => {});
-    }
-
+    const unseen = batches.list.length - doneParts;
     const out = { components: [...merged.values()], usage: totalUsage, skipped };
     if (!out.components.length) {
       showNotice($aiStatus, lastErr
@@ -3726,7 +3698,11 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
         lastErr ? 'error' : 'success', 7000);
       return;
     }
-    if (lastErr) {
+    if (aiScanAbort && unseen > 0) {
+      showNotice($aiStatus,
+        `Stopped — ${unseen} part${unseen === 1 ? '' : 's'} of the page ${unseen === 1 ? 'was' : 'were'} not looked at. The list below covers the rest.`,
+        'success', 8000);
+    } else if (lastErr) {
       showNotice($aiStatus,
         `Part of the page could not be scanned (${lastErr}) — the list below covers the rest.`, 'error', 8000);
     }
@@ -3738,7 +3714,8 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // pollutes what the specialist is inspecting and lands in any markup they
     // copy out of DevTools.
     aiFound = { ...out, context };
-    aiCost += U1AI.estimateCost(out.usage) || 0;
+    // Cost is accumulated per part inside the loop above — adding the merged
+    // total here as well would report every scan at double what it cost.
     renderAiComponents(aiFound);
     $aiStatus.style.display = 'none';
     if ($aiBox?.open) $aiBox.close();   // the results are the screen now
@@ -3747,6 +3724,12 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   } finally {
     btn.disabled = false;
     btn.textContent = original;
+    aiScanAbort = false;
+    if ($aiScanStopBtn) {
+      $aiScanStopBtn.style.display = 'none';
+      $aiScanStopBtn.disabled = false;
+      $aiScanStopBtn.textContent = '■ Stop';
+    }
     // Belt and braces: never leave our own attributes on the site's DOM, even
     // if something threw between stamping and the capture's own cleanup.
     try {
@@ -3755,6 +3738,121 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     } catch {}
   }
 });
+
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length ? s[Math.floor(s.length / 2)] : 0;
+};
+const humanMs = (ms) => {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
+};
+
+// Identity for a candidate ACROSS scroll positions. The selector is the real
+// key, but a candidate whose selector is not U1-valid comes back as '' — and
+// without the fallback every one of those looks identical to the dedupe, so
+// they would all collapse into one and most of the page would go unscanned.
+const candKey = (c) => c.selector || `${c.tag}|${c.role}|${c.name}|${c.mark}`;
+
+/**
+ * Phase A of a page scan: sweep the page once, top to bottom, collecting the
+ * elements and screenshots the model will be asked about. Makes NO model calls
+ * and costs nothing, so it can run flat out and finish in one visible sweep.
+ *
+ * The saving that matters is step 3: a stop that turns up nothing new is not
+ * photographed and not recorded, so it never becomes a request. On a page whose
+ * furniture repeats — and most pages are mostly furniture — that removes the
+ * majority of the stops before a penny is spent.
+ */
+async function collectPageBatches(tab, scopeSel, handled, btn) {
+  const list = [];
+  const seen = new Set();
+  let skipped = 0;
+
+  const grab = async (isFirstStop) => {
+    const context = await inPage(tab.id,
+      (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
+    if (!context || !context.candidates || !context.candidates.length) return;
+
+    let cands = context.candidates;
+    const before = cands.length;
+    cands = cands.filter(c => !c.selector || !handled.has(c.selector));
+    skipped += before - cands.length;
+    // Sticky furniture is in view at every stop. The seen-set catches it by
+    // selector; this catches the case where a responsive header rewrites its
+    // own markup as you scroll and so arrives with a different selector.
+    if (!isFirstStop) cands = cands.filter(c => !c.sticky);
+    cands = cands.filter(c => !seen.has(candKey(c)));
+    if (!cands.length) return;
+
+    cands.forEach(c => seen.add(candKey(c)));
+
+    await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
+    await new Promise(r => setTimeout(r, 250)); // let the overlay paint
+    let shot = null;
+    try {
+      const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
+      // 1568 is the size Anthropic recommends for maximum image fidelity, and
+      // this task does not need it: the model is reading two-digit pink numbers,
+      // not fine detail. 1280 keeps them perfectly legible and costs about a
+      // third fewer vision tokens on every scan.
+      shot = await scaleShot(raw, 1280);
+    } finally {
+      await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+    }
+    if (shot) list.push({ shot, candidates: cands });
+  };
+
+  // A scoped scan targets one widget wherever it currently sits. Scrolling past
+  // it would be exactly wrong, so this path never sweeps.
+  if (scopeSel) {
+    showAiBusy('Reading the page…', `Looking inside ${scopeSel}.`);
+    btn.textContent = 'Reading…';
+    await grab(true);
+    return { list, skipped };
+  }
+
+  const start = await inPage(tab.id, () => ({
+    y: window.scrollY,
+    vh: window.innerHeight || document.documentElement.clientHeight,
+    h: Math.max(document.documentElement.scrollHeight, window.innerHeight),
+  }));
+
+  let y = 0;
+  let stop = 0;
+  const MAX_STOPS = 40; // a runaway infinite-scroll page must still terminate
+  try {
+    while (stop < MAX_STOPS && !aiScanAbort) {
+      stop++;
+      await inPage(tab.id, (v) => window.scrollTo(0, v), [y]);
+      await new Promise(r => setTimeout(r, 350)); // let lazy content settle
+
+      // Re-measure every stop: a lazy-loading page grows as you scroll, and a
+      // plan made from the height at the top would stop short of the real end.
+      const m = await inPage(tab.id, () => ({
+        h: Math.max(document.documentElement.scrollHeight, window.innerHeight),
+        vh: window.innerHeight || document.documentElement.clientHeight,
+      }));
+      const maxY = Math.max(0, m.h - m.vh);
+      showAiBusy('Reading the page…', 'Looking at the whole page — this part is free.',
+        maxY ? Math.round(100 * y / maxY) : 100);
+      btn.textContent = 'Reading…';
+
+      await grab(stop === 1);
+
+      const next = Math.min(y + Math.round(m.vh * 0.88), maxY);
+      if (next <= y) break;
+      y = next;
+    }
+  } finally {
+    // Put the page back where the specialist left it. Done here, once, so it
+    // stays still for the whole of the analysis phase.
+    await inPage(tab.id, (v) => window.scrollTo(0, v), [start.y]).catch(() => {});
+  }
+
+  console.log(`[U1] page ${start.h}px → ${stop} stop(s), ${list.length} batch(es) worth sending`);
+  return { list, skipped };
+}
 
 // Adds one pass's token usage onto the running total for the page, so the cost
 // line reports what the whole scan cost rather than only its last part.
@@ -3771,7 +3869,10 @@ function mergeUsage(total, part) {
 // seconds reads as broken, and the two slow steps here are a screenshot and a
 // model call — neither of which can report progress, so the least we can do is
 // say which one is running.
-function showAiBusy(title, sub) {
+// `pct` turns the indeterminate sweep bar into a real progress bar. A scan that
+// visits twenty screenfuls needs to say how far along it is, or it reads as a
+// page scrolling by itself forever.
+function showAiBusy(title, sub, pct) {
   const results = document.getElementById('aiResults');
   const track = document.getElementById('aiCompTrack');
   if (!results || !track) return;
@@ -3779,10 +3880,14 @@ function showAiBusy(title, sub) {
   const head = track.previousElementSibling;
   if (head) head.style.display = 'none';
   document.getElementById('aiSummary').innerHTML = '';
+  const determinate = typeof pct === 'number' && isFinite(pct);
+  const clamped = determinate ? Math.max(0, Math.min(100, Math.round(pct))) : 0;
   track.innerHTML = `
     <div class="ai-busy">
-      <div class="ai-busy-bar"><span></span></div>
-      <div class="ai-busy-title">${escapeHtml(title)}</div>
+      <div class="ai-busy-bar${determinate ? ' determinate' : ''}">
+        <span${determinate ? ` style="width:${clamped}%"` : ''}></span>
+      </div>
+      <div class="ai-busy-title">${escapeHtml(title)}${determinate ? ` — ${clamped}%` : ''}</div>
       <div class="ai-busy-sub">${escapeHtml(sub || '')}</div>
       ${[0, 1, 2].map(() => '<div class="ai-skel"></div>').join('')}
     </div>`;

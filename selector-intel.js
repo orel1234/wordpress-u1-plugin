@@ -636,13 +636,20 @@
   const vw = () => (root.innerWidth || document.documentElement.clientWidth || 0);
   const vh = () => (root.innerHeight || document.documentElement.clientHeight || 0);
 
+  // Returns the rect, and reports whether the element travels with the viewport.
+  // A page-wide scan visits the same sticky header at every scroll position, so
+  // the caller has to be able to tell "I have already seen this" apart from
+  // "this is a new element that happens to sit in the same place".
+  let lastWasSticky = false;
   function visibleInViewport(el) {
+    lastWasSticky = false;
     const r = el.getBoundingClientRect();
     if (r.width < 8 || r.height < 8) return null;
     if (r.bottom < 0 || r.top > vh() || r.right < 0 || r.left > vw()) return null;
     try {
       const st = getComputedStyle(el);
       if (st.visibility === 'hidden' || st.display === 'none' || parseFloat(st.opacity) < 0.05) return null;
+      lastWasSticky = st.position === 'fixed' || st.position === 'sticky';
     } catch {}
     return r;
   }
@@ -701,6 +708,9 @@
         role: el.getAttribute('role') || '',
         name: accName(el),
         selector: usable,
+        // Travels with the viewport, so a page-wide scan meets it again at every
+        // scroll position. The panel drops these after the first stop.
+        sticky: lastWasSticky,
         // How many elements this selector actually hits. >1 is fine for a field
         // meant to match many (menu items), and wrong for one meant to match a
         // single element — u1.fix.* decorates only one of them.
