@@ -2265,6 +2265,14 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
           'domain to script-src and style-src.';
         notice.style.display = 'block';
       }
+      // Offer the workaround only now — there is no reason to advertise turning
+      // a site's protection off until that protection has actually got in the way.
+      const row = document.getElementById('cspBypassRow');
+      if (row) {
+        row.style.display = 'block';
+        const t = document.getElementById('cspBypassToggle');
+        if (t) t.checked = await cspBypassActive(currentHostname);
+      }
     } else {
       const notice = document.getElementById('injectNotice');
       if (notice) notice.style.display = 'none';
@@ -7802,6 +7810,108 @@ document.getElementById('importDataBtn').addEventListener('click', () => {
 //  Navigation listeners — re-detect U1 whenever the active tab changes
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Working on a site whose policy blocks U1
+//
+//  A site can tell browsers "only run scripts from my own domain". U1 lives on
+//  another domain, so it never loads and there is nothing to map. This lifts
+//  that restriction FOR THIS BROWSER ONLY, so the specialist can do the work.
+//
+//  It fixes nothing for the site's visitors, and it is not a substitute for the
+//  real remedies (host U1 on the site's own domain, or have the site allow ours)
+//  — the notice above the toggle says so, and this comment exists so nobody
+//  later mistakes it for one.
+//
+//  Deliberately session rules, not dynamic ones: session rules die with the
+//  browser, so a forgotten toggle cannot outlive the day's work. It is also
+//  cleared when leaving the site and when the panel closes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// DNR rule ids must be positive integers and unique among session rules. Derive
+// one per host so toggling the same site twice replaces rather than stacks.
+function cspRuleIdFor(host) {
+  let h = 0;
+  for (let i = 0; i < host.length; i++) h = (h * 31 + host.charCodeAt(i)) | 0;
+  return 10000 + Math.abs(h) % 900000;
+}
+
+async function cspBypassActive(host) {
+  if (!host || host === 'unknown') return false;
+  try {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    return rules.some(r => r.id === cspRuleIdFor(host));
+  } catch { return false; }
+}
+
+// Returns { ok } or { err } — the caller shows the real reason rather than a
+// checkbox that silently does nothing.
+async function setCspBypass(host, on) {
+  const id = cspRuleIdFor(host);
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [id],
+      addRules: on ? [{
+        id,
+        priority: 2,
+        action: {
+          type: 'modifyHeaders',
+          responseHeaders: [
+            { header: 'content-security-policy', operation: 'remove' },
+            { header: 'content-security-policy-report-only', operation: 'remove' },
+          ],
+        },
+        // main_frame and sub_frame only: the policy that blocks U1 is the one
+        // delivered with the document. Stripping it from every asset request
+        // would be a wider hole for no extra benefit.
+        condition: { urlFilter: `||${host}`, resourceTypes: ['main_frame', 'sub_frame'] },
+      }] : [],
+    });
+    return { ok: true };
+  } catch (e) {
+    return { err: e?.message || String(e) };
+  }
+}
+
+// Take every one of ours back down. Called when the panel closes.
+async function clearAllCspBypasses() {
+  try {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    const ours = rules.filter(r => r.id >= 10000 && r.id < 910000).map(r => r.id);
+    if (ours.length) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ours });
+  } catch {}
+}
+
+document.getElementById('cspBypassToggle')?.addEventListener('change', async (e) => {
+  const on = e.target.checked;
+  const status = document.getElementById('cspBypassStatus');
+  const host = currentHostname;
+  const res = await setCspBypass(host, on);
+  if (res.err) {
+    e.target.checked = !on;
+    showNotice(status,
+      `Could not change it: ${res.err}. If this says permissions, the extension needs ` +
+      `"declarativeNetRequestWithHostAccess" adding to its manifest.`, 'error', 12000);
+    return;
+  }
+  if (!on) { showNotice(status, `Restriction restored for ${host}.`, 'info', 4000); return; }
+  // The policy arrives with the page, so removing the header only counts from
+  // the next load. Saying "on" without saying that reads as broken.
+  showNotice(status, `Off for ${host} in this browser. Reloading the page so it takes effect…`, 'success', 6000);
+  try {
+    const tab = await getTab();
+    if (tab?.id) await chrome.tabs.reload(tab.id);
+  } catch {}
+});
+
+// Leaving the site puts it back — the toggle is for the page in front of you,
+// not a standing exemption for a client's domain.
+async function releaseCspBypassFor(host) {
+  if (!host || host === 'unknown') return;
+  if (await cspBypassActive(host)) await setCspBypass(host, false);
+}
+
+window.addEventListener('pagehide', () => { clearAllCspBypasses(); });
+
 async function onTabChanged(tab) {
   // Moving to a non-web tab used to leave currentHostname pointing at the site
   // you were last on, with nothing on screen saying so — save now and it lands
@@ -7813,6 +7923,7 @@ async function onTabChanged(tab) {
   // Session-only detection must not follow you to the next site.
   if (newHostname !== currentHostname) detectedSkipLinks = [];
   const hostnameChanged = newHostname !== currentHostname;
+  const previousHostname = currentHostname;
 
   currentHostname = newHostname;
   document.querySelectorAll('#mappingsHostname, #exportHostname, #closeOutHostname').forEach(el => {
@@ -7828,6 +7939,14 @@ async function onTabChanged(tab) {
     // left; leaving them on screen invites approving one client's components
     // into another client's file.
     resetAiWorkspace();
+    // And put the site you just left back the way you found it.
+    await releaseCspBypassFor(previousHostname);
+    const t = document.getElementById('cspBypassToggle');
+    if (t) t.checked = false;
+    const row = document.getElementById('cspBypassRow');
+    if (row) row.style.display = 'none';
+    const cs = document.getElementById('cspBypassStatus');
+    if (cs) cs.style.display = 'none';
     await loadConfigForm();
     await refreshConfigSkipList();
     updateConfigPreview();

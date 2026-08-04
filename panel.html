@@ -149,6 +149,25 @@
       </div>
       <button class="btn-primary" id="injectBtn">Inject U1</button>
       <div class="notice error" id="injectNotice" style="display:none;"></div>
+
+      <!-- Only appears once this page has actually refused to load U1. It is a
+           way to get YOUR work done — the site still blocks U1 for everyone
+           else until its own policy changes, which is why the label says so. -->
+      <div id="cspBypassRow" style="display:none;">
+        <label class="csp-toggle">
+          <input type="checkbox" id="cspBypassToggle">
+          <span class="csp-toggle-text">
+            <strong>Let me work on this site anyway</strong>
+            <span class="csp-toggle-sub">
+              Turns off this site's script restriction in <em>your</em> browser only,
+              so U1 can load and you can map it. Visitors are unaffected — the site
+              still blocks U1 for them. Switches off when you leave the site or
+              close the panel.
+            </span>
+          </span>
+        </label>
+        <div class="notice" id="cspBypassStatus" style="display:none;"></div>
+      </div>
     </div>
   </div>
 

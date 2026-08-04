@@ -1801,6 +1801,25 @@ button {
 .mapping-item .test-btn:hover { color: var(--u1-primary); border-color: var(--u1-primary); }
 .mapping-item .test-btn[disabled] { opacity: 0.3; cursor: not-allowed; }
 
+/* Turning a client's protection off is not a routine control, so it does not
+   look like one: bordered, warm-toned, and explained in place. */
+.csp-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(224, 165, 0, 0.35);
+  border-radius: var(--u1-radius-sm);
+  background: rgba(224, 165, 0, 0.06);
+  cursor: pointer;
+}
+.csp-toggle input { margin-top: 2px; flex: none; }
+.csp-toggle .csp-toggle-text { display: flex; flex-direction: column; gap: 4px; }
+.csp-toggle strong { font-size: 12.5px; color: var(--u1-text); }
+.csp-toggle .csp-toggle-sub { font-size: 11px; color: var(--u1-text-muted); line-height: 1.5; }
+.csp-toggle:focus-within { outline: 2px solid var(--u1-primary); outline-offset: 2px; }
+
 /* One row of the bulk approval screen. Reuses the approved-row look so the
    before and after of an approval read as the same object. */
 .ai-bulk-row { display: flex; align-items: flex-start; gap: 8px; }
