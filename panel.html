@@ -353,10 +353,17 @@
     <!-- The action, and beside it the settings it uses. The key and the
          optional prompt are occasional; the scan is the point. -->
     <div class="ai-run" id="aiRunRow" style="display:none;">
+      <!-- Point at the thing you want. A whole page at once is the wrong unit:
+           sixty candidates is the cap, so a big page summarises the interesting
+           widget away, and one answer covering everything is harder to check
+           than five answers covering one region each. -->
+      <div class="ai-scope-line">
+        <input type="text" id="aiScopeInput" class="ai-scope-input"
+               placeholder="Container to scan: #datepicker, .cart-drawer, nav…">
+        <button class="btn-primary btn-sm" id="aiScopeBtn">Scan it</button>
+      </div>
       <div class="ai-run-line">
-        <button class="btn-primary" id="aiDiscoverBtn">🔎 Find what's on this page</button>
-        <button class="btn-outline" id="aiScanStopBtn" style="display:none;"
-                title="Stop after the part being looked at now">■ Stop</button>
+        <button class="btn-outline" id="aiDiscoverBtn">🔎 Scan what's on screen</button>
         <button class="btn-outline" id="aiSettingsBtn" title="Change the API key">🔑</button>
       </div>
       <!-- Clicking in the panel takes focus off the page, and a great many
@@ -364,14 +371,6 @@
            you need to open one and leave it open. -->
       <button class="btn-ghost btn-sm ai-delayed" id="aiDelayedBtn"
               title="Press, open a dialog or menu on the page, and it captures while it is open">⏱ Scan in 5s — time to open a dialog</button>
-      <!-- Scanning the whole screen is the wrong tool for one widget: a
-           datepicker's forty cells blow past the candidate limit and get
-           summarised away. Point at it instead. -->
-      <div class="ai-scope-line">
-        <input type="text" id="aiScopeInput" class="ai-scope-input"
-               placeholder="Or scan just one part: #datepicker, .cart-drawer…">
-        <button class="btn-outline btn-sm" id="aiScopeBtn">Scan it</button>
-      </div>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
     </div>
 

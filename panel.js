@@ -3467,15 +3467,6 @@ const $aiBox = document.getElementById('aiBox');
 const $aiResults = document.getElementById('aiResults');
 const $aiStatus = document.getElementById('aiStatus');
 const $aiKeyRow = document.getElementById('aiKeyRow');
-const $aiScanStopBtn = document.getElementById('aiScanStopBtn');
-
-// Stopping is free during the sweep and costs at most the request already in
-// flight during the analysis. Either way the work done so far is kept.
-$aiScanStopBtn?.addEventListener('click', () => {
-  aiScanAbort = true;
-  $aiScanStopBtn.disabled = true;
-  $aiScanStopBtn.textContent = 'Stopping…';
-});
 const $aiKeyInput = document.getElementById('aiKeyInput');
 
 let aiFound = null;     // stage 1 result + the element context it was based on
@@ -3525,7 +3516,6 @@ function resetAiWorkspace() {
   empty('aiBulkList'); empty('aiBulkSummary'); empty('aiSummary');
 }
 let aiCost = 0;         // running spend for this panel session, in USD
-let aiScanAbort = false; // set by the Stop button; read between scan steps
 let aiRowTimer = null;
 let aiCardTimer = null;
 
@@ -3677,9 +3667,9 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   const original = btn.textContent;
   btn.disabled = true;
   try {
-    showAiBusy('Reading the page…', 'Measuring how far it goes.');
-    btn.textContent = 'Reading the page…';
     const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
+    showAiBusy('Reading…', scopeSel ? `Looking inside ${scopeSel}.` : 'Looking at what is on screen.');
+    btn.textContent = 'Reading…';
 
     // Drop what this site has already settled. The same page gets scanned again
     // and again to reach things that only exist while open, and re-listing what
@@ -3687,86 +3677,49 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // rather than after the answer also means no tokens are spent on them.
     const handled = await alreadyHandled();
 
-    aiScanAbort = false;
-    $aiScanStopBtn.style.display = '';
-
-    // ── Phase A: one continuous scroll, no model calls ────────────────────────
-    //
-    // Chrome's captureVisibleTab can only photograph what is on screen, so
-    // covering a page means visiting it a screenful at a time. Scrolling and
-    // screenshotting are local and free; the model calls are neither. Doing all
-    // the scrolling FIRST means the page sweeps past once in a few seconds and
-    // then sits still, instead of creeping downward for minutes between calls.
-    const batches = await collectPageBatches(tab, scopeSel, handled, btn);
-    if (batches.err) { showNotice($aiStatus, batches.err, 'error', 5000); return; }
-    if (!batches.list.length) {
+    // ONE region, ONE call. Sixty candidates is the collector's cap, so a whole
+    // page either summarises the widget you actually care about away or costs a
+    // call per screenful — and one answer covering everything is harder to check
+    // than five answers covering one region each. Point at a container instead.
+    const collected = await collectRegion(tab, scopeSel, handled);
+    if (collected.err) { showNotice($aiStatus, collected.err, 'error', 5000); return; }
+    if (!collected.candidates.length) {
       showNotice($aiStatus, scopeSel
         ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
-        : 'Nothing reviewable on this page that has not already been mapped or skipped.',
+        : 'Nothing reviewable on screen that has not already been mapped or skipped. Scroll to the part you want, or name a container above.',
         'success', 7000);
       return;
     }
 
-    // ── Phase B: analyse what was collected. The page does not move again. ────
-    const merged = new Map();
-    const mergedContext = { candidates: [] };
-    let skipped = batches.skipped;
-    let totalUsage = null;
-    let lastErr = null;
-    let doneParts = 0;
-    const partMs = [];
+    showAiBusy('Claude is looking…', 'Usually 10–30 seconds.');
+    btn.textContent = 'Looking…';
+    $aiStatus.textContent = 'Usually 10–30 seconds.';
+    $aiStatus.className = 'map-mode-hint';
+    $aiStatus.style.display = '';
 
-    for (let i = 0; i < batches.list.length; i++) {
-      if (aiScanAbort) break;
-      const b = batches.list[i];
-      const label = batches.list.length > 1 ? ` ${i + 1} of ${batches.list.length}` : '';
-      // The denominator is known — every batch was collected before this loop
-      // started — so unlike a live crawl this count cannot drift.
-      const left = partMs.length
-        ? ` · about ${humanMs(median(partMs) * (batches.list.length - i))} left`
-        : '';
-      showAiBusy('Claude is looking…', `Part${label || ' 1'}${left}.`,
-        Math.round(100 * i / batches.list.length));
-      btn.textContent = `Looking${label}…`;
-      $aiStatus.textContent = `Usually 10–30 seconds per part.`;
-      $aiStatus.className = 'map-mode-hint';
-      $aiStatus.style.display = '';
+    const part = await U1AI.discover({
+      screenshot: collected.shot,
+      // These were being dropped, so every prompt said "Page: (untitled)", an
+      // empty URL, and — worse — the literal "The page has NO headings at all."
+      // even on pages full of them. The heading-order rule was being fed a lie.
+      context: {
+        candidates: collected.candidates,
+        headings: collected.headings,
+        title: collected.title,
+        url: collected.url,
+      },
+      scope: scopeSel || undefined,
+    });
+    if (!part || part.err) { showNotice($aiStatus, part?.err || 'No answer from the model.', 'error', 8000); return; }
 
-      const t0 = Date.now();
-      const part = await U1AI.discover({ screenshot: b.shot, context: { candidates: b.candidates } });
-      partMs.push(Date.now() - t0);
-      // Merge an answer that has already been paid for even if Stop was pressed
-      // while it was in flight — throwing it away spends the money twice.
-      if (!part || part.err) { lastErr = part?.err || 'no answer'; continue; }
-
-      doneParts++;
-      aiCost += U1AI.estimateCost(part.usage) || 0;
-      totalUsage = mergeUsage(totalUsage, part.usage);
-      mergedContext.candidates.push(...b.candidates);
-      for (const c of (part.components || [])) {
-        const key = c.containerSelector || c.selector || JSON.stringify(c);
-        if (!merged.has(key)) merged.set(key, c);
-      }
-    }
-
-    const unseen = batches.list.length - doneParts;
-    const out = { components: [...merged.values()], usage: totalUsage, skipped };
+    aiCost += U1AI.estimateCost(part.usage) || 0;
+    const mergedContext = { candidates: collected.candidates };
+    const out = { components: part.components || [], usage: part.usage, skipped: collected.skipped };
     if (!out.components.length) {
-      showNotice($aiStatus, lastErr
-        ? `Scan failed: ${lastErr}`
-        : (scopeSel
-            ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
-            : 'Nothing reviewable on this page that has not already been mapped or skipped.'),
-        lastErr ? 'error' : 'success', 7000);
+      showNotice($aiStatus, scopeSel
+        ? `Nothing worth mapping inside ${scopeSel}.`
+        : 'Nothing worth mapping on screen right now.', 'success', 7000);
       return;
-    }
-    if (aiScanAbort && unseen > 0) {
-      showNotice($aiStatus,
-        `Stopped — ${unseen} part${unseen === 1 ? '' : 's'} of the page ${unseen === 1 ? 'was' : 'were'} not looked at. The list below covers the rest.`,
-        'success', 8000);
-    } else if (lastErr) {
-      showNotice($aiStatus,
-        `Part of the page could not be scanned (${lastErr}) — the list below covers the rest.`, 'error', 8000);
     }
     const context = mergedContext;
 
@@ -3780,8 +3733,6 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // workspace on a switch, but the panel can also be looking at a tab that
     // changed under it — so the act of saving checks this again.
     aiWorkspaceHost = currentHostname;
-    // Cost is accumulated per part inside the loop above — adding the merged
-    // total here as well would report every scan at double what it cost.
     renderAiComponents(aiFound);
     $aiStatus.style.display = 'none';
     if ($aiBox?.open) $aiBox.close();   // the results are the screen now
@@ -3790,12 +3741,6 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   } finally {
     btn.disabled = false;
     btn.textContent = original;
-    aiScanAbort = false;
-    if ($aiScanStopBtn) {
-      $aiScanStopBtn.style.display = 'none';
-      $aiScanStopBtn.disabled = false;
-      $aiScanStopBtn.textContent = '■ Stop';
-    }
     // Belt and braces: never leave our own attributes on the site's DOM, even
     // if something threw between stamping and the capture's own cleanup.
     try {
@@ -3805,131 +3750,52 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   }
 });
 
-const median = (xs) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length ? s[Math.floor(s.length / 2)] : 0;
-};
-const humanMs = (ms) => {
-  const s = Math.max(1, Math.round(ms / 1000));
-  return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
-};
-
-// Identity for a candidate ACROSS scroll positions. The selector is the real
-// key, but a candidate whose selector is not U1-valid comes back as '' — and
-// without the fallback every one of those looks identical to the dedupe, so
-// they would all collapse into one and most of the page would go unscanned.
-const candKey = (c) => c.selector || `${c.tag}|${c.role}|${c.name}|${c.mark}`;
-
 /**
- * Phase A of a page scan: sweep the page once, top to bottom, collecting the
- * elements and screenshots the model will be asked about. Makes NO model calls
- * and costs nothing, so it can run flat out and finish in one visible sweep.
+ * Collect one region for the model: the candidates inside `scopeSel`, or what is
+ * on screen when no container is given, plus the numbered screenshot of it.
  *
- * The saving that matters is step 3: a stop that turns up nothing new is not
- * photographed and not recorded, so it never becomes a request. On a page whose
- * furniture repeats — and most pages are mostly furniture — that removes the
- * majority of the stops before a penny is spent.
+ * One region, one call. The collector caps at sixty candidates, so pointing at a
+ * container is not a limitation to work around — it is what keeps the widget you
+ * care about from being summarised away, and it keeps each answer small enough
+ * to actually check.
  */
-async function collectPageBatches(tab, scopeSel, handled, btn) {
-  const list = [];
-  const seen = new Set();
-  let skipped = 0;
-
-  const grab = async (isFirstStop) => {
-    const context = await inPage(tab.id,
-      (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
-    if (!context || !context.candidates || !context.candidates.length) return;
-
-    let cands = context.candidates;
-    const before = cands.length;
-    cands = cands.filter(c => !c.selector || !handled.has(c.selector));
-    skipped += before - cands.length;
-    // Sticky furniture is in view at every stop. The seen-set catches it by
-    // selector; this catches the case where a responsive header rewrites its
-    // own markup as you scroll and so arrives with a different selector.
-    if (!isFirstStop) cands = cands.filter(c => !c.sticky);
-    cands = cands.filter(c => !seen.has(candKey(c)));
-    if (!cands.length) return;
-
-    cands.forEach(c => seen.add(candKey(c)));
-
-    await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
-    await new Promise(r => setTimeout(r, 250)); // let the overlay paint
-    let shot = null;
-    try {
-      const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
-      // 1568 is the size Anthropic recommends for maximum image fidelity, and
-      // this task does not need it: the model is reading two-digit pink numbers,
-      // not fine detail. 1280 keeps them perfectly legible and costs about a
-      // third fewer vision tokens on every scan.
-      shot = await scaleShot(raw, 1280);
-    } finally {
-      await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
-    }
-    if (shot) list.push({ shot, candidates: cands });
-  };
-
-  // A scoped scan targets one widget wherever it currently sits. Scrolling past
-  // it would be exactly wrong, so this path never sweeps.
-  if (scopeSel) {
-    showAiBusy('Reading the page…', `Looking inside ${scopeSel}.`);
-    btn.textContent = 'Reading…';
-    await grab(true);
-    return { list, skipped };
+async function collectRegion(tab, scopeSel, handled) {
+  const context = await inPage(tab.id,
+    (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
+  if (!context) return { err: 'Could not read the page.' };
+  if (!context.candidates || !context.candidates.length) {
+    return { candidates: [], headings: [], skipped: 0 };
   }
 
-  const start = await inPage(tab.id, () => ({
-    y: window.scrollY,
-    vh: window.innerHeight || document.documentElement.clientHeight,
-    h: Math.max(document.documentElement.scrollHeight, window.innerHeight),
-  }));
+  const before = context.candidates.length;
+  const candidates = context.candidates.filter(c => !c.selector || !handled.has(c.selector));
+  const skipped = before - candidates.length;
+  if (!candidates.length) return { candidates: [], headings: [], skipped };
 
-  let y = 0;
-  let stop = 0;
-  const MAX_STOPS = 40; // a runaway infinite-scroll page must still terminate
+  // Draw the numbers, capture, then clear them again immediately so the page is
+  // left as it was even if the request fails.
+  await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
+  await new Promise(r => setTimeout(r, 250)); // let the overlay paint
+  let shot = null;
   try {
-    while (stop < MAX_STOPS && !aiScanAbort) {
-      stop++;
-      await inPage(tab.id, (v) => window.scrollTo(0, v), [y]);
-      await new Promise(r => setTimeout(r, 350)); // let lazy content settle
-
-      // Re-measure every stop: a lazy-loading page grows as you scroll, and a
-      // plan made from the height at the top would stop short of the real end.
-      const m = await inPage(tab.id, () => ({
-        h: Math.max(document.documentElement.scrollHeight, window.innerHeight),
-        vh: window.innerHeight || document.documentElement.clientHeight,
-      }));
-      const maxY = Math.max(0, m.h - m.vh);
-      showAiBusy('Reading the page…', 'Looking at the whole page — this part is free.',
-        maxY ? Math.round(100 * y / maxY) : 100);
-      btn.textContent = 'Reading…';
-
-      await grab(stop === 1);
-
-      const next = Math.min(y + Math.round(m.vh * 0.88), maxY);
-      if (next <= y) break;
-      y = next;
-    }
+    const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
+    // 1568 is the size Anthropic recommends for maximum image fidelity, and this
+    // task does not need it: the model is reading two-digit pink numbers, not
+    // fine detail. 1280 keeps them legible and costs about a third fewer tokens.
+    shot = await scaleShot(raw, 1280);
   } finally {
-    // Put the page back where the specialist left it. Done here, once, so it
-    // stays still for the whole of the analysis phase.
-    await inPage(tab.id, (v) => window.scrollTo(0, v), [start.y]).catch(() => {});
+    await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
   }
+  if (!shot) return { err: 'Could not capture the page.' };
 
-  console.log(`[U1] page ${start.h}px → ${stop} stop(s), ${list.length} batch(es) worth sending`);
-  return { list, skipped };
+  return {
+    shot, candidates, skipped,
+    headings: context.headings || [],
+    title: context.title || '',
+    url: context.url || '',
+  };
 }
 
-// Adds one pass's token usage onto the running total for the page, so the cost
-// line reports what the whole scan cost rather than only its last part.
-function mergeUsage(total, part) {
-  if (!part) return total;
-  if (!total) return { ...part };
-  const keys = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'];
-  const out = { ...total };
-  for (const k of keys) out[k] = (total[k] || 0) + (part[k] || 0);
-  return out;
-}
 
 // Something to look at while it works. A panel that sits still for thirty
 // seconds reads as broken, and the two slow steps here are a screenshot and a
