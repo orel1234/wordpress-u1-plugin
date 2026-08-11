@@ -3482,6 +3482,35 @@ const DYNAMIC_OPEN = {
   'keyboard-grid': [], // container + cell are created only when the widget opens
 };
 
+// The SHAPE each component has to have, checked against the live page.
+//
+// Match counts prove every field found something; they cannot prove the fields
+// found the right things. A listbox mapped with the trigger button as its
+// `listbox` passes every count check and is nonsense — and one did: it was
+// generated, previewed, approved and saved without a single step objecting,
+// because nothing anywhere asked whether the options were inside the list.
+//
+// `inside: true`  — the child elements must live within the parent, because
+//                   that is where U1 looks for them.
+// `inside: false` — they must NOT, because nesting them breaks the widget.
+const STRUCTURE_RULES = {
+  // The listbox is the thing that OPENS. The trigger is outside it — a button
+  // that contained the list it opens would disappear along with it.
+  listbox:  [{ parent: 'listbox', child: 'options', inside: true },
+             { parent: 'listbox', child: 'trigger', inside: false }],
+  combobox: [{ parent: 'listbox', child: 'options', inside: true }],
+  menu:     [{ parent: 'menu',    child: 'items',   inside: true }],
+  // A tab strip holds the tabs; the panels sit outside it. Pointing both at one
+  // element makes U1 hide the tabs along with the content they control.
+  tabs:     [{ parent: 'tabList', child: 'tab',       inside: true },
+             { parent: 'tabList', child: 'tabPanel',  inside: false }],
+  table:    [{ parent: 'table',   child: 'row',     inside: true },
+             { parent: 'table',   child: 'cell',    inside: true }],
+  grid:     [{ parent: 'grid',    child: 'row',     inside: true },
+             { parent: 'grid',    child: 'cell',    inside: true }],
+  accordion:[{ parent: 'headerSelector', child: 'contentSelector', inside: false }],
+};
+
 // Fields that point at exactly ONE element. u1.fix.* resolves a selector rather
 // than looping, and applies to the LAST match — so several matches here is a
 // real defect, not a style note. (Plural fields like `items` are meant to match
@@ -7259,11 +7288,47 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
     try {
       const res = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: (pairs, t) => {
-          const out = { counts: {}, optionsAreLinks: false };
+        func: (pairs, t, rules) => {
+          const out = { counts: {}, optionsAreLinks: false, structure: [] };
           for (const [k, sel] of pairs) {
             try { out.counts[k] = document.querySelectorAll(sel).length; }
             catch { out.counts[k] = -1; }
+          }
+
+          // Do the fields describe the SHAPE the component actually has?
+          //
+          // Counting matches says every field found something; it cannot say
+          // they found the right things. A listbox mapped with the trigger
+          // button as its `listbox` passes every count check and is nonsense:
+          // the listbox has to be the thing that OPENS, and the options have to
+          // be inside it. That mapping was generated, previewed, approved and
+          // saved without one step objecting.
+          const one = (sel) => { try { return document.querySelector(sel); } catch { return null; } };
+          const all = (sel) => { try { return Array.prototype.slice.call(document.querySelectorAll(sel)); } catch { return []; } };
+          const get = (k) => (pairs.find((pp) => pp[0] === k) || [])[1];
+
+          for (const rule of rules) {
+            const pSel = get(rule.parent), cSel = get(rule.child);
+            if (!pSel || !cSel) continue;
+            const parent = one(pSel), kids = all(cSel);
+            if (!parent || !kids.length) continue;   // absence is the counts' job
+
+            if (rule.inside) {
+              const outside = kids.filter((el) => !parent.contains(el) || el === parent);
+              if (outside.length === kids.length) {
+                out.structure.push({ level: 'err', parent: rule.parent, child: rule.child, kind: 'none-inside' });
+              } else if (outside.length) {
+                out.structure.push({ level: 'warn', parent: rule.parent, child: rule.child,
+                                     kind: 'some-outside', n: outside.length, total: kids.length });
+              }
+            } else {
+              // The reverse: these must NOT be nested, e.g. a tab panel living
+              // inside the tab strip, or a trigger inside the thing it opens.
+              const inside = kids.filter((el) => parent.contains(el));
+              if (inside.length) {
+                out.structure.push({ level: 'err', parent: rule.parent, child: rule.child, kind: 'wrongly-inside' });
+              }
+            }
           }
           if (t === 'listbox') {
             const opt = pairs.find(pp => pp[0] === 'options');
@@ -7277,7 +7342,7 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
           }
           return out;
         },
-        args: [Object.entries(map), type],
+        args: [Object.entries(map), type, STRUCTURE_RULES[type] || []],
       });
       const r = res?.[0]?.result;
       if (r) {
@@ -7291,6 +7356,28 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
             notes.push({ level: 'ok', msg: `“${k}” matches 0 now — that’s fine for a ${type}: it’s created only when the widget opens. Open it, then click 🔍 to verify this selector.` });
           } else {
             notes.push({ level: 'warn', msg: `“${k}” matches 0 elements on the page right now.` });
+          }
+        }
+        for (const f of r.structure || []) {
+          if (f.kind === 'none-inside') {
+            notes.push({ level: 'err', msg:
+              `None of the elements “${f.child}” matches are inside “${f.parent}”. ` +
+              `U1 looks for them within it, so this mapping will apply and do nothing. ` +
+              (f.parent === 'listbox'
+                ? `The listbox is the list that OPENS, not the control that opens it — ` +
+                  `point it at the panel and put the button in “trigger”.`
+                : `Check which element is really the container.`) });
+          } else if (f.kind === 'some-outside') {
+            notes.push({ level: 'warn', msg:
+              `${f.n} of the ${f.total} elements “${f.child}” matches are outside “${f.parent}”. ` +
+              `U1 will only decorate the ones inside it.` });
+          } else if (f.kind === 'wrongly-inside') {
+            notes.push({ level: 'err', msg:
+              `“${f.child}” is inside “${f.parent}”, and it must not be. ` +
+              (f.parent === 'tabList'
+                ? `A tab panel sits outside the tab strip — pointing both at the same ` +
+                  `element makes U1 hide the tabs along with the content.`
+                : `Check which is the container and which is the part.`) });
           }
         }
         // Note: listbox options that are links are fine — U1 still closes the
