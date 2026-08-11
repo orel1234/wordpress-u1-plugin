@@ -165,5 +165,58 @@ for (const name of SCRIPTS) {
 }
 if (!unparseable) pass(`all ${SCRIPTS.length} scripts parse (no top-level await, no ESM-only syntax)`);
 
+// ── …and actually RUN, defining what panel.html expects ─────────────────────
+// Parsing is not enough, and this is not theoretical: a backtick inside the
+// backtick-quoted DISCOVER_PROMPT turned `.dropdown` into a TAGGED TEMPLATE.
+// Perfectly valid syntax, so the check above passed — and at load it threw
+// "…is not a function", ai-advisor.js never finished, and every scan died on
+// "U1AI is not defined". A file that parses and does not initialise is exactly
+// as broken as one that does not parse, and was invisible here.
+console.log('\nThe library scripts run and define their globals:');
+{
+  // The globals a script is loaded FOR. panel.js is excluded — it is the page's
+  // own code and expects a DOM the moment it runs.
+  const GLOBALS = {
+    'config.js': 'U1_CONFIG',
+    'store.js': 'U1Store',
+    'auth.js': 'U1Auth',
+    'sync.js': 'U1Sync',
+    'ai-advisor.js': 'U1AI',
+    'selector-intel.js': '__u1SelectorIntel',
+  };
+  let broken = 0;
+  for (const [name, globalName] of Object.entries(GLOBALS)) {
+    let src;
+    try { src = readFileSync(join(ROOT, name), 'utf8'); } catch { continue; }
+    const sandbox = {
+      chrome: { runtime: { getURL: (p) => p }, storage: { local: {} } },
+      fetch: async () => ({ ok: false }),
+      document: undefined,
+      window: undefined,
+    };
+    sandbox.globalThis = sandbox;
+    sandbox.self = sandbox;
+    // The binding is read back from INSIDE the script's own scope. A classic
+    // script's top-level `const U1_CONFIG = …` is script-scoped: later scripts
+    // see it as a global, but it never becomes a property of window — so
+    // testing sandbox[name] reports three perfectly good files as broken.
+    let value;
+    try {
+      value = new Function('sandbox',
+        `with (sandbox) { ${src}\n; return typeof ${globalName} !== 'undefined' ? ${globalName} : undefined; }`
+      )(sandbox);
+    } catch (e) {
+      fail(`${name} throws at load — ${e.message.slice(0, 120)}`);
+      broken++;
+      continue;
+    }
+    if (typeof value === 'undefined') {
+      fail(`${name} ran but never defined ${globalName}`);
+      broken++;
+    }
+  }
+  if (!broken) pass(`all ${Object.keys(GLOBALS).length} library scripts define their global`);
+}
+
 console.log(failures === 0 ? '\n✅ All extension checks passed.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);
