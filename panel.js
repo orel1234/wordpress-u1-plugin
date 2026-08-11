@@ -1788,6 +1788,11 @@ U1Store.onSiteWrite = async (keys, items) => {
     if (parsed.prefix === 'config')    await U1Sync.pushSettings(currentHostname, { config: value });
     if (parsed.prefix === 'skipLinks') await U1Sync.pushSettings(currentHostname, { skipLinks: value || [] });
     if (parsed.prefix === 'u1Links')   await U1Sync.pushSettings(currentHostname, { u1Links: value });
+    // A rejection is a judgement about THIS SITE, not about the person who made
+    // it: if a component was not worth mapping here, it is not worth mapping
+    // here for a colleague either. Per-machine, three people on one large site
+    // each waded through the same forty rejected items.
+    if (parsed.prefix === 'dismissed') await U1Sync.pushSettings(currentHostname, { dismissed: value || [] });
   }
 };
 
@@ -1877,6 +1882,7 @@ async function pullSiteFromServer() {
     if (data.settings.config)    writes[storageKey('config', currentHostname)] = data.settings.config;
     if (data.settings.skipLinks) writes[storageKey('skipLinks', currentHostname)] = data.settings.skipLinks;
     if (data.settings.u1Links)   writes[storageKey('u1Links', currentHostname)] = data.settings.u1Links;
+    if (data.settings.dismissed) writes[storageKey('dismissed', currentHostname)] = data.settings.dismissed;
   }
   await U1Store.setLocalOnly(writes);
 
@@ -1884,14 +1890,68 @@ async function pullSiteFromServer() {
   return { ok: true, mappings: data.mappings.length, sweep: !!data.sweep };
 }
 
+/**
+ * Push everything an import brought in, site by site.
+ *
+ * Sites this worker is not assigned to are reported by name rather than
+ * skipped quietly: that work exists, it is on this machine, and nobody else
+ * will ever see it — which is worth saying out loud at the moment it happens
+ * instead of being discovered weeks later.
+ */
+async function pushImportedSites(data, statusEl) {
+  const out = { sent: 0, blocked: [] };
+  if (!(await U1Auth.isLoggedIn())) return out;
+
+  const hosts = new Set();
+  for (const key of Object.keys(data)) {
+    const parsed = U1Store.parseKey(key);
+    if (parsed) hosts.add(parsed.hostname);
+  }
+
+  for (const host of hosts) {
+    const keys = U1Store.SITE_PREFIXES.map((p) => storageKey(p, host));
+    const got = await U1Store.get(keys);
+    const list = (got[storageKey('mappings', host)] || []).filter((m) => m && typeof m === 'object');
+
+    try {
+      if (list.length) {
+        // No baseUpdatedAt for another site — this panel has never read it, so
+        // the server treats each row as a first write. That is the right call
+        // here: one worker per site is how these are assigned, so there is no
+        // colleague's version to be racing.
+        U1Sync.forget();
+        await U1Sync.pushMappings(host, list.map((m) => ({ key: mappingKey(m), payload: m })));
+      }
+      const fields = {};
+      for (const name of ['config', 'skipLinks', 'u1Links', 'dismissed']) {
+        const v = got[storageKey(name, host)];
+        if (v) fields[name] = v;
+      }
+      if (Object.keys(fields).length) await U1Sync.pushSettings(host, fields);
+      out.sent++;
+    } catch (err) {
+      if (err.status === 403) out.blocked.push(host);
+      else if (statusEl) {
+        showNotice(statusEl, `Could not upload ${host}: ${err.message}`, 'error', 10000);
+      }
+    }
+  }
+  // The loop above left this panel's version tracking pointing at whichever
+  // site it visited last. Re-read the site actually in front of us, so the next
+  // save is checked against the right rows rather than being treated as a first
+  // write for all of them.
+  U1Sync.forget();
+  await pullSiteFromServer();
+  return out;
+}
+
 /** This machine's config, skip links and library URLs, on their way up. */
 async function pushLocalSettings() {
-  const keys = ['config', 'skipLinks', 'u1Links'].map((p) => storageKey(p, currentHostname));
+  const names = ['config', 'skipLinks', 'u1Links', 'dismissed'];
+  const keys = names.map((p) => storageKey(p, currentHostname));
   const got = await U1Store.get(keys);
   const fields = {};
-  if (got[keys[0]]) fields.config = got[keys[0]];
-  if (got[keys[1]]) fields.skipLinks = got[keys[1]];
-  if (got[keys[2]]) fields.u1Links = got[keys[2]];
+  names.forEach((name, i) => { if (got[keys[i]]) fields[name] = got[keys[i]]; });
   if (Object.keys(fields).length) await U1Sync.pushSettings(currentHostname, fields);
 }
 
@@ -9685,7 +9745,19 @@ document.getElementById('importDataBtn').addEventListener('click', () => {
         const tab = await getTab();
         if (tab) await refreshSetupTab(tab);
         const sites = Object.keys(data).filter(k => k.startsWith('mappings_')).length;
-        showNotice(status, `Imported ${sites} site${sites !== 1 ? 's' : ''}.` + (dropped ? ` (${dropped} unsafe/unknown entr${dropped !== 1 ? 'ies' : 'y'} skipped.)` : ' All data merged.'), 'success', 4500);
+        // Every site goes up, not only the one in front of you. U1Store.set's
+        // sync hook is scoped to the current hostname — right for a save, wrong
+        // for an import, where nine sites out of ten would have landed on this
+        // machine alone and the button would have been telling the truth about
+        // half of what it did.
+        const up = await pushImportedSites(data, status);
+        showNotice(status,
+          `Imported ${sites} site${sites !== 1 ? 's' : ''}.` +
+          (up.sent ? ` ${up.sent} uploaded to the server.` : '') +
+          (up.blocked.length ? ` Not uploaded — you are not assigned to ${up.blocked.join(', ')}; ` +
+            `that work is on this machine only.` : '') +
+          (dropped ? ` (${dropped} unsafe/unknown entr${dropped !== 1 ? 'ies' : 'y'} skipped.)` : ''),
+          up.blocked.length ? 'error' : 'success', up.blocked.length ? 15000 : 6000);
       } catch (err) {
         showNotice(status, 'Import failed: ' + err.message, 'error', 5000);
       }
