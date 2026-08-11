@@ -54,9 +54,10 @@ function lift(kind, name) {
 
 const parts = [
   lift('const', 'COMPONENT_SCHEMAS'),
+  lift('const', 'JS_LINE_WIDTH'),
   ...['setDeep', 'deepClone', 'normalizeU1Selector', 'isU1ValidSelector', 'isValidIdent',
-      'formatJsObject', 'buildAriaLabelCode', 'buildTemplate', 'stripEmpty',
-      'buildKeyboardGridCode', 'primaryKeyOf'].map(n => lift('function', n)),
+      'formatJsInline', 'formatJsObject', 'buildAriaLabelCode', 'buildTemplate', 'stripEmpty',
+      'buildKeyboardGridCode', 'buildKeyboardTabsCode', 'primaryKeyOf'].map(n => lift('function', n)),
 ];
 const sandbox = {};
 new Function('S', `${parts.join('\n')}\nS.COMPONENT_SCHEMAS=COMPONENT_SCHEMAS;S.buildTemplate=buildTemplate;`)(sandbox);

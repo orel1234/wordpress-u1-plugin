@@ -1,0 +1,115 @@
+{
+  "url": "https://step-shoe-store-production.up.railway.app/",
+  "note": [
+    "Ground truth, written by reading step.html and step-mega.js — NOT by running",
+    "the tool and blessing what it found. That distinction is the whole value of",
+    "this file: a corpus built from the tool's own output can only ever score 100%.",
+    "",
+    "Several components are BUILT BY JAVASCRIPT after load (mega-nav's items, the",
+    "hero slides, the deal tabs, the FAQ accordion). Their selectors are taken from",
+    "the template literals in step-mega.js, so the labels describe the page as a",
+    "user meets it rather than as it is served.",
+    "",
+    "`hidden: true` marks a component that exists only while opened. The survey",
+    "cannot see it, and a scorer that counts it as a miss is measuring the wrong",
+    "thing — it is scored separately, under `openable`."
+  ],
+  "components": [
+    {
+      "type": "menu",
+      "root": ".mega-nav",
+      "why": "Seven top-level triggers, each opening a panel of links. One menu, not seven.",
+      "fields": {
+        "items": ".mega-nav__trigger,.mega-panel__links>li>a",
+        "triggers": ".mega-nav__trigger",
+        "submenus": ".mega-panel"
+      },
+      "builtByJs": true
+    },
+    {
+      "type": "tabs",
+      "root": ".finder__tabs",
+      "why": "role=tablist with five buttons and five sibling panels outside it.",
+      "fields": {
+        "tab": ".finder__tab",
+        "tabPanel": ".finder__panel"
+      }
+    },
+    {
+      "type": "tabs",
+      "root": "#dealTabs",
+      "why": "role=tablist. Six buttons over ONE re-rendered region, not six panels.",
+      "fields": {
+        "tab": ".tab-bar__btn",
+        "tabPanel": "#dealGrid"
+      },
+      "builtByJs": true
+    },
+    {
+      "type": "tabs",
+      "root": "#faqTabs",
+      "why": "The same tab-bar shape again, over the accordion below it.",
+      "fields": {
+        "tab": ".tab-bar__btn",
+        "tabPanel": "#faqPanel"
+      },
+      "builtByJs": true
+    },
+    {
+      "type": "carousel",
+      "root": ".hero-carousel",
+      "why": "aria-roledescription=carousel, prev/next, dots, and a 6.5s auto-advance.",
+      "fields": {
+        "slide": ".hero-slide",
+        "prevButton": "#heroPrev",
+        "nextButton": "#heroNext"
+      },
+      "builtByJs": true
+    },
+    {
+      "type": "form",
+      "root": "[data-finder-form]",
+      "why": "Five of them, one per finder panel. A selector that matches all five is correct here.",
+      "fields": {
+        "inputField": ".finder__control"
+      },
+      "matches": 5
+    },
+    {
+      "type": "table",
+      "root": ".data-table",
+      "why": "A real <table> with a sticky thead.",
+      "fields": {}
+    },
+    {
+      "type": "dialog",
+      "root": ".search-panel",
+      "why": "role=dialog aria-modal=true, opened from the Search button.",
+      "fields": { "trigger": "#searchToggle" },
+      "hidden": true
+    },
+    {
+      "type": "dialog",
+      "root": ".cart-drawer",
+      "why": "A drawer is a modal by behaviour: it covers the page and traps focus.",
+      "fields": { "trigger": "#cartToggle" },
+      "hidden": true
+    },
+    {
+      "type": "menu",
+      "root": "nav[aria-label=\"Breadcrumb\"]",
+      "why": "A landmark nav. Not a drop-down menu, but it is navigation and U1 treats it as one.",
+      "fields": {}
+    }
+  ],
+  "carousels_secondary": {
+    "note": [
+      "The four `.rail` strips are horizontal scrollers with prev/next buttons.",
+      "Whether they are 'a carousel' is a judgement call a specialist makes, so they",
+      "are held apart from the scored set rather than counted as a miss either way.",
+      "If the tool names them carousels that is not wrong; if it stays silent that is",
+      "not wrong either."
+    ],
+    "roots": [".rail"]
+  }
+}

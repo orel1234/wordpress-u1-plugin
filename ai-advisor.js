@@ -86,11 +86,12 @@ Your job in this pass is ONLY to inventory the screen: list every distinct inter
 RULES
 - One row per COMPONENT, not per element. A nav bar with seven links and six drop-downs is ONE menu, not thirteen rows.
 - "containerSelector" must be copied verbatim from a "selector" field in the list. Never invent one. Pick the element that the chosen u1 type expects as its root:
-  · menu → the whole nav/list wrapper       · listbox → the options list (<ul>)
+  · menu → the DIRECT PARENT of the items   · listbox → the options list (<ul>)
   · dialog → the modal box itself           · tabs → the tab strip
   · accordion → the clickable header        · form → the <form>
   · table/grid → the <table>                · carousel → a slide
   · button/link → the element itself
+- For a menu this matters and is the commonest mistake: given <nav><ul><li><a>…, the container is the <ul>, NOT the <nav>. The root must be the element whose own children are the menu items. A wrapper with a logo, a search box and the list inside it is too high — u1 walks its children looking for items and finds furniture.
 - A button that opens a popup list is a listbox (it has one trigger). A standing navigation bar with no single trigger is a menu. Getting this wrong makes u1 throw at runtime.
 - Prefer an element whose "matches" is 1 for a container.
 - Set needsWork false for things that already look correct — a plain <a href> with visible text needs nothing. Do not pad the list.

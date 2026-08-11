@@ -35,12 +35,36 @@
   // they change on every reload, so a mapping built on one breaks silently.
   const VOLATILE_ID = /^(u1st-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+  // Which pseudo-classes may appear in a mapping.
+  //
+  // U1 resolves selectors through jQuery 3.7.1, so a great deal parses that
+  // should not be relied on, and the grammar above accepts any `:name(...)`.
+  // Two are worth allowing and the rest are not:
+  //
+  //   :nth-child / :nth-of-type  — standard CSS, and the ONLY way to name an
+  //     element on a page whose markup carries no id, class or role. Without
+  //     them such a page cannot be mapped at all.
+  //   :not                       — standard, and U1 itself generates it
+  //     (`activeDays: day:not(disabled)` in the datepicker fixer).
+  //
+  // Everything else is refused on purpose. `:eq()` and `:contains()` are jQuery
+  // extensions that would work today and break the moment anything resolves the
+  // selector with querySelectorAll — including U1's own future. `:has()` is
+  // standard but not in every browser a client still supports. A selector that
+  // works in the panel and fails in the field is the worst outcome available.
+  const PSEUDO_OK = /^:(?:not|nth-child|nth-of-type|nth-last-child|nth-last-of-type|first-child|last-child|only-child)\b/;
+  const pseudosOk = (compound) => {
+    const found = compound.match(/::?[\w-]+(?:\([^()]*\))?/g);
+    return !found || found.every(p => PSEUDO_OK.test(p));
+  };
+
   const normalize = (s) => String(s == null ? '' : s).trim().replace(/\s*([>+~,])\s*/g, '$1');
   const isU1Valid = (s) => {
     const n = normalize(s);
     if (n === '') return true;
     return n.split(',').every(group =>
-      group !== '' && group.split(/[>+~]/).every(c => c !== '' && U1_COMPOUND_RE.test(c)));
+      group !== '' && group.split(/[>+~]/).every(c =>
+        c !== '' && U1_COMPOUND_RE.test(c) && pseudosOk(c)));
   };
   const idOk = (id) => /^[A-Za-z][\w-]*$/.test(id) && !VOLATILE_ID.test(id);
   const classOk = (c) => !!c && !c.includes(':') && !c.includes('/') && !c.includes('[') && !c.includes('(');
@@ -102,8 +126,17 @@
     if (!isU1Valid(norm)) {
       return {
         level: 'invalid', label: 'Invalid',
-        reasons: ['U1 only supports > + ~ combinators — no spaces, no descendant, no :pseudo-class.'],
+        reasons: ['U1 only supports > + ~ combinators and :not / :nth-child — no spaces, no descendant combinator, no :eq or :has.'],
       };
+    }
+
+    // Position is a real answer on a page whose markup names nothing, and it is
+    // the weakest one there is: it depends on the element's neighbours rather
+    // than on anything about the element. One extra <div> above it and the
+    // mapping quietly points somewhere else — no error, no warning.
+    const positional = /:nth-(child|of-type|last-child|last-of-type)\b|:(first|last|only)-child\b/.test(norm);
+    if (positional) {
+      reasons.push('Counts position among siblings — adding an element above it silently repoints the mapping. Ask for a class or an id on this element if you can get one.');
     }
 
     // Grade the WEAKEST branch of a comma group, and within a branch the LAST
@@ -129,6 +162,12 @@
       level = 'weak';
       reasons.push('Generated id — it changes on every page load, so this mapping breaks on reload.');
     }
+
+    // Whatever anchors it, a selector that counts siblings is weak. An id at the
+    // front makes it survive a re-render of the rest of the page; it does not
+    // make it survive a sibling being inserted, which is the failure that
+    // matters here.
+    if (positional) level = 'weak';
 
     // Utility / state classes.
     const classes = (norm.match(/\.[\w-]+/g) || []).map(s => s.slice(1));
@@ -196,16 +235,32 @@
     const testId = node.getAttribute('data-testid') || node.getAttribute('data-test');
     if (testId) return `[data-testid="${testId}"]`;
     const tag = node.tagName.toLowerCase();
+
+    // Classes a person named, generated ones only if that is genuinely all
+    // there is — a bad selector still beats no selector.
+    const named = classesOf(node).filter(c => !NOISE.test(c));
+    const handWritten = named.filter(c => !looksGenerated(c));
+    const classes = handWritten.length ? handWritten : named;
+
+    // A hand-written class that is unique on the page wins over EVERYTHING
+    // below, aria-label included. `div[aria-label="Search modes"]` and
+    // `.finder__tabs` pointed at the same tab strip, and the first is worse in
+    // three ways: it breaks when the label is translated or reworded, it says
+    // nothing to the person reading the mapping, and it made the sub-selectors
+    // come back wrong — the same element, described by its label, produced a
+    // tabList with no tabPanel beside it.
+    //
+    // Only a HAND-WRITTEN class, and only a unique one. A build-generated hash
+    // is worse than a description, and so is a class shared by forty elements.
+    for (const c of handWritten) {
+      try { if (document.getElementsByClassName(c).length === 1) return '.' + c; } catch {}
+    }
+
     const al = node.getAttribute('aria-label');
     if (al && al.length < 40 && !al.includes('"')) return `${tag}[aria-label="${al}"]`;
     const nm = node.getAttribute('name');
     if (nm && !nm.includes('"')) return `${tag}[name="${nm}"]`;
-    // Prefer classes a person named. Fall back to generated ones only if that
-    // is genuinely all there is — a bad selector still beats no selector.
-    const named = classesOf(node).filter(c => !NOISE.test(c));
-    const classes = named.filter(c => !looksGenerated(c)).length
-      ? named.filter(c => !looksGenerated(c))
-      : named;
+
     if (classes.length) {
       for (const c of classes) {
         try { if (document.getElementsByClassName(c).length === 1) return '.' + c; } catch {}
@@ -227,7 +282,54 @@
       if (pc.charAt(0) === '#' || uniqueOnPage(chain)) return chain;
       cur = cur.parentElement;
     }
-    return uniqueOnPage(chain) ? chain : c;
+    if (uniqueOnPage(chain)) return chain;
+    // Nothing on this element or its ancestors identifies it. That is the
+    // ordinary shape of a widget hand-rolled from bare <div>s, and everything
+    // above has just produced something like "div>div>div" — syntactically fine
+    // and matching four hundred elements, which is worse than useless because
+    // it looks like an answer.
+    //
+    // Position is the only thing left to say about such an element, and it CAN
+    // be said: U1 resolves selectors through jQuery, so :nth-child is available.
+    // It is a genuinely weaker selector — inserting an element above it silently
+    // repoints the mapping — so it is a last resort, and selectorStrength grades
+    // it accordingly.
+    return positionalSelector(node) || c;
+  }
+
+  /**
+   * `<nearest identifiable ancestor>>tag:nth-child(n)`, or '' if even that
+   * cannot be made unique.
+   *
+   * Anchored on the closest ancestor that has an identity of its own, so the
+   * chain stays short: every extra `>` in it is another element whose position
+   * has to stay put for the mapping to keep working.
+   */
+  function positionalSelector(node) {
+    const step = (el) => {
+      const parent = el.parentElement;
+      if (!parent) return '';
+      const n = Array.prototype.indexOf.call(parent.children, el) + 1;
+      return n > 0 ? `${el.tagName.toLowerCase()}:nth-child(${n})` : '';
+    };
+    let chain = '';
+    let el = node;
+    for (let depth = 0; el && el !== document.documentElement && depth < 8; depth++) {
+      const s = step(el);
+      if (!s) return '';
+      chain = chain ? s + '>' + chain : s;
+      const parent = el.parentElement;
+      if (!parent || parent === document.body) break;
+      const anchor = compound(parent);
+      // An ancestor that identifies itself ends the walk — anchoring there is
+      // both shorter and steadier than counting all the way to <body>.
+      if (anchor.charAt(0) === '#' || uniqueOnPage(anchor)) {
+        const full = anchor + '>' + chain;
+        return uniqueOnPage(full) ? full : '';
+      }
+      el = parent;
+    }
+    return uniqueOnPage(chain) ? chain : '';
   }
 
   function classesOf(el) {
@@ -656,6 +758,47 @@
   // the caller has to be able to tell "I have already seen this" apart from
   // "this is a new element that happens to sit in the same place".
   let lastWasSticky = false;
+
+  // Stickiness is almost never on the element being asked about. A designer pins
+  // the HEADER; the nav, the links and the buttons inside it stay static and
+  // ride along. Testing only the element itself therefore reported an entire
+  // sticky header as ordinary content — and a page-wide scan counted all
+  // twenty-seven of its elements again at every scroll position. On one real
+  // page that was 405 of 706 counted elements: the same header, fifteen times.
+  //
+  // The question is "does anything above this pin it". Answers are cached per
+  // element because getComputedStyle forces layout, and without the cache a
+  // sixty-candidate screenful would ask it several hundred times.
+  //
+  // The cache is thrown away at the start of every collection, and that is not
+  // an optimisation detail: a header that is static at the top of the page and
+  // becomes fixed once you scroll is an extremely common pattern, so an answer
+  // from the previous screenful is exactly the wrong one to reuse.
+  let pinnedCache = new WeakMap();
+  const resetPinned = () => { pinnedCache = new WeakMap(); };
+  function travelsWithViewport(el) {
+    const chain = [];
+    let node = el;
+    while (node && node.nodeType === 1) {
+      const known = pinnedCache.get(node);
+      if (known !== undefined) {
+        for (const n of chain) pinnedCache.set(n, known);
+        return known;
+      }
+      let pos = '';
+      try { pos = getComputedStyle(node).position; } catch { /* detached mid-walk */ }
+      if (pos === 'fixed' || pos === 'sticky') {
+        pinnedCache.set(node, true);
+        for (const n of chain) pinnedCache.set(n, true);
+        return true;
+      }
+      chain.push(node);
+      node = node.parentElement;
+    }
+    for (const n of chain) pinnedCache.set(n, false);
+    return false;
+  }
+
   function visibleInViewport(el) {
     lastWasSticky = false;
     const r = el.getBoundingClientRect();
@@ -664,7 +807,7 @@
     try {
       const st = getComputedStyle(el);
       if (st.visibility === 'hidden' || st.display === 'none' || parseFloat(st.opacity) < 0.05) return null;
-      lastWasSticky = st.position === 'fixed' || st.position === 'sticky';
+      lastWasSticky = travelsWithViewport(el);
     } catch {}
     return r;
   }
@@ -677,6 +820,125 @@
     (el.textContent || '')
   ).trim().replace(/\s+/g, ' ').slice(0, 60);
 
+  /**
+   * Which u1 component this element ANNOUNCES ITSELF as, if any.
+   *
+   * Grouping loose elements into components — "seven links and six drop-downs
+   * are one menu" — is the model's job and is what a scan is paid for. But a
+   * great deal of it needs no judgement at all, because the page already says
+   * so: role="tablist" IS a tab strip, <form> IS a form, <nav> IS navigation.
+   * Reading those here is free and instant, and it is the difference between a
+   * survey that says "22 links, 19 buttons" and one that says "a nav, a
+   * carousel and a tab strip" — which is what you actually choose screens by.
+   *
+   * A class-name match is a weaker signal than a role and is marked as such by
+   * the caller: `.tab-content` matches /tab/ and is not a tab strip. This
+   * proposes; the scan confirms.
+   */
+  const COMPONENT_BY_ROLE = {
+    tablist: 'tabs', menu: 'menu', menubar: 'menu', navigation: 'menu',
+    dialog: 'dialog', alertdialog: 'dialog', listbox: 'listbox',
+    combobox: 'combobox', grid: 'grid', table: 'table', tree: 'menu',
+    radiogroup: 'radio group', toolbar: 'toolbar', search: 'form',
+    tabpanel: '', tab: '', option: '', menuitem: '',   // parts, not components
+  };
+  const COMPONENT_BY_TAG = {
+    nav: 'menu', form: 'form', table: 'table', dialog: 'dialog',
+    video: 'media player', audio: 'media player',
+  };
+  // Ordered: the first match wins, so "carousel" beats the "slider" inside it.
+  //
+  // These are the names people actually give things. A screenful that held a
+  // recognisable widget and showed no box at all was usually one whose author
+  // wrote `class="site-nav"` rather than `<nav>` — common enough that leaving it
+  // out made the survey look broken rather than conservative.
+  const COMPONENT_BY_CLASS = [
+    [/carousel|slideshow|gallery|\bslider\b/i, 'carousel'],
+    [/accordion|collapsible|\bfaq\b/i, 'accordion'],
+    [/datepicker|calendar/i, 'datepicker'],
+    [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
+    [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
+    [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
+    [/pagination|pager/i, 'pagination'],
+    [/tooltip|popover/i, 'tooltip'],
+    [/breadcrumb/i, 'breadcrumb'],
+    // `search` is deliberately absent. It matched NINETEEN elements on one page
+    // — the overlay, the panel, the field, the button and every suggestion chip
+    // — and a search box is usually just an input anyway. A combobox needs a
+    // popup list of suggestions, which a class name cannot tell you and a
+    // behavioural probe can.
+  ];
+
+  const FIELD = 'input:not([type="hidden"]),select,textarea';
+
+  function componentHint(el) {
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (role && Object.prototype.hasOwnProperty.call(COMPONENT_BY_ROLE, role)) {
+      return COMPONENT_BY_ROLE[role] ? { name: COMPONENT_BY_ROLE[role], sure: true } : null;
+    }
+    const tag = el.tagName.toLowerCase();
+    if (COMPONENT_BY_TAG[tag]) return { name: COMPONENT_BY_TAG[tag], sure: true };
+
+    // A strip of role="tab" with no role="tablist" around it. Extremely common —
+    // a developer labels the tabs and forgets the container — and it used to
+    // report "6 tabs" in the element count while the component line said there
+    // was nothing here. The parts were seen; the thing they add up to was not.
+    try {
+      if (el.querySelectorAll(':scope > [role="tab"]').length >= 2) {
+        return { name: 'tabs', sure: true };
+      }
+    } catch (e) { /* :scope is old enough to rely on, but never worth throwing for */ }
+
+    const cls = (el.className && typeof el.className === 'string') ? el.className : '';
+    if (cls) {
+      for (const [re, name] of COMPONENT_BY_CLASS) if (re.test(cls)) return { name, sure: false };
+    }
+
+    // Three or more fields gathered under one element is a form, whatever the
+    // tag says. The newsletter sign-up — name, email, phone, date, size, eight
+    // checkboxes and a submit — was reported as "14 inputs" and no component,
+    // which is exactly backwards: it is the most mappable thing on the page.
+    //
+    // Counting fields ALONE said every wrapper up to <body> was a form, because
+    // every one of them contains three inputs somewhere below. Two conditions
+    // narrow it to the thing a person would point at:
+    //
+    //   · nothing INSIDE it already holds them all — otherwise the answer is
+    //     that tighter element, and this is just its packaging
+    //   · it is not mostly navigation — a form is fields with a few links in
+    //     it, not a page of links that happens to contain a search box
+    try {
+      const fields = el.querySelectorAll(FIELD).length;
+      if (fields >= 3 && !el.closest('form')) {
+        // Descend to the tightest cluster. Asking only whether a child holds
+        // ALL of them is not enough: a page with three separate forms has them
+        // split across three children, so their common ancestor is the page —
+        // which is how "form?" ended up on twenty screenfuls in a row. If ANY
+        // child is itself a group of fields, this element is packaging.
+        const packaging = Array.prototype.some.call(el.children,
+          (ch) => ch.querySelectorAll(FIELD).length >= 3);
+        const links = el.querySelectorAll('a[href]').length;
+        if (!packaging && links <= fields) return { name: 'form', sure: false };
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // Class fragments that suggest a widget. This list and COMPONENT_BY_CLASS are
+  // two halves of one idea and MUST stay in step: the first decides what is even
+  // looked at, the second decides what it is called. When they drifted apart —
+  // `componentHint` knew "navbar" and this list did not — a real menu written as
+  // `class="site-navbar"` was never collected, so nothing was drawn on its
+  // screenful and the survey looked broken rather than conservative.
+  const CLASS_HINTS = [
+    'modal', 'lightbox', 'drawer', 'offcanvas', 'off-canvas',
+    'dropdown', 'megamenu', 'mega-nav', 'nav', 'menu',
+    'tab', 'carousel', 'slider', 'slideshow', 'gallery',
+    'accordion', 'collapsible', 'faq',
+    'datepicker', 'calendar', 'pagination', 'pager',
+    'tooltip', 'popover', 'breadcrumb',
+  ];
+
   // Elements worth showing the model: anything interactive, plus the structural
   // landmarks and media that carry the most common accessibility defects.
   const CANDIDATE_SEL = [
@@ -684,25 +946,70 @@
     '[role]', '[tabindex]', '[onclick]', '[contenteditable="true"]',
     'nav', 'form', 'table', 'dialog', 'iframe', 'video', 'audio',
     'img', 'svg[aria-label]', 'h1', 'h2', 'h3',
-    '[class*="modal"]', '[class*="dropdown"]', '[class*="tab"]',
-    '[class*="carousel"]', '[class*="slider"]', '[class*="accordion"]',
+    ...CLASS_HINTS.map(t => `[class*="${t}"]`),
   ].join(',');
 
   // `within` confines the scan to one element's subtree. Scanning the whole
   // screen is the wrong tool for "this datepicker" — a widget with forty cells
   // blows past the candidate limit and gets summarised away, and the answer
   // covers the header instead of the thing being asked about.
+  /**
+   * The elements worth looking at, in document order.
+   *
+   * CANDIDATE_SEL finds anything that ANNOUNCES itself — a tag, a role, a class
+   * that hints. It cannot find a menu built from bare <div>s that were given
+   * click handlers in JavaScript, because such an element announces nothing: it
+   * matches no tag we search for, carries no role, and its classes are either
+   * absent or layout noise. That is not a rare shape; it is most hand-rolled
+   * widgets.
+   *
+   * The event recorder knows exactly which elements took a click handler, and
+   * that is the only evidence such a page offers. When it is installed, its list
+   * is merged in — and the walk switches to matches() over the subtree so the
+   * merged set still comes back in document order, which is what keeps the mark
+   * numbers running down the screenshot rather than jumping about.
+   *
+   * The slow path is taken ONLY when the recorder is on, which is opt-in.
+   */
+  function candidateElements(scope) {
+    const rec = root.__u1EventMap;
+    let recorded = null;
+    try { recorded = rec && typeof rec.all === 'function' ? rec.all() : null; } catch { recorded = null; }
+    if (!recorded || !recorded.length) return qsa(scope, CANDIDATE_SEL);
+
+    const extra = new Set();
+    for (const el of recorded) {
+      // A recorded element outside the scope is somebody else's problem.
+      if (scope === document || (scope.contains && scope.contains(el))) extra.add(el);
+    }
+    if (!extra.size) return qsa(scope, CANDIDATE_SEL);
+
+    const out = [];
+    for (const el of qsa(scope, '*')) {
+      let hit = extra.has(el);
+      if (!hit) { try { hit = el.matches(CANDIDATE_SEL); } catch { hit = false; } }
+      if (hit) out.push(el);
+    }
+    return out;
+  }
+
   function collectCandidates(limit, within) {
     clearMarks();
+    resetPinned();
     const max = limit || 60;
     const seen = new Set();
     const out = [];
+    // A nav's wrapper, its list and each of its items all match `mega-nav`, so
+    // one menu was reported as fourteen — and fourteen boxes were drawn over the
+    // same strip. A component inside a component OF THE SAME KIND is the same
+    // component. Document order means the outermost is always recorded first.
+    const hinted = new WeakMap();
 
     let scope = document;
     if (within) {
       try { scope = document.querySelector(within) || document; } catch { scope = document; }
     }
-    for (const el of qsa(scope, CANDIDATE_SEL)) {
+    for (const el of candidateElements(scope)) {
       if (out.length >= max) break;
       if (seen.has(el)) continue;
       if (el.closest('#' + MARK_LAYER)) continue;   // never mark our own overlay
@@ -717,12 +1024,34 @@
       el.setAttribute(MARK_ATTR, String(mark));
       const sel = robustSelector(el);
       const usable = isU1Valid(sel) ? sel : '';
+      const hint = componentHint(el);
+      let nested = false;
+      if (hint) {
+        for (let p = el.parentElement; p; p = p.parentElement) {
+          if (hinted.get(p) === hint.name) { nested = true; break; }
+        }
+        hinted.set(el, hint.name);
+      }
       out.push({
         mark,
         tag: el.tagName.toLowerCase(),
         role: el.getAttribute('role') || '',
         name: accName(el),
         selector: usable,
+        // Which u1 component this element says it is, where it says so at all.
+        // `component` is from a role or a tag and is reliable; `maybe` is from a
+        // class name and is a suggestion — `.tab-content` is not a tab strip.
+        component: hint ? hint.name : '',
+        maybe: hint ? !hint.sure : false,
+        // Inside another component of the same kind, so it is a PART of that
+        // one rather than a second one. Counted and drawn once, at the top.
+        nested,
+        // A table taller than the window is on this screenful AND the next one,
+        // and nothing else says they are the same table — so a specialist could
+        // tick only the second and map its bottom half. These two flags say
+        // which edge it runs past.
+        spansAbove: r.top < 0,
+        spansBelow: r.bottom > vh(),
         // Travels with the viewport, so a page-wide scan meets it again at every
         // scroll position. The panel drops these after the first stop.
         sticky: lastWasSticky,
@@ -759,6 +1088,10 @@
 
     return {
       candidates: out,
+      // Hitting the cap and finding exactly that many are indistinguishable
+      // from the outside, and they mean very different things — one is a count,
+      // the other is "there was more and you cannot see it". Say which.
+      truncated: out.length >= max,
       headings,
       scopedTo: within || null,
       viewport: { w: vw(), h: vh() },
@@ -798,6 +1131,80 @@
     });
     document.body.appendChild(layer);
     return document.querySelectorAll('[' + MARK_ATTR + ']').length;
+  }
+
+  /**
+   * drawMarks' sibling, for the free survey rather than the model.
+   *
+   * The model needs numbers, because it answers with one. A person choosing
+   * which screenfuls are worth paying to read needs the opposite: the NAME of
+   * what was found, drawn on the thing itself. "22 links, 19 buttons" is a
+   * measure of how busy a screenful is; a box round the nav labelled `menu` is
+   * an answer to "is this worth reading".
+   *
+   * Takes the candidate list the collector just produced, so the boxes and the
+   * text line can never disagree — they are the same data.
+   */
+  const COMPONENT_COLOUR = {
+    menu: '#7c5cff', tabs: '#0ea5e9', 'tab strips': '#0ea5e9', carousel: '#f59e0b',
+    form: '#10b981', table: '#ec4899', grid: '#ec4899', dialog: '#ef4444',
+    listbox: '#8b5cf6', combobox: '#8b5cf6', accordion: '#14b8a6',
+    datepicker: '#f97316', pagination: '#64748b', tooltip: '#a3a3a3',
+    'media player': '#d946ef', toolbar: '#64748b', 'radio group': '#22c55e',
+  };
+
+  function drawComponentMarks(candidates) {
+    clearOverlay();
+    const layer = document.createElement('div');
+    layer.id = MARK_LAYER;
+    Object.assign(layer.style, {
+      position: 'fixed', inset: '0', zIndex: '2147483646', pointerEvents: 'none',
+    });
+
+    for (const c of (candidates || [])) {
+      // A recognised component with no usable selector used to be skipped here,
+      // which drew nothing on exactly the screenfuls that most needed looking
+      // at: the box is how you SEE what was found, and "found it, cannot address
+      // it" is the finding. It is drawn, and the label says so.
+      if (!c || !c.component || c.nested) continue;
+      let el = null;
+      try { el = document.querySelector(`[${MARK_ATTR}="${c.mark}"]`); } catch { el = null; }
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      const colour = COMPONENT_COLOUR[c.component] || '#ff2d95';
+
+      const box = document.createElement('div');
+      Object.assign(box.style, {
+        position: 'fixed', left: r.left + 'px', top: r.top + 'px',
+        width: r.width + 'px', height: r.height + 'px',
+        boxSizing: 'border-box', borderRadius: '2px',
+        // A guess from a class name is drawn as a guess. The dashes are the
+        // same statement the trailing "?" makes in the text line.
+        border: `2px ${c.maybe ? 'dashed' : 'solid'} ${colour}`,
+        background: colour + '14',
+      });
+      // An element that runs past an edge is cut off in this picture and
+      // continues in the next one. Flattening that edge says so without a word.
+      if (c.spansAbove) { box.style.borderTop = 'none'; box.style.top = '0px'; box.style.height = (r.bottom) + 'px'; }
+      if (c.spansBelow) { box.style.borderBottom = 'none'; }
+
+      const tag = document.createElement('div');
+      tag.textContent = c.component + (c.maybe ? '?' : '') +
+        (c.selector ? '' : ' · no selector') +
+        (c.spansAbove ? ' ↑ continues' : c.spansBelow ? ' ↓ continues' : '');
+      Object.assign(tag.style, {
+        position: 'fixed', left: Math.max(0, r.left) + 'px',
+        top: Math.max(0, (c.spansAbove ? 0 : r.top) - 15) + 'px',
+        background: colour, color: '#fff', font: 'bold 11px/1.3 system-ui,sans-serif',
+        padding: '1px 5px', borderRadius: '3px', whiteSpace: 'nowrap',
+      });
+
+      layer.appendChild(box);
+      layer.appendChild(tag);
+    }
+    document.body.appendChild(layer);
+    return layer.childElementCount / 2;
   }
 
   const clearOverlay = () => { const l = document.getElementById(MARK_LAYER); if (l) l.remove(); };
@@ -866,7 +1273,22 @@
     // reuse. Includes the MAIN-world recorder's verdict when it is installed.
     const rec = root.__u1EventMap || null;
     const interactive = [];
-    const all = qsa(c, 'a,button,input,select,textarea,summary,[role],[tabindex],[onclick],[class*="trigger"],[class*="toggle"],li,[aria-haspopup],[aria-expanded],[aria-controls]');
+    const HINTED = 'a,button,input,select,textarea,summary,[role],[tabindex],[onclick],[class*="trigger"],[class*="toggle"],li,[aria-haspopup],[aria-expanded],[aria-controls]';
+    let all = qsa(c, HINTED);
+    // The recorder exists to find controls that give no hint, and asking it only
+    // about elements that already gave one made it useless for exactly the case
+    // it was written for: an anonymous <div> with a real click handler was never
+    // in `all`, so its recorded handler was collected and never read.
+    if (rec && typeof rec.all === 'function') {
+      try {
+        const known = new Set(all);
+        for (const el of rec.all()) {
+          if (el !== c && c.contains(el) && !known.has(el)) all.push(el);
+        }
+        // Document order, so the model reads the component the way it is built.
+        all.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
+      } catch { /* keep the hinted list as it stands */ }
+    }
     for (const el of all.slice(0, 80)) {
       const sig = clickSignals(el);
       const real = rec && rec.has(el) ? rec.types(el) : null;
@@ -892,13 +1314,230 @@
     };
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  //  H. menuItemsRoot — the element whose own children are the menu items.
+  //
+  //  u1.fix.menu walks the root's CHILDREN looking for items. Given
+  //  <nav><ul><li><a>…, the <nav> is the wrong root: its children are a logo, a
+  //  search box and one <ul>, so the menu it builds has one item. The right root
+  //  is the <ul> — the direct parent of the items.
+  //
+  //  Named containers get picked too high constantly, because <nav> is the
+  //  obvious-looking answer and it is the one with the aria-label on it. This
+  //  descends from whatever was chosen to the list itself, and returns null when
+  //  there is nothing better, so the caller keeps what it had.
+  // ───────────────────────────────────────────────────────────────────────────
+  const MENU_ITEM = 'a[href],button,[role="menuitem"],[role="link"]';
+
+  function menuItemsRoot(containerSel) {
+    var start;
+    try { start = document.querySelector(containerSel); } catch (e) { return null; }
+    if (!start) return null;
+
+    if (!start.querySelector(MENU_ITEM)) return null;
+
+    // The list is the shallowest level whose children are HOMOGENEOUS — two or
+    // more of them, all the same tag, each holding an item. That last test is
+    // what separates <ul> from <nav>: a nav's children are a logo link and a
+    // list, two different tags, and counting "children that contain an item"
+    // alone scores that 2 and stops there. Breadth-first, so a mega-menu picks
+    // the top-level list rather than one of the panels' own lists inside it.
+    var queue = [start], best = null, seen = 0;
+    while (queue.length && seen++ < 400) {
+      var node = queue.shift();
+      var kids = node.children;
+      if (kids.length >= 2) {
+        var tag = kids[0].tagName, same = true, hits = 0;
+        for (var i = 0; i < kids.length; i++) {
+          if (kids[i].tagName !== tag) { same = false; break; }
+          if (kids[i].matches(MENU_ITEM) || kids[i].querySelector(MENU_ITEM)) hits++;
+        }
+        if (same && hits === kids.length) { best = node; break; }
+      }
+      for (var j = 0; j < kids.length; j++) queue.push(kids[j]);
+    }
+    if (!best || best === start) return null;
+
+    var sel = robustSelector(best);
+    // A selector that cannot be reached, or that now matches something else as
+    // well, is worse than the container we were given.
+    if (!sel || !isU1Valid(sel)) return null;
+    try { if (document.querySelector(sel) !== best) return null; } catch (e) { return null; }
+    return sel;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  I. tabPanelsFor — the panels a tab strip switches between.
+  //
+  //  u1.fix.tabs without a tabPanel is a tab strip that announces itself as tabs
+  //  and controls nothing: no aria-controls is written, arrow keys move between
+  //  the tabs and the content never follows. It is required by the schema and
+  //  the model still leaves it out, so it is worked out here instead of asked
+  //  for — this is mechanical, and mechanical beats a second paid call.
+  //
+  //  Three ways, in order of how much they prove:
+  //    1. The tabs SAY so — aria-controls / data-controls holding an element id.
+  //    2. A role says so — [role="tabpanel"] near the strip.
+  //    3. The shape says so — a set of same-class siblings the size of the tab
+  //       count, of which exactly one is showing.
+  // ───────────────────────────────────────────────────────────────────────────
+  function tabPanelsFor(tabListSel, tabSel) {
+    var listEl, tabs = [];
+    try {
+      listEl = document.querySelector(tabListSel);
+      tabs = listEl ? Array.prototype.slice.call(listEl.querySelectorAll(tabSel)) : [];
+    } catch (e) { return null; }
+    if (!listEl || tabs.length < 2) return null;
+
+    var scope = listEl.parentElement || document.body;
+    var byId = [];
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i];
+      var id = t.getAttribute('aria-controls') || t.getAttribute('data-controls');
+      if (!id) {
+        // Any data-* holding the id of a real element. A site wiring its own
+        // tabs through data-finder-tab="finderSport" is entirely ordinary, and
+        // it is the same statement as aria-controls with the ARIA left off.
+        var at = t.attributes;
+        for (var a = 0; a < at.length; a++) {
+          if (at[a].name.indexOf('data-') !== 0) continue;
+          var v = at[a].value;
+          if (v && /^[A-Za-z][\w-]*$/.test(v) && document.getElementById(v)) { id = v; break; }
+        }
+      }
+      var el = id ? document.getElementById(id) : null;
+      if (el) byId.push(el);
+    }
+    // commonSelectorFor answers with a record, not a string.
+    var pick = function (r) { return r && r.selector && isU1Valid(r.selector) ? r.selector : null; };
+
+    if (byId.length >= 2) {
+      var sel = pick(commonSelectorFor(scope, byId, null)) ||
+                pick(commonSelectorFor(document.body, byId, null));
+      if (sel) return sel;
+    }
+
+    var roled = [];
+    try { roled = Array.prototype.slice.call(scope.querySelectorAll('[role="tabpanel"]')); } catch (e) {}
+    if (roled.length >= 2) {
+      var rsel = pick(commonSelectorFor(scope, roled, null));
+      if (rsel) return rsel;
+    }
+
+    // Shape. Walk up from the strip looking for a level holding a run of
+    // same-class siblings as numerous as the tabs, with exactly one of them
+    // visible — which is what a tab panel set looks like with the ARIA off.
+    var node = listEl.parentElement, guard = 0;
+    while (node && guard++ < 4) {
+      var groups = {};
+      var kids = node.children;
+      for (var k = 0; k < kids.length; k++) {
+        if (kids[k] === listEl || kids[k].contains(listEl)) continue;
+        var cls = classesOf(kids[k]).filter(function (c) { return !NOISE.test(c); })[0];
+        if (!cls) continue;
+        (groups[cls] = groups[cls] || []).push(kids[k]);
+      }
+      for (var key in groups) {
+        var g = groups[key];
+        if (g.length < 2 || Math.abs(g.length - tabs.length) > 1) continue;
+        var shown = g.filter(function (el) {
+          if (el.hidden) return false;
+          var cs = window.getComputedStyle(el);
+          return cs.display !== 'none' && cs.visibility !== 'hidden';
+        }).length;
+        if (shown !== 1) continue;
+        var gsel = pick(commonSelectorFor(node, g, null));
+        if (gsel) return gsel;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  J. openedBy — what a trigger opens.
+  //
+  //  A listbox, a datepicker and a tooltip are all rooted on the thing that
+  //  APPEARS, not on the control that summons it, and the schema requires both.
+  //  A whole-page sweep has nobody to ask: it finds "Sign In drop-down trigger",
+  //  holds only the trigger, and the mapping was dropped for want of the other
+  //  half — silently, which is how six components became five.
+  //
+  //  Same ladder as everywhere else: what the page states, then what it shows.
+  // ───────────────────────────────────────────────────────────────────────────
+  const POPUP_ROLE = '[role="menu"],[role="listbox"],[role="dialog"],[role="grid"],[role="tree"]';
+
+  function openedBy(triggerSel) {
+    var t;
+    try { t = document.querySelector(triggerSel); } catch (e) { return null; }
+    if (!t) return null;
+
+    var pick = function (el) {
+      if (!el || el === t || el.contains(t)) return null;
+      var sel = robustSelector(el);
+      if (!sel || !isU1Valid(sel)) return null;
+      try { if (document.querySelector(sel) !== el) return null; } catch (e) { return null; }
+      return sel;
+    };
+
+    // 1. The page states it.
+    var id = t.getAttribute('aria-controls') || t.getAttribute('aria-owns');
+    if (!id) {
+      var at = t.attributes;
+      for (var a = 0; a < at.length; a++) {
+        if (at[a].name.indexOf('data-') !== 0) continue;
+        var v = at[a].value;
+        if (v && /^[A-Za-z][\w-]*$/.test(v) && document.getElementById(v)) { id = v; break; }
+      }
+    }
+    if (id) {
+      var byId = pick(document.getElementById(id));
+      if (byId) return byId;
+    }
+
+    // 2. A role says so, in the trigger's own neighbourhood — a popup is a
+    //    sibling or a cousin of its trigger, never the far side of the page.
+    var node = t, guard = 0;
+    while (node && guard++ < 4) {
+      var scope = node.parentElement;
+      if (!scope) break;
+      var roled = null;
+      try { roled = scope.querySelector(POPUP_ROLE); } catch (e) {}
+      var byRole = pick(roled);
+      if (byRole) return byRole;
+      node = scope;
+    }
+
+    // 3. The shape says so: the nearest following sibling of the trigger, or of
+    //    an ancestor close to it, holding several links or options rather than
+    //    a piece of text. That is what a drop-down IS with the ARIA left off,
+    //    which is the ordinary case and the one that matters.
+    node = t; guard = 0;
+    while (node && guard++ < 3) {
+      var sib = node.nextElementSibling;
+      while (sib) {
+        var items = 0;
+        try { items = sib.querySelectorAll('a[href],button,li,[role="option"],[role="menuitem"]').length; } catch (e) {}
+        if (items >= 2) {
+          var byShape = pick(sib);
+          if (byShape) return byShape;
+        }
+        sib = sib.nextElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
   const api = {
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
+    // menu root correction
+    menuItemsRoot, tabPanelsFor, openedBy,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
     // set-of-mark (AI review)
-    collectCandidates, drawMarks, clearMarks, showMark, extractComponent,
+    collectCandidates, drawMarks, drawComponentMarks, clearMarks, showMark, extractComponent,
   };
 
   root.__u1SelectorIntel = api;

@@ -1,0 +1,574 @@
+// ─────────────────────────────────────────────────────────────────────────────
+//  probe.js — find out what a component IS by operating it.
+//
+//  Everything else in this tool reads the page: a tag, a role, a class name.
+//  That works on a page that labels itself and returns nothing at all on one
+//  that does not — measured, not guessed: the same page scores 100% with its
+//  labels and 0% with them stripped, and no further list of class names can
+//  close that, because there are no names left to list.
+//
+//  So this asks a different question. Not "what are you called" — which a page
+//  can decline to answer — but "what do you do", which it cannot. Press a thing;
+//  watch what appears. The element that opened is the panel, the element pressed
+//  is the trigger, and neither fact needed a name.
+//
+//  That also produces, for free, the part that is most often wrong today: the
+//  FIELD MAPPING. `triggers` and `submenus` are guessed from class names now,
+//  and a wrong guess is what "applied, and nothing happened" actually is.
+//
+//  ── This clicks things on somebody's live site, so: ────────────────────────
+//
+//  Three layers, and the second one is the one that matters, because it does
+//  not depend on the first being right:
+//
+//    1. A blocklist — never press a submit, a real link, or anything whose
+//       words suggest it deletes, pays or sends.
+//    2. A net under the whole run: while probing, a capture-phase listener
+//       cancels navigation and form submission for EVERY element, and
+//       window.open is stubbed. The page's own handlers still run, so the
+//       widget still opens; only leaving the page is prevented. If layer 1
+//       misjudges something, this still holds.
+//    3. Put it back: press again, then Escape. If the page did not return to
+//       the state it started in, that is recorded and probing of that
+//       component stops. Nothing is ever reloaded behind your back.
+// ─────────────────────────────────────────────────────────────────────────────
+(function (root) {
+  'use strict';
+  if (root.__u1Probe) return;
+
+  var doc = root.document;
+
+  // ── Layer 1: what must never be pressed ────────────────────────────────────
+  //
+  // Words in the user's language, not the developer's — this is read off the
+  // button's face, which is the only place a "Delete account" announces itself
+  // when the class is called `c4b`.
+  var DANGER = new RegExp([
+    'delete', 'remove', 'discard', 'destroy', 'clear all',
+    'pay', 'buy', 'checkout', 'order now', 'place order', 'purchase',
+    'add to cart', 'add to bag', 'subscribe', 'sign up', 'register',
+    'log ?out', 'sign ?out', 'confirm', 'send', 'submit', 'apply',
+    'unsubscribe', 'cancel (order|subscription)', 'download',
+    // Hebrew — the sites this runs on are as often in Hebrew as English.
+    'מחק', 'הסר', 'שלם', 'תשלום', 'לתשלום', 'הזמן', 'קנה', 'רכישה',
+    'הוסף לסל', 'לסל', 'הרשמה', 'הירשם', 'התנתק', 'יציאה', 'אשר',
+    'שלח', 'שליחה', 'בטל', 'הורד',
+  ].join('|'), 'i');
+
+  function faceOf(el) {
+    return ((el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) ||
+            el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  }
+
+  /**
+   * May this element be pressed? Returns a reason when not, so a component that
+   * is skipped can say why rather than silently going missing.
+   */
+  function safeToClick(el) {
+    if (!el || el.nodeType !== 1) return { ok: false, why: 'not an element' };
+    var tag = el.tagName.toLowerCase();
+
+    if (tag === 'a') {
+      var href = el.getAttribute('href') || '';
+      // An in-page anchor or a JS hook is fine. A real destination is not: the
+      // net below would cancel it, but a link is a link and there is nothing
+      // to learn by pressing one.
+      if (href && !/^#/.test(href) && !/^javascript:/i.test(href)) {
+        return { ok: false, why: 'a link to another page' };
+      }
+      if (el.hasAttribute('download') || el.getAttribute('target') === '_blank') {
+        return { ok: false, why: 'opens or downloads elsewhere' };
+      }
+    }
+
+    var type = (el.getAttribute('type') || '').toLowerCase();
+    if (type === 'submit' || type === 'reset' || type === 'file') {
+      return { ok: false, why: 'a ' + type + ' control' };
+    }
+    // A <button> inside a form with no type IS a submit — the default nobody
+    // remembers, and the single likeliest way to post a stranger's form.
+    if (tag === 'button' && !type && el.closest && el.closest('form')) {
+      return { ok: false, why: 'an untyped button in a form, which submits' };
+    }
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') {
+      return { ok: false, why: 'disabled' };
+    }
+    if (DANGER.test(faceOf(el))) {
+      return { ok: false, why: 'its label reads as an action, not a disclosure' };
+    }
+    return { ok: true, why: '' };
+  }
+
+  // ── Layer 2: the net ───────────────────────────────────────────────────────
+  //
+  // Installed for the duration of a run, removed after. It does NOT stop the
+  // page's own handlers — the widget must still open, or there is nothing to
+  // observe. It stops the page LEAVING.
+  var net = null;
+
+  function armNet() {
+    if (net) return net;
+    var onClick = function (e) {
+      // EVERY link, including an in-page one. A `href="#deals"` does not leave
+      // the page, but it does move it — and a sweep that is walking the page a
+      // screenful at a time works from the current scroll position, so one
+      // anchor jump sends it wandering. It revisited the same screens and
+      // reported forty-two of them on a page that has twenty.
+      //
+      // The page's own handler still runs; only the jump is cancelled.
+      var a = e.target && e.target.closest && e.target.closest('a[href]');
+      if (a && a.getAttribute('href')) e.preventDefault();
+    };
+    var onSubmit = function (e) { e.preventDefault(); };
+    var onLeave = function (e) { e.preventDefault(); e.returnValue = ''; return ''; };
+
+    // Capture phase and LAST argument true: this runs before the page's own
+    // listeners, and preventDefault survives whatever they do afterwards
+    // because it is the default action being cancelled, not the dispatch.
+    doc.addEventListener('click', onClick, true);
+    doc.addEventListener('submit', onSubmit, true);
+    root.addEventListener('beforeunload', onLeave, true);
+
+    var openWas = root.open;
+    try { root.open = function () { return null; }; } catch (e) {}
+
+    net = {
+      disarm: function () {
+        doc.removeEventListener('click', onClick, true);
+        doc.removeEventListener('submit', onSubmit, true);
+        root.removeEventListener('beforeunload', onLeave, true);
+        try { root.open = openWas; } catch (e) {}
+        net = null;
+      },
+    };
+    return net;
+  }
+
+  // ── Snapshots ──────────────────────────────────────────────────────────────
+  //
+  // Not the HTML — a fingerprint of the things that change when something
+  // opens. Comparing markup would flag every re-rendered price and every
+  // animation frame; this flags appearing and disappearing, which is what a
+  // disclosure actually does.
+  var STATE_ATTRS = ['hidden', 'aria-expanded', 'aria-selected', 'aria-hidden',
+                     'aria-current', 'open', 'checked'];
+
+  function shown(el) {
+    if (el.hasAttribute('hidden')) return false;
+    var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    if (r && (r.width > 0 || r.height > 0)) return true;
+    // jsdom and display:contents both give a zero box to things that are
+    // genuinely there, so absence of a box is not absence of the element.
+    return !!(el.offsetParent || (el.getClientRects && el.getClientRects().length));
+  }
+
+  /**
+   * Which elements to watch while something is pressed.
+   *
+   * The neighbourhood of the trigger, plus — anywhere in the document —
+   * everything currently hidden. A cart drawer and a modal are children of
+   * <body>, nowhere near the button that opens them, so a purely local watch
+   * reported "pressed 8, nothing opened" while the drawer was visibly sliding
+   * open on screen. Whatever appears must have been hidden a moment ago, which
+   * makes that set exactly the right one to add and keeps it small.
+   */
+  function watched(scope, limit) {
+    var els = Array.prototype.slice.call(scope.querySelectorAll('*'), 0, limit || 1200);
+    try {
+      var far = doc.querySelectorAll('[hidden],[aria-hidden="true"],dialog');
+      for (var i = 0; i < far.length && i < 200; i++) {
+        if (els.indexOf(far[i]) === -1) els.push(far[i]);
+      }
+    } catch (e) {}
+    return els;
+  }
+
+  // Takes the LIST, not the scope. Rebuilding it after the click was the bug
+  // that hid every drawer and modal: the watch list includes everything
+  // currently [hidden], so the moment a panel opened it left the selector, was
+  // missing from the second reading, and counted as VANISHED rather than
+  // appeared. The comparison has to be of the same elements, both times.
+  function fingerprint(all) {
+    var out = new Map();
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      var s = (shown(el) ? '1' : '0') + '|' + el.children.length;
+      for (var a = 0; a < STATE_ATTRS.length; a++) {
+        s += '|' + (el.getAttribute(STATE_ATTRS[a]) || '');
+      }
+      out.set(el, s);
+    }
+    return out;
+  }
+
+  /** What became visible, what vanished, and what merely changed state. */
+  function diff(before, after) {
+    var appeared = [], vanished = [], changed = [];
+    after.forEach(function (now, el) {
+      var was = before.get(el);
+      if (was === undefined) { if (now.charAt(0) === '1') appeared.push(el); return; }
+      if (was === now) return;
+      if (was.charAt(0) === '0' && now.charAt(0) === '1') appeared.push(el);
+      else if (was.charAt(0) === '1' && now.charAt(0) === '0') vanished.push(el);
+      else changed.push(el);
+    });
+    before.forEach(function (was, el) {
+      if (!after.has(el) && was.charAt(0) === '1') vanished.push(el);
+    });
+    return { appeared: appeared, vanished: vanished, changed: changed };
+  }
+
+  // An element that appeared only because its parent did is not a second
+  // finding. The outermost one is the panel; the rest is its contents.
+  function outermost(els) {
+    return els.filter(function (el) {
+      for (var i = 0; i < els.length; i++) {
+        if (els[i] !== el && els[i].contains(el)) return false;
+      }
+      return true;
+    });
+  }
+
+  var raf = function () {
+    return new Promise(function (r) {
+      if (root.requestAnimationFrame) root.requestAnimationFrame(function () { root.requestAnimationFrame(r); });
+      else setTimeout(r, 32);
+    });
+  };
+  var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+  /**
+   * The region a press could plausibly affect.
+   *
+   * Fingerprinting the whole page four times per press is what a first version
+   * did, and on a four-thousand-element page that is a hundred and sixty full
+   * scans per screenful — slow enough that the run never finished.
+   *
+   * A disclosure's panel is a sibling or a cousin of its trigger, never the far
+   * side of the document, so climbing a few levels from the trigger both bounds
+   * the work and keeps the answer. The climb stops when the subtree is big
+   * enough to contain the panel, or when it would get expensive.
+   */
+  function localScope(el, outer, cap) {
+    cap = cap || 600;
+    var node = el, best = el;
+    for (var i = 0; i < 8 && node && node !== outer; i++) {
+      var p = node.parentElement;
+      if (!p) break;
+      var n = p.querySelectorAll('*').length;
+      if (n > cap) break;
+      best = p;
+      node = p;
+    }
+    return best === el ? (el.parentElement || outer) : best;
+  }
+
+  /**
+   * Press one element and report what it did.
+   *
+   * `scope` bounds both the fingerprint and the answer: a click that changes
+   * something on the other side of the page is not this component's doing.
+   */
+  async function probeOne(el, opts) {
+    opts = opts || {};
+    var scope = opts.scope || doc.body;
+    var settle = opts.settle == null ? 120 : opts.settle;
+
+    var safe = safeToClick(el);
+    if (!safe.ok) return { skipped: true, why: safe.why };
+
+    var els = watched(scope, opts.limit);
+    var before = fingerprint(els);
+    try { el.click(); } catch (e) { return { skipped: true, why: 'could not be pressed' }; }
+    await raf();
+    if (settle) await wait(settle);
+    var d = diff(before, fingerprint(els));
+
+    // Put it back before reporting, so a caller that stops reading here still
+    // leaves the page as it found it.
+    var restored = false;
+    try {
+      el.click();
+      await raf();
+      if (settle) await wait(settle);
+      restored = same(before, fingerprint(els));
+      if (!restored) {
+        doc.dispatchEvent(new root.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await raf();
+        restored = same(before, fingerprint(els));
+      }
+    } catch (e) { restored = false; }
+
+    return {
+      skipped: false,
+      opened: outermost(d.appeared),
+      closed: outermost(d.vanished),
+      touched: d.changed.length,
+      restored: restored,
+    };
+  }
+
+  function same(a, b) {
+    if (a.size !== b.size) return false;
+    var eq = true;
+    a.forEach(function (v, k) { if (b.get(k) !== v) eq = false; });
+    return eq;
+  }
+
+  // ── Which elements are worth pressing ──────────────────────────────────────
+  //
+  // On a page that labels itself this is easy. On one that does not, the only
+  // honest signal is that something registered a click handler — which is
+  // precisely what the event recorder knows and nothing else does.
+  // Pressed already, this session. The sticky header travels with the viewport,
+  // so a sweep met the same Search and Cart buttons on all twenty-eight
+  // screenfuls and pressed them twenty-eight times — which is why the cart kept
+  // opening. A component only has to be operated once.
+  var everPressed = new WeakSet();
+
+  function pressable(scope, opts) {
+    opts = opts || {};
+    var out = [], seen = new Set();
+    // A sweep probes one screenful at a time, so the question is not "is it on
+    // the page" but "is it on THIS screen". Without this the same menu is
+    // pressed again at every scroll position.
+    var vh = root.innerHeight || 768, vw = root.innerWidth || 1024;
+    var onScreen = function (el) {
+      if (!opts.inViewport) return true;
+      try {
+        var r = el.getBoundingClientRect();
+        return r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
+      } catch (e) { return false; }
+    };
+    var add = function (el) {
+      if (!el || seen.has(el) || !scope.contains(el)) return;
+      if (!opts.repeat && everPressed.has(el)) return;
+      if (!shown(el) || !onScreen(el)) return;
+      if (!safeToClick(el).ok) return;
+      seen.add(el); out.push(el);
+    };
+
+    var rec = root.__u1EventMap;
+    if (rec && typeof rec.all === 'function') {
+      try { rec.all().forEach(add); } catch (e) {}
+    }
+    // Plus the ones that announce themselves, for pages that do.
+    try {
+      scope.querySelectorAll(
+        'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],summary,[tabindex]'
+      ).forEach(add);
+    } catch (e) {}
+
+    // And, when neither of those found anything, the one signal a page cannot
+    // help giving: `cursor: pointer`.
+    //
+    // A page of bare <div>s carries no tag, no role and no useful class — but
+    // whoever built it still had to make the thing LOOK clickable, and there is
+    // one way to do that. It is not proof, which is why it is a last resort and
+    // why the probe then presses it and watches rather than believing it.
+    //
+    // Without this the probe needed the event recorder, which is opt-in and
+    // needs a page reload — so on exactly the pages it was written for it had
+    // nothing to press and reported nothing at all.
+    // Always, not only when nothing else was found. Three stray [tabindex]
+    // elements on a page were enough to make `out` non-empty, and the sweep
+    // that finds the ACTUAL controls never ran — the probe reported nothing on
+    // the one kind of page it was written for.
+    if (out.length < (opts.max || 40)) {
+      try {
+        var all = scope.querySelectorAll('div,span,li,td');
+        for (var i = 0; i < all.length && out.length < (opts.max || 40) * 3; i++) {
+          var el = all[i];
+          if (seen.has(el) || !onScreen(el)) continue;
+          // A pointer cursor INHERITED from a clickable ancestor is that
+          // ancestor's, not this element's — otherwise every word inside a
+          // button becomes a candidate.
+          var p = el.parentElement;
+          var mine = root.getComputedStyle(el).cursor === 'pointer';
+          if (!mine) continue;
+          if (p && root.getComputedStyle(p).cursor === 'pointer') continue;
+          add(el);
+        }
+      } catch (e) {}
+    }
+    return out.slice(0, opts.max || 40);
+  }
+
+  var commonAncestor = function (els) {
+    if (!els.length) return null;
+    var a = els[0];
+    for (var i = 1; i < els.length; i++) {
+      var b = els[i];
+      while (a && !a.contains(b)) a = a.parentElement;
+    }
+    return a;
+  };
+
+  var isOverlay = function (el) {
+    try {
+      var pos = root.getComputedStyle(el).position;
+      if (pos !== 'fixed' && pos !== 'absolute') return false;
+      var r = el.getBoundingClientRect();
+      var vw = root.innerWidth || 1024, vh = root.innerHeight || 768;
+      return r.width >= vw * 0.6 && r.height >= vh * 0.5;
+    } catch (e) { return false; }
+  };
+
+  /**
+   * Turn "pressing A revealed B" into a component.
+   *
+   * This is the whole point of the exercise: every one of these decisions is a
+   * description of something that was observed, not a reading of a name. The
+   * same code answers correctly on a page built with role="tablist" and on the
+   * same page with every attribute stripped, because it never looked at either.
+   */
+  function classify(results, pressed) {
+    pressed = pressed || [];
+    var comps = [];
+    var used = new Set();
+
+    // Siblings that each reveal a DIFFERENT panel are a tab strip. One panel
+    // shared between them is the same thing — a strip over one re-rendered
+    // region — and both are far commoner than a page that says so.
+    // Grouped by PRESSED siblings, not by siblings that revealed something.
+    // The tab that is already selected reveals nothing when pressed, so a
+    // two-tab strip produces exactly one observation — and requiring two
+    // observations classified it as an accordion. A row of sibling controls
+    // where pressing one swaps what is visible is a strip, and the already-open
+    // one is a member of it.
+    var byParent = new Map();
+    pressed.forEach(function (el) {
+      var p = el.parentElement;
+      if (!p) return;
+      if (!byParent.has(p)) byParent.set(p, []);
+      byParent.get(p).push(el);
+    });
+
+    byParent.forEach(function (siblings) {
+      if (siblings.length < 2) return;
+      var group = results.filter(function (r) { return siblings.indexOf(r.trigger) !== -1; });
+      if (!group.length) return;
+      // Siblings that each reveal something are not automatically a tab strip.
+      // A header toolbar is exactly that shape — Search, Wishlist and Cart each
+      // open their own overlay — and it was being reported as tabs.
+      //
+      // What makes a strip a strip is that its panels are MUTUALLY EXCLUSIVE:
+      // showing one hides another. A toolbar's overlays are independent, and
+      // pressing one closes nothing.
+      var exclusive = group.some(function (r) { return r.closed && r.closed.length; });
+      if (!exclusive) return;
+      var panels = [];
+      group.forEach(function (r) { r.opened.forEach(function (el) { if (panels.indexOf(el) === -1) panels.push(el); }); });
+      if (!panels.length) return;
+      group.forEach(function (r) { used.add(r.trigger); });
+      // The tab that was ALREADY selected reveals nothing when pressed, so it
+      // never appears in `results` — and a three-tab strip was reported as two
+      // tabs with the current one missing. Its siblings that were pressed and
+      // did nothing belong to the same strip.
+      var tabs = group.map(function (r) { return r.trigger; });
+      siblings.forEach(function (el) {
+        if (tabs.indexOf(el) === -1) { tabs.push(el); used.add(el); }
+      });
+      // Back into document order, so `tab` reads left to right as it looks.
+      tabs.sort(function (a, b) {
+        return (a.compareDocumentPosition(b) & 4) ? -1 : 1;   // 4 = FOLLOWING
+      });
+      comps.push({
+        type: 'tabs',
+        root: commonAncestor(tabs.concat(panels)),
+        parts: { tab: tabs, tabPanel: panels },
+        why: tabs.length + ' controls, each revealing ' +
+             (panels.length === 1 ? 'the same region' : 'a different panel'),
+      });
+    });
+
+    results.forEach(function (r) {
+      if (used.has(r.trigger) || !r.opened.length) return;
+      var panel = r.opened[0];
+      var type = isOverlay(panel) ? 'dialog'
+        : (panel.querySelectorAll('a[href]').length >= 2 ? 'menu' : 'accordion');
+      comps.push({
+        type: type,
+        root: type === 'dialog' ? panel : commonAncestor([r.trigger, panel]),
+        parts: { trigger: [r.trigger], panel: [panel] },
+        why: type === 'dialog' ? 'it opened a layer over the page'
+          : type === 'menu' ? 'it revealed a panel of links'
+          : 'it revealed and hid a region',
+      });
+    });
+
+    return comps;
+  }
+
+  /**
+   * Press everything worth pressing inside `scope`, and say what is there.
+   *
+   * The net is armed for the whole run and disarmed in `finally`, so an
+   * exception halfway through cannot leave a page that refuses to navigate.
+   */
+  async function probeAll(scope, opts) {
+    opts = opts || {};
+    scope = scope || doc.body;
+    var net = armNet();
+    var results = [], pressed = [], skipped = 0, comps = [];
+    // The state to come back to, taken once for the whole run. Restoring after
+    // each individual press is not possible for a tab strip — pressing a tab a
+    // second time re-selects it, it does not undo it — and treating that as a
+    // failure aborted the run at the first tab and left the strip undiscovered.
+    var wholeScope = watched(scope, opts.limit);
+    var start = fingerprint(wholeScope);
+    try {
+      var list = pressable(scope, opts);
+      for (var i = 0; i < list.length; i++) {
+        // Each press is measured in its own neighbourhood, not across the whole
+        // page — see localScope. The run-wide restore check below still uses
+        // the full scope, because that is a guarantee about the page.
+        var near = localScope(list[i], scope, opts.near);
+        var r = await probeOne(list[i], { scope: near, settle: opts.settle, limit: opts.limit });
+        if (r.skipped) { skipped++; continue; }
+        everPressed.add(list[i]);
+        pressed.push(list[i]);
+        if (r.opened.length) results.push({ trigger: list[i], opened: r.opened, closed: r.closed });
+      }
+
+      // Put the whole scope back.
+      //
+      // Only a TAB STRIP needs this. A toggle was already closed by probeOne —
+      // pressing it a second time is what closed it — so pressing the first
+      // trigger of every group re-OPENED every menu and accordion on the page,
+      // which is the exact opposite of restoring. Classify first, then press
+      // back only the thing that cannot undo itself.
+      comps = classify(results, pressed);
+      if (!same(start, fingerprint(wholeScope))) {
+        for (var g = 0; g < comps.length; g++) {
+          if (comps[g].type !== 'tabs') continue;
+          try { comps[g].parts.tab[0].click(); } catch (e) {}
+        }
+        await raf();
+        if (!same(start, fingerprint(wholeScope))) {
+          try {
+            doc.dispatchEvent(new root.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          } catch (e) {}
+          await raf();
+        }
+      }
+    } finally {
+      net.disarm();
+    }
+    var restored = same(start, fingerprint(wholeScope));
+    return { components: comps, pressed: pressed.length, skipped: skipped, restored: restored };
+  }
+
+  root.__u1Probe = {
+    safeToClick: safeToClick,
+    fingerprint: fingerprint,
+    diff: diff,
+    outermost: outermost,
+    probeOne: probeOne,
+    probeAll: probeAll,
+    pressable: pressable,
+    classify: classify,
+    armNet: armNet,
+    DANGER: DANGER,
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
