@@ -29,16 +29,26 @@
 
   // Utility / framework / state classes — present on thousands of elements and
   // liable to change, so never the basis of a mapping.
-  // Names U1 ITSELF puts on the page. Nothing here may ever enter a mapping.
+  // Names written onto the page by our own tooling. None may enter a mapping.
   //
-  // Not because they are ugly — because they are CIRCULAR. `u1-anchor-f9u36-1`
-  // is an id u1.fix.listbox generates while decorating the trigger, and
-  // `u1st-tabbable-element` is a class it adds at the same moment. Neither
-  // exists in the site's own HTML. A mapping written against one of them says:
-  // "find the element that u1 will create once this mapping has run" — which
-  // resolves happily in a panel looking at an already-decorated page, and
-  // matches nothing at all on the client's site at load, where the fix has yet
-  // to run. It fails in exactly the place nobody is looking.
+  // Two different sources, and it is worth knowing which is which:
+  //
+  //   u1-anchor-<token>-<n>   OURS. The Studio stamps this on an element when a
+  //                           skip link targets it by CSS selector rather than
+  //                           by id — a skip link needs something to jump to.
+  //                           Written at runtime by background.js on every page
+  //                           load, and re-randomised each time the skip links
+  //                           are saved (the token exists precisely so a stale
+  //                           anchor from a previous run cannot be mistaken for
+  //                           a current one).
+  //   u1st-*                  The U1 library's own: u1st-tabbable-element,
+  //                           u1st-avoid-change-detection.
+  //
+  // Neither is in the site's HTML. A mapping built on one depends on other
+  // tooling having already run — and on a token that changes the next time
+  // somebody edits a skip link. It resolves perfectly in a panel looking at a
+  // page that has been through all of that, and is fragile or dead anywhere
+  // else.
   //
   // The trap is that it LOOKS like the best answer available: an id, unique on
   // the page, short and stable-looking. `#u1-anchor-f9u36-1` outranked
