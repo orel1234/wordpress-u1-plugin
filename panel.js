@@ -4046,8 +4046,47 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
 
     aiCost += U1AI.estimateCost(part.usage) || 0;
     const mergedContext = { candidates: collected.candidates };
-    const out = { components: part.components || [], usage: part.usage,
-                  skipped: collected.skipped, scope: scopeSel || '' };
+    let found = part.components || [];
+
+    // You pointed at ONE element. Handle that element.
+    //
+    // Typing `.signin` and pressing Scan it came back with three components,
+    // because everything inside a container is, technically, inside it — the
+    // dropdown, the Register link, the wrapper. All true, none of them what was
+    // asked. The scoped box is a way of saying "this one", and answering with an
+    // inventory means picking your component out of a list you did not want.
+    //
+    // The others are counted and named, not silently dropped: the scan saw them
+    // and that is worth knowing. They are simply not the answer.
+    let alsoInside = [];
+    if (scopeSel && found.length > 1) {
+      const ranked = await inPage(tab.id, (scope, sels) => {
+        const el = (s) => { try { return document.querySelector(s); } catch { return null; } };
+        const target = el(scope);
+        if (!target) return null;
+        return sels.map((s) => {
+          const node = el(s);
+          if (!node) return 2;
+          if (node === target) return 0;              // it IS what was asked for
+          // Otherwise the outermost thing inside it is the best reading of
+          // "this one" — a wrapper's single real widget, rather than its parts.
+          return target.contains(node) ? 1 : 2;
+        });
+      }, [scopeSel, found.map((c) => c.containerSelector)]);
+
+      if (ranked) {
+        const best = Math.min(...ranked);
+        const keep = [], rest = [];
+        found.forEach((c, i) => (ranked[i] === best ? keep : rest).push(c));
+        // Several equally-good candidates means the scope really is a wrapper
+        // round separate widgets, and listing them all is the honest answer.
+        if (keep.length === 1) { found = keep; alsoInside = rest; }
+      }
+    }
+
+    const out = { components: found, usage: part.usage,
+                  skipped: collected.skipped, scope: scopeSel || '',
+                  alsoInside: alsoInside.map((c) => c.label || c.containerSelector) };
     if (!out.components.length) {
       showNotice($aiStatus, scopeSel
         ? `Nothing worth mapping inside ${scopeSel}.`
@@ -4284,6 +4323,14 @@ function renderAiComponents(found) {
     // Folded away. It is the same paragraph on every scan, it is read once, and
     // sitting above the results it is only something to scroll past. How many
     // rows were left out earns a place on the summary; the explanation does not.
+    // Named, not silently dropped. The scan saw them and that is worth knowing;
+    // they are simply not what was pointed at.
+    ((found.alsoInside || []).length
+      ? `<div class="ai-meta">Also inside ${escapeHtml(found.scope)}, not mapped: ` +
+        found.alsoInside.map((n) => escapeHtml(n)).join(', ') +
+        ` — scan ${found.alsoInside.length === 1 ? 'it' : 'one of them'} directly to handle ` +
+        `${found.alsoInside.length === 1 ? 'it' : 'them'}.</div>`
+      : '') +
     `<details class="ai-hint-fold"><summary>What wasn't scanned` +
     (found.skipped ? ` · ${found.skipped} left out` : '') + `</summary>` +
     `<div class="ai-hint-line">Only ${found.scope ? `<code>${escapeHtml(found.scope)}</code>` : 'what was on screen'}` +
@@ -4742,6 +4789,16 @@ async function prepareOne(row, tab) {
   if (row.type === 'menu') {
     const better = await inPage(tab.id, (s) => window.__u1SelectorIntel.menuItemsRoot(s), [row.sel]);
     if (better && better !== row.sel) row.sel = better;
+  }
+  // A listbox is rooted on the list that APPEARS. The same mistake has now been
+  // made in both directions — the button that opens it, and the wrapper holding
+  // both — and each time every field resolved and nothing objected. u1 looks for
+  // the options inside the container, so a container with no option-shaped
+  // children of its own is the wrong element, and what it opens is the right
+  // one. The element originally chosen becomes the trigger, which is what it was.
+  if (row.type === 'listbox' && !row.trigger) {
+    const list = await inPage(tab.id, (s) => window.__u1SelectorIntel.listboxRoot(s), [row.sel]);
+    if (list && list !== row.sel) { row.trigger = row.sel; row.sel = list; }
   }
   const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
   if (!markup || markup.error || markup.notFound) {

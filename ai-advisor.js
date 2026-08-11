@@ -67,7 +67,7 @@
             u1Type: { type: 'string', enum: U1_TYPES, description: 'The u1.fix.* component this needs.' },
             containerSelector: {
               type: 'string',
-              description: 'The selector of the element that component type expects as its root — COPIED from the element list. For menu the whole nav; for listbox the options list; for dialog the modal box.',
+              description: 'The selector of the element that component type expects as its root — COPIED from the element list. For menu the list holding the items (not the surrounding nav); for listbox the list that appears (not the button that opens it); for dialog the modal box.',
             },
             needsWork: { type: 'boolean', description: 'true if it currently has an accessibility problem worth fixing; false if it already looks correct.' },
             why: { type: 'string', description: 'One short line: what is wrong, or why it is already fine. Plain English.' },
@@ -86,12 +86,13 @@ Your job in this pass is ONLY to inventory the screen: list every distinct inter
 RULES
 - One row per COMPONENT, not per element. A nav bar with seven links and six drop-downs is ONE menu, not thirteen rows.
 - "containerSelector" must be copied verbatim from a "selector" field in the list. Never invent one. Pick the element that the chosen u1 type expects as its root:
-  · menu → the DIRECT PARENT of the items   · listbox → the options list (<ul>)
+  · menu → the DIRECT PARENT of the items   · listbox → the list that APPEARS
   · dialog → the modal box itself           · tabs → the tab strip
   · accordion → the clickable header        · form → the <form>
   · table/grid → the <table>                · carousel → a slide
   · button/link → the element itself
 - For a menu this matters and is the commonest mistake: given <nav><ul><li><a>…, the container is the <ul>, NOT the <nav>. The root must be the element whose own children are the menu items. A wrapper with a logo, a search box and the list inside it is too high — u1 walks its children looking for items and finds furniture.
+- For a listbox the same mistake runs the other way, and it is just as common. Given <div class="wrap"><button>Sign In</button><ul class="dropdown">…</ul></div>, the containerSelector is `.dropdown` — THE LIST THAT APPEARS — and `.wrap` or the <button> goes in the trigger field. Never the wrapper and never the button: u1 looks for the options INSIDE the container, and there are no options inside a button. The test is mechanical — if the options are not descendants of what you chose, you chose the wrong element.
 - A button that opens a popup list is a listbox (it has one trigger). A standing navigation bar with no single trigger is a menu. Getting this wrong makes u1 throw at runtime.
 - Prefer an element whose "matches" is 1 for a container.
 - Set needsWork false for things that already look correct — a plain <a href> with visible text needs nothing. Do not pad the list.
@@ -120,7 +121,13 @@ RULES
       screenshot,
       text:
         `Page: ${context.title || '(untitled)'}\nURL: ${context.url || ''}\n` +
-        (scope ? `The specialist limited this to: ${scope}\n` : '') +
+        (scope
+          ? `The specialist POINTED AT one element: ${scope}\n` +
+            `Answer about THAT element. It is the component they want mapped — not an\n` +
+            `inventory of what is inside it. Return one row for it. Only return more if\n` +
+            `${scope} is a plain wrapper holding several genuinely separate widgets, and\n` +
+            `even then put the one they pointed at first.\n`
+          : '') +
         `\nThe numbered elements in the screenshot:\n${JSON.stringify(compactList(context.candidates))}` +
         (context.headings && context.headings.length
           ? `\n\nThe page's heading outline, in document order (for the heading-order rule):\n` +

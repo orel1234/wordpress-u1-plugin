@@ -242,5 +242,45 @@ console.log('\na trigger-first component gets the thing it OPENS, not just the t
     opened('<button id="trig" class="solo">Sign In</button>') === null);
 }
 
+console.log('\na listbox is rooted on the list that OPENS');
+{
+  // The real Molina Sign In dropdown. The model has now got this wrong twice in
+  // a row, in both directions, and every field resolved both times:
+  //   listbox: ".clicker"    the button   → no options inside a button
+  //   listbox: ".click-nav"  the wrapper  → contains the trigger too
+  const page = '<div class="signin"><div class="click-nav">' +
+    '<button class="clicker">Sign In</button>' +
+    '<ul class="signin-dropdown" role="menu"><li><a href="/m">Member</a></li>' +
+    '<li><a href="/h">HCP</a></li></ul></div></div>';
+  const root = (sel) => {
+    const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only' });
+    d.window.eval(INTEL);
+    return d.window.__u1SelectorIntel.listboxRoot(sel);
+  };
+  check('the button it opens from is corrected to the list', root('.clicker') === '.signin-dropdown');
+  check('so is the wrapper holding both', root('.click-nav') === '.signin-dropdown');
+  check('the list itself is left alone', root('.signin-dropdown') === null);
+  // Counting DESCENDANTS instead of children would accept the wrapper, because
+  // the wrapper contains the list which contains the options.
+  check('a wrapper is not mistaken for the list by descendant count',
+    root('.signin') === '.signin-dropdown');
+}
+
+console.log('\nnames U1 itself writes never enter a mapping');
+{
+  // Circular: the mapping would depend on an id the mapping itself causes to
+  // exist. It resolves on a decorated page and matches nothing at load.
+  const d = new JSDOM('<body><div class="click-nav u1st-tabbable-element" ' +
+    'id="u1-anchor-f9u36-1"><button class="clicker">Sign In</button></div></body>',
+    { runScripts: 'outside-only' });
+  d.window.eval(INTEL);
+  const S = d.window.__u1SelectorIntel;
+  check('the u1-generated id is not used, the site\'s own class is',
+    S.robustSelector(d.window.document.querySelector('.click-nav')) === '.click-nav');
+  check('u1- ids are graded volatile', S.VOLATILE_ID.test('u1-anchor-f9u36-1'));
+  check('u1st- ids too', S.VOLATILE_ID.test('u1st-9f8e7d'));
+  check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

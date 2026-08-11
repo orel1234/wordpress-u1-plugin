@@ -1594,11 +1594,48 @@
     return null;
   }
 
+  /**
+   * The list a listbox mapping should actually be rooted on.
+   *
+   * u1.fix.listbox looks for the options INSIDE the container, so the container
+   * has to be the list that appears — not the button that opens it and not the
+   * wrapper holding both. That mistake has now been made twice by the model in
+   * a row, in both directions:
+   *
+   *   listbox: ".clicker"    the button          → no options inside a button
+   *   listbox: ".click-nav"  the wrapper         → contains the trigger too
+   *
+   * A prompt can ask for the right element; only a check can establish it. This
+   * is the check: if what was chosen already holds option-shaped children, keep
+   * it. Otherwise ask what it opens.
+   *
+   * Returns null when the choice was already right, or when there is nothing
+   * better to offer — the caller keeps what it had.
+   */
+  function listboxRoot(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+
+    var OPTION = 'li,[role="option"],[role="menuitem"],a[href],button';
+    var direct = 0, kids = root.children;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i].matches(OPTION)) direct++;
+    }
+    // Two or more option-shaped CHILDREN means this really is the list. Counting
+    // descendants instead would accept the wrapper, which contains the list.
+    if (direct >= 2) return null;
+
+    var opened = openedBy(rootSel);
+    if (!opened || opened === rootSel) return null;
+    return opened;
+  }
+
   const api = {
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
-    menuItemsRoot, tabPanelsFor, openedBy,
+    menuItemsRoot, tabPanelsFor, openedBy, listboxRoot,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
     // set-of-mark (AI review)
