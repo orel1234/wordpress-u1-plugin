@@ -131,6 +131,20 @@ else pass('panel.html loads store.js before its users');
 // whole file. That gap let a broken panel.js pass every check and get pushed.
 // `new Function(src)` parses with exactly the browser's classic-script rules.
 
+// ── Every script panel.html loads is actually packaged ──────────────────────
+// The build's FILES list is hand-maintained and nothing compared it with the
+// markup, so adding a <script src> and forgetting the list shipped a panel that
+// died on a missing file — with the zip reporting success.
+console.log('\nEvery script panel.html loads is in the build:');
+{
+  const build = read('scripts/build.mjs');
+  const listed = new Set([...build.matchAll(/'([\w.-]+\.(?:js|css|html|json|md))'/g)].map((m) => m[1]));
+  const loadedSrcs = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
+  const missing = loadedSrcs.filter((f) => !listed.has(f));
+  if (missing.length) fail(`panel.html loads ${missing.join(', ')} but build.mjs does not package ${missing.length === 1 ? 'it' : 'them'}`);
+  else pass(`all ${loadedSrcs.length} scripts panel.html loads are packaged`);
+}
+
 console.log('\nShipped files parse as classic browser scripts:');
 const SCRIPTS = [
   'panel.js', 'selector-intel.js', 'ai-advisor.js', 'event-recorder.js',

@@ -221,6 +221,27 @@ const COMPONENT_SCHEMAS = {
     },
   },
 
+  // Same three selectors as `tabs` above, deliberately: the difference is the
+  // engine behind them, not what you have to fill in. `tabs` calls u1.fix.tabs
+  // and so needs U1 on the page; this one is DOM-only and runs anywhere.
+  'keyboard-tabs': {
+    custom:'keyboardTabs',
+    selectors:{tabList:'PRIMARY', tab:'', tabPanel:''},
+    fields:['tab','tabPanel'],
+    rootFields:{isVertical:false},
+    selectorRoots:[],
+    req:['tab','tabList','tabPanel'],
+    labels:{
+      tabList:'Container of the tabs alone — NOT the panels',
+    },
+    desc:{
+      tabList:'Selector of the container holding the tabs only. It becomes the tablist, so it must not wrap the panels too.',
+      tab:'Selector of the tab elements with the click event. Searched INSIDE each tab list, so one page can hold several strips without them mixing.',
+      tabPanel:'Selector of the panel(s) whose content changes. Usually outside the tab list. Matched to tabs in order when the counts agree; if the site renders only the visible panel, every tab points at that one.',
+      isVertical:'Default is horizontal (Left/Right arrows). Set true for vertical tabs (Up/Down).',
+    },
+  },
+
   form: {
     selectors:{form:'PRIMARY', submitButton:'', inputField:'', invalidField:'',
                requiredField:'', errorMsg:'', successMsg:'', formLabelAbsolute:''},
@@ -545,10 +566,46 @@ function isValidIdent(s) {
   return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(s);
 }
 
+// Longest line we will produce before breaking an object across lines. Wide
+// enough that a selector pair fits, narrow enough to stay readable in a doc.
+const JS_LINE_WIDTH = 92;
+
+// One-line rendering, or null when the value contains nothing (an empty object
+// prints the same either way, so it is left to the caller's fast path).
+function formatJsInline(obj) {
+  if (obj === null) return 'null';
+  if (typeof obj === 'string') return JSON.stringify(obj);
+  if (typeof obj === 'number' || typeof obj === 'boolean') return String(obj);
+  if (Array.isArray(obj)) {
+    if (!obj.length) return '[]';
+    const parts = obj.map(formatJsInline);
+    return parts.includes(null) ? null : `[${parts.join(', ')}]`;
+  }
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj);
+    if (!keys.length) return '{}';
+    const parts = keys.map((k) => {
+      const v = formatJsInline(obj[k]);
+      return v === null ? null : `${isValidIdent(k) ? k : JSON.stringify(k)}: ${v}`;
+    });
+    return parts.includes(null) ? null : `{ ${parts.join(', ')} }`;
+  }
+  return String(obj);
+}
+
 // Serialize an object as JS source with unquoted identifier keys.
+//
+// Anything that fits on one line is printed on one line. The implementer pastes
+// this into their site and reads it there, and a three-selector mapping spread
+// over eight lines is not clearer than the same thing on one — it is just
+// longer. Purely a formatting change: the value emitted is identical.
 function formatJsObject(obj, indent = 0) {
   const pad = '  '.repeat(indent);
   const padInner = '  '.repeat(indent + 1);
+
+  const inline = formatJsInline(obj);
+  if (inline !== null && pad.length + inline.length <= JS_LINE_WIDTH) return inline;
+
   if (obj === null) return 'null';
   if (typeof obj === 'string') return JSON.stringify(obj);
   if (typeof obj === 'number' || typeof obj === 'boolean') return String(obj);
@@ -620,6 +677,17 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
       `   Standalone: needs neither U1 nor the extension. Engine is included in the export. */\n` +
       `window.__u1MakeClickable(${JSON.stringify({ selector: target, role, label, activates })});`;
     return { type, primary: target, firstArg: target, config, code, custom: 'keyboardClickable' };
+  }
+
+  // Custom: extension-provided tab strip, full ARIA pattern (no U1).
+  if (schema.custom === 'keyboardTabs') {
+    const tabList = primary.trim();
+    const tab = (fieldValues.tab || '').trim();
+    const tabPanel = (fieldValues.tabPanel || '').trim();
+    const isVertical = !!(rootValues && (rootValues.isVertical === true || rootValues.isVertical === 'true'));
+    const config = { selectors: { tabList, tab, tabPanel }, isVertical };
+    const code = buildKeyboardTabsCode(tabList, tab, tabPanel, isVertical);
+    return { type, primary: tabList, firstArg: tabList, config, code, custom: 'keyboardTabs' };
   }
 
   // Custom: extension-provided keyboard grid navigation (no U1).
@@ -859,6 +927,7 @@ async function applyOne(type, primary, config, custom) {
   if (custom === 'ariaLabel') return applyAriaLabel(primary, config);
   if (custom === 'keyboardGrid') return applyKeyboardGrid(primary, config);
   if (custom === 'keyboardClickable') return applyKeyboardClickable(primary, config);
+  if (custom === 'keyboardTabs') return applyKeyboardTabs(primary, config);
   return applyFix(type, primary, config);
 }
 
@@ -866,6 +935,14 @@ async function applyOne(type, primary, config, custom) {
 // The RUNNABLE install call for a keyboard-grid mapping — identical to what
 // mappingToCode and the deployable export emit, so the single "Copy" of a
 // template gives code that actually runs (the engine is inlined by the export).
+function buildKeyboardTabsCode(tabList, tab, tabPanel, isVertical) {
+  const config = { selectors: { tabList, tab, tabPanel }, isVertical };
+  return `/* Accessible tab strip — tablist/tab/tabpanel roles, roving tabindex,\n` +
+         `   ${isVertical ? 'Up/Down' : 'Left/Right'}/Home/End, and aria-selected kept in step with the page.\n` +
+         `   Needs the tabs engine (included at the top of the exported bundle). */\n` +
+         `window.__u1InstallTabsFromMapping(${JSON.stringify(tabList)}, ${formatJsObject(config)});`;
+}
+
 function buildKeyboardGridCode(s, columns, direction) {
   const config = { selectors: s, columns, direction };
   return `/* Accessible grid/datepicker — full ARIA + keyboard. Needs the grid engine\n` +
@@ -879,6 +956,32 @@ function buildKeyboardGridCode(s, columns, direction) {
 // Makes every match of a selector keyboard-operable (role + tabindex + Enter/
 // Space). Uses the same shared engine file, so it is identical to what ships in
 // the exported bundle.
+// Installs the full ARIA tabs pattern on the page (no U1): tablist/tab/tabpanel
+// roles, roving tabindex, arrow/Home/End, and aria-selected re-read from the
+// page after each switch. Same shared engine file the export ships.
+async function applyKeyboardTabs(primary, config) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  const s = (config && config.selectors) || {};
+  const opts = {
+    tabList: s.tabList || primary,
+    tab: s.tab || '',
+    tabPanel: s.tabPanel || '',
+    isVertical: !!(config && config.isVertical),
+  };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['grid-nav.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (a) => (window.__u1InstallTabs ? window.__u1InstallTabs(a) : { ok: false, err: 'grid-nav.js not loaded' }),
+      args: [opts],
+    });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
 async function applyKeyboardClickable(target, config) {
   const tab = await getTab();
   if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
@@ -940,9 +1043,31 @@ async function applyKeyboardGrid(container, config) {
   }
 }
 
+// Put the library corrections on the page before any u1.fix.* call runs.
+//
+// The export inlines a SLICED patch, because there size matters. Here it does
+// not, and slicing per apply would push a second set of correctors onto a page
+// that already has core installed. So: the whole file, once, guarded by
+// __u1Patch inside the patch itself.
+//
+// world:'MAIN' is not optional — the patch wraps window.u1.fix.*, and in the
+// isolated world there is no window.u1 to wrap.
+//
+// Without this, Apply ran raw U1 while the export ran patched U1, so testing in
+// the panel could never show what the client would actually get.
+async function ensurePatchOnPage(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', files: ['u1-patch.js'],
+    });
+    return true;
+  } catch { return false; }  // never block an apply on the corrections
+}
+
 async function applyFix(type, primary, config) {
   const tab = await getTab();
   if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  await ensurePatchOnPage(tab.id);
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -989,6 +1114,7 @@ async function applyMappingsBatch(items) {
   if (structured.length === 0) {
     return { ok: false, err: 'No applicable mappings (legacy string mappings cannot be auto-applied — re-add them).' };
   }
+  await ensurePatchOnPage(tab.id);
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -1571,6 +1697,10 @@ function mappingToCode(m) {
   if (m.custom === 'keyboardClickable') {
     return `window.__u1MakeClickable(${formatJsObject({ selector: m.primary, role: (m.config && m.config.role) || 'auto', label: (m.config && m.config.label) || '', activates: (m.config && m.config.activates) || '' })});`;
   }
+  if (m.custom === 'keyboardTabs') {
+    return `/* Accessible tab strip — uses the engine included above. */\n` +
+           `window.__u1InstallTabsFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
+  }
   if (m.custom === 'ariaLabel') {
     return buildAriaLabelCode(m.primary, sel.middleText || (m.config && m.config.middleText) || '', sel.headingSelector || (m.config && m.config.headingSelector) || '');
   }
@@ -1609,6 +1739,164 @@ function mappingKey(m) {
     return m.type + '::' + m.primary + fa;
   }
   return JSON.stringify(m);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Sync — the site's work lives on the server
+//
+//  Registered once, here, because this is the file that knows what a mapping's
+//  key is. Everything below happens on the way OUT of a local write, so no save
+//  path has to remember to call it.
+//
+//  Mappings are the only thing tracked per row. Config, skip links and library
+//  URLs are whole-object settings — a config is not a list of independently
+//  editable things, so a merge on it would be inventing a conflict model the
+//  data does not have.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Mappings the SERVER has, as last read, so a delete can be told from a never-saved. */
+let serverMappingKeys = new Set();
+
+U1Store.onSiteWrite = async (keys, items) => {
+  // Not signed in, or on a site nobody is assigned to: the panel still works
+  // locally and this is simply not its business.
+  if (!(await U1Auth.isLoggedIn())) return;
+
+  for (const key of keys) {
+    const parsed = U1Store.parseKey(key);
+    if (!parsed || parsed.hostname !== currentHostname) continue;
+    const value = items[key];
+
+    if (parsed.prefix === 'mappings') {
+      const list = Array.isArray(value) ? value : [];
+      const rows = list
+        .filter((m) => m && typeof m === 'object')
+        .map((m) => ({ key: mappingKey(m), payload: m }));
+      // Anything the server holds that is no longer in the list was deleted
+      // here. Sent as a tombstone, because a row that merely stops being
+      // mentioned is indistinguishable from a machine that has not synced.
+      const live = new Set(rows.map((r) => r.key));
+      for (const gone of serverMappingKeys) {
+        if (!live.has(gone)) rows.push({ key: gone, payload: {}, deleted: true });
+      }
+      const out = await U1Sync.pushMappings(currentHostname, rows);
+      serverMappingKeys = live;
+      if (out.conflicts && out.conflicts.length) reportConflicts(out.conflicts);
+      continue;
+    }
+
+    if (parsed.prefix === 'config')    await U1Sync.pushSettings(currentHostname, { config: value });
+    if (parsed.prefix === 'skipLinks') await U1Sync.pushSettings(currentHostname, { skipLinks: value || [] });
+    if (parsed.prefix === 'u1Links')   await U1Sync.pushSettings(currentHostname, { u1Links: value });
+  }
+};
+
+/**
+ * A colleague changed the same component while this panel held an older copy.
+ *
+ * Reported, never resolved. Picking a winner silently is the one behaviour that
+ * makes shared work untrustworthy — whichever side is discarded, somebody's
+ * afternoon vanished and nobody was told.
+ */
+function reportConflicts(conflicts) {
+  const status = document.getElementById('mappingsStatus') ||
+                 document.getElementById('applyAllStatus');
+  const names = conflicts.map((c) => c.key.split('::')[1] || c.key);
+  const by = conflicts.find((c) => c.updatedBy);
+  showNotice(status,
+    `Not saved: ${names.join(', ')} — ${by && by.updatedBy ? by.updatedBy : 'someone else'} ` +
+    `changed ${conflicts.length === 1 ? 'it' : 'them'} while you had ${conflicts.length === 1 ? 'it' : 'them'} open. ` +
+    `Reload the panel to see their version, then re-apply your change on top.`,
+    'error', 20000);
+}
+
+/**
+ * Everything this site holds on the server, into the panel.
+ *
+ * The server is the truth, so this REPLACES what is cached locally rather than
+ * merging into it. Merging here would quietly resurrect on this machine
+ * whatever a colleague deleted on theirs.
+ */
+async function pullSiteFromServer() {
+  if (!(await U1Auth.isLoggedIn())) return { ok: false, reason: 'not_logged_in' };
+  let data;
+  try {
+    data = await U1Sync.pull(currentHostname);
+  } catch (err) {
+    if (err.offline) return { ok: false, reason: 'offline' };
+    if (err.status === 403) return { ok: false, reason: 'not_assigned' };
+    return { ok: false, reason: 'error', message: err.message };
+  }
+
+  serverMappingKeys = new Set(data.mappings.map((m) => mappingKey(m)));
+
+  // setLocalOnly, not set: going through set() would fire onSiteWrite and push
+  // what we just pulled straight back at the server, stamping this machine's
+  // name on a colleague's work and racing anything they saved in between.
+  const writes = { [storageKey('mappings', currentHostname)]: data.mappings };
+  if (data.settings) {
+    if (data.settings.config)    writes[storageKey('config', currentHostname)] = data.settings.config;
+    if (data.settings.skipLinks) writes[storageKey('skipLinks', currentHostname)] = data.settings.skipLinks;
+    if (data.settings.u1Links)   writes[storageKey('u1Links', currentHostname)] = data.settings.u1Links;
+  }
+  await U1Store.setLocalOnly(writes);
+
+  if (data.sweep) await adoptServerSweep(data.sweep);
+  return { ok: true, mappings: data.mappings.length, sweep: !!data.sweep };
+}
+
+/**
+ * Say where the work on screen came from.
+ *
+ * Silence here is the failure mode that matters: a panel showing a local cache
+ * because the server was unreachable looks exactly like a panel showing live
+ * shared work, and the difference is whether a colleague will ever see what you
+ * do next.
+ */
+function reportSyncState(pulled) {
+  const status = document.getElementById('mappingsStatus') ||
+                 document.getElementById('applyAllStatus');
+  if (!pulled || pulled.ok) return;
+  if (pulled.reason === 'not_logged_in') return;   // the sign-in gate says this already
+  if (pulled.reason === 'not_assigned') return;    // the licence gate says this already
+  if (pulled.reason === 'offline') {
+    showNotice(status,
+      'No connection to the U1 server — this is your machine\'s own copy, and anything ' +
+      'you change now will not reach your colleagues. Reconnect and reopen the panel.',
+      'error', 20000);
+    return;
+  }
+  showNotice(status, 'Could not load this site\'s shared work: ' + (pulled.message || 'unknown error'),
+    'error', 15000);
+}
+
+/**
+ * A colleague's survey, into this panel.
+ *
+ * The pictures are fetched one at a time and only for screenfuls that have one,
+ * because opening the panel on a large site must not pull a megabyte of images
+ * nobody has asked to look at. They arrive after the list is already on screen.
+ */
+async function adoptServerSweep(sweep) {
+  aiSweep = {
+    running: false, abort: false, armed: false,
+    phase: sweep.phase === 'components' ? 'components' : 'screens',
+    stops: sweep.stops || [], tabId: null, url: sweep.url || '',
+  };
+  aiCost = sweep.cost || 0;
+  aiWorkspaceHost = currentHostname;
+  if (aiSweep.phase === 'components') renderSweepPicks(); else renderSweepScreens();
+
+  const have = new Set((sweep.screenshots || []).map((s) => s.n));
+  for (const stop of aiSweep.stops) {
+    if (stop.thumb || !have.has(stop.n)) continue;
+    const url = await U1Sync.fetchThumb(currentHostname, stop.n);
+    if (!url) continue;
+    stop.thumb = url;
+    // Re-rendered per picture rather than at the end: on a slow connection a
+    // list that fills in is a list you can start reading.
+    if (aiSweep.phase === 'components') renderSweepPicks(); else renderSweepScreens();
+  }
 }
 
 function showNotice(el, text, kind = 'success', duration = 3500) {
@@ -1809,8 +2097,16 @@ async function init() {
   await loadConfigForm();
   await refreshConfigSkipList();
   updateConfigPreview();
+  // The server first, and before anything is drawn: this site's work belongs to
+  // the site, so what a colleague saved is what should be on screen — not this
+  // machine's older copy of it.
+  const pulled = await pullSiteFromServer();
   await loadMappingsList();
   await refreshExportInfo();
+  reportSyncState(pulled);
+  // Only if the server had nothing. A local survey is a cache of the shared one
+  // and must never be shown on top of it.
+  if (!pulled.ok || !pulled.sweep) await restoreSweep();
 
   // Auto-run: every time the panel opens, push the saved config + apply all
   // mappings on the page so the user never has to re-apply manually.
@@ -2788,6 +3084,13 @@ const TYPE_GUIDE = {
   'aria-label': { what:'Gives a vague control a meaningful name (its text + context).', keys:'No behaviour change — only what is announced.', wcag:[['4.1.2','Name, Role, Value'],['2.4.4','Link Purpose in Context']], apg:'' },
   'keyboard-grid': { what:'Extension engine (no U1): makes a calendar/grid keyboard-operable.', keys:'Arrows between cells · Enter/Space chooses · visible focus ring.', wcag:[['2.1.1','Keyboard'],['4.1.2','Name, Role, Value'],['2.4.7','Focus Visible']], apg:'grid' },
   'keyboard-clickable': { what:'Extension engine (no U1): makes non-focusable elements real controls. Applies to EVERY match.', keys:'Tab to reach · Enter (and Space for buttons) activates.', wcag:[['2.1.1','Keyboard'],['4.1.2','Name, Role, Value']], apg:'button' },
+  'keyboard-tabs': { what:'Extension engine (no U1): the same tab strip as "tabs", for a site that has not deployed U1 yet.', keys:'Tab to the active tab · Arrows switch tabs · Home/End jump to the ends · Tab moves into the panel.', wcag:[['4.1.2','Name, Role, Value'],['2.1.1','Keyboard']], apg:'tabs',
+    variants:[
+      ['The site already loads U1', 'Prefer "tabs" — it is the product doing the work.'],
+      ['Demo, staging or prospect site with no U1', 'This one. Identical selectors, runs on any page.'],
+      ['Only sets a value, no panel swap', 'That is a radio group → use "radio".'],
+      ['Marked each tab with keyboard-clickable role=tab', 'Undo that. It announces "tab" but gives no arrows and no aria-selected — a broken promise, worse than plain buttons.'],
+    ] },
 };
 
 // Renders the guide for the chosen type (or hides it when nothing is selected).
@@ -3199,22 +3502,32 @@ let autoResult = null;
 
 const $modeManualBtn = document.getElementById('modeManualBtn');
 const $modeAutoBtn = document.getElementById('modeAutoBtn');
+const $modeSweepBtn = document.getElementById('modeSweepBtn');
 const $modeHint = document.getElementById('modeHint');
 const $preciseEventsRow = document.getElementById('preciseEventsRow');
 const $preciseEventsToggle = document.getElementById('preciseEventsToggle');
 
 let mapMode = 'manual';
 
+// 'manual' | 'auto' | 'sweep'. The two AI routes share every result panel below
+// — the inventory cards, the mapping carousel, the approval screen — and differ
+// only in what starts them, so `isAi` rather than `isAuto` is what most of this
+// function is asking about.
 function setMapMode(mode) {
   mapMode = mode;
   const isAuto = mode === 'auto';
-  $modeManualBtn?.classList.toggle('active', !isAuto);
-  $modeAutoBtn?.classList.toggle('active', isAuto);
-  $modeManualBtn?.setAttribute('aria-selected', String(!isAuto));
-  $modeAutoBtn?.setAttribute('aria-selected', String(isAuto));
+  const isSweep = mode === 'sweep';
+  const isAi = isAuto || isSweep;
+  for (const [btn, on] of [[$modeManualBtn, mode === 'manual'],
+                           [$modeAutoBtn, isAuto],
+                           [$modeSweepBtn, isSweep]]) {
+    btn?.classList.toggle('active', on);
+    btn?.setAttribute('aria-selected', String(on));
+  }
   if ($modeHint) {
-    $modeHint.textContent = isAuto
-      ? 'Enter the selector of the parent element only — the rest is worked out for you and shown for approval.'
+    $modeHint.textContent =
+      isSweep ? 'It scrolls the page itself, one screenful at a time, and shows you everything it found before any of it is applied.'
+      : isAuto ? 'Enter the selector of the parent element only — the rest is worked out for you and shown for approval.'
       : 'Fill each selector yourself.';
   }
   // Show one route at a time. In Automatic mode the type picker, the CSS
@@ -3222,7 +3535,7 @@ function setMapMode(mode) {
   // never touch — the AI cards carry their own copies — so hiding them is what
   // actually makes this tab readable, rather than shrinking everything.
   const manualOnly = document.getElementById('manualOnly');
-  if (manualOnly) manualOnly.style.display = isAuto ? 'none' : '';
+  if (manualOnly) manualOnly.style.display = isAi ? 'none' : '';
   // The sub-selector form and the preview are manual-route panels too, but they
   // sit OUTSIDE #manualOnly in the markup — so hiding that block left them on
   // screen. Open a type in Manual, switch to Automatic, and its Selectors form
@@ -3232,7 +3545,7 @@ function setMapMode(mode) {
   for (const el of [document.getElementById('subSelectorsSection'),
                     document.getElementById('previewSection')]) {
     if (!el) continue;
-    if (isAuto) {
+    if (isAi) {
       if (el.dataset.manualDisplay === undefined) el.dataset.manualDisplay = el.style.display || '';
       el.style.display = 'none';
     } else if (el.dataset.manualDisplay !== undefined) {
@@ -3240,14 +3553,15 @@ function setMapMode(mode) {
       delete el.dataset.manualDisplay;
     }
   }
-  // The AI teacher lives in Automatic mode alongside the rule-based analyzer.
-  // Everything AI, hidden together. Moving the scan button out of the box left
-  // it visible in Manual mode, where it means nothing.
+  // Each AI route has its own starting line — one scans a container, the other
+  // scans everything — and only one of them belongs on screen at a time.
   const runRow = document.getElementById('aiRunRow');
   if (runRow) runRow.style.display = isAuto ? '' : 'none';
+  const sweepRow = document.getElementById('sweepOnly');
+  if (sweepRow) sweepRow.style.display = isSweep ? '' : 'none';
   // The assistant is a dialog now — it is opened on demand, not shown by
-  // display, and leaving Automatic mode must dismiss it rather than strand it.
-  if (!isAuto) document.getElementById('aiBox')?.close();
+  // display, and leaving the AI routes must dismiss it rather than strand it.
+  if (!isAi) document.getElementById('aiBox')?.close();
   // Show a results panel only when it holds actual results. #aiResults has a
   // fixed shell (summary, list, buttons), so testing its own innerHTML would
   // always be truthy and leave an empty box with a dead button sitting there.
@@ -3263,13 +3577,27 @@ function setMapMode(mode) {
   const approved = document.getElementById('aiApproved');
   const pendingCards = document.querySelectorAll('#aiSlideTrack .ai-map-card:not([data-done])').length;
   const pendingFound = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
-  if (found) found.style.display = (isAuto && !pendingCards && pendingFound) ? 'block' : 'none';
-  if (maps) maps.style.display = (isAuto && pendingCards) ? 'block' : 'none';
+  if (found) found.style.display = (isAi && !pendingCards && pendingFound) ? 'block' : 'none';
+  if (maps) maps.style.display = (isAi && pendingCards) ? 'block' : 'none';
   // Count the ROWS. The section is a <details> with a summary and a list in
   // the markup, so it always has children — which made it show itself even
   // when it had nothing to report.
   const approvedRows = document.querySelectorAll('#aiApprovedList .ai-approved-row').length;
-  if (approved) approved.style.display = (isAuto && approvedRows) ? 'block' : 'none';
+  if (approved) approved.style.display = (isAi && approvedRows) ? 'block' : 'none';
+  // The approval screen belongs to both AI routes and is the one panel that can
+  // be on screen with no cards behind it — leaving it up in Manual mode would
+  // put an "Approve & apply all" button under a hand-filled form.
+  const bulk = document.getElementById('aiBulkReview');
+  if (bulk && !isAi) bulk.style.display = 'none';
+  // The sweep's own list of what to make accessible belongs to that route only,
+  // and it holds a "make these accessible" button that must not sit under a
+  // hand-filled form.
+  const picks = document.getElementById('sweepPicks');
+  if (picks && !isSweep) picks.style.display = 'none';
+  else if (picks && isSweep && document.querySelector('#sweepPicksList .ai-bulk-row')) picks.style.display = 'block';
+  // Leaving the sweep running while its own controls are hidden means a page
+  // scrolling by itself with no way to stop it. Switching route stops it.
+  if (!isSweep && aiSweep.running) aiSweep.abort = true;
 }
 
 document.getElementById('aiSettingsBtn')?.addEventListener('click', () => {
@@ -3280,8 +3608,14 @@ document.getElementById('aiBoxClose')?.addEventListener('click', () => {
   document.getElementById('aiBox')?.close();
 });
 
+document.getElementById('sweepSettingsBtn')?.addEventListener('click', () => {
+  const d = document.getElementById('aiBox');
+  if (d?.showModal && !d.open) d.showModal();
+});
+
 $modeManualBtn?.addEventListener('click', () => setMapMode('manual'));
 $modeAutoBtn?.addEventListener('click', () => setMapMode('auto'));
+$modeSweepBtn?.addEventListener('click', () => setMapMode('sweep'));
 
 
 
@@ -3346,12 +3680,18 @@ function resetAiWorkspace() {
   aiFound = null;
   aiMapped = [];
   aiBulk = { running: false, abort: false, failed: [], armed: false };
+  // A sweep in flight is scrolling the page, so clearing the workspace under it
+  // has to stop it too — and its stops index into the aiMapped that just went.
+  aiSweep.abort = true;
+  aiSweep = { running: false, abort: false, armed: false, phase: 'screens', stops: [] };
   aiWorkspaceHost = null;
   const hide = (id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
   const empty = (id) => { const el = document.getElementById(id); if (el) el.innerHTML = ''; };
   hide('aiResults'); hide('aiMappings'); hide('aiApproved'); hide('aiBulkReview');
+  hide('sweepLog'); hide('sweepPicks');
   empty('aiCompTrack'); empty('aiSlideTrack'); empty('aiApproved');
-  empty('aiBulkList'); empty('aiBulkSummary'); empty('aiSummary');
+  empty('aiBulkList'); empty('aiBulkSummary'); empty('aiSummary'); empty('sweepLog');
+  empty('sweepPicksList'); empty('sweepPicksSummary');
 }
 let aiCost = 0;         // running spend for this panel session, in USD
 let aiRowTimer = null;
@@ -3597,19 +3937,78 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
  * container is not a limitation to work around — it is what keeps the widget you
  * care about from being summarised away, and it keeps each answer small enough
  * to actually check.
+ *
+ * `opts.drop(candidate)` is an extra filter applied before anything is captured
+ * or sent, so what it rejects costs nothing. The sweep uses it to leave out the
+ * sticky header it already dealt with on the first screenful.
+ *
+ * `opts.thumb` also takes a picture WITHOUT the pink numbers on it. That one is
+ * never sent anywhere — it is what the approval screen shows beside "screen 4"
+ * so a row can be placed on the page without scrolling back to find it.
+ *
+ * `opts.surveyOnly` stops before the part that costs anything: the candidates
+ * are collected (that is in-page code, free and instant) and the plain picture
+ * is taken, but the numbers are never drawn and the big screenshot for the model
+ * is never made. It is what lets the sweep photograph fifteen screenfuls in
+ * twenty seconds so you can choose which of them is worth paying to read.
  */
-async function collectRegion(tab, scopeSel, handled) {
+async function collectRegion(tab, scopeSel, handled, opts) {
+  // The paid scan sends every candidate to the model, so sixty is a token
+  // budget. The free survey sends nothing anywhere, so the same number was
+  // simply hiding a third of a busy screenful behind a "truncated" badge.
+  const limit = (opts && opts.surveyOnly) ? 250 : 60;
   const context = await inPage(tab.id,
-    (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [60, scopeSel || null]);
+    (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [limit, scopeSel || null]);
   if (!context) return { err: 'Could not read the page.' };
   if (!context.candidates || !context.candidates.length) {
     return { candidates: [], headings: [], skipped: 0 };
   }
 
+  const drop = (opts && opts.drop) || null;
   const before = context.candidates.length;
-  const candidates = context.candidates.filter(c => !c.selector || !handled.has(c.selector));
+  const candidates = context.candidates.filter(c =>
+    (!c.selector || !handled.has(c.selector)) && !(drop && drop(c)));
   const skipped = before - candidates.length;
   if (!candidates.length) return { candidates: [], headings: [], skipped };
+
+  // The survey's own picture, with a labelled box round each component that was
+  // recognised. It is what the screens list is chosen from, so it shows the
+  // finding rather than describing it — and it costs nothing, because drawing
+  // and capturing never involve the model.
+  let thumb = null;
+  // captureVisibleTab photographs the tab in FRONT of the window, whatever id
+  // it is handed. A survey keeps running while you work in another tab, so
+  // taking the picture anyway would file a photograph of a different page
+  // against this screenful. No picture is honest; the wrong one is not.
+  if (opts && opts.thumb && !(await pinnedTabIsVisible(tab))) opts = { ...opts, thumb: false };
+  if (opts && opts.thumb) {
+    try {
+      // Including what the PROBE found. The boxes were drawn from the read
+      // candidates alone, so a component discovered by pressing it was named in
+      // the text and drawn nowhere — on a page where reading finds nothing,
+      // that is every box on the picture.
+      const drawn = candidates.concat((opts.observed || []).map((c) => ({
+        mark: null, selector: c.root, component: c.type, maybe: false, observed: true,
+      })));
+      await inPage(tab.id, (list) => window.__u1SelectorIntel.drawComponentMarks(list), [drawn]);
+      await new Promise(r => setTimeout(r, 200));   // let the overlay paint
+      const shot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 72 });
+      // Wide enough for the labels to be readable in the 340px hover preview and
+      // the full-size view. A sweep holds one per screenful for the session.
+      thumb = await scaleShot(shot, 760);
+    } catch { thumb = null; }   // a missing picture must not stop the survey
+    finally { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); }
+  }
+
+  if (opts && opts.surveyOnly) {
+    // Everything below this line exists to build the model's input. A survey
+    // never calls the model, so it stops here — and leaves the page untouched,
+    // since the numbers were never drawn.
+    return {
+      shot: null, thumb, candidates, skipped, truncated: !!context.truncated,
+      headings: context.headings || [], title: context.title || '', url: context.url || '',
+    };
+  }
 
   // Draw the numbers, capture, then clear them again immediately so the page is
   // left as it was even if the request fails.
@@ -3628,7 +4027,7 @@ async function collectRegion(tab, scopeSel, handled) {
   if (!shot) return { err: 'Could not capture the page.' };
 
   return {
-    shot, candidates, skipped,
+    shot, thumb, candidates, skipped,
     headings: context.headings || [],
     title: context.title || '',
     url: context.url || '',
@@ -3690,6 +4089,32 @@ function showMapBusy(label, n, total) {
 function clearMapBusy() {
   document.getElementById('aiMapBusyHost')?.remove();
   document.getElementById('aiMapBusy')?.remove();
+}
+
+// The sweep's progress, in its own panel rather than Automatic mode's.
+//
+// It used to call showAiBusy, which draws into #aiCompTrack — inside #aiResults,
+// which also holds "✨ Make all of these accessible" and "Clear". A running
+// sweep therefore showed two buttons from the other route, both of which would
+// have acted on an empty inventory. Same look, its own container.
+function showSweepBusy(title, sub, pct) {
+  const host = document.getElementById('sweepBusy');
+  if (!host) return;
+  const determinate = typeof pct === 'number' && isFinite(pct);
+  const clamped = determinate ? Math.max(0, Math.min(100, Math.round(pct))) : 0;
+  host.innerHTML = `
+    <div class="ai-busy">
+      <div class="ai-busy-bar${determinate ? ' determinate' : ''}">
+        <span${determinate ? ` style="width:${clamped}%"` : ''}></span>
+      </div>
+      <div class="ai-busy-title">${escapeHtml(title)}${determinate ? ` — ${clamped}%` : ''}</div>
+      <div class="ai-busy-sub">${escapeHtml(sub || '')}</div>
+    </div>`;
+}
+
+function clearSweepBusy() {
+  const host = document.getElementById('sweepBusy');
+  if (host) host.innerHTML = '';
 }
 
 // The inventory. Every row's component type and container selector are inputs,
@@ -3894,9 +4319,23 @@ const triggerRequired = (type) => {
  * two can never disagree about what a trigger-first type means.
  */
 function rowFromCompCard(comp) {
-  const type = comp.querySelector('.ai-comp-type').value;
-  const found = comp.querySelector('.ai-comp-sel').value.trim();
-  const container = (comp.querySelector('.ai-comp-cont')?.value || '').trim();
+  return rowFromParts({
+    type: comp.querySelector('.ai-comp-type').value,
+    found: comp.querySelector('.ai-comp-sel').value.trim(),
+    container: (comp.querySelector('.ai-comp-cont')?.value || '').trim(),
+    label: comp.querySelector('.ai-comp-label').textContent,
+    compIndex: comp.dataset.i,
+  });
+}
+
+/**
+ * The same rules, without a card to read them off.
+ *
+ * The whole-page sweep never draws the inventory cards — it goes straight from
+ * the model's answer to preparing each component — so the trigger swap and the
+ * required-field check had to stop living inside the DOM reader.
+ */
+function rowFromParts({ type, found, container, label, compIndex }) {
   // For a trigger-first type the found element is the TRIGGER, and the mapping
   // is rooted on what it opens. Everything downstream expects `sel` to be that
   // root, so swap them here rather than teaching each step about the exception.
@@ -3907,8 +4346,8 @@ function rowFromCompCard(comp) {
     type,
     sel: swap ? container : found,
     trigger: swap ? found : (acceptsTrigger(type) && container ? container : undefined),
-    label: comp.querySelector('.ai-comp-label').textContent,
-    compIndex: comp.dataset.i,
+    label,
+    compIndex,
   };
   // Block only on what the schema actually requires. dialog declares a trigger
   // but does not require one, and this used to refuse it anyway.
@@ -4140,6 +4579,16 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
  */
 async function prepareOne(row, tab) {
   const track = document.getElementById('aiSlideTrack');
+  // A menu's root has to be the DIRECT PARENT of the items — u1.fix.menu reads
+  // the root's own children. <nav> is the element with the aria-label on it and
+  // the one that looks like the answer, so it gets chosen constantly, and its
+  // children are a logo, a search box and one <ul>: a menu of one item. Descend
+  // to the list. Returns null when there is nothing better, and then we keep
+  // what the specialist or the model chose.
+  if (row.type === 'menu') {
+    const better = await inPage(tab.id, (s) => window.__u1SelectorIntel.menuItemsRoot(s), [row.sel]);
+    if (better && better !== row.sel) row.sel = better;
+  }
   const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
   if (!markup || markup.error || markup.notFound) {
     // Almost always the same cause: the scan was taken on one section and the
@@ -4172,6 +4621,26 @@ async function prepareOne(row, tab) {
     out.fields = (out.fields || []).filter(f => f.key !== 'trigger');
     out.fields.unshift({ key: 'trigger', value: row.trigger,
                          why: 'The element you started from — you identified it as what opens this.' });
+  }
+
+  // A tabs mapping without a tabPanel is a tab strip that controls nothing:
+  // U1 writes no aria-controls, the arrows move between the tabs, and the
+  // content never follows. The schema requires it and the model leaves it out
+  // anyway, so it is worked out from the page instead of asked for again —
+  // mechanical, free, and it does not depend on the markup saying "tabpanel".
+  if (row.type === 'tabs') {
+    const has = (out.fields || []).find(f => f.key === 'tabPanel' && String(f.value || '').trim());
+    if (!has) {
+      const tabField = (out.fields || []).find(f => f.key === 'tab');
+      const panels = await inPage(tab.id,
+        (listSel, tabSel) => window.__u1SelectorIntel.tabPanelsFor(listSel, tabSel),
+        [row.sel, (tabField && tabField.value) || '[role="tab"]']);
+      if (panels) {
+        out.fields = (out.fields || []).filter(f => f.key !== 'tabPanel');
+        out.fields.push({ key: 'tabPanel', value: panels,
+          why: 'Worked out from the page — the panels these tabs switch between. Required: without it the tabs control nothing.' });
+      }
+    }
   }
 
   const idx = aiMapped.length;
@@ -4315,25 +4784,6 @@ function renderBulkReview() {
     (aiBulk.failed.length ? ` · ${aiBulk.failed.length} could not be prepared` : '') +
     ` · ~$${aiCost.toFixed(3)} spent preparing these</div>`;
 
-  const rows = pending.map(({ entry, idx }) => {
-    const conf = ['high', 'medium', 'low'].includes(entry.result.confidence) ? entry.result.confidence : 'medium';
-    // Read the template fresh so the row shows what would actually be applied,
-    // including any edit made in the carousel after this screen was opened.
-    const tpl = aiCardTemplate(idx);
-    return `
-      <div class="ai-approved-row ai-bulk-row" data-bulk-idx="${idx}">
-        <input type="checkbox" class="ai-bulk-tick" checked aria-label="Apply ${escapeHtml(entry.row.label)}">
-        <div class="ai-bulk-body">
-          <span class="ai-approved-label">${escapeHtml(entry.row.label)}</span>
-          <code>u1.fix.${escapeHtml(entry.row.type)}</code>
-          <span class="ai-conf" data-c="${conf}">${conf}</span>
-          <button class="btn-ghost btn-xs" data-bulk-edit="${idx}">Edit</button>
-          <div class="ai-approved-why">${escapeHtml(tpl?.primary || entry.row.sel || '')}</div>
-          ${tpl ? `<details class="ai-approved-code"><summary>Show the code</summary><div class="code-preview">${escapeHtml(tpl.code)}</div></details>` : ''}
-        </div>
-      </div>`;
-  }).join('');
-
   const fails = aiBulk.failed.map(f => `
       <div class="ai-approved-row ai-bulk-row">
         <span class="ai-approved-tick warn">!</span>
@@ -4343,8 +4793,62 @@ function renderBulkReview() {
         </div>
       </div>`).join('');
 
-  list.innerHTML = rows + fails;
+  // A sweep produces one flat list of everything on a twelve-screen page, which
+  // is a list with no sense of where anything is. Grouped by the screenful it
+  // came from — with that screenful's own picture and its own share of the cost
+  // — it can be read, and a whole screen can be dropped in one click.
+  const groups = aiSweep.stops.filter(s => s.indexes.length);
+  list.innerHTML = groups.length ? sweepGroupsHtml(groups, pending) + fails
+                                 : pending.map(p => bulkRowHtml(p)).join('') + fails;
 }
+
+function bulkRowHtml({ entry, idx }) {
+  const conf = ['high', 'medium', 'low'].includes(entry.result.confidence) ? entry.result.confidence : 'medium';
+  // Read the template fresh so the row shows what would actually be applied,
+  // including any edit made in the carousel after this screen was opened.
+  const tpl = aiCardTemplate(idx);
+  return `
+      <div class="ai-approved-row ai-bulk-row" data-bulk-idx="${idx}">
+        <input type="checkbox" class="ai-bulk-tick" checked aria-label="Apply ${escapeHtml(entry.row.label)}">
+        <div class="ai-bulk-body">
+          <span class="ai-approved-label">${escapeHtml(entry.row.label)}</span>
+          <code>u1.fix.${escapeHtml(entry.row.type)}</code>
+          <span class="ai-conf" data-c="${conf}">${conf}</span>
+          ${entry.row.needsWork === false
+            ? '<span class="ai-sev" data-need="0">already looks correct</span>' : ''}
+          <button class="btn-ghost btn-xs" data-bulk-edit="${idx}">Edit</button>
+          <div class="ai-approved-why">${escapeHtml(tpl?.primary || entry.row.sel || '')}</div>
+          ${tpl ? `<details class="ai-approved-code"><summary>Show the code</summary><div class="code-preview">${escapeHtml(tpl.code)}</div></details>` : ''}
+        </div>
+      </div>`;
+}
+
+function sweepGroupsHtml(groups, pending) {
+  const byIdx = new Map(pending.map(p => [p.idx, p]));
+  return groups.map((stop, i) => {
+    const mine = stop.indexes.map(idx => byIdx.get(idx)).filter(Boolean);
+    if (!mine.length) return '';   // every row in it has already been approved
+    const img = safeImg(stop.thumb);
+    const n = mine.length;
+    return `
+      <details class="sweep-group" data-stop="${stop.n}"${i === 0 ? ' open' : ''}>
+        <summary>
+          <input type="checkbox" class="sweep-group-tick" checked
+                 aria-label="Apply everything found on screen ${stop.n}">
+          ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
+                     <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
+                     <img class="mh-preview" src="${img}" alt="">
+                   </span>` : ''}
+          <span class="sweep-group-name">Screen ${stop.n}</span>
+          <span class="sweep-group-meta">${n} component${n === 1 ? '' : 's'} · $${(stop.cost || 0).toFixed(3)}</span>
+        </summary>
+        <div class="sweep-group-body">${mine.map(p => bulkRowHtml(p)).join('')}</div>
+      </details>`;
+  }).join('');
+}
+
+// Ticking a whole screenful at a time is wired for both lists by
+// wireGroupTicks, alongside the picks list it was written for.
 
 document.getElementById('aiBulkBackBtn')?.addEventListener('click', () => {
   document.getElementById('aiBulkReview').style.display = 'none';
@@ -4452,6 +4956,1404 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
     btn.disabled = false;
     btn.textContent = original;
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Whole page — the same two stages, run over every screenful by itself.
+//
+//  Automatic mode does one screenful per press. A real page is eight to twenty
+//  of them, so the actual workflow was: scroll, press, wait, scroll, press —
+//  twenty times. Every step of that already exists here; all that was missing
+//  was doing them in a row.
+//
+//  Nothing reaches the site during the sweep. It prepares, and the one approval
+//  screen at the end is still the only thing that writes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 15% back, so a component sitting across the fold is whole in one of the two
+// shots rather than cut in half in both.
+const SWEEP_OVERLAP = 0.85;
+// A page that grows as you scroll never ends. This is the backstop against
+// following an infinite feed forever.
+//
+// It used to be 15, from when every screenful cost a model call — it was a
+// spending guard wearing a loop guard's clothes. The survey costs nothing now,
+// so a page taller than fifteen screens was simply being cut off with most of it
+// unseen. The real end condition is a scroll position that stops moving; this
+// only has to be higher than any page a person would actually scan. Sixty
+// screenfuls is about a minute and a half, and still free.
+const SWEEP_MAX_STOPS = 60;
+// Scrolling starts lazy images and whole sections loading. Capturing straight
+// away photographs the skeleton.
+const SWEEP_SETTLE_MS = 700;
+
+// phase: 'screens' once the free survey is done and you are choosing which
+// screenfuls to pay to read; 'components' once those have been read and you are
+// choosing what to fix.
+let aiSweep = { running: false, abort: false, armed: false, phase: 'screens', stops: [], tabId: null };
+
+const $sweepStatus = () => document.getElementById('sweepStatus');
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  A sweep outlives the panel
+//
+//  It was memory only, so closing the browser — or the side panel, which the
+//  browser closes for you — threw away a survey that had cost real money to
+//  produce, with no way back except paying for it again. A sweep is per SITE
+//  and it is durable: it is kept under the hostname, restored the next time
+//  that site is in front of you, and only forgotten when you press Clear.
+//
+//  The `__` prefix marks it private, which keeps it out of exported backups.
+//  It is a cache of one machine's scan, not the client's project data — it
+//  should not travel to a colleague in a handover file.
+// ─────────────────────────────────────────────────────────────────────────────
+const sweepStoreKey = (host) => U1Store.PRIVATE_PREFIX + 'sweep_' + (host || currentHostname);
+
+let sweepSaveTimer = null;
+
+/**
+ * Persist the survey. Debounced: the render functions call it, and a run
+ * re-renders on every screenful.
+ *
+ * The thumbnails travel with it — they are the whole reason the list is worth
+ * looking at, and "unlimitedStorage" is already granted for exactly this kind
+ * of payload. `running`, `abort` and `tabId` are deliberately dropped: a
+ * restored sweep is finished, and its tab is gone.
+ */
+function saveSweep() {
+  clearTimeout(sweepSaveTimer);
+  sweepSaveTimer = setTimeout(async () => {
+    try {
+      if (!aiSweep.stops.length) return;
+      await U1Store.set({
+        [sweepStoreKey()]: {
+          v: 1,
+          savedAt: Date.now(),
+          host: currentHostname,
+          url: aiSweep.url || '',
+          phase: aiSweep.phase,
+          cost: aiCost,
+          stops: aiSweep.stops,
+        },
+      });
+      // And to the server, so a colleague on another machine opens this site
+      // and sees the same survey — the same screens, the same pictures, the
+      // same progress — instead of being asked to pay for it again.
+      //
+      // The sweep key is private (`__`), so U1Store.set's own sync hook does
+      // not fire for it: a survey is not one of the site-scoped prefixes and
+      // has its own shape, its own pictures and its own endpoint.
+      if (await U1Auth.isLoggedIn()) {
+        try {
+          await U1Sync.pushSweep(currentHostname, {
+            url: aiSweep.url, phase: aiSweep.phase, cost: aiCost, stops: aiSweep.stops,
+          });
+        } catch (err) {
+          showNotice(document.getElementById('sweepPicksStatus'),
+            'The scan is saved on this machine but did not reach the server, so your ' +
+            'colleagues will not see it: ' + err.message, 'error', 12000);
+        }
+      }
+    } catch (err) {
+      // Storage being full must not take the run down with it — the results are
+      // still on screen and still usable, they just will not survive the panel.
+      showNotice(document.getElementById('sweepPicksStatus'),
+        'The scan is on screen but could not be saved: ' + err.message, 'warn', 8000);
+    }
+  }, 400);
+}
+
+/** Throw the stored survey away. Only Clear does this — never a tab change. */
+async function forgetSweep(host) {
+  try { await U1Store.remove([sweepStoreKey(host)]); } catch {}
+}
+
+/**
+ * Put back the survey for the site now in front of us, if there is one.
+ *
+ * Nothing here costs anything or touches the page: it is the free half of the
+ * work being handed back. The tab it ran on is not restored — that tab is
+ * gone, and sweepTab() falls back to the one in front, which is the right
+ * answer for a survey being reopened rather than continued.
+ */
+async function restoreSweep() {
+  if (aiSweep.running || aiSweep.stops.length) return false;
+  let saved;
+  try { saved = (await U1Store.get([sweepStoreKey()]))[sweepStoreKey()]; } catch { return false; }
+  if (!saved || !Array.isArray(saved.stops) || !saved.stops.length) return false;
+
+  aiSweep = {
+    running: false, abort: false, armed: false,
+    phase: saved.phase === 'components' ? 'components' : 'screens',
+    stops: saved.stops, tabId: null, url: saved.url || '',
+  };
+  aiCost = saved.cost || 0;
+  aiWorkspaceHost = currentHostname;
+  if (aiSweep.phase === 'components') renderSweepPicks();
+  else renderSweepScreens();
+
+  // How old it is, said plainly. A scan from last week describes a page that
+  // may have been redeployed twice since, and a stale survey that looks fresh
+  // is worse than no survey — it spends money reading screenfuls that moved.
+  const summary = document.getElementById('sweepPicksSummary');
+  if (summary) {
+    summary.insertAdjacentHTML('beforeend',
+      `<div class="sweep-restored">Restored from your last scan of this site, ` +
+      `${describeAge(saved.savedAt)}. Nothing was charged to bring it back — ` +
+      `scan again if the page has changed since.</div>`);
+  }
+  return true;
+}
+
+function describeAge(ts) {
+  if (!ts) return 'earlier';
+  // Not `const mins` — verify-sweep.mjs lifts the panel's own `const mins =`
+  // helper out of this file by regex, and a second declaration of that name
+  // anywhere above it is the one the regex finds.
+  const ageMins = Math.round((Date.now() - ts) / 60000);
+  if (ageMins < 2) return 'just now';
+  if (ageMins < 60) return `${ageMins} minutes ago`;
+  const ageHours = Math.round(ageMins / 60);
+  if (ageHours < 24) return `${ageHours} hour${ageHours === 1 ? '' : 's'} ago`;
+  const ageDays = Math.round(ageHours / 24);
+  return `${ageDays} day${ageDays === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * One line in the scan log.
+ *
+ * A tall page produces two or three lines per screenful, and thirty screenfuls
+ * of that filled the panel and pushed the thing you actually came for — the
+ * list of screens to pick from — off the bottom. So the log is an accordion:
+ * shut by default, one nested section per screenful, and the summary line of
+ * each carries that screen's result so the detail is there without being in
+ * the way. Progress still shows while a sweep runs, because the outer summary
+ * mirrors the latest line even while everything is closed.
+ */
+function sweepLog(n, what, kind, cost) {
+  const box = document.getElementById('sweepLog');
+  if (!box) return;
+  box.style.display = '';
+
+  let wrap = box.querySelector('.sweep-log-wrap');
+  if (!wrap) {
+    wrap = document.createElement('details');
+    wrap.className = 'sweep-log-wrap';
+    wrap.innerHTML =
+      '<summary><span class="sweep-log-title">Scan log</span>' +
+      '<span class="sweep-log-live"></span></summary>' +
+      '<div class="sweep-log-body"></div>';
+    box.appendChild(wrap);
+  }
+  const body = wrap.querySelector('.sweep-log-body');
+
+  const row = document.createElement('div');
+  row.className = 'sweep-log-row';
+  if (kind) row.dataset.kind = kind;
+  row.innerHTML =
+    `<span class="what">${escapeHtml(what)}</span>` +
+    `<span class="cost">${typeof cost === 'number' ? '$' + cost.toFixed(3) : ''}</span>`;
+
+  if (!n) {
+    // Not about one screenful — the end of the page, a limit, a failure. These
+    // are the lines worth seeing without opening anything, so they sit loose at
+    // the bottom rather than inside a section.
+    row.classList.add('sweep-log-note');
+    body.appendChild(row);
+  } else {
+    let sec = body.querySelector(`.sweep-log-screen[data-n="${n}"]`);
+    if (!sec) {
+      sec = document.createElement('details');
+      sec.className = 'sweep-log-screen';
+      sec.dataset.n = String(n);
+      sec.innerHTML = `<summary><span class="n">Screen ${n}</span>` +
+        '<span class="sum"></span></summary>';
+      body.appendChild(sec);
+    }
+    sec.appendChild(row);
+    // The last line that says something — "pressed 12, nothing opened" is
+    // process, "form · tabs? — 51 elements" is the answer.
+    if (kind !== 'skip' || !sec.querySelector('.sum').textContent) {
+      sec.querySelector('.sum').textContent = what;
+    }
+  }
+
+  const live = wrap.querySelector('.sweep-log-live');
+  if (live) live.textContent = n ? `Screen ${n} · ${what}` : what;
+  if (wrap.open) body.scrollTop = body.scrollHeight;
+}
+
+/** How tall the page is in screenfuls — the basis for the estimate. */
+async function sweepMeasure(tab) {
+  return inPage(tab.id, () => ({
+    height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
+    view: window.innerHeight,
+    y: window.scrollY,
+  }));
+}
+
+document.getElementById('sweepStopBtn')?.addEventListener('click', () => {
+  aiSweep.abort = true;
+  const b = document.getElementById('sweepStopBtn');
+  b.disabled = true;
+  b.textContent = 'Stopping after this screen…';
+});
+
+document.getElementById('sweepStartBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('sweepStartBtn');
+  const status = $sweepStatus();
+  if (aiSweep.running) return;
+
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
+    return;
+  }
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
+
+  // No API key check and no "are you sure" here any more. This press only
+  // photographs the page and counts what is on it, in the panel — it makes no
+  // request and costs nothing, so asking permission for it was friction in
+  // front of the free half. The confirmation belongs on the next press, which
+  // is where the first call is made, and that is where it now lives.
+  await runSweep(tab);
+});
+
+async function runSweep(tab) {
+  const btn = document.getElementById('sweepStartBtn');
+  const stopBtn = document.getElementById('sweepStopBtn');
+  const status = $sweepStatus();
+  const log = document.getElementById('sweepLog');
+
+  // Pinned to the tab this ran on. Hovering a screenful scrolls the page and
+  // draws on it, and `getTab()` answers with whatever tab is in FRONT — so
+  // switching browser tabs and moving the mouse over the list scrolled and
+  // marked up a completely different page. The results belong to the page they
+  // came from, and so does everything that acts on them.
+  aiSweep = { running: true, abort: false, armed: false, phase: 'screens', stops: [],
+              tabId: tab.id, url: tab.url || '' };
+  aiBulk.failed = [];
+  if (log) { log.innerHTML = ''; log.style.display = 'none'; }
+  btn.disabled = true;
+  stopBtn.style.display = '';
+  stopBtn.disabled = false;
+  stopBtn.textContent = '■ Stop after this screen';
+  document.getElementById('aiBulkReview').style.display = 'none';
+  document.getElementById('sweepPicks').style.display = 'none';
+
+  // Stamp the site these selectors come from, the same way a single scan does.
+  aiWorkspaceHost = currentHostname;
+
+  // Where the page was before we started moving it. A sweep ends fourteen
+  // screenfuls down, and leaving it there means the approval screen names
+  // components nowhere near what is on the page behind it.
+  const startedAt = (await sweepMeasure(tab))?.y || 0;
+
+  // Selectors already dealt with — saved mappings and dismissals — plus, as the
+  // sweep goes, everything it has already found. Without the second half the
+  // sticky header is discovered again at every scroll position.
+  const handled = await alreadyHandled();
+
+  let n = 0;
+  try {
+    await inPage(tab.id, () => window.scrollTo(0, 0));
+    await new Promise(r => setTimeout(r, SWEEP_SETTLE_MS));
+
+    while (n < SWEEP_MAX_STOPS && !aiSweep.abort) {
+      n++;
+      const stop = {
+        n, scrollY: 0, thumb: null, cost: 0,
+        count: 0, components: '', inventory: '', truncated: false, sticky: 0, probed: [],
+        compSels: [], continuedFrom: 0, continuesOnto: 0, positional: 0,
+        scanned: false, found: [], indexes: [],
+      };
+      aiSweep.stops.push(stop);
+
+      const pos = await sweepMeasure(tab);
+      stop.scrollY = pos ? pos.y : 0;
+      showSweepBusy(`Screen ${n}`, 'Photographing this screenful.',
+        pos && pos.height ? Math.min(100, ((pos.y + pos.view) / pos.height) * 100) : undefined);
+      btn.textContent = `Screen ${n}…`;
+
+      // Survey only: collect what is here and photograph it. No numbers drawn,
+      // no big screenshot, no model call — so a fifteen-screen page is looked
+      // at in about twenty seconds and costs nothing.
+      //
+      // A sticky header travels with the viewport and would be counted again at
+      // every stop, which is why it is dropped from the second screenful on.
+      // Pressed BEFORE the picture is taken, so what the probe finds can be
+      // drawn on it. The probe needs no screenshot of its own.
+      let observed = [];
+      if (document.getElementById('sweepProbeTick')?.checked) {
+        showSweepBusy(`Screen ${n}`, 'Opening each component to see what it is.',
+          pos && pos.height ? Math.min(100, ((pos.y + pos.view) / pos.height) * 100) : undefined);
+        const probed = await probeScreen(tab);
+        await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
+        if (!probed) sweepLog(n, 'the probe could not run on this page', 'err');
+        else if (!probed.pressed) {
+          sweepLog(n, 'nothing here could be pressed' +
+            (probed.skipped ? ` — ${probed.skipped} were refused as unsafe` : ''), 'skip');
+        } else if (!probed.components.length) {
+          sweepLog(n, `pressed ${probed.pressed}, nothing opened`, 'skip');
+        } else {
+          observed = probed.components;
+          stop.probed = probed.components;
+          sweepLog(n, `pressed ${probed.pressed} · found ` +
+            probed.components.map((c) => c.type).join(', '));
+          if (!probed.restored) {
+            sweepLog(n, 'a component would not close again — the page may look different', 'err');
+          }
+        }
+      }
+
+      const collected = await collectRegion(tab, '', handled, {
+        thumb: true,
+        surveyOnly: true,
+        observed,
+        drop: (c) => c.sticky && n > 1,
+      });
+      if (collected.err) { sweepLog(n, collected.err, 'err'); break; }
+      stop.thumb = collected.thumb || null;
+      stop.count = collected.candidates.length;
+      stop.truncated = !!collected.truncated;
+      stop.inventory = screenInventory(collected.candidates);
+
+      // Read as well. The probe above covers what it could press; the reading
+      // covers what announces itself, and neither is a superset of the other.
+      stop.components = mergeComponents(screenComponents(collected.candidates), observed);
+      // Which components are on this screenful, by selector. The same selector
+      // appearing on two consecutive stops is the same element straddling the
+      // fold — a table taller than the window — and saying so is what stops you
+      // ticking the second screenful alone and mapping its bottom half.
+      stop.compSels = collected.candidates
+        .filter(c => c.component && c.selector)
+        .map(c => c.selector);
+      const prev = aiSweep.stops[aiSweep.stops.length - 2];
+      if (prev && prev.compSels) {
+        const shared = stop.compSels.filter(s => prev.compSels.includes(s));
+        if (shared.length) {
+          stop.continuedFrom = prev.n;
+          prev.continuesOnto = n;
+        }
+      }
+      // Which screenful the sticky header landed on. It is counted once, on the
+      // first screenful that sees it — so that screenful has to say so, or
+      // ticking only the middle of a page would silently leave out the site's
+      // main navigation.
+      stop.sticky = collected.candidates.filter(c => c.sticky).length;
+      // Components whose only possible selector counts siblings. Worth knowing
+      // BEFORE paying to read the screenful: the mapping will work and will be
+      // fragile, and the better move may be to ask the client for a class.
+      stop.positional = collected.candidates
+        .filter(c => c.component && /:nth-|:first-child|:last-child|:only-child/.test(c.selector || '')).length;
+      sweepLog(n,
+        stop.count
+          ? (stop.components ? stop.components + ' — ' : 'no complex components — ') +
+            `${stop.count}${stop.truncated ? '+' : ''} elements` +
+            (stop.truncated ? ' · truncated' : '')
+          : 'nothing on this screenful',
+        stop.count ? '' : 'skip');
+
+      if (aiSweep.abort) break;
+
+      // Down one screenful, less the overlap.
+      //
+      // behavior:'instant' is load-bearing. A page carrying the very ordinary
+      // `html { scroll-behavior: smooth }` animates scrollTo, so window.scrollY
+      // on the next line still holds the OLD value — and reading it there to
+      // decide whether the page moved concluded "bottom reached" after the
+      // first screenful, every time, on every site that has that one line of
+      // CSS. The check has to happen after the scroll has actually landed, so
+      // it is a second call after the settle rather than a return value here.
+      const y0 = (await sweepMeasure(tab))?.y ?? 0;
+      await inPage(tab.id, (frac) => {
+        window.scrollTo({ top: window.scrollY + window.innerHeight * frac, left: 0, behavior: 'instant' });
+      }, [SWEEP_OVERLAP]);
+      await new Promise(r => setTimeout(r, SWEEP_SETTLE_MS));
+      const y1 = (await sweepMeasure(tab))?.y ?? 0;
+      // The page itself decides when this ends: a scroll position that will not
+      // move is the bottom, whatever the height said before lazy content
+      // changed it.
+      if (y1 <= y0) {
+        // Two very different things end a sweep here, and they look identical
+        // from the outside: the page really is at its end, or it refused to
+        // scroll at all. Saying which turns "it stopped after one screen" into
+        // something answerable.
+        const atEnd = pos && (y1 + pos.view) >= pos.height - 4;
+        sweepLog(0, atEnd
+          ? `reached the bottom of the page (${Math.round(y1)}px)`
+          : `the page would not scroll past ${Math.round(y1)}px of ${Math.round(pos ? pos.height : 0)} — stopping`,
+          'skip');
+        break;
+      }
+    }
+    if (n >= SWEEP_MAX_STOPS && !aiSweep.abort) {
+      sweepLog(0, `stopped at the ${SWEEP_MAX_STOPS}-screen limit`, 'skip');
+    }
+  } catch (err) {
+    sweepLog(0, 'Failed: ' + err.message, 'err');
+  } finally {
+    clearSweepBusy();
+    aiSweep.running = false;
+    btn.disabled = false;
+    btn.textContent = '🪄 Scan the whole page';
+    stopBtn.style.display = 'none';
+    // Our own numbers must never be left on the site's DOM, and the page goes
+    // back where it was — the specialist did not scroll it here.
+    try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
+    try { await inPage(tab.id, (y) => window.scrollTo(0, y), [startedAt]); } catch {}
+  }
+
+  const total = aiSweep.stops.reduce((s, x) => s + x.count, 0);
+  if (!total) {
+    // The commonest reason a survey comes back empty is the skip list: a handful
+    // of "Skip" presses in an earlier session, still in force and invisible. The
+    // way to undo that has to be offered here, not found.
+    const skipped = (await dismissedSelectors()).length;
+    showNotice(status, 'Nothing on this page that is not already mapped.', 'success', 0);
+    if (skipped) {
+      status.insertAdjacentHTML('beforeend',
+        ` ${skipped} element${skipped === 1 ? ' was' : 's were'} left out because ${skipped === 1 ? 'it was' : 'they were'} skipped in an earlier scan — ` +
+        `<button class="btn-ghost btn-xs" id="aiResetDismissed">show them again</button>.`);
+    }
+    return;
+  }
+  status.style.display = 'none';
+  aiSweep.phase = 'screens';
+  renderSweepScreens();
+}
+
+/**
+ * The COMPONENTS on this screenful, as the page itself declares them.
+ *
+ * This is the line worth reading. "22 links, 19 buttons" tells you how busy a
+ * screenful is; "a nav, a carousel and a tab strip" tells you whether it is
+ * worth paying to read — and that is the choice the list exists to support.
+ *
+ * Free, because none of it is judgement: role="tablist" IS a tab strip and
+ * <form> IS a form. What the model is paid for is the part that IS judgement —
+ * deciding that seven links and six drop-downs are one menu, and which element
+ * is its root. Anything guessed from a class name is marked with a "?" so the
+ * two are never confused.
+ */
+function screenComponents(candidates) {
+  const sure = new Map();
+  const maybe = new Map();
+  for (const c of candidates || []) {
+    if (!c.component || c.nested) continue;
+    const into = c.maybe ? maybe : sure;
+    into.set(c.component, (into.get(c.component) || 0) + 1);
+  }
+  // A guess is not worth repeating when the same component is already known to
+  // be there — a `.hero-carousel` class beside role="region" says one thing.
+  for (const k of sure.keys()) maybe.delete(k);
+  const say = (m, q) => [...m.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${v > 1 ? v + ' ' : ''}${v > 1 ? k + (k.endsWith('s') ? '' : 's') : k}${q}`);
+  return [...say(sure, ''), ...say(maybe, '?')].slice(0, 5).join(' · ');
+}
+
+/**
+ * Operate this screenful's components and report what they turned out to be.
+ *
+ * Reading a page cannot see a widget built from bare <div>s with its handlers
+ * hung in JavaScript. That is measured rather than assumed: the same page scores
+ * 100% with its roles and class names and 0% with them stripped. Pressing it
+ * works on both, because it never looked at either.
+ *
+ * Costs no model call and no money. What it costs is pressing things on someone
+ * else's page, so it sits behind a switch and inside probe.js's own safety net.
+ */
+/**
+ * One line describing the screenful, from what was read and what was observed.
+ *
+ * An observation outranks a guess about the same kind of thing: if pressing the
+ * strip proved it is a tab strip, "tabs?" from a class name adds nothing and its
+ * question mark is now simply wrong. Guesses about kinds nobody probed are kept
+ * — the probe presses at most a dozen things per screenful, so its silence is
+ * not evidence of absence.
+ */
+function mergeComponents(readLine, observed) {
+  if (!observed || !observed.length) return readLine;
+  const counts = new Map();
+  for (const c of observed) counts.set(c.type, (counts.get(c.type) || 0) + 1);
+  const proven = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => (v > 1 ? `${v} ${k}${k.endsWith('s') ? '' : 's'}` : k));
+
+  const kinds = new Set(counts.keys());
+  const leftover = (readLine || '').split(' · ')
+    .filter(Boolean)
+    .filter(part => ![...kinds].some(k => part.includes(k)));
+
+  return [...proven, ...leftover].slice(0, 5).join(' · ');
+}
+
+async function probeScreen(tab) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['probe.js'] });
+  } catch { return null; }
+  try {
+    return await inPage(tab.id, async () => {
+      const P = window.__u1Probe, S = window.__u1SelectorIntel;
+      if (!P || !S) return null;
+      const out = await P.probeAll(document.body,
+        { inViewport: true, settle: 80, max: 12, limit: 2500 });
+      // Selectors are worked out HERE, where the elements are. The panel never
+      // handles a node — only a selector produced by the same code that
+      // produces every other selector in the tool.
+      const nameFor = (root, els) => {
+        if (!els || !els.length) return '';
+        if (els.length === 1) return S.robustSelector(els[0]);
+        const common = root && S.commonSelectorFor ? S.commonSelectorFor(root, els) : null;
+        return (common && common.selector) || els.map((e) => S.robustSelector(e)).join(',');
+      };
+      return {
+        restored: out.restored, pressed: out.pressed, skipped: out.skipped,
+        components: out.components.map((c) => {
+          const parts = {};
+          for (const k of Object.keys(c.parts)) parts[k] = nameFor(c.root, c.parts[k]);
+          return { type: c.type, root: c.root ? S.robustSelector(c.root) : '', why: c.why, parts };
+        }),
+      };
+    });
+  } catch { return null; }
+}
+
+/**
+ * What kind of thing is on this screenful, counted in the panel from data the
+ * page already handed back. No model, no network, no wait — which is the whole
+ * reason the survey can afford to look at every screenful.
+ */
+function screenInventory(candidates) {
+  const KIND = {
+    a: 'links', button: 'buttons', input: 'inputs', select: 'inputs',
+    textarea: 'inputs', form: 'forms', nav: 'navs', table: 'tables',
+    img: 'images', iframe: 'iframes', video: 'media', audio: 'media',
+  };
+  // A role is the better answer where there is one — a <div role="tab"> is a
+  // tab, not a div, and that is what you are choosing screens by.
+  // A container and the things inside it are two different answers. Counting a
+  // tablist among its own tabs reported the five-tab finder as six tabs — a
+  // number that is wrong in the one place you are using numbers to choose.
+  const ROLE = {
+    tab: 'tabs', tablist: 'tab strips',
+    menu: 'menus', menubar: 'menus',
+    dialog: 'dialogs', alertdialog: 'dialogs',
+    listbox: 'lists', option: 'options',
+    combobox: 'comboboxes', grid: 'grids', table: 'tables', row: 'rows',
+    checkbox: 'checkboxes', radio: 'radios', button: 'buttons', link: 'links',
+  };
+  const tally = new Map();
+  for (const c of candidates || []) {
+    const kind = ROLE[(c.role || '').toLowerCase()] || KIND[(c.tag || '').toLowerCase()] || 'other';
+    tally.set(kind, (tally.get(kind) || 0) + 1);
+  }
+  // "other" is every div the collector picked up on a class hint. It is real,
+  // but naming it adds nothing to a choice, so it sorts last and is dropped
+  // once there is anything better to say.
+  const rows = [...tally.entries()].sort((a, b) =>
+    (a[0] === 'other') - (b[0] === 'other') || b[1] - a[1]);
+  const named = rows.filter(([k]) => k !== 'other');
+  return (named.length ? named : rows).slice(0, 4)
+    .map(([k, v]) => `${v} ${v === 1 ? SINGULAR[k] || k : k}`).join(', ');
+}
+
+// Written out rather than stripped with a regex. Chopping /e?s$/ turns "tables"
+// into "tabl" and "images" into "imag" — which is where the "1 tabl" in a real
+// run came from. English is not regular enough to guess at in a label somebody
+// is reading to make a decision.
+const SINGULAR = {
+  links: 'link', buttons: 'button', inputs: 'input', forms: 'form',
+  navs: 'nav', tables: 'table', images: 'image', iframes: 'iframe',
+  media: 'media', tabs: 'tab', 'tab strips': 'tab strip', menus: 'menu',
+  dialogs: 'dialog', lists: 'list', options: 'option', comboboxes: 'combobox',
+  grids: 'grid', rows: 'row', checkboxes: 'checkbox', radios: 'radio',
+  other: 'other',
+};
+
+// ── The screens, to choose from ─────────────────────────────────────────────
+// The survey above cost nothing. Reading a screenful costs a model call, so the
+// choice sits here, in front of the first thing that is charged for — and it is
+// made from the photographs, which is the one form in which fifteen screenfuls
+// can actually be judged at a glance.
+
+// What a call costs and how long it takes. The money is measured from this
+// session as soon as there is anything to measure; the times are not measured
+// at all and are labelled as estimates wherever they are shown.
+const SWEEP_EST = { scanSecs: 15, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 };
+
+const sweepAvgCall = () =>
+  (aiCost > 0 && aiMapped.length ? aiCost / aiMapped.length : SWEEP_EST.fallbackCall);
+
+const mins = (secs) => secs < 90 ? `~${Math.round(secs)}s`
+  : `~${Math.round(secs / 60)}–${Math.round(secs / 60) + 2} min`;
+
+function renderSweepScreens() {
+  const wrap = document.getElementById('sweepPicks');
+  const list = document.getElementById('sweepPicksList');
+  const summary = document.getElementById('sweepPicksSummary');
+  if (!wrap || !list) return;
+
+  const stops = aiSweep.stops;
+  const elements = stops.reduce((s, x) => s + x.count, 0);
+  const pickable = stops.filter(s => s.count).length;
+  summary.innerHTML = `<div class="ai-meta">${stops.length} screen${stops.length === 1 ? '' : 's'} · ` +
+    `${elements} element${elements === 1 ? '' : 's'} · nothing spent yet</div>` +
+    // Twenty-one screenfuls is twenty-one clicks to clear, and "only the ones
+    // with a carousel" starts from none rather than from all.
+    `<label class="sweep-all"><input type="checkbox" id="sweepAllTick" checked>` +
+    `Select all ${pickable} readable screen${pickable === 1 ? '' : 's'}</label>`;
+
+  list.innerHTML = stops.map(sweepScreenRowHtml).join('');
+
+  wrap.style.display = 'block';
+  document.getElementById('aiBulkReview').style.display = 'none';
+  syncSweepMakeBtn();
+  saveSweep();
+}
+
+/**
+ * One screenful, as a row you can tick to pay to read it.
+ *
+ * Pulled out of renderSweepScreens so the same row can be shown again AFTER a
+ * read, under "not read yet" — reading the first screen used to replace the
+ * whole list with its results, and the other seventeen screenfuls simply
+ * disappeared with no way back to them short of scanning the page again.
+ */
+function sweepScreenRowHtml(stop) {
+    const img = safeImg(stop.thumb);
+    const empty = !stop.count;
+    return `
+      <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}" data-screen="${stop.n}">
+        <input type="checkbox" class="sweep-screen-tick" ${empty ? 'disabled' : 'checked'}
+               aria-label="Read screen ${stop.n}">
+        ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
+                   <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
+                 </span>` : ''}
+        <div class="ai-bulk-body">
+          <span class="ai-approved-label">Screen ${stop.n}</span>
+          ${// The components come first and in the panel's own text colour.
+            // "22 links, 19 buttons" says how busy a screenful is; the components
+            // say whether it is worth paying to read, which is the actual choice.
+            //
+            // A screenful with none says so out loud. Left blank, an unmarked
+            // picture reads as "the tool missed it" rather than "there is
+            // nothing here but links and text" — which is a real answer, and
+            // usually a reason not to spend a call on it.
+            //
+            // "no COMPLEX components", not "no components": a screenful of
+            // links, buttons and inputs is full of components, they are just
+            // the simple kind that needs no mapping. The shorter wording read
+            // as "nothing here", which is wrong and reads as a failure.
+            stop.components
+            ? `<span class="sweep-components">${escapeHtml(stop.components)}</span>`
+            : stop.count
+            ? `<span class="sweep-components sweep-none">no complex components — simple elements only</span>`
+            : ''}
+          ${stop.truncated ? '<span class="ai-sev" data-need="1">only the first 250 counted</span>' : ''}
+          ${stop.positional ? '<span class="ai-sev" data-need="1">positional</span>' : ''}
+          <div class="ai-approved-why">${stop.count}${stop.truncated ? '+' : ''} element${stop.count === 1 ? '' : 's'}${
+            stop.inventory ? ' · ' + escapeHtml(stop.inventory) : ''}${
+            // A sticky header is counted once, on the screenful that first sees
+            // it. Ticking only the middle of a page would otherwise leave out
+            // the site's main navigation with nothing to say it had.
+            stop.sticky ? ` · includes the sticky header (${stop.sticky})` : ''}${
+            // Something here runs past the edge of the picture and carries on in
+            // the next screenful. Tick one without the other and you map half of
+            // it — which is worth saying before the choice, not after.
+            stop.continuedFrom ? ` · continued from screen ${stop.continuedFrom}` : ''}${
+            stop.continuesOnto ? ` · continues onto screen ${stop.continuesOnto}` : ''}${
+            stop.positional ? ` · ${stop.positional} can only be reached by position — ask the client for a class` : ''}${
+            // An observation is worth marking as one: these were not read off
+            // the markup, they were opened and watched.
+            (stop.probed || []).length ? ` · ${stop.probed.length} confirmed by opening ${stop.probed.length === 1 ? 'it' : 'them'}` : ''}</div>
+        </div>
+      </div>`;
+}
+
+/**
+ * The estimate under the screens list.
+ *
+ * Two rows, because they are two different promises. "Scan" is what pressing
+ * the button now will cost. "Fix" is what would follow IF every component found
+ * were then ticked — a ceiling, not a forecast, and said so on the line itself.
+ * Rolling them into one number would quote a bill nobody has agreed to yet.
+ */
+function sweepEstimateHtml(screens, elements) {
+  const call = sweepAvgCall();
+  const comps = Math.max(1, Math.round(elements / SWEEP_EST.fixPerElements));
+  const measured = aiCost > 0 && aiMapped.length;
+  return `
+    <div class="sweep-est">
+      <div class="sweep-est-head">Ticked: ${screens} screen${screens === 1 ? '' : 's'} · ${elements} element${elements === 1 ? '' : 's'}</div>
+      <div class="sweep-est-row">
+        <span>Scan</span><span>${mins(screens * SWEEP_EST.scanSecs)}</span>
+        <span>~$${(screens * call).toFixed(2)}</span>
+      </div>
+      <div class="sweep-est-row">
+        <span>Fix</span><span>${mins(comps * SWEEP_EST.fixSecs)}</span>
+        <span>~$${(comps * SWEEP_EST.fixCall).toFixed(2)}</span>
+        <em>only if you then tick all ~${comps}</em>
+      </div>
+      <div class="sweep-est-note">${measured
+        ? `Prices from this session's own calls. Times are estimates.`
+        : `Estimates. They tighten once the first call has been made.`}</div>
+    </div>`;
+}
+
+// ── What it found, to choose from ───────────────────────────────────────────
+// The sweep stops here on purpose. Everything above cost one call per SCREEN;
+// working out the selectors for a component costs a call per COMPONENT. Putting
+// the choice between the two is what makes "just the first screen" cheap
+// instead of merely tidier — nothing below this list is paid for until it is
+// ticked and the button is pressed.
+function renderSweepPicks() {
+  const wrap = document.getElementById('sweepPicks');
+  const list = document.getElementById('sweepPicksList');
+  const summary = document.getElementById('sweepPicksSummary');
+  if (!wrap || !list) return;
+
+  const read = aiSweep.stops.filter(s => s.found.length);
+  // A screenful whose components have all been made accessible is finished, and
+  // it is not a choice any more. It used to stay in the list with everything
+  // ticked, so the next press offered to do the same work again; and hiding the
+  // whole panel after applying took the rest of the page with it. Done screens
+  // move to their own drawer, shut, where they can still be looked at.
+  // A component that could not be mapped is not done, so its screenful stays in
+  // the pending list carrying the reason. "Six found, five saved" must never
+  // again be something you notice by counting.
+  const stops = read.filter(s => !s.found.every(f => f.done));
+  const finished = read.filter(s => s.found.length && s.found.every(f => f.done));
+  const total = stops.reduce((s, x) => s + x.found.length, 0);
+  const doneCount = finished.reduce((s, x) => s + x.found.length, 0);
+  const barrenCount = read.filter(s => s.scanned && !s.found.length).length;
+  if (!total && !doneCount && !barrenCount) { wrap.style.display = 'none'; return; }
+
+  summary.innerHTML = `<div class="ai-meta">${total} component${total === 1 ? '' : 's'} across ` +
+    `${stops.length} screen${stops.length === 1 ? '' : 's'} · $${aiCost.toFixed(3)} to find them</div>`;
+
+  list.innerHTML = stops.map((stop, i) => {
+    const img = safeImg(stop.thumb);
+    const k = stop.found.length;
+    return `
+      <details class="sweep-group" data-stop="${stop.n}"${i === 0 ? ' open' : ''}>
+        <summary>
+          <input type="checkbox" class="sweep-group-tick" checked
+                 aria-label="Choose everything found on screen ${stop.n}">
+          ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
+                     <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
+                     <img class="mh-preview" src="${img}" alt="">
+                   </span>` : ''}
+          <span class="sweep-group-name">Screen ${stop.n}</span>
+          <span class="sweep-group-meta">${k} component${k === 1 ? '' : 's'} · $${(stop.cost || 0).toFixed(3)}</span>
+        </summary>
+        <div class="sweep-group-body">${stop.found.map(f => `
+          <div class="ai-approved-row ai-bulk-row" data-pick="${f.id}">
+            <input type="checkbox" class="ai-bulk-tick" checked aria-label="Make ${escapeHtml(f.label)} accessible">
+            <div class="ai-bulk-body">
+              <span class="ai-approved-label">${escapeHtml(f.label)}</span>
+              <code>u1.fix.${escapeHtml(f.type)}</code>
+              ${f.needsWork ? '<span class="ai-sev" data-need="1">needs work</span>'
+                            : '<span class="ai-sev" data-need="0">already looks correct</span>'}
+              ${f.failed ? '<span class="ai-sev" data-need="1">could not be mapped</span>' : ''}
+              <div class="ai-approved-why">${escapeHtml(f.why || f.sel)}</div>
+              ${f.failed ? `<div class="ai-approved-why sweep-failed">${escapeHtml(f.failed)}</div>` : ''}
+            </div>
+          </div>`).join('')}</div>
+      </details>`;
+  }).join('');
+
+  // Done, and out of the way. Named, so "which screens have I finished" is
+  // answerable at a glance rather than by remembering.
+  if (finished.length) {
+    const doneBox = document.createElement('details');
+    doneBox.className = 'sweep-done';
+    doneBox.innerHTML =
+      `<summary><span class="sweep-done-name">✓ ${finished.length} screen${finished.length === 1 ? '' : 's'} completed</span>` +
+      `<span class="sweep-done-meta">${doneCount} component${doneCount === 1 ? '' : 's'} made accessible</span></summary>` +
+      `<div class="sweep-done-body">${finished.map(stop => `
+        <div class="sweep-done-row" data-screen="${stop.n}">
+          ${safeImg(stop.thumb) ? `<span class="mh-thumb"><img class="mh-img" src="${safeImg(stop.thumb)}" alt="Screen ${stop.n}"></span>` : ''}
+          <div class="ai-bulk-body">
+            <span class="ai-approved-label">Screen ${stop.n}</span>
+            <div class="ai-approved-why">${stop.found.map(f => escapeHtml(f.label)).join(' · ')}</div>
+          </div>
+        </div>`).join('')}</div>`;
+    list.appendChild(doneBox);
+  }
+
+  // The screenfuls you did NOT pay to read. Reading one used to replace the
+  // list with its results, and the rest of the page went with it — "I ticked
+  // screen 1 and made it accessible, where is everything else". They are still
+  // surveyed, still free, and still tickable; shut by default because the
+  // components just found are what this step is about.
+  // Read, and it produced nothing. Not a choice any more and not a failure —
+  // but it must be SAYABLE, because two screens ticked and one screen of
+  // results is otherwise indistinguishable from the run having stopped early.
+  const barren = read.filter(s => s.scanned && !s.found.length);
+  if (barren.length) {
+    const box = document.createElement('div');
+    box.className = 'sweep-barren';
+    box.innerHTML = barren.map(stop => `
+      <div class="sweep-barren-row" data-screen="${stop.n}">
+        <span class="sweep-barren-n">Screen ${stop.n}</span>
+        <span class="sweep-barren-why">${escapeHtml(stop.outcome || 'read, nothing found')}</span>
+      </div>`).join('');
+    list.appendChild(box);
+  }
+
+  const unread = aiSweep.stops.filter(s => !s.scanned && s.count);
+  if (unread.length) {
+    const rest = document.createElement('details');
+    rest.className = 'sweep-rest';
+    rest.innerHTML =
+      `<summary><span class="sweep-rest-name">${unread.length} screen${unread.length === 1 ? '' : 's'} not read yet</span>` +
+      `<span class="sweep-rest-meta">already surveyed · free until you read ${unread.length === 1 ? 'it' : 'them'}</span></summary>` +
+      `<div class="sweep-rest-body">${unread.map(sweepScreenRowHtml).join('')}` +
+      `<button type="button" class="u1-btn u1-btn-secondary" id="sweepReadMoreBtn">Read the ticked screens</button></div>`;
+    list.appendChild(rest);
+    rest.querySelectorAll('.sweep-screen-tick').forEach(t => { t.checked = false; });
+    rest.querySelector('#sweepReadMoreBtn').addEventListener('click', async () => {
+      const picks = [...rest.querySelectorAll('.sweep-screen')]
+        .filter(r => r.querySelector('.sweep-screen-tick')?.checked)
+        .map(r => Number(r.dataset.screen));
+      if (!picks.length) {
+        showNotice(document.getElementById('sweepPicksStatus'),
+          'Tick the screens you want read first.', 'warn', 4000);
+        return;
+      }
+      await scanPickedScreens(picks);
+    });
+  }
+
+  wrap.style.display = 'block';
+  // Two panels with two "apply" buttons is the thing this guards against — but
+  // only while there is still something pending to choose. Once everything read
+  // has been applied, the review IS the result and hiding it leaves the press
+  // looking like it did nothing.
+  if (total) document.getElementById('aiBulkReview').style.display = 'none';
+  syncSweepMakeBtn();
+  saveSweep();
+}
+
+const sweepPicked = () => [...document.querySelectorAll('#sweepPicksList .ai-bulk-row[data-pick]')]
+  .filter(r => r.querySelector('.ai-bulk-tick')?.checked)
+  .map(r => r.dataset.pick);
+
+const sweepPickedScreens = () => [...document.querySelectorAll('#sweepPicksList .sweep-screen')]
+  .filter(r => r.querySelector('.sweep-screen-tick')?.checked)
+  .map(r => Number(r.dataset.screen));
+
+// One button, two jobs, because the list under it changes and the button is
+// always "do the next thing to what is ticked". The count is on it in both
+// cases: it is the number of calls that will be charged.
+function syncSweepMakeBtn() {
+  const btn = document.getElementById('sweepMakeBtn');
+  const est = document.getElementById('sweepEstimate');
+  if (!btn) return;
+
+  if (aiSweep.phase === 'screens') {
+    const picked = sweepPickedScreens();
+    // Keep the master tick honest about what is under it. An empty screenful is
+    // disabled and never counts either way, or "select all" could never reach
+    // a fully-ticked state on a page that has one.
+    const all = document.getElementById('sweepAllTick');
+    const ticks = [...document.querySelectorAll('#sweepPicksList .sweep-screen-tick:not(:disabled)')];
+    if (all && ticks.length) {
+      all.checked = picked.length > 0;
+      all.indeterminate = picked.length > 0 && picked.length < ticks.length;
+    }
+    const elements = aiSweep.stops.filter(s => picked.includes(s.n)).reduce((a, s) => a + s.count, 0);
+    btn.disabled = !picked.length;
+    btn.textContent = picked.length
+      ? `🔎 Read ${picked.length} screen${picked.length === 1 ? '' : 's'}`
+      : '🔎 No screens ticked';
+    if (est) est.innerHTML = picked.length ? sweepEstimateHtml(picked.length, elements) : '';
+    return;
+  }
+
+  const k = sweepPicked().length;
+  btn.disabled = !k;
+  btn.textContent = k ? `✨ Make ${k} accessible — ${k} more call${k === 1 ? '' : 's'}`
+                      : '✨ Nothing ticked';
+  if (est) est.innerHTML = '';
+}
+
+// One tick for a whole screenful, in both lists. Same behaviour, so they are
+// wired the same way.
+function wireGroupTicks(rootId, after) {
+  document.getElementById(rootId)?.addEventListener('change', (e) => {
+    // A screens-phase row has no group around it — it IS the unit — so it falls
+    // straight through to `after`, which recomputes the estimate.
+    const group = e.target.closest('.sweep-group');
+    if (group) {
+      if (e.target.classList.contains('sweep-group-tick')) {
+        group.querySelectorAll('.ai-bulk-tick').forEach(t => { t.checked = e.target.checked; });
+      } else if (e.target.classList.contains('ai-bulk-tick')) {
+        const ticks = [...group.querySelectorAll('.ai-bulk-tick')];
+        const head = group.querySelector('.sweep-group-tick');
+        if (head) {
+          head.checked = ticks.some(t => t.checked);
+          head.indeterminate = head.checked && ticks.some(t => !t.checked);
+        }
+      }
+      group.dataset.off = [...group.querySelectorAll('.ai-bulk-tick')].some(t => t.checked) ? '' : '1';
+    }
+    if (after) after();
+  });
+  // Clicking the thumbnail opens it full size — the hover preview settles
+  // "which screen is this", not "is that the right button".
+  document.getElementById(rootId)?.addEventListener('click', (e) => {
+    const thumb = e.target.closest('.sweep-group .mh-thumb');
+    if (!thumb) return;
+    e.preventDefault();          // the summary would otherwise toggle the group
+    const stop = aiSweep.stops.find(s => String(s.n) === thumb.dataset.shot);
+    if (stop?.thumb) openImageDialog(stop.thumb);
+  });
+}
+wireGroupTicks('sweepPicksList', syncSweepMakeBtn);
+wireGroupTicks('aiBulkList');
+
+// ── Hovering a screenful shows it on the real page ──────────────────────────
+//
+// A 340px picture of a screenful answers "roughly where am I". Scrolling the
+// actual page there and outlining the components on it answers "is THAT the nav
+// I mean" — which is the question you are actually holding while you decide
+// whether a screenful is worth paying to read.
+//
+// The marks are drawn from a fresh collection at that scroll position rather
+// than from what the survey stored: it is local code, it costs nothing, and it
+// means the outlines are of the page as it is now, not as it was.
+let sweepHover = { n: 0, timer: null, restoreY: null, busy: false };
+
+/**
+ * The tab a sweep's results belong to — not whichever tab is in front now.
+ *
+ * Everything that acts on those results scrolls a page and draws on it, so
+ * pointing any of it at the wrong tab is worse than doing nothing. Returns null
+ * once that tab is gone, and the caller simply does not act.
+ */
+async function sweepTab() {
+  if (aiSweep.tabId != null) {
+    try {
+      const t = await chrome.tabs.get(aiSweep.tabId);
+      return isInjectable(t) ? t : null;
+    } catch { return null; }   // closed or navigated away
+  }
+  const t = await getTab();
+  return isInjectable(t) ? t : null;
+}
+
+/**
+ * True when there is sweep work — running or finished — tied to a tab that is
+ * still open.
+ *
+ * Switching browser tab changes the panel's hostname, and the panel clears the
+ * AI workspace on every hostname change. That is right for a scan of "whatever
+ * is in front of me" and wrong for a sweep, which is pinned to one tab: looking
+ * at another tab and coming back threw the whole survey away and started it
+ * over. The results are still that tab's results, so they stay.
+ */
+async function sweepIsPinnedAndAlive() {
+  if (aiSweep.tabId == null) return false;
+  if (!aiSweep.running && !(aiSweep.stops && aiSweep.stops.length)) return false;
+  return !!(await sweepTab());
+}
+
+/**
+ * True when the pinned tab is the one actually on screen.
+ *
+ * captureVisibleTab photographs whichever tab is in FRONT of the window, not
+ * the tab id you pass — pass a backgrounded tab and it hands back a picture of
+ * a different page, with no error. A sweep that keeps running while you work in
+ * another tab must therefore skip its thumbnails rather than store wrong ones.
+ */
+async function pinnedTabIsVisible(tab) {
+  try {
+    const t = await chrome.tabs.get(tab.id);
+    if (!t.active) return false;
+    const w = await chrome.windows.get(t.windowId);
+    return !!w.focused || w.state !== 'minimized';
+  } catch { return false; }
+}
+
+async function sweepPreviewScreen(n) {
+  const stop = aiSweep.stops.find(s => s.n === n);
+  if (!stop || sweepHover.busy || aiSweep.running) return;
+  const tab = await sweepTab();
+  if (!tab) return;
+  sweepHover.busy = true;
+  try {
+    // Where the page was before any of this, so it can be put back.
+    if (sweepHover.restoreY === null) sweepHover.restoreY = (await sweepMeasure(tab))?.y ?? 0;
+    await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
+    // For a screen already read, the components ARE known — mark those, by the
+    // selectors that were paid for, rather than re-guessing from the markup.
+    // For one not read yet, a fresh local collection is all there is, and it is
+    // free.
+    const known = (stop.found || []).map(f => ({
+      mark: null, selector: f.sel, component: f.type, maybe: false, observed: true,
+    }));
+    await inPage(tab.id, (known) => {
+      const got = window.__u1SelectorIntel.collectCandidates(200, null);
+      window.__u1SelectorIntel.drawComponentMarks(known.length ? known : got.candidates);
+    }, [known]);
+  } catch { /* the page may have navigated away mid-hover */ }
+  finally { sweepHover.busy = false; }
+}
+
+async function sweepPreviewEnd() {
+  const tab = await sweepTab();
+  if (!tab) return;
+  try {
+    await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+    if (sweepHover.restoreY !== null) {
+      await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [sweepHover.restoreY]);
+      sweepHover.restoreY = null;
+    }
+  } catch {}
+}
+
+document.getElementById('sweepPicksList')?.addEventListener('mouseover', (e) => {
+  // Gated on the phase, this stopped working the moment one screen had been
+  // read — which is exactly when the rest of the list is most worth looking at,
+  // and when the "not read yet" rows appear. A row that names a screenful can
+  // preview that screenful whatever phase the panel is in. Both shapes qualify:
+  // an unread screen row, and a group of components found on one.
+  const row = e.target.closest('.sweep-screen, .sweep-group, .sweep-done-row');
+  if (!row) return;
+  const n = Number(row.dataset.screen || row.dataset.stop);
+  if (!n || n === sweepHover.n) return;
+  sweepHover.n = n;
+  document.querySelectorAll('#sweepPicksList .is-previewing')
+    .forEach(x => x.classList.remove('is-previewing'));
+  row.classList.add('is-previewing');
+  // Debounced: sweeping the mouse down twenty-one rows must not fire twenty-one
+  // scrolls, and the page jumping about under the cursor is the whole failure
+  // mode this guards against.
+  clearTimeout(sweepHover.timer);
+  sweepHover.timer = setTimeout(() => sweepPreviewScreen(sweepHover.n), 160);
+});
+
+document.getElementById('sweepPicksList')?.addEventListener('mouseleave', () => {
+  clearTimeout(sweepHover.timer);
+  sweepHover.n = 0;
+  document.querySelectorAll('#sweepPicksList .is-previewing')
+    .forEach(x => x.classList.remove('is-previewing'));
+  // Leaving the list puts the page back where it was. A tool that scrolls
+  // somebody's page and walks away has moved their work, not shown them theirs.
+  sweepPreviewEnd();
+});
+
+// Select all / none. It lives in the summary, which is rebuilt on every render,
+// so it is delegated rather than bound to the element.
+document.getElementById('sweepPicksSummary')?.addEventListener('change', (e) => {
+  if (e.target.id !== 'sweepAllTick') return;
+  const on = e.target.checked;
+  document.querySelectorAll('#sweepPicksList .sweep-screen-tick:not(:disabled)')
+    .forEach(t => { t.checked = on; });
+  syncSweepMakeBtn();
+});
+
+document.getElementById('sweepPicksClearBtn')?.addEventListener('click', async () => {
+  // Clear is the ONLY thing that forgets a stored survey. Switching site or
+  // closing the panel must not, or the durability is theatre.
+  const paid = aiSweep.stops.some(s => s.scanned);
+  if (paid && !confirm(
+    'Clear this scan?\n\nThe screens you paid to read go with it, and reading ' +
+    'them again costs the same as it did the first time.')) return;
+  clearTimeout(sweepSaveTimer);
+  aiSweep.stops = [];
+  await forgetSweep();
+  // Shared work, so Clear clears it for everyone — leaving the server copy
+  // would mean it silently reappeared the next time the panel was opened.
+  if (await U1Auth.isLoggedIn()) {
+    try { await U1Sync.deleteSweep(currentHostname); } catch {}
+  }
+  document.getElementById('sweepPicks').style.display = 'none';
+  document.getElementById('sweepPicksList').innerHTML = '';
+  document.getElementById('sweepLog').style.display = 'none';
+  document.getElementById('sweepLog').innerHTML = '';
+});
+
+// ── The paid half ───────────────────────────────────────────────────────────
+// Work out the selectors for the ticked components, then save and apply them.
+// The choice was already made on the list above, so this does not ask a second
+// time — it hands the prepared cards to the approval flow and presses its
+// button, which is the one path that saves, applies and reports. Duplicating
+// that here is how the two would drift.
+// ── The first paid step: read the ticked screens ────────────────────────────
+// One model call per ticked screen. The photograph the choice was made from is
+// the small one; the model needs the numbered 1280px version, and that has to be
+// taken at the right scroll position — so this scrolls back to each screen it
+// was asked about. ~1.5s of scrolling against 10–30s of call is noise, and
+// collecting afresh means the picture and the element list always agree.
+async function scanPickedScreens(numbers) {
+  const btn = document.getElementById('sweepMakeBtn');
+  const status = document.getElementById('sweepPicksStatus');
+  // The page the survey walked, not the one in front now — this scrolls back to
+  // each screenful, and doing that to the wrong tab would both waste the calls
+  // and move somebody's work.
+  const tab = await sweepTab();
+  if (!tab) {
+    showNotice(status, 'The page these results came from is no longer open.', 'error', 6000);
+    return;
+  }
+  if (!(await U1AI.getKey())) {
+    document.getElementById('aiBox')?.showModal?.();
+    showNotice(status, 'Paste your Anthropic API key first.', 'error', 4000);
+    return;
+  }
+  // This one is paid for, and the picture IS the request. A survey may keep
+  // running while you look at another tab — a picture of that other tab is not
+  // something to spend a call on, so bring the sweep's own page to the front.
+  if (!(await pinnedTabIsVisible(tab))) {
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+      await chrome.windows.update(tab.windowId, { focused: true });
+      await new Promise(r => setTimeout(r, 250));
+    } catch {}
+  }
+
+  const stops = aiSweep.stops.filter(s => numbers.includes(s.n));
+  const handled = await alreadyHandled();
+  const startedAt = (await sweepMeasure(tab))?.y || 0;
+  aiSweep.running = true;
+  aiSweep.abort = false;
+  btn.disabled = true;
+  document.getElementById('sweepStopBtn').style.display = '';
+  document.getElementById('sweepStopBtn').disabled = false;
+  document.getElementById('sweepStopBtn').textContent = '■ Stop after this screen';
+
+  try {
+    for (let i = 0; i < stops.length; i++) {
+      if (aiSweep.abort) break;
+      const stop = stops[i];
+      const before = aiCost;
+      btn.textContent = `Reading screen ${stop.n}…`;
+      showSweepBusy(`Screen ${stop.n}`, `Claude is reading it — usually 10–30 seconds.`,
+        ((i) / stops.length) * 100);
+
+      await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
+      await new Promise(r => setTimeout(r, SWEEP_SETTLE_MS));
+
+      const collected = await collectRegion(tab, '', handled, { drop: (c) => c.sticky && stop.n > 1 });
+      if (collected.err) {
+        sweepLog(stop.n, collected.err, 'err');
+        stop.outcome = collected.err;
+        continue;
+      }
+      // Every candidate on this screenful was filtered out before the model was
+      // called: either already mapped, already found on an earlier screenful, or
+      // part of the sticky header which is counted once. Nothing was charged.
+      //
+      // Silently skipping made a two-screen run look like a one-screen run —
+      // the second screen produced no components, so renderSweepPicks dropped
+      // its row and there was nothing on screen saying it had been looked at.
+      // A screenful that was read and yielded nothing is a RESULT, and it says
+      // so on its own row.
+      if (!collected.candidates.length) {
+        const why = collected.skipped
+          ? `nothing new — all ${collected.skipped} element${collected.skipped === 1 ? '' : 's'} here were already found on an earlier screen or already mapped`
+          : 'nothing on this screenful to read';
+        sweepLog(stop.n, why, 'skip');
+        stop.scanned = true;
+        stop.outcome = why;
+        continue;
+      }
+
+      const part = await U1AI.discover({
+        screenshot: collected.shot,
+        context: {
+          candidates: collected.candidates,
+          headings: collected.headings,
+          title: collected.title,
+          url: collected.url,
+        },
+      });
+      if (part && part.err) {
+        sweepLog(stop.n, part.err, 'err');
+        // A rate limit or a network blip is not a reason to abandon the other
+        // screens; a bad key is, and it would fail the same way on every one.
+        if (/API 401/.test(part.err)) break;
+        continue;
+      }
+      aiCost += U1AI.estimateCost(part.usage) || 0;
+
+      // needsWork is a LABEL, not a filter — which is how Automatic mode has
+      // always treated it. Dropping the rows it marks false looked like a saving
+      // and was actually a way to return nothing: the model is conservative with
+      // that flag, so a page whose markup reads as broadly reasonable came back
+      // empty even though every component on it still needed mapping.
+      const found = (part.components || []).filter(c => c && c.containerSelector);
+      let seenAgain = 0;
+      stop.found = [];
+      for (const c of found) {
+        // Never twice, whatever brought it back: a sticky bar, a repeated
+        // footer, or a component straddling the overlap between two screenfuls.
+        if (handled.has(c.containerSelector)) { seenAgain++; continue; }
+        handled.add(c.containerSelector);
+        stop.found.push({
+          id: `s${stop.n}i${stop.found.length}`,
+          label: c.label || c.containerSelector,
+          type: c.u1Type,
+          sel: c.containerSelector,
+          why: c.why || '',
+          needsWork: c.needsWork !== false,
+        });
+      }
+      stop.scanned = true;
+      stop.cost = aiCost - before;
+      const k = stop.found.length;
+      stop.outcome = found.length
+        ? `${k} component${k === 1 ? '' : 's'}` +
+          (seenAgain ? ` · ${seenAgain} already mapped or found on an earlier screen` : '')
+        : 'read, and nothing on it needs mapping';
+      sweepLog(stop.n, stop.outcome, k ? '' : 'skip', stop.cost);
+    }
+  } catch (err) {
+    sweepLog(0, 'Failed: ' + err.message, 'err');
+  } finally {
+    clearSweepBusy();
+    aiSweep.running = false;
+    btn.disabled = false;
+    document.getElementById('sweepStopBtn').style.display = 'none';
+    try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
+    try { await inPage(tab.id, (y) => window.scrollTo(0, y), [startedAt]); } catch {}
+  }
+
+  // What the run actually did, per screen, in one line. Ticking two screens and
+  // seeing one in the results is alarming and was unexplained: the second had
+  // been read and had yielded nothing, and nothing said so.
+  const ran = stops.filter(s => s.scanned);
+  const empty = ran.filter(s => !s.found.length);
+  const total = aiSweep.stops.reduce((s, x) => s + x.found.length, 0);
+  if (ran.length && empty.length) {
+    showNotice(status,
+      `Read ${ran.length} screen${ran.length === 1 ? '' : 's'}. ` +
+      empty.map(s => `Screen ${s.n}: ${s.outcome || 'nothing found'}`).join('. ') + '.',
+      total ? 'warn' : 'info', 12000);
+  }
+  if (!total) {
+    if (!empty.length) {
+      showNotice(status, 'Nothing on those screens needs mapping that is not already mapped.', 'success', 8000);
+    }
+    return;
+  }
+  aiSweep.phase = 'components';
+  renderSweepPicks();
+}
+
+document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
+  if (aiSweep.running) return;
+  if (aiSweep.phase === 'screens') {
+    const screens = sweepPickedScreens();
+    if (!screens.length) return;
+    // The estimate is already on screen, under the list, and it moved as the
+    // ticks moved — so this is a confirmation of a number that has been visible
+    // the whole time, not a figure produced at the moment of charging.
+    if (!aiSweep.armed) {
+      aiSweep.armed = true;
+      const btn = document.getElementById('sweepMakeBtn');
+      const was = btn.textContent;
+      btn.textContent = `Yes — read ${screens.length} screen${screens.length === 1 ? '' : 's'}`;
+      showNotice(document.getElementById('sweepPicksStatus'),
+        `That is ${screens.length} call${screens.length === 1 ? '' : 's'} to Claude, at about $${sweepAvgCall().toFixed(2)} each. Press again to start.`,
+        'warn', 12000);
+      setTimeout(() => {
+        if (!aiSweep.running && aiSweep.armed) { aiSweep.armed = false; btn.textContent = was; }
+      }, 12000);
+      return;
+    }
+    aiSweep.armed = false;
+    await scanPickedScreens(screens);
+    return;
+  }
+
+  const btn = document.getElementById('sweepMakeBtn');
+  const status = document.getElementById('sweepPicksStatus');
+  const picked = new Set(sweepPicked());
+  if (!picked.size) return;
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
+    return;
+  }
+  if (!aiWorkspaceMatchesSite()) { warnWrongSite(status); return; }
+
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
+
+  const jobs = [];
+  for (const stop of aiSweep.stops) {
+    for (const f of stop.found) if (picked.has(f.id)) jobs.push({ stop, f });
+  }
+
+  aiBulk = { running: true, abort: false, failed: [], armed: false };
+  btn.disabled = true;
+  const original = btn.textContent;
+  document.getElementById('aiMappings').style.display = 'block';
+
+  try {
+    for (let i = 0; i < jobs.length; i++) {
+      const { stop, f } = jobs[i];
+      btn.textContent = `Preparing ${i + 1} of ${jobs.length}…`;
+      showMapBusy(f.label, i + 1, jobs.length);
+      // A listbox, a datepicker and a tooltip are rooted on the thing that
+      // APPEARS, and the sweep holds only the control that summons it. Passing
+      // an empty container made rowFromParts refuse every one of them — that is
+      // why a page reporting six components saved five, with the reason shown
+      // in a panel the auto-approve closed a moment later.
+      //
+      // Two ways to supply the other half, best evidence first. The probe
+      // PRESSED it and watched what came out; that is not a guess. Failing
+      // that, it is read off the page the same way every other selector is.
+      let container = '';
+      if (triggerRequired(f.type) || triggerFirstType(f.type)) {
+        const seen = (stop.probed || []).find(p =>
+          p.parts && (p.parts.trigger === f.sel || p.root === f.sel) && p.parts.panel);
+        container = (seen && seen.parts.panel) ||
+          (await inPage(tab.id, (s) => window.__u1SelectorIntel.openedBy(s), [f.sel])) || '';
+      }
+      const built = rowFromParts({
+        type: f.type, found: f.sel, container, label: f.label, compIndex: undefined,
+      });
+      if (built.err) {
+        aiBulk.failed.push({ label: f.label, err: built.err });
+        f.failed = built.err;
+        continue;
+      }
+      f.failed = null;
+      built.row.needsWork = f.needsWork;
+      try {
+        const prepared = await prepareOne(built.row, tab);
+        if (prepared.err) {
+          aiBulk.failed.push({ label: f.label, err: prepared.err });
+          f.failed = prepared.err;
+        } else { stop.indexes.push(prepared.idx); f.done = true; f.failed = null; }
+      } catch (err) {
+        aiBulk.failed.push({ label: f.label, err: err.message });
+        f.failed = err.message;
+      }
+    }
+  } finally {
+    clearMapBusy();
+    aiBulk.running = false;
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+
+  document.getElementById('sweepPicks').style.display = 'none';
+  renderBulkReview();
+  // Everything on that screen is what was just ticked, so approving it again
+  // would be the same question twice. The code is still there to read on each
+  // row afterwards, and every mapping stays editable in Mappings below.
+  document.getElementById('aiBulkApproveBtn')?.click();
+  // And the page you were working through comes back — with the screens just
+  // finished moved into the completed drawer, and the ones never read still
+  // waiting. Hiding it left the review on screen and nothing else, which reads
+  // as the end of the job on a page with twenty-five screens left in it.
+  renderSweepPicks();
 });
 
 const aiMapCardError = (row, why) => `
@@ -5327,6 +7229,12 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
 // will then replace the original (tracked via editingMappingKey).
 function loadMappingIntoForm(m) {
   if (!m || typeof m !== 'object' || !m.type || !COMPONENT_SCHEMAS[m.type]) return;
+  // Editing IS the manual builder, and the AI routes hide it — the container
+  // field lives inside #manualOnly. Open a sweep result in the builder without
+  // this and the form fills correctly behind a hidden panel: every sub-selector
+  // on screen and no element selector anywhere, which reads as the tool having
+  // lost it.
+  if (mapMode !== 'manual') setMapMode('manual');
   $primarySelectorInput.value = m.primary || '';
   $componentType.value = m.type;
   renderTypeGuide(m.type);
@@ -5913,7 +7821,14 @@ function elemScanProgressHtml(n, total, m) {
     <ul class="test-steps" id="elemScanLiveSteps"></ul>`;
 }
 
-async function runElementScan() {
+/**
+ * @param {string} [onlyKey] mappingKey of a single mapping to test. Given, the
+ *   run is that one mapping — this is what the 🧪 button in the Mappings drawer
+ *   hands over, so the per-mapping test and the all-of-them test produce the
+ *   same report in the same place instead of two different kinds of answer in
+ *   two different tabs.
+ */
+async function runElementScan(onlyKey) {
   const status = document.getElementById('elemScanStatus');
   const btn = document.getElementById('elemScanBtn');
   const stopBtn = document.getElementById('elemScanStopBtn');
@@ -5922,7 +7837,14 @@ async function runElementScan() {
   if (!isInjectable(tab)) { showNotice(status, 'Cannot run on this page.', 'error', 4000); return; }
 
   const key = storageKey('mappings', currentHostname);
-  const all = (await U1Store.get([key]))[key] || [];
+  let all = (await U1Store.get([key]))[key] || [];
+  if (onlyKey) {
+    all = all.filter(m => typeof m === 'object' && mappingKey(m) === onlyKey);
+    if (!all.length) {
+      showNotice(status, 'That mapping is no longer saved for this site.', 'error', 5000);
+      return;
+    }
+  }
   if (!all.length) {
     showNotice(status, 'No saved mappings for this site yet — add some in the Picker tab.', 'info', 5000);
     return;
@@ -6130,6 +8052,17 @@ document.getElementById('copyTemplateBtn').addEventListener('click', () => {
   });
 });
 
+// U1-dependent types that have a DOM-only twin in the same dropdown. Read when
+// an apply dies on a missing library, so the error can name the way forward
+// instead of only naming the problem. Labels must match panel.html's <option>.
+const U1_FREE_ALTERNATIVE = {
+  tabs: 'tab strip (custom — full pattern, no U1)',
+  grid: 'keyboard grid (custom — arrow nav, no U1)',
+  datepicker: 'keyboard grid (custom — arrow nav, no U1)',
+  button: 'make keyboard-clickable (custom — all matches)',
+  link: 'make keyboard-clickable (custom — all matches)',
+};
+
 document.getElementById('applyTemplateBtn').addEventListener('click', async () => {
   if (!currentTemplate) return;
   const status = document.getElementById('applyStatus');
@@ -6137,7 +8070,14 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
   if (result.ok) {
     showNotice(status, 'Applied on page.', 'success');
   } else if (result.u1Missing) {
-    showNotice(status, 'U1 library is not loaded — inject U1 in Setup first.', 'error', 4500);
+    // Naming the alternative matters here. The export emits window.u1?.fix.*,
+    // so on a page without U1 that code is a silent no-op and the only symptom
+    // is "nothing happened" — with no error anywhere to explain it. Say which
+    // dropdown entry does work on this page.
+    const alt = U1_FREE_ALTERNATIVE[currentTemplate.type];
+    showNotice(status, 'U1 is not loaded on this page — inject it in Setup first' +
+      (alt ? `, or pick "${alt}" in the type list, which runs without U1.` : '.'),
+      'error', 7000);
   } else {
     showNotice(status, 'Error: ' + result.err, 'error', 4500);
   }
@@ -6724,12 +8664,60 @@ document.getElementById('mappingsList')?.addEventListener('click', async (e) => 
     'success', 6000);
 });
 
-// The keyboard-grid engine lives in grid-nav.js. For DEPLOYMENT we inline its
+// The keyboard engines live in grid-nav.js. For DEPLOYMENT we inline their
 // source so the produced snippet runs on the live site with no extension.
-async function getGridEngineSource() {
+//
+// grid-nav.js holds three INDEPENDENT engines (grid/datepicker, make-clickable,
+// tab strip) marked off by //#region u1-engine:<kind>. Inlining the whole file
+// shipped all three to every client — roughly 26KB where a site using one of
+// them needs 5–14KB. `kinds` narrows it to what the mappings actually call.
+async function getGridEngineSource(kinds) {
   try {
     const res = await fetch(chrome.runtime.getURL('grid-nav.js'));
-    return stripComments(await res.text());
+    const src = await res.text();
+    const wanted = new Set(kinds && kinds.length ? kinds : ['grid', 'clickable', 'tabs']);
+
+    const picked = [];
+    const re = /\/\/#region u1-engine:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+    let m;
+    while ((m = re.exec(src))) if (wanted.has(m[1])) picked.push(m[2]);
+
+    // If the markers are ever lost to a bad edit, fall back to the whole file:
+    // a deliverable that is larger than it needs to be still works, one missing
+    // its engine does not.
+    return stripComments(picked.length ? `'use strict';\n${picked.join('\n\n')}` : src);
+  } catch { return ''; }
+}
+
+// The U1 patch corrects defects in the library itself (see u1-patch.js). It is
+// sliced the same way the engine is, so a site that maps tabs and a menu ships
+// those two corrections rather than all fifteen.
+//
+// `core` is always included: it carries the per-match wrapper for u1.fix.*, the
+// observer the other regions register with, and the skip-link fix, which has no
+// mapping type of its own to key off.
+async function getPatchSource(types) {
+  try {
+    const res = await fetch(chrome.runtime.getURL('u1-patch.js'));
+    const src = await res.text();
+
+    const wanted = new Set(['core']);
+    (types || []).forEach((t) => wanted.add(t));
+    // The tabs correction reads which panel is visible, so a mapped tabpanel
+    // without a mapped tablist still needs it.
+    if (wanted.has('tabs')) wanted.add('tabs');
+
+    const picked = [];
+    const re = /\/\/#region u1-patch:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+    let m;
+    while ((m = re.exec(src))) if (wanted.has(m[1])) picked.push(m[2]);
+
+    // Only `core` matched means there is nothing type-specific to correct —
+    // still worth shipping, because the wrapper and the skip-link fix apply to
+    // every site. Nothing matched at all means the markers are gone; ship the
+    // whole file rather than silently dropping the corrections.
+    if (!picked.length) return stripComments(src);
+    return stripComments(`'use strict';\n${picked.join('\n\n')}`);
   } catch { return ''; }
 }
 
@@ -6788,7 +8776,7 @@ function qaCheckFor(m) {
 // Builds the full, self-contained script the implementer pastes into the site
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
-  const fixes = [], customs = [], grids = [], clickables = [];
+  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [];
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
@@ -6809,6 +8797,9 @@ async function buildDeployableCode(list, hostname) {
     if (!m || typeof m !== 'object') continue;
     if (m.custom === 'keyboardGrid') grids.push(m);
     else if (m.custom === 'keyboardClickable') clickables.push(m);
+    // Must sit in an engine-carrying bucket, not with the plain customs: its
+    // call is meaningless without the engine source shipped alongside it.
+    else if (m.custom === 'keyboardTabs') tabStrips.push(m);
     else if (m.custom) { const c = mappingToCode(m); if (c) customs.push(header(m) + '\n' + c); } // regenerated, never stored m.code
     else { const c = mappingToCode(m); if (c) fixes.push(header(m) + '\n' + c); }
   }
@@ -6820,30 +8811,101 @@ async function buildDeployableCode(list, hostname) {
     ` * Paste AFTER the U1 library <script> tag.\n` +
     ` * ============================================================ */`);
 
+  // The patch must be in place BEFORE the u1.fix.* calls below it: part of what
+  // it does is wrap those functions so they apply to every match instead of the
+  // first, and a wrapper installed afterwards would be too late.
   if (fixes.length) {
-    parts.push(`/* ---- 1. Component mappings ---- */\n` + fixes.join('\n\n'));
+    const mappedTypes = [...new Set(sorted.filter((m) => m && m.type && !m.custom).map((m) => m.type))];
+    const patch = await getPatchSource(mappedTypes);
+    if (patch) {
+      parts.push(
+        `/* ---- 1. Library corrections ----\n` +
+        ` * Corrects defects in the U1 library for the components mapped below:\n` +
+        ` * per-match application, missing keys, and ARIA states left unmaintained.\n` +
+        ` * Each correction checks the current state first, so it goes quiet on\n` +
+        ` * its own once the library ships the same fix. */\n` +
+        `(function () {\n${patch}\n})();`
+      );
+    }
+    // Wrapped in a named function and called, rather than run inline, so the
+    // resize hook further down can run exactly the same calls again. See there
+    // for why that is needed at all.
+    parts.push(`/* ---- 2. Component mappings ---- */\n` +
+      `function __u1ApplyMappings() {\n` + fixes.join('\n\n') + `\n}\n__u1ApplyMappings();`);
   }
   if (customs.length) {
-    parts.push(`/* ---- 2. Accessible names ---- */\n` + customs.join('\n\n'));
+    parts.push(`/* ---- 3. Accessible names ---- */\n` +
+      `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1ApplyNames();`);
   }
-  if (grids.length || clickables.length) {
-    const engine = await getGridEngineSource();
+  if (grids.length || clickables.length || tabStrips.length) {
+    // Only the engines these mappings actually call.
+    const kinds = [];
+    if (grids.length) kinds.push('grid');
+    if (clickables.length) kinds.push('clickable');
+    if (tabStrips.length) kinds.push('tabs');
+    // A hosted engine turns ~26KB of pasted code into one <script src> line,
+    // and lets an engine fix reach every client without anyone re-pasting it.
+    // Empty field → inline, exactly as before, so a client who will not load a
+    // third-party script still gets something that works.
+    const engine = await getGridEngineSource(kinds);
     const calls = grids.map(g =>
       header(g) + `\nwindow.__u1InstallGridFromMapping(${JSON.stringify(g.primary)}, ${JSON.stringify(g.config, null, 2)});`
     ).concat(clickables.map(c =>
       header(c) + `\nwindow.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' }, null, 2)});`
+    )).concat(tabStrips.map(t =>
+      header(t) + `\nwindow.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${JSON.stringify(t.config, null, 2)});`
     )).join('\n\n');
     parts.push(
-      `/* ---- 3. Accessible grid / datepicker ----\n` +
-      ` * Adds role=grid/gridcell, aria-label/selected/disabled, roving tabindex,\n` +
-      ` * arrow/Home/End/Enter/Space, a visible focus ring, and re-applies itself\n` +
-      ` * on every re-render and each time the widget opens. */\n` +
+      `/* ---- 4. Keyboard engines (grid / clickable / tab strip) ----\n` +
+      ` * Adds the ARIA roles, names and states each pattern needs, roving\n` +
+      ` * tabindex, arrow/Home/End/Enter/Space, a visible focus ring, and\n` +
+      ` * re-applies itself on every re-render and each time a widget opens. */\n` +
       (engine ? `(function () {\n${engine}\n})();\n\n${calls}`
               : `/* !! Engine source unavailable — re-copy this script. */\n${calls}`)
     );
   }
 
-  // ── 4. Monitoring hook — inert unless the page is loaded with ?u1qa=1 ──────
+  // ── Responsive re-apply ────────────────────────────────────────────────────
+  // u1 processes an element ONCE per page load and stamps it; it does not come
+  // back. On a responsive site that is a real gap: a page loaded wide has the
+  // desktop nav fixed and the hamburger either hidden or not built yet. Resize
+  // to a phone width and the site swaps in a menu u1 has never seen — no roles,
+  // no aria, no keyboard. The visitor who most needs it gets nothing.
+  //
+  // Re-calling the same fixes is safe BECAUSE of that stamp: elements already
+  // processed are skipped, so this costs nothing on a page that has not changed
+  // and decorates whatever the breakpoint just introduced.
+  //
+  // Only on a real width change — a phone firing resize as the address bar
+  // hides must not re-run this on every scroll. Height changes are ignored for
+  // the same reason.
+  if (fixes.length || customs.length) {
+    const reapply = [fixes.length ? '__u1ApplyMappings' : null,
+                     customs.length ? '__u1ApplyNames' : null].filter(Boolean);
+    parts.push(
+      `/* ---- ${customs.length ? 4 : 3}. Responsive re-apply ----\n` +
+      ` * u1 decorates an element once per page load. A responsive site swaps its\n` +
+      ` * navigation at a breakpoint, and the menu that appears was never seen by\n` +
+      ` * u1 — so it arrives with no roles, no aria and no keyboard support.\n` +
+      ` * This re-runs the same calls after a real WIDTH change. Elements u1 has\n` +
+      ` * already processed are skipped by the library itself, so nothing is done\n` +
+      ` * twice. */\n` +
+      `(function () {\n` +
+      `  var lastWidth = window.innerWidth;\n` +
+      `  var t = null;\n` +
+      `  window.addEventListener('resize', function () {\n` +
+      `    if (window.innerWidth === lastWidth) return;   // height only — ignore\n` +
+      `    lastWidth = window.innerWidth;\n` +
+      `    clearTimeout(t);\n` +
+      `    t = setTimeout(function () {\n` +
+      `      try { ${reapply.map(f => f + '();').join(' ')} } catch (e) {}\n` +
+      `    }, 250);\n` +
+      `  });\n` +
+      `})();`
+    );
+  }
+
+  // ── Monitoring hook — inert unless the page is loaded with ?u1qa=1 ─────────
   // Lets the external daily monitor detect a mapping whose selector no longer
   // resolves. On such a page it logs ONE greppable console.error per broken
   // mapping, carrying the durable id, the type, the exact field that broke, the
@@ -6853,7 +8915,7 @@ async function buildDeployableCode(list, hostname) {
   for (const m of sorted) { const c = qaCheckFor(m); if (c) checks.push(c); }
   if (checks.length) {
     parts.push(
-      `/* ---- 4. Monitoring hook (only runs with ?u1qa=1) ---- */\n` +
+      `/* ---- 5. Monitoring hook (only runs with ?u1qa=1) ---- */\n` +
       `(function () {\n` +
       `  try {\n` +
       `    if (new URLSearchParams(location.search).get('u1qa') !== '1') return;\n` +
@@ -7046,10 +9108,36 @@ function openImageDialog(src) {
   document.body.appendChild(overlay);
 }
 
+/**
+ * The Scan tab's list of what "every mapping" covers, by name.
+ *
+ * The card offered to test them all without ever naming one, so the only way to
+ * find out what a press would cover was to press it. Each row can also be run on
+ * its own — one option, the same run, restricted to that mapping.
+ */
+function renderElemScanSaved(list) {
+  const box = document.getElementById('elemScanSaved');
+  if (!box) return;
+  const real = list.filter(m => m && typeof m === 'object' && m.type);
+  if (!real.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML = real.map(m => `
+    <div class="elem-scan-saved-row">
+      <span class="elem-scan-saved-name">${escapeHtml(m.primary || m.firstArg || m.type)}</span>
+      <code>u1.fix.${escapeHtml(m.type)}</code>
+      <button class="btn-ghost btn-xs" data-testone="${escapeHtml(mappingKey(m))}"
+              title="Run the keyboard test on this one">🧪 Test</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-testone]').forEach(b => {
+    b.addEventListener('click', () => runElementScan(b.dataset.testone));
+  });
+}
+
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
+  renderElemScanSaved(list);
   const container = document.getElementById('mappingsList');
   const applyAllRow = document.getElementById('applyAllRow');
   const toolbar = document.getElementById('mappingsToolbar');
@@ -7284,7 +9372,21 @@ async function loadMappingsList() {
     btn.addEventListener('click', async () => {
       const i = parseInt(btn.dataset.idx, 10);
       const m = list[i];
-      if (m && typeof m === 'object') await runMappingTest(m, btn);
+      if (!m || typeof m !== 'object') return;
+      // The test's home is the Scan tab — that is where its report is built,
+      // filtered and exported. Running it from here used to print a different,
+      // smaller answer in the Picker tab, so the same button gave two kinds of
+      // result depending on which list you pressed it from. It moves you, and a
+      // control that moves you says so before it does it.
+      const name = m.primary || m.firstArg || m.type;
+      const ok = confirm(
+        `Test "${name}"?\n\n` +
+        `This moves you to the Scan tab, where the result is shown with the ` +
+        `rest of the mapping tests and can be exported. The page will be driven ` +
+        `by the keyboard while it runs.`);
+      if (!ok) return;
+      document.querySelector('.tab-btn[data-tab="scan"]')?.click();
+      await runElementScan(mappingKey(m));
     });
   });
 
@@ -7657,10 +9759,13 @@ async function onTabChanged(tab) {
   if (hostnameChanged && !(await enforceLicence(currentHostname))) return;
 
   if (hostnameChanged) {
-    // Before anything else. Scan results are selectors from the site you just
-    // left; leaving them on screen invites approving one client's components
-    // into another client's file.
-    resetAiWorkspace();
+    // Scan results are selectors from the site you just left; leaving them on
+    // screen invites approving one client's components into another client's
+    // file. But a sweep is pinned to the tab it started on, and if that tab is
+    // still open the results still belong to it — throwing away a survey
+    // because you glanced at another tab is the worse of the two failures, and
+    // every write path already refuses to save across sites.
+    if (!(await sweepIsPinnedAndAlive())) resetAiWorkspace();
     // And put the site you just left back the way you found it.
     await releaseCspBypassFor(previousHostname);
     const t = document.getElementById('cspBypassToggle');
@@ -7672,8 +9777,14 @@ async function onTabChanged(tab) {
     await loadConfigForm();
     await refreshConfigSkipList();
     updateConfigPreview();
+    U1Sync.forget();          // one site's versions must not vouch for another's
+    const pulled = await pullSiteFromServer();
     await loadMappingsList();
     await refreshExportInfo();
+    reportSyncState(pulled);
+    // The workspace was just cleared for the new site — so this is the new
+    // site's own last survey coming back, not the previous one following you.
+    if (!pulled.ok || !pulled.sweep) await restoreSweep();
   }
 
   // Run detection immediately and again after a short delay to catch async U1 init

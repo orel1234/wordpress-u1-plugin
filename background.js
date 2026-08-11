@@ -114,6 +114,16 @@ async function injectConfig(tabId, config) {
 // registered right when u1.fix appears (before/at U1's first scan) — applying
 // them later from the panel is too late, which is why auto-apply "did nothing".
 async function injectMappings(tabId, mappings) {
+  // The library corrections must be on the page BEFORE any u1.fix.* call, since
+  // part of what they do is wrap those functions. Injecting here — the same
+  // moment the mappings are armed — is what makes an auto-applied page behave
+  // like the exported bundle rather than like raw U1. The patch guards itself
+  // against a second install, and a failure must not stop the mappings.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', injectImmediately: true, files: ['u1-patch.js'],
+    });
+  } catch {}
   await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -165,7 +175,7 @@ async function injectKeyboardGrids(tabId, grids) {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: (list) => {
-      if (!window.__u1InstallGridFromMapping || !window.__u1MakeClickable) {
+      if (!window.__u1InstallGridFromMapping || !window.__u1MakeClickable || !window.__u1InstallTabsFromMapping) {
         console.log('[U1 Studio] keyboard-grid: ENGINE NOT LOADED (grid-nav.js missing) for', list.length, 'mapping(s)');
         return;
       }
@@ -176,6 +186,8 @@ async function injectKeyboardGrids(tabId, grids) {
             ? window.__u1MakeClickable({ selector: m.primary,
                 role: (m.config && m.config.role) || 'button',
                 label: (m.config && m.config.label) || '' })
+            : (m.custom === 'keyboardTabs')
+            ? window.__u1InstallTabsFromMapping(m.primary, m.config)
             : window.__u1InstallGridFromMapping(m.primary, m.config);
           if (r && r.ok) n++; else errs.push((r && r.err) || 'unknown');
         } catch (e) { errs.push(e.message); }
@@ -218,7 +230,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     const early = earlyAll.filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
     if (early.length) { try { await injectMappings(tabId, early); } catch {} }
     // Arm the custom keyboard-grid engine early too (idempotent — it guards itself).
-    const earlyGrids = earlyAll.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable') && m.primary);
+    const earlyGrids = earlyAll.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs') && m.primary);
     if (earlyGrids.length) { try { await injectKeyboardGrids(tabId, earlyGrids); } catch {} }
   }
 
@@ -235,7 +247,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     if (mappings.length) { try { await injectMappings(tabId, mappings); } catch {} }
 
     // Custom keyboard-grid mappings run our own engine — apply them too.
-    const grids = all.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable') && m.primary);
+    const grids = all.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs') && m.primary);
     if (grids.length) { try { await injectKeyboardGrids(tabId, grids); } catch {} }
 
     const injectData = stored[`manualInject_${hostname}`];

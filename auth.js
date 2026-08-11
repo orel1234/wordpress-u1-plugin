@@ -94,6 +94,25 @@ const U1Auth = (() => {
       if (refreshed) return request(path, options, false);
     }
 
+    // Not every studio endpoint answers in JSON — a screenful's thumbnail comes
+    // back as image bytes. Parsing that as JSON returns {} and the caller sees
+    // "no picture" for a request that succeeded, so the response type is the
+    // caller's to state.
+    if (options.asDataUrl) {
+      if (!res.ok) {
+        const err = new Error(`http_${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      const blob = await res.blob();
+      return await new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => resolve(null);
+        fr.readAsDataURL(blob);
+      });
+    }
+
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(body.error || `http_${res.status}`);
@@ -259,5 +278,9 @@ const U1Auth = (() => {
     });
   }
 
-  return { login, logout, isLoggedIn, getStoredClient, checkSiteAccess, requestAccess, touch };
+  // `request` is exported so the sync layer speaks to the server through the
+  // SAME path as everything else: one place that attaches the bearer token, one
+  // place that refreshes it on a 401, one definition of what "offline" means.
+  // A second fetch helper would be a second thing to get those wrong in.
+  return { login, logout, isLoggedIn, getStoredClient, checkSiteAccess, requestAccess, touch, request };
 })();

@@ -328,18 +328,26 @@
     <span class="u1-gradient-text">Build</span> a component template<span class="dot">.</span>
   </div>
 
+  <!-- The route, chosen once for the whole tab.
+       Manual     = fill every selector by hand (the original flow).
+       Automatic  = one screenful: the analyzer proposes selectors and the AI
+                    says what on it needs fixing at all.
+       Whole page = the same, run over every screenful by itself.
+
+       This sits OUTSIDE the Element section deliberately. It governs the whole
+       tab — Selectors and Preview appear or disappear with it — so presenting it
+       as one field inside Element understated what pressing it does. Only the
+       Element section's contents swap; Mappings below is common to all three. -->
+  <div class="map-mode wide" role="tablist" aria-label="Mapping mode">
+    <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true">✍️ Manual</button>
+    <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false">🤖 Automatic (AI)</button>
+    <button class="map-mode-btn" id="modeSweepBtn" role="tab" aria-selected="false">🪄 Whole page (AI)</button>
+  </div>
+  <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
+
   <!-- Element selection -->
   <div class="section">
     <div class="section-title">Element<span class="dot">.</span></div>
-
-    <!-- Manual    = fill every selector by hand (the original flow).
-         Automatic = the rule-based analyzer proposes the selectors, and the AI
-                     reviewer says what on this page needs fixing at all. -->
-    <div class="map-mode wide" role="tablist" aria-label="Mapping mode">
-      <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true">✍️ Manual</button>
-      <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false">🤖 Automatic (AI)</button>
-    </div>
-    <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
 
     <!-- ── AI accessibility teacher ──────────────────────────────────────── -->
     <!-- One job: change the API key. The scan instruction and the event-recorder
@@ -388,6 +396,59 @@
       <button class="btn-ghost btn-sm ai-delayed" id="aiDelayedBtn"
               title="Press, open a dialog or menu on the page, and it captures while it is open">⏱ Scan in 5s — time to open a dialog</button>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
+    </div>
+
+    <!-- ── Whole page ────────────────────────────────────────────────────── -->
+    <!-- Same two stages as Automatic, run over every screenful without being
+         asked each time. It scrolls the page itself, so the estimate is shown
+         and a second press is required before anything is charged. -->
+    <div class="ai-run" id="sweepOnly" style="display:none;">
+      <div class="ai-run-line">
+        <button class="btn-outline" id="sweepStartBtn">🪄 Scan the whole page</button>
+        <button class="btn-outline" id="sweepSettingsBtn" title="Change the API key">🔑</button>
+      </div>
+      <!-- Reading a page finds nothing on one that carries no roles, no
+           semantic tags and no meaningful class names — measured, not assumed.
+           Operating it finds the same components on both. It costs no money and
+           no model call; what it costs is pressing things on the page. -->
+      <label class="sweep-all" for="sweepProbeTick">
+        <input type="checkbox" id="sweepProbeTick" checked>
+        Open each component to see what it is
+      </label>
+      <div class="input-hint" style="display:block;margin:-4px 0 0 24px;">
+        Presses menus, tabs and accordions and watches what they reveal, then
+        closes them again. Never presses a link, a submit, or anything labelled
+        pay, delete or send — and navigation is blocked outright while it runs.
+      </div>
+      <button class="btn-outline" id="sweepStopBtn" style="display:none;">■ Stop after this screen</button>
+      <!-- Named per stop, so a run that visits fourteen screenfuls can be read
+           as it happens instead of only at the end. -->
+      <!-- The sweep's own progress. It used to borrow Automatic mode's results
+           panel, which carries that route's "Make all of these accessible" and
+           "Clear" buttons — so a running sweep put two buttons on screen that
+           belonged to the other route and would have acted on nothing. -->
+      <div id="sweepBusy"></div>
+      <div class="sweep-log" id="sweepLog" style="display:none;"></div>
+      <div class="map-mode-hint" id="sweepStatus" style="margin:4px 0 0;"></div>
+    </div>
+
+    <!-- What the sweep found, grouped by the screenful it was on. This is the
+         cheap half: one model call per screen produced all of it. Working out
+         the selectors for a component is a call of its own, so it happens for
+         the ticked rows and nothing else — which is what makes ticking one
+         screen out of fourteen a real saving rather than a tidier list. -->
+    <div class="ai-results" id="sweepPicks" style="display:none;">
+      <div class="ai-summary" id="sweepPicksSummary"></div>
+      <div id="sweepPicksList"></div>
+      <!-- What pressing the button will cost, in time and money, for exactly
+           what is ticked right now. Empty in the second phase, where the button
+           itself carries the number. -->
+      <div id="sweepEstimate"></div>
+      <div class="ai-found-actions">
+        <button class="btn-primary" id="sweepMakeBtn">✨ Make the ticked ones accessible</button>
+        <button class="btn-ghost btn-sm" id="sweepPicksClearBtn">Clear</button>
+      </div>
+      <div class="map-mode-hint" id="sweepPicksStatus" style="margin:4px 0 0;"></div>
     </div>
 
     <!-- Stage 1 result: the inventory. Each row's type and container are
@@ -477,6 +538,7 @@
         <option value="heading">heading</option>
         <option value="aria-label">aria-label (custom description)</option>
         <option value="keyboard-grid">keyboard grid (custom — arrow nav, no U1)</option>
+        <option value="keyboard-tabs">tab strip (custom — full pattern, no U1)</option>
         <option value="keyboard-clickable">make keyboard-clickable (custom — all matches)</option>
       </select>
     </div>
@@ -519,8 +581,15 @@
 
   <!-- Preview + actions -->
   <div class="section" id="previewSection" style="display:none;">
-    <div class="section-title">Preview<span class="dot">.</span></div>
-    <div class="code-preview" id="templatePreview"></div>
+    <!-- The code is the proof, not the task. Editing a mapping meant scrolling
+         past a dozen lines of generated JavaScript to reach the buttons that
+         act on it, so it folds away and the buttons sit directly under the
+         form. Open it when you want to check what will be written. -->
+    <details class="code-fold" id="previewFold">
+      <summary><span class="section-title">Preview<span class="dot">.</span></span>
+        <span class="code-fold-hint">the code this will write</span></summary>
+      <div class="code-preview" id="templatePreview"></div>
+    </details>
     <div class="btn-row">
       <button class="btn-outline" id="copyTemplateBtn">Copy</button>
       <button class="btn-outline" id="applyTemplateBtn">Apply</button>
@@ -541,6 +610,9 @@
         <button class="seg-btn" id="filterAll" role="tab" aria-selected="false">All</button>
       </div>
     </div>
+    <!-- Where the work on screen came from, and anything a colleague changed
+         under you. It sits ABOVE the list because it is about the list. -->
+    <div class="notice" id="mappingsStatus"></div>
     <div id="mappingsList"><div class="empty-state">No mappings yet.</div></div>
 
     <div class="btn-row" id="applyAllRow" style="display:none;">
@@ -581,6 +653,10 @@
           Runs the keyboard test on every mapping for this site, one at a time —
           the same test the 🧪 button runs, for all of them at once.
         </p>
+        <!-- What "every mapping" actually means on this site, by name. The card
+             offered to test them without ever saying what they were, so the
+             only way to know what a press would cover was to press it. -->
+        <div class="elem-scan-saved" id="elemScanSaved"></div>
         <div class="btn-row">
           <button class="btn-primary" id="elemScanBtn">🧪 Test every mapping</button>
           <button class="btn-outline" id="elemScanStopBtn" style="display:none;">■ Stop</button>
@@ -686,6 +762,10 @@
 <!-- after store.js: it reads U1Store.PRIVATE_PREFIX to key the API key -->
 <script src="ai-advisor.js"></script>
 <script src="auth.js"></script>
+<!-- after auth.js: it sends every request through U1Auth.request, so the
+     bearer token, the 401 refresh and the meaning of "offline" are defined
+     in exactly one place -->
+<script src="sync.js"></script>
 <script src="docx-gen.js"></script>
 <script src="report-gen.js"></script>
 <script src="panel.js"></script>

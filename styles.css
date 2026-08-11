@@ -1925,6 +1925,249 @@ button {
 .ai-bulk-row .ai-bulk-body .ai-approved-code { flex-basis: 100%; }
 .ai-bulk-row .ai-bulk-tick { margin-top: 3px; flex: none; }
 
+/* ── Whole-page sweep ───────────────────────────────────────────────────────
+   The run's own log, one line per screenful, written as it goes. A scan that
+   scrolls the page by itself for two minutes has to say what it is doing while
+   it does it — the end result alone leaves you watching a page move.
+
+   Thirty screenfuls at two lines each buried the screen picker under its own
+   progress report, so the whole thing is shut by default and the summary line
+   carries the latest news. */
+.sweep-log {
+  margin-top: 8px;
+  border: 1px solid var(--u1-border);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--u1-bg-elevated, rgba(255, 255, 255, .03));
+}
+.sweep-log-wrap > summary {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px 9px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 6px;
+}
+.sweep-log-wrap > summary::-webkit-details-marker { display: none; }
+.sweep-log-wrap > summary::before {
+  content: '▸';
+  flex: none;
+  color: var(--u1-text-muted);
+  transition: transform .12s ease;
+}
+.sweep-log-wrap[open] > summary::before { transform: rotate(90deg); }
+.sweep-log-title { font-weight: 600; flex: none; }
+/* The live line: what the sweep is doing right now, readable while shut. */
+.sweep-log-live {
+  flex: 1;
+  min-width: 0;
+  color: var(--u1-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sweep-log-body {
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 2px 9px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sweep-log-screen > summary {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  cursor: pointer;
+  list-style: none;
+  padding: 3px 0;
+}
+.sweep-log-screen > summary::-webkit-details-marker { display: none; }
+.sweep-log-screen > summary .n {
+  flex: none;
+  min-width: 60px;
+  color: var(--u1-text-muted);
+}
+.sweep-log-screen > summary .sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sweep-log-screen[open] > summary { font-weight: 600; }
+.sweep-log-row { display: flex; gap: 8px; align-items: baseline; padding-left: 68px; }
+.sweep-log-note { padding-left: 0; color: var(--u1-text-muted); font-style: italic; }
+.sweep-log-row .what { flex: 1; min-width: 0; }
+.sweep-log-row .cost { color: var(--u1-text-muted); flex: none; font-variant-numeric: tabular-nums; }
+.sweep-log-row[data-kind="skip"] .what { color: var(--u1-text-muted); }
+.sweep-log-row[data-kind="err"] .what { color: var(--u1-danger, #e5484d); }
+
+/* The approval screen, grouped by screenful. Each group is a <details> so a
+   fourteen-screen run opens as fourteen closed lines rather than sixty rows. */
+.sweep-group { border: 1px solid var(--u1-border); border-radius: 6px; margin-bottom: 6px; }
+.sweep-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+}
+.sweep-group > summary::-webkit-details-marker { display: none; }
+.sweep-group > summary::before { content: '▸'; color: var(--u1-text-muted); flex: none; }
+.sweep-group[open] > summary::before { content: '▾'; }
+.sweep-group .sweep-group-name { font-weight: 600; }
+.sweep-group .sweep-group-meta { color: var(--u1-text-muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+.sweep-group .sweep-group-body { padding: 4px 9px 9px 26px; }
+/* A group whose rows are all unticked still shows what it holds, but says
+   plainly that it is being left out. */
+.sweep-group[data-off="1"] > summary { opacity: .55; }
+
+/* The screenfuls that were surveyed and not read. Reading one screen replaced
+   the list with its results and the rest of the page vanished with it; they
+   come back here, shut, because the components just found are the subject and
+   these are the way back to the others. */
+.sweep-rest {
+  border: 1px dashed var(--u1-border);
+  border-radius: 6px;
+  margin-top: 10px;
+}
+.sweep-rest > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  cursor: pointer;
+  list-style: none;
+}
+.sweep-rest > summary::-webkit-details-marker { display: none; }
+.sweep-rest > summary::before { content: '▸'; color: var(--u1-text-muted); flex: none; }
+.sweep-rest[open] > summary::before { content: '▾'; }
+.sweep-rest-name { font-weight: 600; }
+.sweep-rest-meta { color: var(--u1-text-muted); margin-left: auto; font-size: 11px; }
+.sweep-rest-body {
+  padding: 4px 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sweep-rest-body #sweepReadMoreBtn { margin-top: 4px; align-self: flex-start; }
+
+/* The screenful's own picture, same hover-to-enlarge as a mapping row's
+   thumbnail. The rules there are scoped to .mapping-head, so they are restated
+   rather than un-scoped — widening that selector would change every existing
+   row's layout to serve this one screen. */
+.sweep-group .mh-thumb { flex: 0 0 auto; position: relative; display: inline-flex; cursor: zoom-in; }
+.sweep-group .mh-img {
+  width: 44px;
+  height: 30px;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 4px;
+}
+.sweep-group .mh-preview {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 36px;
+  width: 340px;
+  height: auto;
+  max-height: 420px;
+  object-fit: contain;
+  object-position: top;
+  z-index: 50;
+  background: #000;
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .6);
+  padding: 4px;
+}
+.sweep-group .mh-thumb:hover .mh-preview { display: block; }
+
+/* One screenful in the survey list. The picture is the point here — it is the
+   only form in which fifteen screenfuls can be judged at a glance — so it gets
+   more room than the thumbnail on a component row. */
+.sweep-screen { align-items: center; }
+.sweep-screen .mh-thumb { flex: 0 0 auto; position: relative; display: inline-flex; cursor: zoom-in; }
+.sweep-screen .mh-img {
+  width: 60px;
+  height: 40px;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 4px;
+}
+/* No hover preview here. Hovering a screenful scrolls the REAL page to it and
+   outlines the components on the page itself — a 340px picture answers "roughly
+   where am I", the live page answers "is THAT the nav I mean". The thumbnail
+   stays as the row's identity, and clicking it still opens the full capture. */
+.sweep-screen.is-previewing {
+  outline: 2px solid var(--u1-accent, #7c5cff);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.sweep-screen .sweep-none { color: var(--u1-text-muted); font-style: italic; }
+/* A screenful with nothing on it is still shown — you chose from pictures, and
+   a gap in the numbering would read as a bug — but it cannot be ticked. */
+.sweep-screen.is-empty { opacity: .5; }
+
+/* The components the page declares about itself. This is the line the choice is
+   made from, so it gets the full text colour while the raw element counts drop
+   to the muted "why" line below it. A trailing "?" marks a guess from a class
+   name rather than a role — `.tab-content` matches /tab/ and is not a tab strip. */
+.sweep-screen .sweep-components {
+  font-size: 11.5px;
+  color: var(--u1-text);
+  flex-basis: 100%;
+  order: 1;
+}
+.sweep-screen .ai-approved-why { order: 2; }
+
+/* Select all / none. Twenty-one screenfuls is twenty-one clicks to clear, and
+   "only the ones with a carousel" wants to start from none. */
+.sweep-all {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 6px 0 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* What the ticked screens will cost, in time and money. Two rows, because they
+   are two different promises: one is what the next press costs, the other is a
+   ceiling that only applies if everything found is then ticked too. */
+.sweep-est {
+  margin: 8px 0 2px;
+  border: 1px solid var(--u1-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+}
+.sweep-est-head { font-weight: 600; margin-bottom: 5px; }
+.sweep-est-row {
+  display: grid;
+  grid-template-columns: 42px 1fr auto;
+  gap: 4px 8px;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+.sweep-est-row em {
+  grid-column: 1 / -1;
+  font-style: normal;
+  color: var(--u1-text-muted);
+  font-size: 10.5px;
+  margin-top: -3px;
+}
+.sweep-est-row > span:first-child { color: var(--u1-text-muted); }
+.sweep-est-note { color: var(--u1-text-muted); margin-top: 6px; font-size: 10.5px; }
+
 /* Two scans, side by side — one asks what is wrong with the page's own markup,
    the other whether the fixes already made still work. Equal weight, so neither
    reads as the afterthought. */
@@ -2714,7 +2957,10 @@ button.u1-readonly-off {
    its consequences, and gives each option a real target. */
 .map-mode.wide {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* One equal column per route, however many there are — a fourth needs no
+     arithmetic here. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 3px;
   width: 100%;
   margin-bottom: 8px;
@@ -2722,10 +2968,14 @@ button.u1-readonly-off {
 }
 
 .map-mode.wide .map-mode-btn {
-  padding: 9px 8px;
-  font-size: 12px;
+  padding: 9px 6px;
+  font-size: 11.5px;
   font-weight: 600;
   text-align: center;
+  /* Three labels in a 400px panel. Wrapping is better than clipping "(AI)" off
+     the end of the one that says which route you are on. */
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .map-mode.wide .map-mode-btn.active {
@@ -3522,3 +3772,131 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
+
+/* ── Folded code ────────────────────────────────────────────────────────────
+   The generated snippet under the mapping form. It is there to be checked, not
+   to be read every time: left open it pushed Copy / Apply / Update Mapping off
+   the bottom of a 400px panel on every edit. */
+.code-fold { margin-top: 10px; }
+.code-fold > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.code-fold > summary::-webkit-details-marker { display: none; }
+.code-fold > summary::before {
+  content: '▸';
+  color: var(--u1-text-muted);
+  flex: none;
+}
+.code-fold[open] > summary::before { content: '▾'; }
+.code-fold > summary .section-title { margin: 0; }
+.code-fold-hint { color: var(--u1-text-muted); font-size: 11px; }
+.code-fold .code-preview { margin-top: 8px; }
+
+/* ── What "every mapping" covers, named ─────────────────────────────────────
+   In the Scan tab's saved-mappings card. Each row is also its own one-press
+   test, so the drawer's 🧪 and this list run the same thing and report it in
+   the same place. */
+.elem-scan-saved {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 10px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.elem-scan-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--u1-border);
+  border-radius: 5px;
+  font-size: 11px;
+}
+.elem-scan-saved-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.elem-scan-saved-row code { flex: none; color: var(--u1-text-muted); }
+.elem-scan-saved-row button { flex: none; }
+
+/* ── Screens already made accessible ────────────────────────────────────────
+   Finished work, kept and shut. Left in the pending list it came back ticked
+   on every subsequent press, offering to redo itself. */
+.sweep-done {
+  border: 1px solid var(--u1-ok, #30a46c);
+  border-radius: 6px;
+  margin-top: 10px;
+}
+.sweep-done > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  cursor: pointer;
+  list-style: none;
+}
+.sweep-done > summary::-webkit-details-marker { display: none; }
+.sweep-done > summary::before { content: '▸'; color: var(--u1-text-muted); flex: none; }
+.sweep-done[open] > summary::before { content: '▾'; }
+.sweep-done-name { font-weight: 600; color: var(--u1-ok, #30a46c); }
+.sweep-done-meta { color: var(--u1-text-muted); margin-left: auto; font-size: 11px; }
+.sweep-done-body { padding: 4px 9px 10px; display: flex; flex-direction: column; gap: 6px; }
+.sweep-done-row { display: flex; align-items: center; gap: 8px; }
+.sweep-done-row .mh-thumb { flex: 0 0 auto; display: inline-flex; }
+.sweep-done-row .mh-img {
+  width: 44px;
+  height: 30px;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--u1-border);
+  border-radius: 3px;
+}
+
+/* A survey put back from storage. It cost money to produce and none to return,
+   and its age is the thing worth knowing — a scan from last week describes a
+   page that may have been redeployed twice since. */
+.sweep-restored {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--u1-accent, #7c5cff);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--u1-text-muted);
+  background: var(--u1-bg-elevated, rgba(255, 255, 255, .03));
+}
+
+/* A screenful that was read and yielded nothing. Ticking two screens and being
+   shown one is indistinguishable from the run stopping early, so the empty one
+   states its own result rather than disappearing from the list. */
+.sweep-barren {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sweep-barren-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 8px;
+  border: 1px dashed var(--u1-border);
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--u1-text-muted);
+}
+.sweep-barren-n { flex: none; font-weight: 600; }
+.sweep-barren-why { flex: 1; min-width: 0; }
+
+/* Why one component out of a screenful could not be saved. It used to be shown
+   only in the approval panel, which the sweep auto-approves and closes — so the
+   count silently dropped by one and nothing said why. */
+.sweep-failed { color: var(--u1-danger, #e5484d); }

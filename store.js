@@ -65,9 +65,44 @@
      * theoretical. The rejection used to travel up as an unhandled error: the
      * save silently did nothing and the work looked like it had vanished.
      */
+    /**
+     * Called after every successful local write, with the site-scoped keys that
+     * changed. Registered by panel.js, which owns what a mapping's key is.
+     *
+     * A hook rather than a call inside each of the fifteen places that save
+     * something: the whole point of putting sync here is that it cannot be
+     * forgotten at a call site, and a second choke point would be a second
+     * thing to forget. store.js still knows nothing about mappings.
+     */
+    onSiteWrite: null,
+
+    /**
+     * Write WITHOUT telling the server.
+     *
+     * Exactly one caller should ever want this: the code that has just read
+     * from the server and is putting the answer into the local cache. Going
+     * through set() there would fire onSiteWrite and push what was just pulled
+     * straight back — stamping this machine's name on a colleague's work and
+     * racing anything they saved in between.
+     *
+     * A named method rather than a raw chrome.storage call at the call site, so
+     * the exception is visible, greppable, and explained where it lives.
+     */
+    setLocalOnly(items) {
+      return chrome.storage.local.set(items);
+    },
+
     async set(items) {
       try {
-        return await chrome.storage.local.set(items);
+        const res = await chrome.storage.local.set(items);
+        if (this.onSiteWrite) {
+          const siteKeys = Object.keys(items).filter((k) => parseKey(k));
+          // Awaited, not fired and forgotten. The server is the truth here, so
+          // a save that did not reach it is a save that did not happen — and
+          // the caller's own error handling is what tells the user so.
+          if (siteKeys.length) await this.onSiteWrite(siteKeys, items);
+        }
+        return res;
       } catch (e) {
         const msg = String((e && e.message) || e);
         if (/quota|QUOTA_BYTES/i.test(msg)) {

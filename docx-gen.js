@@ -423,8 +423,33 @@ function safeConfigOf(config, skipLinks) {
 }
 
 // Pretty JS object literal (unquoted identifier keys) for embedding in code.
-function jsObjSource(obj) {
-  return JSON.stringify(obj, null, 4).replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:');
+//
+// Four-space indent turned a three-property style object into nine lines at the
+// very top of the guide — the first code the implementer meets. Anything that
+// fits on a line is printed on a line; only genuinely large objects break up.
+const DOC_LINE_WIDTH = 92;
+
+function jsObjSource(obj, indent = 0) {
+  const pad = '  '.repeat(indent);
+  const padInner = '  '.repeat(indent + 1);
+  const key = (k) => (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) ? k : JSON.stringify(k));
+
+  const inline = (v) => {
+    if (v === null || typeof v !== 'object') return JSON.stringify(v);
+    if (Array.isArray(v)) return v.length ? `[${v.map(inline).join(', ')}]` : '[]';
+    const ks = Object.keys(v);
+    return ks.length ? `{ ${ks.map((k) => `${key(k)}: ${inline(v[k])}`).join(', ')} }` : '{}';
+  };
+
+  const flat = inline(obj);
+  if (pad.length + flat.length <= DOC_LINE_WIDTH) return flat;
+
+  if (Array.isArray(obj)) {
+    return `[\n${obj.map((v) => padInner + jsObjSource(v, indent + 1)).join(',\n')}\n${pad}]`;
+  }
+  return `{\n${Object.keys(obj)
+    .map((k) => `${padInner}${key(k)}: ${jsObjSource(obj[k], indent + 1)}`)
+    .join(',\n')}\n${pad}}`;
 }
 
 function skipLinksHtmlOf(skipLinks) {
