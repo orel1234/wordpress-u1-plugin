@@ -9246,12 +9246,18 @@ function renderElemScanSaved(list) {
   const real = list.filter(m => m && typeof m === 'object' && m.type);
   if (!real.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
   box.style.display = '';
+  // Named exactly as the Mappings drawer names them — the same id badge, the
+  // same type pill, the same selector, in the same order. A mapping you are
+  // looking for here is one you already recognise from down there, and
+  // inventing a second way to write it down ("u1.fix.heading" three times over)
+  // made a list of distinct things look like one thing repeated.
   box.innerHTML = real.map(m => `
     <div class="elem-scan-saved-row">
-      <span class="elem-scan-saved-name">${escapeHtml(m.primary || m.firstArg || m.type)}</span>
-      <code>u1.fix.${escapeHtml(m.type)}</code>
+      ${m.id ? `<span class="mh-id">${escapeHtml(m.id)}</span>` : ''}
+      <span class="mh-type">${escapeHtml(m.type)}</span>
+      <span class="mh-sel">${escapeHtml(m.primary || m.firstArg || '')}</span>
       <button class="btn-ghost btn-xs" data-testone="${escapeHtml(mappingKey(m))}"
-              title="Run the keyboard test on this one">🧪 Test</button>
+              title="Run the keyboard test on this one">🧪</button>
     </div>`).join('');
   box.querySelectorAll('[data-testone]').forEach(b => {
     b.addEventListener('click', () => runElementScan(b.dataset.testone));

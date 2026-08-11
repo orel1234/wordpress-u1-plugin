@@ -453,13 +453,18 @@ button {
 
 .btn-row {
   display: flex;
+  flex-wrap: wrap;   /* three buttons in a 400px panel is a second line, not an overflow */
   gap: 10px;
   margin-top: 10px;
 }
 
+/* `flex: 1` alone distributes free space but refuses to shrink past the content
+   width, so a button whose label is longer than its share pushed the row past
+   the panel edge instead of wrapping. The min-width override is what lets it. */
 .btn-row .btn-primary,
 .btn-row .btn-outline {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .btn-row.right {
@@ -2171,8 +2176,10 @@ button {
 /* Two scans, side by side — one asks what is wrong with the page's own markup,
    the other whether the fixes already made still work. Equal weight, so neither
    reads as the afterthought. */
-.scan-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-@media (max-width: 420px) { .scan-choice { grid-template-columns: 1fr; } }
+/* One above the other, always. Two tracks in a 400px side panel gave each card
+   about 150px, which wrapped "Scan this page" into five stacked words and still
+   let the buttons run past the edge. The panel is a column; the cards are too. */
+.scan-choice { display: flex; flex-direction: column; gap: 10px; }
 .scan-choice-card {
   border: 1px solid var(--u1-border);
   border-radius: var(--u1-radius-sm);
@@ -3811,20 +3818,47 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
 .elem-scan-saved-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
+  gap: 6px;
+  padding: 5px 7px;
   border: 1px solid var(--u1-border);
   border-radius: 5px;
   font-size: 11px;
-}
-.elem-scan-saved-name {
-  flex: 1;
   min-width: 0;
+}
+/* The drawer's own row parts, reused verbatim so the two lists read as one
+   vocabulary. Only the selectors are restated — the .mapping-item ancestor in
+   the originals scopes them out of reach here. */
+.elem-scan-saved-row .mh-id {
+  flex: 0 0 auto;
+  font: 600 9px/1.7 "Consolas", monospace;
+  color: var(--u1-text-dim, #9aa4b2);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--u1-border-strong);
+  border-radius: 4px;
+  padding: 0 5px;
+  letter-spacing: .2px;
+}
+.elem-scan-saved-row .mh-type {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  color: #fff;
+  background: var(--u1-primary, #6c4cf1);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.elem-scan-saved-row .mh-sel {
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: "Consolas", monospace;
+  font-size: 11px;
+  color: var(--u1-info);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.elem-scan-saved-row code { flex: none; color: var(--u1-text-muted); }
 .elem-scan-saved-row button { flex: none; }
 
 /* ── Screens already made accessible ────────────────────────────────────────
