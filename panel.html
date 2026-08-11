@@ -92,6 +92,19 @@
     </div>
   </dialog>
 
+  <!-- A role that was in the site's markup BEFORE we touched it. Overruling an
+       author's statement about what an element is, is a decision for a person —
+       so the save stops here and asks, rather than writing over it quietly. -->
+  <dialog id="roleClashDialog" class="u1-dialog">
+    <div class="dialog-title">The site already says what this is</div>
+    <p class="dialog-sub" id="roleClashBody"></p>
+    <div class="btn-row" id="roleClashActions">
+      <button class="btn-outline" id="roleClashCancel">Cancel</button>
+      <button class="btn-outline" id="roleClashSwitch">Map it as <span id="roleClashOther"></span></button>
+      <button class="btn-primary" id="roleClashOverwrite">Overwrite it</button>
+    </div>
+  </dialog>
+
   <div class="tabs">
     <button class="tab-btn active" data-tab="setup">Setup</button>
     <button class="tab-btn" data-tab="config">Config</button>

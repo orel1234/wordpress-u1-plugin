@@ -3934,3 +3934,14 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
    only in the approval panel, which the sweep auto-approves and closes — so the
    count silently dropped by one and nothing said why. */
 .sweep-failed { color: var(--u1-danger, #e5484d); }
+
+/* How to RECOGNISE the element this field wants, under what the field IS.
+   Two different questions, so two lines and two weights — the second is the
+   one people were missing, so it is not made quieter, only distinguished. */
+.sub-sel-row .how-hint {
+  margin-top: 3px;
+  padding-left: 8px;
+  border-left: 2px solid var(--u1-primary, #6c4cf1);
+  color: var(--u1-text);
+  opacity: .85;
+}

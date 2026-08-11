@@ -1686,6 +1686,38 @@
    * have this shape at all — in which case the caller keeps what it had.
    */
   const LB_ITEM = 'li,[role="option"],[role="menuitem"],a[href],button';
+  const LB_ACTIVATES = 'a[href],button,[role="option"],[role="menuitem"],[tabindex]';
+
+  /**
+   * Within one row of a list, the element a person actually activates.
+   *
+   * Order is by strength of evidence, not by tag:
+   *
+   *   1. the event recorder saw a click handler on it — an OBSERVATION, and the
+   *      only source here that is not an inference. It is already what picks
+   *      the trigger; it belongs on the options for the same reason.
+   *   2. the row's single interactive descendant — <a href> or <button>.
+   *   3. nothing better: the row itself.
+   *
+   * Returns null when the row IS the activatable thing already, so a caller can
+   * tell "descend to this" from "stay where you are".
+   */
+  function optionInside(row) {
+    if (!row) return null;
+    var rec = root.__u1EventMap;
+    if (rec && rec.has) {
+      var watched = Array.prototype.slice.call(row.querySelectorAll('*'));
+      for (var i = 0; i < watched.length; i++) {
+        if (rec.has(watched[i])) return watched[i];
+      }
+      // The handler is on the row itself — a delegated list, and the row is
+      // genuinely the option. Say so by refusing to descend.
+      if (rec.has(row)) return null;
+    }
+    var hits;
+    try { hits = row.querySelectorAll(LB_ACTIVATES); } catch (e) { return null; }
+    return hits.length === 1 ? hits[0] : null;
+  }
 
   function listboxShape(containerSel) {
     var box;
@@ -1730,14 +1762,94 @@
     if (!lbSel || !trSel || !isU1Valid(lbSel) || !isU1Valid(trSel)) return null;
 
     // THE OPTIONS: the list's own children, named by what they share.
-    var items = Array.prototype.slice.call(panel.children)
+    // THE OPTIONS: the element a person actually ACTIVATES, which is not always
+    // the row that holds it.
+    //
+    // A list of <li><a>…</a></li> returns the <li> if you stop at the panel's
+    // children, and `role="option"` on a wrapper containing a link is a broken
+    // pair — the focus lands on one element and the action is on the other.
+    //
+    // Evidence first, tag second. Descending is only allowed when EVERY row
+    // agrees on the same level: one row holding two links means there is no
+    // common level to descend to, and the wrappers are the honest answer.
+    var rows = Array.prototype.slice.call(panel.children)
       .filter(function (c) { return c.matches(LB_ITEM) || c.querySelector(LB_ITEM); });
+
+    var items = rows;
+    var inner = rows.map(function (row) { return optionInside(row); });
+    if (inner.every(function (el) { return !!el; })) items = inner;
+
+    // commonSelectorFor answers for the CONTAINER it is given: inside this
+    // panel, plain `a` covers every option and nothing else. U1 resolves the
+    // selector against the whole document, where `a` is every link on the site.
+    //
+    // So the answer is checked globally and scoped under the list if it is
+    // wider there. Descending to the links is what exposed this — while the
+    // options were `li` the short form happened to be unique anyway.
     var opt = commonSelectorFor(panel, items, lbSel);
-    var optSel = (opt && opt.selector && isU1Valid(opt.selector))
-      ? opt.selector
-      : lbSel + '>' + items[0].tagName.toLowerCase();
+    var optSel = (opt && opt.selector && isU1Valid(opt.selector)) ? opt.selector : '';
+    // A bare tag — `a`, `li`, `button` — is refused even when it happens to
+    // match the right number today. It is right by accident of what else is on
+    // the page, and gains a wrong match the moment the page gains a link. The
+    // count check below cannot tell the two apart, because on this page they
+    // look identical.
+    if (/^[a-z][a-z0-9]*$/i.test(optSel)) optSel = '';
+    if (optSel && countOf(optSel) !== items.length) {
+      var scoped = lbSel + ' ' + optSel;                 // for the count only
+      var direct = lbSel + '>' + optSel;
+      // U1 takes no descendant spaces, so only the child form is usable — and
+      // it is right whenever the items are the list's own children.
+      optSel = (countOf(direct) === items.length) ? direct : '';
+      void scoped;
+    }
+    if (!optSel) {
+      // Last resort: name them by position under the list, which is always
+      // exact even when nothing about them is nameable.
+      var tag = items[0].tagName.toLowerCase();
+      var viaRow = lbSel + '>' + panel.children[0].tagName.toLowerCase() + '>' + tag;
+      optSel = countOf(viaRow) === items.length ? viaRow : lbSel + '>' + tag;
+    }
 
     return { listbox: lbSel, trigger: trSel, options: optSel };
+  }
+
+  /**
+   * A role the SITE wrote, which this mapping is about to write over.
+   *
+   * Molina's dropdown ships `<ul class="signin-dropdown" role="menu">`. Mapped
+   * as a listbox, u1 is asked to put `role="listbox"` over an author's role.
+   * The trigger was decorated and the list was not, and nothing anywhere said
+   * why — the two statements simply disagreed and one of them lost.
+   *
+   * The distinction that matters is WHO wrote it. A role u1 has already written
+   * is our own and is not news; a role that was in the markup first is the
+   * author's opinion about what this element is, and overruling it is a
+   * decision for a person, not a default.
+   *
+   * Returns { role, willWrite } when there is a genuine conflict, else null.
+   */
+  const ROLE_BY_TYPE = {
+    listbox: 'listbox', combobox: 'combobox', menu: 'menu', tabs: 'tablist',
+    dialog: 'dialog', grid: 'grid', table: 'table', radio: 'radiogroup',
+    tooltip: 'tooltip', button: 'button', checkbox: 'checkbox',
+  };
+
+  function authoredRoleConflict(sel, type) {
+    var want = ROLE_BY_TYPE[type];
+    if (!want) return null;
+    var el;
+    try { el = document.querySelector(sel); } catch (e) { return null; }
+    if (!el) return null;
+
+    var have = el.getAttribute('role');
+    if (!have || have === want) return null;
+
+    // u1 has been here, so the role on it is ours and there is nothing to ask.
+    if (el.hasAttribute('u1st-avoid-change-detection') ||
+        el.hasAttribute('data-u1-revert') ||
+        el.hasAttribute('u1st-trigger-element')) return null;
+
+    return { role: have, willWrite: want };
   }
 
   const api = {
@@ -1745,6 +1857,7 @@
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
     menuItemsRoot, tabPanelsFor, openedBy, listboxRoot, listboxShape,
+    authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
     // set-of-mark (AI review)

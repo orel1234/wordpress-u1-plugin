@@ -145,6 +145,45 @@ console.log('\nEvery script panel.html loads is in the build:');
   else pass(`all ${loadedSrcs.length} scripts panel.html loads are packaged`);
 }
 
+// ── Every field says how to RECOGNISE its element ───────────────────────────
+// `desc` says what a field is, in U1's words. FIELD_HOW says which element on
+// the page it is, in ours — and the gap between those two is where mappings go
+// wrong. Enforced rather than remembered: a twentieth component type cannot
+// arrive without criteria, because this fails the build.
+console.log('\nEvery selector field says how to recognise its element:');
+{
+  // The two objects are EVALUATED, not pattern-matched. A first attempt read
+  // the keys with a regex and reported four fields missing that were present:
+  // `selectors:{…}` contains nested groups (year, month, days), so the
+  // non-greedy match stopped at the first inner `},` and read half the block.
+  // Object literals should be parsed by the thing that parses object literals.
+  const grab = (name) => {
+    const from = panel.indexOf(`const ${name} = {`);
+    const to = panel.indexOf('\n};', from);
+    return new Function(`return ${panel.slice(from + `const ${name} = `.length, to + 2)}`)();
+  };
+  let schemas, how;
+  try { schemas = grab('COMPONENT_SCHEMAS'); how = grab('FIELD_HOW'); }
+  catch (e) { schemas = null; fail(`could not read the schemas: ${e.message}`); }
+
+  if (schemas) {
+    // Nested groups are addressed dotted — `days.table` — exactly as `fields`
+    // and `req` already spell them.
+    const keysOf = (sel, prefix) => Object.entries(sel).flatMap(([k, v]) =>
+      (v && typeof v === 'object') ? keysOf(v, `${prefix}${k}.`) : [prefix + k]);
+
+    const missing = [];
+    for (const [type, schema] of Object.entries(schemas)) {
+      if (!schema.selectors) continue;
+      for (const key of keysOf(schema.selectors, '')) {
+        if (!how[type] || !how[type][key]) missing.push(`${type}.${key}`);
+      }
+    }
+    if (missing.length) fail(`FIELD_HOW has no criterion for: ${missing.join(', ')}`);
+    else pass('every component type states how to identify each of its fields');
+  }
+}
+
 console.log('\nShipped files parse as classic browser scripts:');
 const SCRIPTS = [
   'panel.js', 'selector-intel.js', 'ai-advisor.js', 'event-recorder.js',

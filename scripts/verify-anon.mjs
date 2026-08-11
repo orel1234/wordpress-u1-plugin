@@ -340,7 +340,10 @@ console.log('\na listbox is read off the structure, not asked about');
   const a = shape(molina, '.click-nav');
   check('the button is the trigger', a && a.trigger === '.clicker', JSON.stringify(a));
   check('the list is the listbox', a && a.listbox === '.signin-dropdown');
-  check('the items are the options', a && a.options === '.signin-dropdown>li');
+  // The <a> inside each <li>, not the <li>: role="option" on a wrapper holding
+  // a link puts the focus on one element and the action on another.
+  check('the options are the links, not the rows holding them',
+    a && a.options === '.signin-dropdown>li>a', JSON.stringify(a));
 
   // "לא משנה לי מה זה" — a <div> of <a>s is the same shape and the same answer.
   const divs = '<div class="wrap"><button class="btn">Pick</button>' +
@@ -356,6 +359,80 @@ console.log('\na listbox is read off the structure, not asked about');
 
   check('a container with no list at all returns null rather than guessing',
     shape('<div class="wrap"><button class="btn">Pick</button></div>', '.wrap') === null);
+}
+
+console.log('\nthe option is what a person ACTIVATES, not the row holding it');
+{
+  // role="option" on an <li> wrapping an <a> puts the focus on one element and
+  // the action on another. Evidence first: what the event recorder SAW beats
+  // what the tag suggests.
+  const opts = (page, scope, wire) => {
+    const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only' });
+    if (wire) wire(d.window);
+    d.window.eval(INTEL);
+    const r = d.window.__u1SelectorIntel.listboxShape(scope);
+    return r && r.options;
+  };
+  const molina = '<div class="click-nav"><button class="clicker">Sign In</button>' +
+    '<ul class="signin-dropdown"><li><a href="/m" class="opt">Member</a></li>' +
+    '<li><a href="/h" class="opt">HCP</a></li></ul></div>';
+
+  check('<li><a> descends to the link', opts(molina, '.click-nav') === '.opt');
+  check('rows that are already links are left alone',
+    opts('<div class="w"><button class="b">P</button><div class="list">' +
+         '<a href="/1" class="o">A</a><a href="/2" class="o">B</a></div></div>', '.w') === '.o');
+  // No common level to descend to, so descending would be a guess.
+  check('a row holding TWO links stays on the row',
+    opts('<div class="w"><button class="b">P</button><ul class="list">' +
+         '<li><a href="/1">A</a><a href="/2">B</a></li><li><a href="/3">C</a></li></ul></div>',
+         '.w') === '.list>li');
+  // A delegated list: the handler is on the row, so the row IS the option.
+  check('the event recorder overrules the tag, not merely agrees with it',
+    opts(molina, '.click-nav', (w) => {
+      const rows = [...w.document.querySelectorAll('li')];
+      w.__u1EventMap = { has: (el) => rows.includes(el) };
+    }) === '.signin-dropdown>li');
+}
+
+console.log('\na role the SITE wrote is a question, not a default');
+{
+  const clash = (attrs, type) => {
+    const d = new JSDOM(`<body><ul class="dd" ${attrs}><li><a href="/a">A</a></li></ul></body>`,
+      { runScripts: 'outside-only' });
+    d.window.eval(INTEL);
+    return d.window.__u1SelectorIntel.authoredRoleConflict('.dd', type);
+  };
+  const c = clash('role="menu"', 'listbox');
+  check('the site saying role="menu" while we map a listbox is a conflict',
+    !!c && c.role === 'menu' && c.willWrite === 'listbox', JSON.stringify(c));
+  check('no role at all is not a conflict', clash('', 'listbox') === null);
+  check('the same role is not a conflict', clash('role="listbox"', 'listbox') === null);
+  // Once u1 has processed the element the role on it is OURS, and asking about
+  // our own work would make the question noise that gets clicked through.
+  check('a role u1 already wrote is not asked about',
+    clash('role="menu" u1st-avoid-change-detection="true"', 'listbox') === null);
+  check('…nor one on an element u1 marked as a trigger',
+    clash('role="menu" u1st-trigger-element="true"', 'listbox') === null);
+}
+
+console.log('\nthe options selector is checked against the whole page, not the list');
+{
+  // commonSelectorFor answers for the container it is given: inside the panel,
+  // plain `a` covers every option and nothing else. U1 resolves against the
+  // document, where `a` is every link on the site. Descending to the links is
+  // what exposed this — while the options were `li` the short form happened to
+  // be unique anyway.
+  const d = new JSDOM('<body><a href="/x">elsewhere</a><nav><a href="/y">and here</a></nav>' +
+    '<div class="click-nav"><button class="clicker">S</button>' +
+    '<ul class="signin-dropdown"><li><a href="/m">M</a></li><li><a href="/h">H</a></li></ul>' +
+    '</div></body>', { runScripts: 'outside-only' });
+  d.window.eval(INTEL);
+  const r = d.window.__u1SelectorIntel.listboxShape('.click-nav');
+  check('it does not answer with a bare tag that matches the whole site',
+    r.options !== 'a', r.options);
+  check('it matches exactly the options and nothing else',
+    d.window.document.querySelectorAll(r.options).length === 2,
+    `${r.options} matches ${d.window.document.querySelectorAll(r.options).length}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -3165,6 +3165,188 @@ const $templatePreview = document.getElementById('templatePreview');
 //  `apg` links to the W3C ARIA Authoring Practices pattern (the authoritative
 //  "how this component should behave" reference).
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  FIELD_HOW — how to RECOGNISE the element each field wants.
+//
+//  `desc` above says what a field IS, in U1's own words from their docs. That
+//  is a different question from "which element on this page is it", and the gap
+//  between the two is where mappings go wrong: "Selector of the options
+//  container" is accurate and still lets you pick the wrapper, the button, or
+//  the list, all three of which look like containers of options.
+//
+//  Measured, not supposed: one listbox was mapped wrongly three times in a row,
+//  in three different arrangements, each time with every field resolving and
+//  nothing objecting. Stating the mechanical test — "the element whose OWN
+//  children are the options" — settled it in one.
+//
+//  So every line here is a test against the markup, not a description of a
+//  role: "its own children", "NOT inside", "exactly one", "the one a person
+//  activates". If a line cannot be checked by looking at the DOM, it is not
+//  pulling its weight.
+//
+//  Kept beside the schemas rather than inside them so the two voices stay
+//  distinguishable — theirs and ours — and verify.mjs asserts that every
+//  selector key of every type has a line here, so type 20 cannot arrive without
+//  one.
+// ─────────────────────────────────────────────────────────────────────────────
+const FIELD_HOW = {
+  button: {
+    element: 'The element a person clicks. If a <div> wraps a <button>, it is the <button> — the one carrying the click handler, not the box round it.',
+    focusTo: 'Where focus should land after the click. Usually the region the button scrolled to or revealed.',
+  },
+  link: {
+    element: 'The <a> itself, not its wrapper. If it has no href it is a button, not a link.',
+  },
+  menu: {
+    menu: 'The element whose OWN CHILDREN are the menu items — the <ul>, not the <nav> around it. A wrapper that also holds a logo or a search box is one level too high: U1 walks the root\'s children looking for items and finds furniture.',
+    items: 'Everything the arrow keys move between, top level AND inside drop-downs. The element a person activates: if a row is <li><a>, it is the <a>. One class rarely covers both levels — use a comma group.',
+    submenus: 'The drop-down PANELS themselves, not the links inside them. Filling this requires menubar: false.',
+    triggers: 'Only the items that OPEN a drop-down — a subset of items. If nothing opens anything, leave it empty.',
+    horizontalMenu: 'The same element as the menu when the bar runs left-to-right. It only changes which arrow keys move between items.',
+    openByMouseover: 'Items whose drop-down opens on mouseover rather than click. Check the site\'s own handlers before filling this.',
+    openByMouseenter: 'The same, for mouseenter.',
+    openByFocus: 'Items whose drop-down opens on focus — common in keyboard-friendly navs.',
+  },
+  accordion: {
+    headerSelector: 'The element a person clicks to expand — the clickable header itself, not the section wrapping header and panel together.',
+    contentSelector: 'The panel that expands. It must be OUTSIDE the header, not inside it: a panel inside its own trigger collapses the trigger with it.',
+    disabledElementsSelector: 'Headers that cannot be opened, if any.',
+  },
+  carousel: {
+    carouselContainer: 'The element holding all the slides. Not the section with the heading and the buttons around it.',
+    slide: 'One slide. All of them — the selector should match every slide, including those off-screen. This is also fix.carousel()\'s FIRST argument.',
+    prevButton: 'The control that moves back. Exactly one element.',
+    nextButton: 'The control that moves forward. Exactly one element.',
+    slidePickerButtons: 'The dots or numbers that jump straight to a slide.',
+    absoluteCarouselContainerLabel: 'A heading or label describing the carousel, anywhere on the page — this one is not resolved inside the container.',
+    activeSlides: 'When several slides are visible at once, the ones currently in view. Leave empty for one-at-a-time carousels.',
+  },
+  datepicker: {
+    container: 'The whole picker panel — days, month and year controls together. Open it on the page before pointing at it; a closed picker often is not in the DOM at all.',
+    trigger: 'The field or button that opens the picker, and it is OUTSIDE the picker. This is fix.datepicker()\'s FIRST argument, because U1 waits for it.',
+    'year.label': 'The element showing the current year as text.',
+    'year.prevButton': 'The control that goes back a year. Exactly one.',
+    'year.nextButton': 'The control that goes forward a year. Exactly one.',
+    'month.label': 'The element showing the current month as text.',
+    'month.prevButton': 'The control that goes back a month. Exactly one.',
+    'month.nextButton': 'The control that goes forward a month. Exactly one.',
+    'days.table': 'The grid of days ALONE — not the panel that also holds the month and year controls.',
+    'days.day': 'Every day cell, including the greyed ones. The element a person clicks.',
+    'days.selected': 'The day currently chosen — usually a state class the site toggles.',
+    'days.disabled': 'Days that cannot be chosen, including the leading and trailing days of adjacent months.',
+  },
+  dialog: {
+    dialog: 'The modal BOX — the panel with the content. Not the full-screen backdrop behind it, which is a sibling or a parent.',
+    trigger: 'What opens it, and it is outside the dialog. Given, it becomes fix.dialog()\'s first argument so U1 waits for it.',
+    closeBtn: 'The ✕ or Cancel. Exactly one element inside the dialog.',
+    heading: 'The dialog\'s title element — this becomes its accessible name, so pick the text a person would read out.',
+    textContent: 'The body text, when the dialog has no heading to name it by.',
+    focusTo: 'Where focus goes when the dialog closes. Usually back to the trigger.',
+  },
+  listbox: {
+    listbox: 'The element whose OWN CHILDREN are the options — two or more of them. Not the wrapper that also holds the button, and not the button. Whether it is a <ul> or a <div> is irrelevant: holding the items is what makes it the list.',
+    trigger: 'The clickable element that opens it, and it is NOT inside the list. A <button> if there is one. This is also fix.listbox()\'s FIRST argument — U1 waits for the trigger, so the generated call reads fix.listbox("<trigger>", …), which looks wrong and is right.',
+    options: 'The items inside the list, and specifically the element a person ACTIVATES. If every row is <li><a>, the option is the <a> — role="option" on a wrapper holding a link puts the focus on one element and the action on another.',
+    label: 'A visible label naming the list, if one exists. Leave empty otherwise.',
+  },
+  combobox: {
+    combobox: 'The wrapper holding the input and the popup together. If there is no wrapper, the input itself.',
+    listbox: 'The suggestions list — the element whose own children are the options.',
+    textbox: 'The <input> a person types into. Exactly one.',
+    options: 'The individual suggestions inside the list, and the element a person activates.',
+    label: 'The <label> or visible text naming the field.',
+  },
+  checkbox: {
+    element: 'The element carrying the click handler — often a styled <div> or <span>, not a hidden native <input>. Point at what a person actually clicks.',
+    checkedState: 'How the page SHOWS it is checked: the class or attribute the site toggles. Tick it on the page and see what changes.',
+    uncheckedState: 'The same for unchecked. Without it U1 writes no aria-checked at all, and a screen reader never announces the state.',
+    disabled: 'How the page shows it cannot be changed.',
+    exclude: 'Elements matched by the selector above that are NOT checkboxes.',
+    label: 'The text naming this checkbox.',
+  },
+  radio: {
+    radioGroup: 'The container holding all the buttons of ONE question. Not the form, and not a single option.',
+    radioButton: 'Every option in the group — the element a person clicks.',
+    checkedState: 'How the page shows which option is chosen: the class or attribute it toggles.',
+    uncheckedState: 'The same for the unchosen ones.',
+    exclude: 'Anything the selector above catches that is not a radio option.',
+  },
+  tabs: {
+    tabList: 'The strip holding the tabs ALONE. If it also wraps the panels, it is the wrong element — U1 makes it the tablist, and the panels end up inside their own tablist.',
+    tab: 'The clickable tabs themselves, searched inside the strip, so several strips on one page do not mix.',
+    tabPanel: 'The content panels, and they sit OUTSIDE the tab list. Pointing both fields at the same element hides the tabs along with the content they control.',
+  },
+  'keyboard-tabs': {
+    tabList: 'The strip holding the tabs ALONE — not a wrapper that also contains the panels.',
+    tab: 'The clickable tabs, found inside the strip.',
+    tabPanel: 'The content panels, OUTSIDE the strip. If the site renders only the visible panel, every tab points at that one.',
+  },
+  form: {
+    form: 'The <form>, or the element wrapping every field and the submit button together.',
+    submitButton: 'The control that submits. Exactly one.',
+    inputField: 'Every field a person fills — inputs, selects and textareas together.',
+    invalidField: 'How the page MARKS a field as wrong: the class or attribute it adds. Submit the form empty and see what appears.',
+    requiredField: 'How the page marks a field as required.',
+    errorMsg: 'The element holding the message for a bad field.',
+    successMsg: 'The confirmation shown after a good submit.',
+    formLabelAbsolute: 'A heading naming the whole form, resolved from the page rather than from inside it.',
+  },
+  table: {
+    table: 'The <table>, or the element wrapping every row and cell.',
+    row: 'Every row, header rows included.',
+    cell: 'Every data cell. Not the headers — those have their own fields.',
+    columnheader: 'The cells across the top that name each column.',
+    rowheader: 'The cells down the side that name each row, if the table has them.',
+  },
+  grid: {
+    grid: 'The container of every row and cell. Use grid rather than table when a person arrows BETWEEN cells rather than reading down them.',
+    row: 'Every row.',
+    cell: 'Every cell that takes focus.',
+    columnheader: 'The cells naming each column.',
+    rowheader: 'The cells naming each row.',
+  },
+  pagination: {
+    container: 'The element holding the page controls.',
+    pageButtons: 'The numbered page controls. This is fix.pagination()\'s FIRST argument.',
+    prevBtn: 'The control that goes back one page. Exactly one.',
+    nextBtn: 'The control that goes forward one page. Exactly one.',
+    prevSkip: 'A jump-back control — « or "First" — if the site has one.',
+    nextSkip: 'A jump-forward control — » or "Last".',
+    results: 'The element announcing how many results there are, so a change of page is announced.',
+  },
+  loading: {
+    loadingBar: 'The bar or spinner itself, not the region it covers.',
+  },
+  tooltip: {
+    tooltip: 'The bubble that appears. Hover or focus the trigger first — a tooltip is often not in the DOM until then.',
+    trigger: 'What a person hovers or focuses to show it, and it is outside the bubble.',
+  },
+  heading: {
+    heading: 'The element that reads as a heading on screen but is not one in the markup — a styled <div> or <span>. A real <h2> needs no mapping.',
+  },
+  'aria-label': {
+    target: 'The element that needs a name a screen reader can read. Usually one with an icon and no text.',
+  },
+  'keyboard-clickable': {
+    target: 'An element with a click handler that the keyboard cannot reach — a <div> or <span> acting as a control. A real <button> already works.',
+  },
+  'keyboard-grid': {
+    container: 'The panel holding the whole grid of cells.',
+    trigger: 'What opens it, outside the panel. Leave empty if the grid is always on the page.',
+    day: 'Every cell that takes focus, in reading order.',
+    activate: 'The element inside a cell that carries the click, when the cell itself does not.',
+    selected: 'How the page shows the chosen cell.',
+    disabled: 'How it shows a cell that cannot be chosen.',
+    monthLabel: 'The element showing the current month.',
+    monthPrev: 'The control that goes back a month.',
+    monthNext: 'The control that goes forward a month.',
+    yearLabel: 'The element showing the current year.',
+    yearPrev: 'The control that goes back a year.',
+    yearNext: 'The control that goes forward a year.',
+    controls: 'Any other controls in the panel that should be in the keyboard order.',
+  },
+};
+
 const TYPE_GUIDE = {
   button:     { what:'A control that performs an action on the page.', keys:'Tab to reach · Enter or Space to activate.', wcag:[['4.1.2','Name, Role, Value'],['2.1.1','Keyboard']], apg:'button' },
   link:       { what:'A control that navigates somewhere else.', keys:'Tab to reach · Enter to follow.', wcag:[['4.1.2','Name, Role, Value'],['2.4.4','Link Purpose in Context']], apg:'link' },
@@ -3173,12 +3355,26 @@ const TYPE_GUIDE = {
       ['Site navigation (links) — menubar: false', 'Default. Items stay links; only the triggers become buttons. role="menuitem" is NOT expected.'],
       ['Application menubar (commands) — menubar: true', 'Every item becomes role="menuitem". Do not combine with nested submenus — U1 throws “Submenu must have a trigger element”.'],
     ] },
-  accordion:  { what:'Headers that expand and collapse panels of content.', keys:'Tab between headers · Enter or Space toggles.', wcag:[['4.1.2','Name, Role, Value'],['1.3.1','Info and Relationships']], apg:'accordion' },
+  accordion:  { what:'Headers that expand and collapse panels of content.', keys:'Tab between headers · Enter or Space toggles.', wcag:[['4.1.2','Name, Role, Value'],['1.3.1','Info and Relationships']], apg:'accordion',
+    variants:[
+      ['Each panel opens in place, under its own header', 'This. Several can be open at once.'],
+      ['One panel area, and the controls swap what is in it', 'That is tabs.'],
+    ] },
   carousel:   { what:'A rotating set of slides with previous/next controls.', keys:'Tab to the controls · Enter activates · a pause control is required if it auto-plays.', wcag:[['4.1.2','Name, Role, Value'],['2.2.2','Pause, Stop, Hide']], apg:'carousel' },
   datepicker: { what:'A calendar popup for choosing a date.', keys:'Enter on the trigger opens · Arrows move between days · Enter picks · Esc closes.', wcag:[['4.1.2','Name, Role, Value'],['2.1.1','Keyboard']], apg:'dialog-modal' },
   dialog:     { what:'A modal window that takes over the page until dismissed.', keys:'Focus moves in on open · Tab is trapped inside · Esc closes · focus returns to the trigger.', wcag:[['4.1.2','Name, Role, Value'],['2.4.3','Focus Order'],['2.1.2','No Keyboard Trap']], apg:'dialog-modal' },
-  listbox:    { what:'A list the user picks one option from.', keys:'Tab to the list · Arrows move the option · Enter selects · Esc closes.', wcag:[['4.1.2','Name, Role, Value'],['2.1.1','Keyboard']], apg:'listbox' },
-  combobox:   { what:'A text field with a popup list of suggestions.', keys:'Type to filter · Arrows into the list · Enter selects · Esc closes.', wcag:[['4.1.2','Name, Role, Value'],['4.1.3','Status Messages']], apg:'combobox' },
+  listbox:    { what:'A list the user picks one option from.', keys:'Tab to the list · Arrows move the option · Enter selects · Esc closes.', wcag:[['4.1.2','Name, Role, Value'],['2.1.1','Keyboard']], apg:'listbox',
+    variants:[
+      ['One button opens one list', 'This. The list is the container, the button is the trigger.'],
+      ['A standing nav bar with no single trigger', 'That is a menu, not a listbox.'],
+      ['The site already put role="menu" on the list', 'Believe it — map it as a menu. Writing role="listbox" over an author\'s role leaves the two disagreeing, and the list ends up decorated by neither.'],
+      ['There is a text field that filters the list', 'That is a combobox.'],
+    ] },
+  combobox:   { what:'A text field with a popup list of suggestions.', keys:'Type to filter · Arrows into the list · Enter selects · Esc closes.', wcag:[['4.1.2','Name, Role, Value'],['4.1.3','Status Messages']], apg:'combobox',
+    variants:[
+      ['Typing filters the list', 'This.'],
+      ['No typing — a button opens a fixed list', 'That is a listbox.'],
+    ] },
   checkbox:   { what:'An on/off (or mixed) choice.', keys:'Tab to reach · Space toggles.', wcag:[['4.1.2','Name, Role, Value']], apg:'checkbox',
     variants:[
       ['Native <input type="checkbox">', 'Already accessible — no mapping needed.'],
@@ -3200,8 +3396,16 @@ const TYPE_GUIDE = {
       ['Navigates to another page/URL', 'Those are links → use “menu” or “link”.'],
     ] },
   form:       { what:'A form — links each field to its label and announces errors.', keys:'Tab between fields · errors must be announced and tied to their field.', wcag:[['3.3.2','Labels or Instructions'],['3.3.1','Error Identification'],['1.3.1','Info and Relationships']], apg:'' },
-  table:      { what:'A data table — ties each cell to its row/column header.', keys:'Read-only; screen readers announce the header for each cell.', wcag:[['1.3.1','Info and Relationships']], apg:'table' },
-  grid:       { what:'An interactive table whose cells receive focus.', keys:'Arrows move between cells · Enter activates.', wcag:[['4.1.2','Name, Role, Value'],['2.1.1','Keyboard']], apg:'grid' },
+  table:      { what:'A data table — ties each cell to its row/column header.', keys:'Read-only; screen readers announce the header for each cell.', wcag:[['1.3.1','Info and Relationships']], apg:'table',
+    variants:[
+      ['Cells are read, not operated', 'This. Tab passes over the table; the reader announces each cell with its headers.'],
+      ['Cells take focus and arrows move between them', 'That is a grid.'],
+    ] },
+  grid:       { what:'An interactive table whose cells receive focus.', keys:'Arrows move between cells · Enter activates.', wcag:[['4.1.2','Name, Role, Value'],['2.1.1','Keyboard']], apg:'grid',
+    variants:[
+      ['Arrows move cell to cell in two directions', 'This.'],
+      ['Just rows of data to read', 'That is a table, and it is the lighter fix.'],
+    ] },
   pagination: { what:'Numbered page controls for a result list.', keys:'Tab between page buttons · Enter activates · the current page is announced.', wcag:[['4.1.2','Name, Role, Value'],['2.4.4','Link Purpose in Context']], apg:'' },
   loading:    { what:'A loading indicator that must be announced, not silent.', keys:'No focus — announced via a live region.', wcag:[['4.1.3','Status Messages']], apg:'' },
   tooltip:    { what:'Extra text shown next to a control.', keys:'Must appear on FOCUS, not only on hover · Esc dismisses.', wcag:[['1.4.13','Content on Hover or Focus'],['4.1.2','Name, Role, Value']], apg:'tooltip' },
@@ -3381,7 +3585,9 @@ function renderSubSelectorInputs(type, into, opts) {
   const primaryHint = scoped ? null : document.getElementById('primaryHint');
   if (primaryHint) {
     // Prefer the plain-language explanation; fall back to the terse doc text.
-    const body = (helpInfo && helpInfo.help) || (pKey && desc[pKey]) || '';
+    const howPrimary = pKey ? (FIELD_HOW[type] || {})[pKey] : '';
+    const body = ((helpInfo && helpInfo.help) || (pKey && desc[pKey]) || '') +
+                 (howPrimary ? '\n' + howPrimary : '');
     if (body) {
       const reqTag = (pKey && req.includes(pKey)) ? '★ required — ' : '';
       const exTag = (helpInfo && helpInfo.ex) ? `\nExample: ${helpInfo.ex}` : '';
@@ -3395,9 +3601,15 @@ function renderSubSelectorInputs(type, into, opts) {
   }
 
   // Manual fields — each with a required marker and an on-focus description bubble.
+  const howFor = FIELD_HOW[type] || {};
   for (const f of schema.fields) {
     const isReq = req.includes(f);
     const hint = desc[f] || '';
+    // Two different questions, so two lines: `desc` is what the field IS, in
+    // U1's words; `how` is which element on this page it is, in ours. The
+    // second is the one that was missing, and the one mappings go wrong for
+    // want of.
+    const how = howFor[f] || '';
     const row = document.createElement('div');
     row.className = 'sub-sel-row';
     row.innerHTML = `
@@ -3408,6 +3620,7 @@ function renderSubSelectorInputs(type, into, opts) {
       </span>
       <button class="btn-ghost btn-xs sel-test" title="Test selector on page">🔍</button>
       ${hint ? `<div class="input-hint">${escapeHtml(hint)}</div>` : ''}
+      ${how ? `<div class="input-hint how-hint">${escapeHtml(how)}</div>` : ''}
     `;
     $subSelArea.appendChild(row);
   }
@@ -7586,6 +7799,83 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
   } catch {}
 });
 
+/**
+ * Ask before writing our role over one the site's own markup already carries.
+ *
+ * Molina's dropdown ships `<ul class="signin-dropdown" role="menu">`. Mapped as
+ * a listbox, u1 was asked to write `role="listbox"` over the author's role: the
+ * trigger got decorated, the list did not, and nothing anywhere said why. Two
+ * statements about what an element is, and one of them silently lost.
+ *
+ * Three answers, because there genuinely are three: the site is wrong, the site
+ * is right, or you want to look first. Nothing is saved until one is chosen.
+ *
+ * Resolves true to carry on saving, false to abandon it.
+ */
+async function confirmRoleOverwrite(tpl) {
+  const dlg = document.getElementById('roleClashDialog');
+  if (!dlg || !tpl || !tpl.type || !tpl.primary) return true;
+
+  const tab = await getTab();
+  if (!isInjectable(tab)) return true;
+
+  let clash = null;
+  try {
+    clash = await inPage(tab.id,
+      (sel, type) => window.__u1SelectorIntel.authoredRoleConflict(sel, type),
+      [tpl.primary, tpl.type]);
+  } catch { return true; }   // cannot read the page — not a reason to block a save
+  if (!clash) return true;
+
+  // The role the site chose usually names a component we can map instead, and
+  // offering that is the whole point of asking rather than warning.
+  const ROLE_TO_TYPE = {
+    menu: 'menu', menubar: 'menu', navigation: 'menu', listbox: 'listbox',
+    tablist: 'tabs', dialog: 'dialog', grid: 'grid', table: 'table',
+    combobox: 'combobox', radiogroup: 'radio', tooltip: 'tooltip',
+  };
+  const other = ROLE_TO_TYPE[clash.role];
+  const canSwitch = !!other && other !== tpl.type && !!COMPONENT_SCHEMAS[other];
+
+  document.getElementById('roleClashBody').innerHTML =
+    `<code>${escapeHtml(tpl.primary)}</code> already carries ` +
+    `<code>role="${escapeHtml(clash.role)}"</code> in the site's own HTML — we did not put it there. ` +
+    `Saving this mapping asks U1 to write <code>role="${escapeHtml(clash.willWrite)}"</code> over it.`;
+
+  const switchBtn = document.getElementById('roleClashSwitch');
+  switchBtn.style.display = canSwitch ? '' : 'none';
+  if (canSwitch) document.getElementById('roleClashOther').textContent = other;
+
+  return await new Promise((resolve) => {
+    const done = (answer) => {
+      dlg.close();
+      cancel.removeEventListener('click', onCancel);
+      over.removeEventListener('click', onOver);
+      switchBtn.removeEventListener('click', onSwitch);
+      resolve(answer);
+    };
+    const cancel = document.getElementById('roleClashCancel');
+    const over = document.getElementById('roleClashOverwrite');
+    const onCancel = () => done(false);
+    const onOver = () => done(true);
+    const onSwitch = () => {
+      // Change the type and let them regenerate: the fields a menu wants are
+      // not the fields a listbox wants, so saving straight through would
+      // produce a mapping of the new type filled from the old one's form.
+      $componentType.value = other;
+      $componentType.dispatchEvent(new Event('change'));
+      showNotice(document.getElementById('applyStatus'),
+        `Switched to ${other} — the site's own role. Fill the fields for it and press Generate Template.`,
+        'info', 9000);
+      done(false);
+    };
+    cancel.addEventListener('click', onCancel);
+    over.addEventListener('click', onOver);
+    switchBtn.addEventListener('click', onSwitch);
+    dlg.showModal();
+  });
+}
+
 // Loads an existing mapping back into the builder for editing. "Add to Mapping"
 // will then replace the original (tracked via editingMappingKey).
 function loadMappingIntoForm(m) {
@@ -8572,6 +8862,12 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
     showNotice(status, 'Enter a CSS selector and pick a component type first.', 'error', 3500);
     return;
   }
+  // The site may already have said what this element is. Overruling an author's
+  // role is a decision for a person, so the save stops here — before anything is
+  // written — rather than quietly putting our role on top of theirs and leaving
+  // the two to disagree at runtime.
+  if (!(await confirmRoleOverwrite(currentTemplate))) return;
+
   const btn = document.getElementById('addMappingBtn');
   btn.textContent = 'Capturing…';
   let updated;
