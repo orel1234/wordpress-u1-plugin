@@ -29,11 +29,27 @@
 
   // Utility / framework / state classes — present on thousands of elements and
   // liable to change, so never the basis of a mapping.
-  const NOISE = /^(flex|grid|w-|h-|p-|m-|py-|px-|mt-|mb-|ml-|mr-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui)/i;
+  // Names U1 ITSELF puts on the page. Nothing here may ever enter a mapping.
+  //
+  // Not because they are ugly — because they are CIRCULAR. `u1-anchor-f9u36-1`
+  // is an id u1.fix.listbox generates while decorating the trigger, and
+  // `u1st-tabbable-element` is a class it adds at the same moment. Neither
+  // exists in the site's own HTML. A mapping written against one of them says:
+  // "find the element that u1 will create once this mapping has run" — which
+  // resolves happily in a panel looking at an already-decorated page, and
+  // matches nothing at all on the client's site at load, where the fix has yet
+  // to run. It fails in exactly the place nobody is looking.
+  //
+  // The trap is that it LOOKS like the best answer available: an id, unique on
+  // the page, short and stable-looking. `#u1-anchor-f9u36-1` outranked
+  // `.click-nav` in every test compound() applies.
+  const U1_GENERATED = /^u1(st)?-/i;
 
-  // GENERATED ids (U1's own u1st-<uuid>, Angular Material, framework uuids) —
-  // they change on every reload, so a mapping built on one breaks silently.
-  const VOLATILE_ID = /^(u1st-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const NOISE = /^(flex|grid|w-|h-|p-|m-|py-|px-|mt-|mb-|ml-|mr-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui|u1st-|u1-)/i;
+
+  // GENERATED ids (U1's own, Angular Material, framework uuids) — they change on
+  // every reload, so a mapping built on one breaks silently.
+  const VOLATILE_ID = /^(u1st-|u1-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
   // Which pseudo-classes may appear in a mapping.
   //
@@ -1234,6 +1250,55 @@
     return true;
   }
 
+  /**
+   * Outline whatever a selector matches, and scroll the first match into view.
+   *
+   * For hovering a saved mapping: the question being asked is "which thing on
+   * the page IS this", and a selector string cannot answer it. Every match is
+   * outlined, not just the first — a mapping whose selector has quietly widened
+   * to catch fourteen elements looks identical in the list and unmistakable
+   * here.
+   *
+   * Returns the number of matches, so the caller can say "matches nothing"
+   * rather than silently drawing nothing.
+   */
+  function highlightSelector(sel, opts) {
+    clearOverlay();
+    let els;
+    try { els = Array.prototype.slice.call(document.querySelectorAll(sel), 0, 40); }
+    catch (e) { return -1; }          // -1: the selector itself is invalid
+    if (!els.length) return 0;
+
+    if (!(opts && opts.noScroll)) {
+      els[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    const layer = document.createElement('div');
+    layer.id = MARK_LAYER;
+    Object.assign(layer.style, {
+      position: 'fixed', inset: '0', zIndex: '2147483646', pointerEvents: 'none',
+    });
+    els.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      if (!r.width && !r.height) return;   // hidden — nothing to draw round
+      const box = document.createElement('div');
+      Object.assign(box.style, {
+        position: 'fixed', left: r.left + 'px', top: r.top + 'px',
+        width: r.width + 'px', height: r.height + 'px',
+        boxSizing: 'border-box', pointerEvents: 'none',
+        // The first match is the one the panel scrolled to; the rest are
+        // evidence that the selector is wider than it looks.
+        outline: i === 0 ? '3px solid #6c4cf1' : '2px dashed #6c4cf1',
+        outlineOffset: '1px',
+        background: i === 0 ? 'rgba(108,76,241,0.16)' : 'rgba(108,76,241,0.07)',
+        borderRadius: '2px',
+      });
+      layer.appendChild(box);
+    });
+    document.body.appendChild(layer);
+    return els.length;
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   //  G. extractComponent — what stage 2 of the AI flow reads.
   //
@@ -1538,6 +1603,7 @@
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
     // set-of-mark (AI review)
     collectCandidates, drawMarks, drawComponentMarks, clearMarks, showMark, extractComponent,
+    highlightSelector,
   };
 
   root.__u1SelectorIntel = api;
