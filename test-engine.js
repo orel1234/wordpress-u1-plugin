@@ -39,10 +39,23 @@
     const notes = [];
     const cls = (el.className && typeof el.className === 'string') ? el.className : '';
 
+    // Several fixers re-query with querySelector and so only ever fix the first
+    // match. The patch shipped with every export calls those once per match, so
+    // for them a multi-match selector is a legitimate choice rather than a
+    // mistake — but only when the OTHER selectors also resolve inside each
+    // match, which is the part that actually catches people out.
+    const PER_MATCH = ['tabs', 'combobox', 'listbox', 'dialog', 'tooltip', 'pagination'];
     if (count > 1) {
-      notes.push({ level: 'warn',
-        msg: `Matches ${count} elements — not unique. U1 uses the first match, which may be the wrong one.`,
-        suggestion: robustSelector(el) });
+      notes.push(PER_MATCH.includes(type)
+        ? { level: 'info',
+            msg: `Matches ${count} elements — all ${count} will be fixed, one at a time. ` +
+                 `Make sure the other selectors below match inside EVERY one of them; ` +
+                 `a match whose panel/content selector finds nothing is skipped. ` +
+                 `Use #id here if you meant only this one.`,
+            suggestion: robustSelector(el) }
+        : { level: 'warn',
+            msg: `Matches ${count} elements — not unique. U1 uses the first match, which may be the wrong one.`,
+            suggestion: robustSelector(el) });
     }
 
     if (type === 'dialog') {

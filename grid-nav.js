@@ -1,4 +1,5 @@
 'use strict';
+//#region u1-engine:grid
 // ─────────────────────────────────────────────────────────────────────────────
 //  U1 Studio — accessible grid/datepicker engine (no U1).
 //  Injected via chrome.scripting.executeScript({files:['grid-nav.js']}) by BOTH
@@ -331,6 +332,8 @@ window.__u1InstallGridFromMapping = function (primary, config) {
   });
 };
 
+//#endregion
+//#region u1-engine:clickable
 // ─────────────────────────────────────────────────────────────────────────────
 //  Make-keyboard-operable: turn non-focusable elements (<a> without href, divs
 //  and spans acting as controls) into real keyboard controls — role + tabindex
@@ -583,3 +586,224 @@ window.__u1MakeClickable = function (opts) {
   }
   return { ok: true, wired, role, activatesFound, missedActivates: missCount };
 };
+
+//#endregion
+//#region u1-engine:tabs
+// ─────────────────────────────────────────────────────────────────────────────
+//  Tab strip: the full WAI-ARIA tabs pattern on a page we do not own.
+//
+//  Why this exists next to u1.fix.tabs rather than instead of it: fix.tabs needs
+//  window.u1 on the page, so on a site that has not deployed U1 yet — a demo, a
+//  prospect, a staging box — it cannot run at all. This is DOM-only.
+//
+//  What separates it from marking each tab role="tab" by hand (which is what
+//  keyboard-clickable with role=tab does) is everything that makes the role
+//  true: one tab in the tab sequence instead of all of them, arrow keys between
+//  them, aria-selected kept in step with the page's own idea of the active tab,
+//  and each tab pointed at its panel. A role="tab" without those promises a
+//  keyboard contract that does not exist, which is worse than plain buttons.
+//
+//  Standalone: DOM only, needs neither U1 nor the extension.
+// ─────────────────────────────────────────────────────────────────────────────
+// Anything that takes keyboard focus on its own. Used to decide whether a
+// tabpanel needs to be put into the tab sequence itself.
+const FOCUSABLE = 'a[href],button,input,select,textarea,summary,iframe,' +
+  'audio[controls],video[controls],[contenteditable]:not([contenteditable="false"]),' +
+  '[tabindex]:not([tabindex="-1"])';
+
+window.__u1InstallTabs = function (opts) {
+  const listSel  = opts && opts.tabList;
+  const tabSel   = opts && opts.tab;
+  const panelSel = opts && opts.tabPanel;
+  const vertical = !!(opts && opts.isVertical);
+  if (!listSel || !tabSel || !panelSel) {
+    return { ok: false, err: 'tabList, tab and tabPanel are all required' };
+  }
+
+  let uid = 0;
+  const idFor = (el, prefix) => {
+    if (!el.id) el.id = `u1-${prefix}-${Date.now().toString(36)}-${uid++}`;
+    return el.id;
+  };
+
+  /**
+   * Which tab the PAGE considers active. We are a layer on top of someone
+   * else's widget: it already has an opinion, expressed as a class it toggles.
+   * Reading that opinion — rather than storing our own — is what keeps
+   * aria-selected honest when the tab is changed by a route change, a click we
+   * never saw, or the site's own script.
+   */
+  const activeIn = (tabs) => {
+    // The site's own signal is read FIRST. aria-selected is only a fallback,
+    // because from the second pass onwards that attribute is OURS: checking it
+    // first made the engine read back its own stale answer and pin the strip to
+    // whichever tab happened to be active when it was installed.
+    const bySite = tabs.findIndex((t) =>
+      /(^|\s)(active|selected|current|is-active|is-selected)(\s|$)/i.test(t.getAttribute('class') || '') ||
+      t.getAttribute('aria-current') === 'true' ||
+      t.getAttribute('aria-current') === 'page');
+    if (bySite !== -1) return bySite;
+    // No class signal — a site that maintains aria-selected itself. Our first
+    // pass copied its value, so reading it back really is reading the site.
+    const byAria = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+    return byAria === -1 ? 0 : byAria;
+  };
+
+  const wire = () => {
+    const lists = Array.from(document.querySelectorAll(listSel));
+    if (!lists.length) return { lists: 0, tabs: 0, panels: 0 };
+
+    let tabCount = 0, panelCount = 0;
+
+    lists.forEach((list) => {
+      // Scoped to this list: a page may hold several tab strips, and pairing a
+      // tab with another strip's panel would be worse than leaving it alone.
+      const tabs = Array.from(list.querySelectorAll(tabSel));
+      if (!tabs.length) return;
+
+      // Panels usually sit OUTSIDE the tablist (that is the point — the strip
+      // switches what is below it), so they are looked up document-wide.
+      const panels = Array.from(document.querySelectorAll(panelSel));
+
+      list.setAttribute('role', 'tablist');
+      if (vertical) list.setAttribute('aria-orientation', 'vertical');
+      else list.removeAttribute('aria-orientation'); // horizontal is the default
+
+      const active = activeIn(tabs);
+
+      tabs.forEach((tab, i) => {
+        tab.setAttribute('role', 'tab');
+        idFor(tab, 'tab');
+        tab.setAttribute('aria-selected', i === active ? 'true' : 'false');
+        // Roving tabindex — the reason Tab reaches the panel instead of walking
+        // through every tab first.
+        tab.tabIndex = i === active ? 0 : -1;
+
+        // One panel per tab where the counts line up. When they do not (a site
+        // that renders only the visible panel) every tab points at the single
+        // live panel, which is still true and still better than no link.
+        const panel = panels.length === tabs.length ? panels[i] : panels[0];
+        if (panel) {
+          panel.setAttribute('role', 'tabpanel');
+          idFor(panel, 'tabpanel');
+          panel.setAttribute('aria-labelledby', tab.id);
+          // A panel joins the tab sequence ONLY when it holds nothing focusable
+          // — then tabindex=0 is what lets a keyboard user reach and scroll its
+          // text. A panel full of fields already has its own stops, and adding
+          // one in front of them is a dead stop, not an improvement.
+          //
+          // Re-evaluated on every pass, and the marker records that the
+          // tabindex is ours: a panel that gains a field later must lose it,
+          // and one the site set itself must never be touched.
+          if (panel.querySelector(FOCUSABLE)) {
+            if (panel.dataset.u1PanelTabindex) {
+              panel.removeAttribute('tabindex');
+              delete panel.dataset.u1PanelTabindex;
+            }
+          } else if (!panel.hasAttribute('tabindex')) {
+            panel.tabIndex = 0;
+            panel.dataset.u1PanelTabindex = '1';
+          }
+          tab.setAttribute('aria-controls', panel.id);
+          panelCount++;
+        }
+        tabCount++;
+      });
+
+      if (list.__u1TabKeys) list.removeEventListener('keydown', list.__u1TabKeys);
+      const onKey = (e) => {
+        const current = Array.from(list.querySelectorAll(tabSel));
+        const here = current.indexOf(e.target.closest(tabSel));
+        if (here === -1) return;
+
+        const prevKey = vertical ? 'ArrowUp' : 'ArrowLeft';
+        const nextKey = vertical ? 'ArrowDown' : 'ArrowRight';
+        let to = -1;
+        if (e.key === prevKey) to = (here - 1 + current.length) % current.length;
+        else if (e.key === nextKey) to = (here + 1) % current.length;
+        else if (e.key === 'Home') to = 0;
+        else if (e.key === 'End') to = current.length - 1;
+        else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          // A div acting as a tab has no native activation. Native controls
+          // already do this themselves, so touching them would double-fire.
+          const tag = e.target.tagName;
+          if (tag !== 'BUTTON' && tag !== 'A' && tag !== 'INPUT') {
+            e.preventDefault();
+            e.target.click();
+          }
+          return;
+        } else return;
+
+        // Only once the key is known to be ours: Home/End must still scroll the
+        // page everywhere else.
+        e.preventDefault();
+        const target = current[to];
+        target.focus();
+        // Activation follows focus. The panel swap is the site's own click
+        // handler doing its job; we then re-read which tab it made active, so
+        // aria-selected reflects what actually happened rather than what we
+        // assumed would happen.
+        target.click();
+        requestAnimationFrame(wire);
+      };
+      list.addEventListener('keydown', onKey);
+      list.__u1TabKeys = onKey;
+
+      // A click by mouse changes the active tab too, and aria-selected has to
+      // follow it or a screen reader reads a stale strip.
+      if (!list.__u1TabClick) {
+        const onClick = () => requestAnimationFrame(wire);
+        list.addEventListener('click', onClick);
+        list.__u1TabClick = onClick;
+      }
+    });
+
+    return { lists: lists.length, tabs: tabCount, panels: panelCount };
+  };
+
+  const first = wire();
+
+  // Keep it applied across framework re-renders, the same way the other two
+  // engines do. Without this a React repaint silently strips every attribute.
+  window.__u1TabWatchers = window.__u1TabWatchers || {};
+  const key = `${listSel}|${tabSel}|${panelSel}`;
+  if (!window.__u1TabWatchers[key]) {
+    let queued = false;
+    const mo = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; wire(); });
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    window.__u1TabWatchers[key] = mo;
+  }
+
+  if (!first.lists) {
+    return { ok: true, watching: true, tabs: 0, panels: 0,
+             note: 'Tab list not present yet — wires automatically when it appears.' };
+  }
+  if (!first.tabs) {
+    return { ok: false, tabs: 0,
+             err: `Found the tab list, but "${tabSel}" matches nothing inside it. ` +
+                  `The tab selector is searched WITHIN the tab list, so it must match the tabs themselves.` };
+  }
+  if (!first.panels) {
+    return { ok: false, tabs: first.tabs, panels: 0,
+             err: `Wired ${first.tabs} tab${first.tabs === 1 ? '' : 's'}, but "${panelSel}" matches nothing. ` +
+                  `Panels usually sit outside the tab list — give a selector for the content area that changes.` };
+  }
+  return { ok: true, watching: true, lists: first.lists, tabs: first.tabs, panels: first.panels };
+};
+
+// Convenience wrapper mirroring __u1InstallGridFromMapping: rebuild the engine
+// options from a stored mapping so background.js can re-apply on every load.
+window.__u1InstallTabsFromMapping = function (primary, config) {
+  const s = (config && config.selectors) || {};
+  return window.__u1InstallTabs({
+    tabList: s.tabList || primary,
+    tab: s.tab || '',
+    tabPanel: s.tabPanel || '',
+    isVertical: !!(config && config.isVertical),
+  });
+};
+//#endregion
