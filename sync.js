@@ -69,11 +69,24 @@ const U1Sync = (() => {
       .filter((m) => !m.deletedAt)
       .map((m) => m.payload);
 
+    // Has the server ever held anything for this site at all?
+    //
+    // This is NOT the same question as "does it hold anything now", and the
+    // difference is somebody's work. Zero live mappings can mean two opposite
+    // things: nobody has ever synced this site, or a colleague deliberately
+    // deleted everything on it. Tombstones and stored settings are what tell
+    // them apart — the second case leaves traces, the first leaves none.
+    const virgin =
+      (data.mappings || []).length === 0 &&
+      !data.settings &&
+      !data.sweep;
+
     return {
       mappings,
       settings: data.settings || null,
       sweep: data.sweep || null,
       deleted: (data.mappings || []).filter((m) => m.deletedAt).map((m) => m.key),
+      virgin,
     };
   }
 

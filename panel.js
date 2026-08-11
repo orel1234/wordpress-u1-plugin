@@ -1828,6 +1828,45 @@ async function pullSiteFromServer() {
     return { ok: false, reason: 'error', message: err.message };
   }
 
+  // ── First contact: the server has never held this site ────────────────────
+  //
+  // Every mapping ever made lived on one machine until now, so on the day this
+  // ships EVERY site is in this state — and the naive read replaces the local
+  // copy with the server's, which is empty. Forty mappings, overwritten with
+  // nothing, silently, on the first panel open.
+  //
+  // So when the server has never seen this site, the work goes UP instead of
+  // being replaced by nothing. `virgin` is deliberately narrow: a site a
+  // colleague deliberately emptied leaves tombstones and settings behind, and
+  // that is a real state that must still pull down as empty.
+  if (data.virgin) {
+    const local = (await U1Store.get([storageKey('mappings', currentHostname)]))
+      [storageKey('mappings', currentHostname)] || [];
+    const mine = local.filter((m) => m && typeof m === 'object');
+    if (mine.length) {
+      serverMappingKeys = new Set();
+      try {
+        await U1Sync.pushMappings(currentHostname,
+          mine.map((m) => ({ key: mappingKey(m), payload: m })));
+        serverMappingKeys = new Set(mine.map((m) => mappingKey(m)));
+        // The sweep and the settings this machine holds go with them, or the
+        // next open would find the server "not virgin" and pull them away.
+        await pushLocalSettings();
+        const cached = (await U1Store.get([sweepStoreKey()]))[sweepStoreKey()];
+        if (cached && cached.stops && cached.stops.length) {
+          await U1Sync.pushSweep(currentHostname, {
+            url: cached.url, phase: cached.phase, cost: cached.cost, stops: cached.stops,
+          });
+        }
+        return { ok: true, mappings: mine.length, sweep: !!(cached && cached.stops), adopted: mine.length };
+      } catch (err) {
+        // Nothing was overwritten — the local copy is untouched and still the
+        // only copy. Say so, rather than leaving a half-migrated site behind.
+        return { ok: false, reason: 'adopt_failed', message: err.message };
+      }
+    }
+  }
+
   serverMappingKeys = new Set(data.mappings.map((m) => mappingKey(m)));
 
   // setLocalOnly, not set: going through set() would fire onSiteWrite and push
@@ -1845,6 +1884,17 @@ async function pullSiteFromServer() {
   return { ok: true, mappings: data.mappings.length, sweep: !!data.sweep };
 }
 
+/** This machine's config, skip links and library URLs, on their way up. */
+async function pushLocalSettings() {
+  const keys = ['config', 'skipLinks', 'u1Links'].map((p) => storageKey(p, currentHostname));
+  const got = await U1Store.get(keys);
+  const fields = {};
+  if (got[keys[0]]) fields.config = got[keys[0]];
+  if (got[keys[1]]) fields.skipLinks = got[keys[1]];
+  if (got[keys[2]]) fields.u1Links = got[keys[2]];
+  if (Object.keys(fields).length) await U1Sync.pushSettings(currentHostname, fields);
+}
+
 /**
  * Say where the work on screen came from.
  *
@@ -1856,7 +1906,22 @@ async function pullSiteFromServer() {
 function reportSyncState(pulled) {
   const status = document.getElementById('mappingsStatus') ||
                  document.getElementById('applyAllStatus');
+  if (pulled && pulled.ok && pulled.adopted) {
+    showNotice(status,
+      `${pulled.adopted} mapping${pulled.adopted === 1 ? '' : 's'} from this machine ` +
+      `${pulled.adopted === 1 ? 'was' : 'were'} the only copy — ${pulled.adopted === 1 ? 'it has' : 'they have'} ` +
+      `now been uploaded to the U1 server, so your colleagues will see ${pulled.adopted === 1 ? 'it' : 'them'} too.`,
+      'success', 15000);
+    return;
+  }
   if (!pulled || pulled.ok) return;
+  if (pulled.reason === 'adopt_failed') {
+    showNotice(status,
+      'Your work on this site is still only on this machine — uploading it failed: ' +
+      (pulled.message || 'unknown error') + '. Nothing was changed or lost. Try reopening the panel.',
+      'error', 20000);
+    return;
+  }
   if (pulled.reason === 'not_logged_in') return;   // the sign-in gate says this already
   if (pulled.reason === 'not_assigned') return;    // the licence gate says this already
   if (pulled.reason === 'offline') {
