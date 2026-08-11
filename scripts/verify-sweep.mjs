@@ -351,6 +351,9 @@ console.log('\nchoosing screens');
     // here, so it is a no-op — the point is that rendering still works without
     // a chrome.storage behind it.
     saveSweep: () => {},
+    // The sweep panel belongs to the Whole page route, so the render functions
+    // ask which route is on screen. These tests are about that route.
+    mapMode: 'sweep',
     SWEEP_EST: { scanSecs: 15, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 },
     aiSweep: { phase: 'screens', stops: [
       { n: 1, thumb: PIXEL, count: 14, inventory: '6 links, 3 buttons', sticky: 27, truncated: false, found: [] },

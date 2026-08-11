@@ -3748,7 +3748,13 @@ function setMapMode(mode) {
   // hand-filled form.
   const picks = document.getElementById('sweepPicks');
   if (picks && !isSweep) picks.style.display = 'none';
-  else if (picks && isSweep && document.querySelector('#sweepPicksList .ai-bulk-row')) picks.style.display = 'block';
+  else if (picks && isSweep && aiSweep.stops.length) {
+    // Re-drawn rather than merely un-hidden. Testing for a pending row alone
+    // missed the case where every screen read is already done: the survey is
+    // still there, the completed drawer and the unread screens are still worth
+    // seeing, and the panel came back empty.
+    if (aiSweep.phase === 'components') renderSweepPicks(); else renderSweepScreens();
+  }
   // Leaving the sweep running while its own controls are hidden means a page
   // scrolling by itself with no way to stop it. Switching route stops it.
   if (!isSweep && aiSweep.running) aiSweep.abort = true;
@@ -4111,6 +4117,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   } catch (err) {
     showNotice($aiStatus, 'Failed: ' + err.message, 'error', 6000);
   } finally {
+    clearAiBusy();
     btn.disabled = false;
     btn.textContent = original;
     // Belt and braces: never leave our own attributes on the site's DOM, even
@@ -4254,6 +4261,29 @@ function showAiBusy(title, sub, pct) {
       <div class="ai-busy-sub">${escapeHtml(sub || '')}</div>
       ${[0, 1, 2].map(() => '<div class="ai-skel"></div>').join('')}
     </div>`;
+}
+
+/**
+ * Take the spinner down.
+ *
+ * showAiBusy writes itself into the results track, and the success path
+ * overwrites it by rendering the components. Every OTHER path did not: "nothing
+ * reviewable inside .click-nav", "nothing worth mapping", a failed call — each
+ * returned early and left the spinner turning over an empty panel with the real
+ * message somewhere below it. Pressing Scan it and watching nothing happen was
+ * the tool working correctly and saying so underneath a spinner.
+ *
+ * Only clears if the busy markup is still what is in the track, so calling it
+ * after a successful render cannot wipe the results.
+ */
+function clearAiBusy() {
+  const track = document.getElementById('aiCompTrack');
+  if (!track || !track.querySelector('.ai-busy')) return;
+  track.innerHTML = '';
+  const results = document.getElementById('aiResults');
+  if (results && !document.querySelector('#aiCompTrack .ai-comp')) {
+    results.style.display = 'none';
+  }
 }
 
 function showMapBusy(label, n, total) {
@@ -5818,7 +5848,7 @@ function renderSweepScreens() {
 
   list.innerHTML = stops.map(sweepScreenRowHtml).join('');
 
-  wrap.style.display = 'block';
+  wrap.style.display = mapMode === 'sweep' ? 'block' : 'none';
   document.getElementById('aiBulkReview').style.display = 'none';
   syncSweepMakeBtn();
   saveSweep();
@@ -6038,7 +6068,11 @@ function renderSweepPicks() {
     });
   }
 
-  wrap.style.display = 'block';
+  // The sweep's results belong to the Whole page route. Restoring a survey on
+  // panel open, or adopting a colleague's, calls this whatever route is on
+  // screen — which put "2 screens completed" and a Make-accessible button
+  // underneath the single-element scanner, acting on nothing you were looking at.
+  wrap.style.display = mapMode === 'sweep' ? 'block' : 'none';
   // Two panels with two "apply" buttons is the thing this guards against — but
   // only while there is still something pending to choose. Once everything read
   // has been applied, the review IS the result and hiding it leaves the press
