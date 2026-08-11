@@ -321,5 +321,42 @@ console.log('\na closed panel inside the scope you named is the interesting elem
     !!(ul && ul.closed));
 }
 
+console.log('\na listbox is read off the structure, not asked about');
+{
+  // Inside the container: the clickable thing is the trigger (it has the
+  // event); the thing that CONTAINS several things is the listbox (that is the
+  // shape). Asked three times, the model answered wrong three times in three
+  // different arrangements — so it is measured instead.
+  const shape = (page, scope) => {
+    const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only' });
+    d.window.eval(INTEL);
+    return d.window.__u1SelectorIntel.listboxShape(scope);
+  };
+
+  const molina = '<div class="signin"><div class="click-nav">' +
+    '<button class="clicker" title="Sign In">Sign In<span></span></button>' +
+    '<ul class="signin-dropdown" role="menu"><li><a href="/m">Member</a></li>' +
+    '<li><a href="/h">HCP</a></li></ul></div></div>';
+  const a = shape(molina, '.click-nav');
+  check('the button is the trigger', a && a.trigger === '.clicker', JSON.stringify(a));
+  check('the list is the listbox', a && a.listbox === '.signin-dropdown');
+  check('the items are the options', a && a.options === '.signin-dropdown>li');
+
+  // "לא משנה לי מה זה" — a <div> of <a>s is the same shape and the same answer.
+  const divs = '<div class="wrap"><button class="btn">Pick</button>' +
+    '<div class="panel"><a href="/1" class="opt">One</a><a href="/2" class="opt">Two</a></div></div>';
+  const b = shape(divs, '.wrap');
+  check('a <div> holding <a>s is a list just as much as a <ul>',
+    b && b.listbox === '.panel' && b.trigger === '.btn', JSON.stringify(b));
+
+  // The container must never be its own listbox: it holds the trigger AND the
+  // list, so it scores as "contains several things" every time.
+  check('the container is never mistaken for the list',
+    shape(molina, '.click-nav').listbox !== '.click-nav');
+
+  check('a container with no list at all returns null rather than guessing',
+    shape('<div class="wrap"><button class="btn">Pick</button></div>', '.wrap') === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

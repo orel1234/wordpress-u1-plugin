@@ -4820,15 +4820,31 @@ async function prepareOne(row, tab) {
     const better = await inPage(tab.id, (s) => window.__u1SelectorIntel.menuItemsRoot(s), [row.sel]);
     if (better && better !== row.sel) row.sel = better;
   }
-  // A listbox is rooted on the list that APPEARS. The same mistake has now been
-  // made in both directions — the button that opens it, and the wrapper holding
-  // both — and each time every field resolved and nothing objected. u1 looks for
-  // the options inside the container, so a container with no option-shaped
-  // children of its own is the wrong element, and what it opens is the right
-  // one. The element originally chosen becomes the trigger, which is what it was.
-  if (row.type === 'listbox' && !row.trigger) {
-    const list = await inPage(tab.id, (s) => window.__u1SelectorIntel.listboxRoot(s), [row.sel]);
-    if (list && list !== row.sel) { row.trigger = row.sel; row.sel = list; }
+  // A listbox is not a judgement call, so it is not asked as one.
+  //
+  // Inside the container: the clickable thing is the trigger, because it has the
+  // event; the thing that CONTAINS several things is the listbox, because that
+  // is the shape. The model has been asked three times and answered wrong three
+  // times in three different arrangements — the button as the listbox, the
+  // wrapper as the listbox, and the two swapped outright — each with a fluent
+  // explanation, each with every field resolving. That is the signature of a
+  // question that should be measured instead of asked.
+  //
+  // Measured here, and it OVERRIDES the answer below rather than filling a gap.
+  let lbShape = null;
+  if (row.type === 'listbox') {
+    lbShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.listboxShape(s), [row.sel]);
+    // Read from the container that was pointed at; if that was already the list
+    // itself, ask its parent, which is where the trigger lives.
+    if (!lbShape) {
+      lbShape = await inPage(tab.id, (s) => {
+        const el = document.querySelector(s);
+        const up = el && el.parentElement;
+        return up ? window.__u1SelectorIntel.listboxShape(
+          window.__u1SelectorIntel.robustSelector(up)) : null;
+      }, [row.sel]);
+    }
+    if (lbShape) { row.sel = lbShape.listbox; row.trigger = lbShape.trigger; }
   }
   const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
   if (!markup || markup.error || markup.notFound) {
@@ -4882,6 +4898,20 @@ async function prepareOne(row, tab) {
           why: 'Worked out from the page — the panels these tabs switch between. Required: without it the tabs control nothing.' });
       }
     }
+  }
+
+  // The measured shape wins. Not a preference: the three fields below are
+  // determined by the markup, and an answer that disagrees with the markup is
+  // wrong however confidently it is phrased.
+  if (lbShape) {
+    out.fields = (out.fields || []).filter(
+      (f) => f.key !== 'trigger' && f.key !== 'options');
+    out.fields.unshift(
+      { key: 'trigger', value: lbShape.trigger,
+        why: 'The clickable element in this container — it carries the event that opens the list.' },
+      { key: 'options', value: lbShape.options,
+        why: 'The list\'s own items.' });
+    out.primary = lbShape.listbox;
   }
 
   const idx = aiMapped.length;

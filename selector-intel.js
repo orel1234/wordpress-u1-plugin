@@ -1668,11 +1668,83 @@
     return opened;
   }
 
+  /**
+   * The whole listbox, read off the structure. No model involved.
+   *
+   * Given the container a specialist pointed at, this is not a judgement call:
+   *
+   *   something clickable inside it            → the trigger, it has the event
+   *   something that CONTAINS several things   → the listbox, that is the shape
+   *
+   * The model has now been asked three times and answered wrong three times, in
+   * three different arrangements — the button as the listbox, the wrapper as the
+   * listbox, and finally the two swapped outright. Each answer had a fluent
+   * explanation and every field resolved. That is the signature of a question
+   * that should not be asked: the shape is mechanical, so it is measured.
+   *
+   * Returns { listbox, trigger, options } or null when the container does not
+   * have this shape at all — in which case the caller keeps what it had.
+   */
+  const LB_ITEM = 'li,[role="option"],[role="menuitem"],a[href],button';
+
+  function listboxShape(containerSel) {
+    var box;
+    try { box = document.querySelector(containerSel); } catch (e) { return null; }
+    if (!box) return null;
+
+    // THE LIST: the shallowest descendant with two or more item-shaped children
+    // of its own. Whether it is a <ul> or a <div> is irrelevant — what makes it
+    // the list is that it holds the items.
+    var queue = [box], panel = null, seen = 0;
+    while (queue.length && seen++ < 400) {
+      var node = queue.shift();
+      var kids = node.children, hits = 0;
+      for (var i = 0; i < kids.length; i++) {
+        if (kids[i].matches(LB_ITEM) || kids[i].querySelector(LB_ITEM)) hits++;
+      }
+      // `node !== box` matters: the container itself holds the trigger AND the
+      // list, so it always scores 2 and would win every time.
+      if (hits >= 2 && node !== box) { panel = node; break; }
+      for (var j = 0; j < kids.length; j++) queue.push(kids[j]);
+    }
+    if (!panel) return null;
+
+    // THE TRIGGER: the clickable thing that is NOT inside the list. A <button>
+    // first, because that is what it almost always is; then anything carrying a
+    // popup attribute; then anything the event recorder saw a click handler on.
+    var trigger = null;
+    var pool = Array.prototype.slice.call(
+      box.querySelectorAll('button,[role="button"],a[href],[aria-haspopup],[tabindex]'));
+    var rec = root.__u1EventMap;
+    for (var p = 0; p < pool.length; p++) {
+      var el = pool[p];
+      if (panel.contains(el) || el === panel) continue;
+      if (el.tagName === 'BUTTON') { trigger = el; break; }
+      if (!trigger) trigger = el;
+      if (rec && rec.has && rec.has(el)) { trigger = el; break; }
+    }
+    if (!trigger) return null;
+
+    var lbSel = robustSelector(panel);
+    var trSel = robustSelector(trigger);
+    if (!lbSel || !trSel || !isU1Valid(lbSel) || !isU1Valid(trSel)) return null;
+
+    // THE OPTIONS: the list's own children, named by what they share.
+    var items = Array.prototype.slice.call(panel.children)
+      .filter(function (c) { return c.matches(LB_ITEM) || c.querySelector(LB_ITEM); });
+    var opt = commonSelectorFor(panel, items, lbSel);
+    var optSel = (opt && opt.selector && isU1Valid(opt.selector))
+      ? opt.selector
+      : lbSel + '>' + items[0].tagName.toLowerCase();
+
+    return { listbox: lbSel, trigger: trSel, options: optSel };
+  }
+
   const api = {
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
-    menuItemsRoot, tabPanelsFor, openedBy, listboxRoot,
+    menuItemsRoot, tabPanelsFor, openedBy, listboxRoot, listboxShape,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
     // set-of-mark (AI review)
