@@ -7340,7 +7340,9 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
         (ours
           ? `the Studio writes that id onto the element at runtime because a skip ` +
             `link points at it, and the random part changes every time the skip ` +
-            `links are saved.`
+            `links are saved. The skip link is fine and should stay — one element ` +
+            `can be a skip target and a mapped component at once. It is only the ` +
+            `id that must not be used here.`
           : `the U1 library adds it while it runs.`) +
         ` Use the element's own class or id instead.` });
     }

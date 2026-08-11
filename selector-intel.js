@@ -1035,12 +1035,35 @@
     if (within) {
       try { scope = document.querySelector(within) || document; } catch { scope = document; }
     }
+    // Hidden descendants are only collected inside a named scope, and only a
+    // few: a container holding thirty collapsed rows should not spend the
+    // model's whole list on them.
+    const HIDDEN_CAP = 12;
+    let hiddenUsed = 0;
     for (const el of candidateElements(scope)) {
       if (out.length >= max) break;
       if (seen.has(el)) continue;
       if (el.closest('#' + MARK_LAYER)) continue;   // never mark our own overlay
-      const r = visibleInViewport(el);
-      if (!r) continue;
+      // A CLOSED panel inside the container you pointed at is the interesting
+      // element, not one to skip.
+      //
+      // A dropdown's <ul> is display:none until it opens, so it never became a
+      // candidate — and the model is forbidden from naming a selector that is
+      // not in the list, so it could not choose the list even while describing
+      // it in prose. Pointing at `.click-nav` returned only the button, with
+      // "the actual options list isn't available here" as the reason.
+      //
+      // Page-wide this would be wrong: every closed modal, tooltip and menu on
+      // the site would flood the list. Inside a named scope it is exactly what
+      // was asked for, so it is allowed only there, and capped.
+      let r = visibleInViewport(el);
+      let closed = false;
+      if (!r) {
+        if (scope === document || hiddenUsed >= HIDDEN_CAP || el === scope) continue;
+        r = el.getBoundingClientRect();
+        closed = true;
+        hiddenUsed++;
+      }
       // Skip a wrapper whose only content is a single already-listed child —
       // it produces two marks pointing at visually identical boxes.
       if (el.childElementCount === 1 && seen.has(el.firstElementChild)) continue;
@@ -1078,6 +1101,10 @@
         // which edge it runs past.
         spansAbove: r.top < 0,
         spansBelow: r.bottom > vh(),
+        // Present in the DOM but not showing — a closed dropdown, a collapsed
+        // panel. The model must know: it cannot see this one in the screenshot,
+        // and "I could not see it" is not a reason to leave it out of the answer.
+        closed,
         // Travels with the viewport, so a page-wide scan meets it again at every
         // scroll position. The panel drops these after the first stop.
         sticky: lastWasSticky,

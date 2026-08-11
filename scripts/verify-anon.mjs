@@ -282,5 +282,44 @@ console.log('\nnames U1 itself writes never enter a mapping');
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }
 
+console.log('\na closed panel inside the scope you named is the interesting element');
+{
+  // Pointing at .click-nav returned only the button, and the model's own reason
+  // was "the actual options list isn't available here". It was not: the <ul> is
+  // display:none until the dropdown opens, so it never became a candidate — and
+  // the prompt forbids naming a selector that is not in the list.
+  const page = '<div class="signin"><div class="click-nav">' +
+    '<button class="clicker">Sign In</button>' +
+    '<ul class="signin-dropdown" role="menu" style="display:none">' +
+    '<li><a href="/m">Member</a></li></ul></div></div>';
+  const boxed = () => {
+    const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+    // jsdom has no layout: give everything a box except what CSS hides, which
+    // is the one distinction this test turns on.
+    d.window.Element.prototype.getBoundingClientRect = function () {
+      return d.window.getComputedStyle(this).display === 'none'
+        ? { width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }
+        : { width: 200, height: 40, top: 10, left: 10, right: 210, bottom: 50 };
+    };
+    d.window.eval(INTEL);
+    return d.window;
+  };
+  const sels = (scope) => {
+    const w = boxed();
+    const got = w.__u1SelectorIntel.collectCandidates(40, scope);
+    return got.candidates;
+  };
+
+  const wide = sels(null).map((c) => c.selector);
+  check('page-wide, a closed panel is NOT collected — every shut modal on the site would flood the list',
+    !wide.includes('.signin-dropdown'), wide.join(' | '));
+
+  const scoped = sels('.click-nav');
+  const ul = scoped.find((c) => c.selector === '.signin-dropdown');
+  check('scoped to its container, it IS collected', !!ul);
+  check('…and flagged closed, so the model knows it is not in the screenshot',
+    !!(ul && ul.closed));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

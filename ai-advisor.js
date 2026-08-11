@@ -96,7 +96,8 @@ RULES
 - A button that opens a popup list is a listbox (it has one trigger). A standing navigation bar with no single trigger is a menu. Getting this wrong makes u1 throw at runtime.
 - Prefer an element whose "matches" is 1 for a container.
 - Set needsWork false for things that already look correct — a plain <a href> with visible text needs nothing. Do not pad the list.
-- Skip anything you cannot see in the screenshot.`;
+- Skip anything you cannot see in the screenshot — EXCEPT an element marked "closed": true. Those are in the page but not showing, which is what a dropdown's list, a collapsed panel or a closed dialog looks like when shut. They are in the list precisely because they are the part that matters, and they are usually the container the component should be rooted on. Use them.
+- So: a trigger button plus a "closed" list beside it is ONE listbox, not a lone button. The list is the containerSelector and the button is the trigger. Never answer that the options list "is not available" when a closed element is in the list.`;
 
   // The scan's rules live in a11y-rules.md so they can be changed without
   // touching code. Fetched once and appended to the prompt above; if it cannot
@@ -360,6 +361,9 @@ WHAT "changed nothing" USUALLY MEANS
     if (c.disabled) o.disabled = true;
     if (c.labelled) o.labelled = true;
     if (c.signals && c.signals.length) o.signals = c.signals;
+    // In the DOM but not showing right now. You will not find it in the
+    // screenshot, and that is not a reason to leave it out of the answer.
+    if (c.closed) o.closed = true;
     return o;
   });
 
