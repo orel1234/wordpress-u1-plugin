@@ -3146,6 +3146,21 @@ button.u1-readonly-off {
   border-radius: 6px;
 }
 
+/* The panel is showing a site that is not the tab in front, because a scan is
+   still going on that site. Stated rather than left to be inferred from a
+   mappings list that names somewhere else. */
+.sweep-holds {
+  margin: 6px 0;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--u1-text-muted);
+  background: var(--u1-surface);
+  border: 1px solid var(--u1-border);
+  border-left: 3px solid var(--u1-primary);
+  border-radius: 6px;
+}
+
 /* ▶ — read this one screenful, now.
    Quiet until the row is under the pointer: it spends money, so it should be
    found deliberately rather than sit there inviting a stray click. It keeps a

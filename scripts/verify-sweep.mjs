@@ -1627,5 +1627,89 @@ console.log('\n…and it really does give up, run for real');
   check('a late answer after a timeout does not settle it a second time', settled === 1, String(settled));
 }
 
+// ── Switching tabs must not touch a scan that is running ───────────────────
+//
+// Reported as: started a single-screen scan, switched tabs, and it reset — it
+// had not really scanned. The background camera made the run survive; this is
+// what threw the run away anyway.
+//
+// onTabChanged re-points the whole panel at whatever tab is IN FRONT. The most
+// damaging line in it is the quietest: `currentHostname = newHostname`. Nothing
+// visible happens — but sweepStoreKey() defaults to currentHostname, so from
+// that moment every save of the RUNNING scan is written under the other site's
+// key and pushed to the other site on the server; then the same function pulls
+// that site's own survey down over the top. Come back and the scan is gone and
+// its screens are unread, because that is genuinely what is stored under this
+// site's name now.
+console.log('\na running scan owns the panel');
+{
+  const otc = panelSrc.slice(panelSrc.indexOf('async function onTabChanged('),
+                             panelSrc.indexOf('chrome.tabs.onUpdated.addListener'));
+  // The hold has to be the FIRST thing, ahead of every line that acts on the
+  // new tab — a guard placed after the assignment guards nothing.
+  const hold = otc.indexOf('if (aiSweep.running && await sweepIsPinnedAndAlive())');
+  check('a running, pinned scan stops the tab change dead', hold > 0);
+  check('…before the panel is re-pointed at the other site',
+    hold > 0 && hold < otc.indexOf('currentHostname = newHostname'),
+    `hold at ${hold}, reassignment at ${otc.indexOf('currentHostname = newHostname')}`);
+  check('…before the licence is re-checked for the other site',
+    hold > 0 && hold < otc.indexOf('enforceLicence(currentHostname)'));
+  check('…before anything can reset the workspace',
+    hold > 0 && hold < otc.indexOf('resetAiWorkspace()'));
+  check('…and before the other site\'s survey is pulled over the top',
+    hold > 0 && hold < otc.indexOf('restoreSweep()'));
+  // A scan not running, or pinned to a tab that has been closed, must still let
+  // the panel follow you — otherwise the panel is stuck on a dead site.
+  check('the hold needs BOTH a running scan and a tab still alive',
+    /aiSweep\.running && await sweepIsPinnedAndAlive\(\)/.test(otc));
+  // Held is not the same as broken. The mappings list will be naming a site
+  // that is not the one on screen, and that has to be stated.
+  check('the hold says why the panel is showing another site',
+    /Still scanning \$\{currentHostname\}/.test(panelSrc) &&
+    /this panel stays with the scan/.test(panelSrc));
+  check('…and says nothing when you are looking at the scan\'s own tab',
+    /if \(!here \|\| here === currentHostname\) \{ host\.style\.display = 'none'; return; \}/.test(panelSrc));
+  check('…and it is cleared once the panel is free to follow again',
+    /clearSweepHoldsPanel\(\);/.test(otc));
+  check('the notice has somewhere to render',
+    /id="sweepHoldsPanel"/.test(readFileSync(join(ROOT, 'panel.html'), 'utf8')));
+
+  // The guard above is the fix. This is the reason the bug could exist at all,
+  // closed separately: a survey is filed under the site it is ABOUT, carried on
+  // the survey itself, rather than under a global that describes whichever tab
+  // is in front.
+  check('a survey carries the site it is about',
+    /host: getHostname\(tab\)/.test(panelSrc));
+  check('…and saves under THAT site, not the panel\'s',
+    /const host = aiSweep\.host \|\| currentHostname;/.test(panelSrc) &&
+    /\[sweepStoreKey\(host\)\]:/.test(panelSrc));
+  check('…and pushes to that site on the server too',
+    /U1Sync\.pushSweep\(host, \{/.test(panelSrc));
+  check('a restored survey keeps the site it was saved for',
+    /host: saved\.host \|\| currentHostname/.test(panelSrc));
+  check('…and one continued from a restore gets a host before it writes',
+    /if \(!aiSweep\.host\) aiSweep\.host = getHostname\(tab\) \|\| currentHostname;/.test(panelSrc));
+  // sweepStoreKey takes an optional host; every writer must pass it, or the
+  // default quietly reintroduces exactly this bug.
+  check('no save path is left keying off the panel\'s idea of the site',
+    !/\[sweepStoreKey\(\)\]: \{/.test(panelSrc));
+
+  // And the hole the guard would otherwise have had. sweepIsPinnedAndAlive
+  // requires a tabId; restoreSweep deliberately sets it to null, because the
+  // tab a saved survey ran on is gone. So a RESTORED survey is not pinned, the
+  // hold does not apply to it, and pressing ▶ on one and switching tabs resets
+  // it anyway — which is the shape of the run that was actually reported.
+  check('restoring a survey leaves it unpinned, as it must',
+    /stops: saved\.stops, tabId: null/.test(panelSrc));
+  check('…so reading a screenful pins it to the tab being read',
+    /aiSweep\.tabId = tab\.id;/.test(panelSrc.slice(panelSrc.indexOf('async function scanPickedScreens('))));
+  check('…and that happens before the first screenful is read',
+    panelSrc.indexOf('aiSweep.tabId = tab.id;') < panelSrc.indexOf('for (let i = 0; i < stops.length; i++)'));
+  // Belt and braces: sweepIsPinnedAndAlive is the whole condition the hold
+  // rests on, so its requirement must not drift without this test noticing.
+  check('the hold rests on there being a tabId at all',
+    /if \(aiSweep\.tabId == null\) return false;/.test(panelSrc));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -472,6 +472,11 @@
            "Clear" buttons — so a running sweep put two buttons on screen that
            belonged to the other route and would have acted on nothing. -->
       <div id="sweepBusy"></div>
+      <!-- A run is pinned to one tab, so looking at another one changes nothing
+           about it — including which site this panel is filed under. That hold
+           is invisible otherwise, and reads as the panel being stuck on the
+           wrong site. -->
+      <div id="sweepHoldsPanel" class="sweep-holds" style="display:none;" role="status"></div>
       <!-- The run stops on each screenful and asks. Everything named here is
            built from measurement and costs nothing; only what is left over is
            sent to the model. -->

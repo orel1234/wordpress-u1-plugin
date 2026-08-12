@@ -6299,11 +6299,15 @@ function sweepWrite() {
   return (async () => {
     try {
       if (!aiSweep.stops.length) return;
+      // The survey's own site, not the panel's. They are the same except when
+      // something has moved the panel, and that is exactly when writing to the
+      // panel's key files a scan under the wrong client.
+      const host = aiSweep.host || currentHostname;
       await U1Store.set({
-        [sweepStoreKey()]: {
+        [sweepStoreKey(host)]: {
           v: 1,
           savedAt: Date.now(),
-          host: currentHostname,
+          host,
           url: aiSweep.url || '',
           phase: aiSweep.phase,
           cost: aiCost,
@@ -6319,7 +6323,7 @@ function sweepWrite() {
       // has its own shape, its own pictures and its own endpoint.
       if (await U1Auth.isLoggedIn()) {
         try {
-          await U1Sync.pushSweep(currentHostname, {
+          await U1Sync.pushSweep(host, {
             url: aiSweep.url, phase: aiSweep.phase, cost: aiCost, stops: aiSweep.stops,
           });
         } catch (err) {
@@ -6360,6 +6364,9 @@ async function restoreSweep() {
     running: false, abort: false,
     phase: saved.phase === 'components' ? 'components' : 'screens',
     stops: saved.stops, tabId: null, url: saved.url || '',
+    // Filed under the site it was saved for, so continuing it later saves it
+    // back to the same place.
+    host: saved.host || currentHostname,
   };
   aiCost = saved.cost || 0;
   aiWorkspaceHost = currentHostname;
@@ -6504,8 +6511,14 @@ async function runSweep(tab) {
   // switching browser tabs and moving the mouse over the list scrolled and
   // marked up a completely different page. The results belong to the page they
   // came from, and so does everything that acts on them.
+  // The site this survey is ABOUT, carried on the survey itself. sweepStoreKey
+  // defaults to currentHostname, which is a property of whatever tab is in
+  // front — so anything that re-points the panel mid-run also re-points where
+  // the run is filed, silently, one save at a time. The panel is held during a
+  // run now; this is so that a future path that moves currentHostname cannot
+  // file a scan of one client's site under another client's name.
   aiSweep = { running: true, abort: false, phase: 'screens', stops: [],
-              tabId: tab.id, url: tab.url || '' };
+              tabId: tab.id, url: tab.url || '', host: getHostname(tab) };
   aiBulk.failed = [];
   if (log) { log.innerHTML = ''; log.style.display = 'none'; }
   btn.disabled = true;
@@ -7699,6 +7712,20 @@ async function scanPickedScreens(numbers) {
   // Only if it will not attach do we fall back to yanking the tab in front,
   // which is the rude version: it takes the window away from whatever you were
   // doing. That yank used to happen on every run, camera or no camera.
+  // A survey restored from storage comes back with tabId null — the tab it
+  // originally ran on is gone, and sweepTab() falls back to the one in front.
+  // That is the right answer for reopening a survey and the wrong one for
+  // continuing it: sweepIsPinnedAndAlive() requires a tabId, so without this a
+  // restored survey is not "pinned", the hold in onTabChanged does not apply to
+  // it, and pressing ▶ on it and then switching tabs resets it — which is
+  // precisely the run that was reported as never having scanned.
+  //
+  // Reading a screenful pins the survey to the tab being read, whatever it was
+  // pinned to before.
+  aiSweep.tabId = tab.id;
+  if (!aiSweep.url) aiSweep.url = tab.url || '';
+  // A restored survey has no host of its own until it is continued.
+  if (!aiSweep.host) aiSweep.host = getHostname(tab) || currentHostname;
   const cam = await announceCamera(tab);
   if (!cam && !(await pinnedTabIsVisible(tab))) {
     try {
@@ -12096,10 +12123,59 @@ async function releaseCspBypassFor(host) {
 
 window.addEventListener('pagehide', () => { clearAllCspBypasses(); });
 
+/**
+ * Say why the panel is showing a site that is not the tab in front.
+ *
+ * Without this the hold is invisible and reads as the panel being stuck: you
+ * are looking at one site and the mappings list names another. One line, in
+ * the place a tab change would otherwise have redrawn.
+ */
+function noteSweepHoldsPanel(tab) {
+  const host = document.getElementById('sweepHoldsPanel');
+  if (!host) return;
+  const here = tab && isInjectable(tab) ? getHostname(tab) : '';
+  // Looking at the scan's own tab is the ordinary case and needs no notice.
+  if (!here || here === currentHostname) { host.style.display = 'none'; return; }
+  host.style.display = '';
+  host.textContent = `Still scanning ${currentHostname} — this panel stays with the scan ` +
+    `until it finishes. Nothing here is about ${here}.`;
+}
+
+function clearSweepHoldsPanel() {
+  const host = document.getElementById('sweepHoldsPanel');
+  if (host) { host.style.display = 'none'; host.textContent = ''; }
+}
+
 async function onTabChanged(tab) {
   // Moving to a non-web tab used to leave currentHostname pointing at the site
   // you were last on, with nothing on screen saying so — save now and it lands
   // on the previous site.
+  // ── A running scan owns the panel ────────────────────────────────────────
+  //
+  // The background camera made "start a scan and carry on working" possible;
+  // this is what made it not work anyway. Reported as: started a single-screen
+  // scan, switched tabs, and it reset — it had not really scanned.
+  //
+  // Everything below re-points the panel at whatever tab is IN FRONT. The
+  // single most damaging line is the quietest one: currentHostname is
+  // reassigned, and sweepStoreKey() defaults to currentHostname — so from that
+  // moment every save of the RUNNING scan was written under the other site's
+  // key and pushed to the other site on the server. Then the cascade below
+  // pulled that other site's own survey down over the top of it. Come back and
+  // the scan is gone, and its screens are unread, because that is genuinely
+  // what is now stored under this site's name.
+  //
+  // A scan is pinned to one tab. Which tab you happen to be LOOKING at is not
+  // information about it, so it is not allowed to change anything about it —
+  // not the site the panel is filed under, not the licence check, not the
+  // mappings list, and not the survey on screen. The panel stays on the run
+  // until the run ends, and says which site it is still showing.
+  if (aiSweep.running && await sweepIsPinnedAndAlive()) {
+    noteSweepHoldsPanel(tab);
+    return;
+  }
+  clearSweepHoldsPanel();
+
   if (!tab || !isInjectable(tab)) { borrowedHost = true; renderHostWarning(); return; }
   borrowedHost = false;
   renderHostWarning();
