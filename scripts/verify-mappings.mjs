@@ -22,6 +22,7 @@ import { JSDOM } from 'jsdom';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+let narrowScopes, narrowValidates, narrowLeavesNoneInside, narrowOnSave, narrowOnApply, narrowIsSaid, radioHasRule, fatalNamed;
 
 // ── Pull the pure builders out of panel.js without booting the panel ────────
 // Panel.js is one file of UI and logic together, so it cannot be imported: the
@@ -361,6 +362,34 @@ const roleTable = (src) => {
 const tA = roleTable(readFileSync(join(ROOT, 'selector-intel.js'), 'utf8')), tB = roleTable(panelSrc);
 const tablesAgree = !!tA && !!tB && JSON.stringify(tA) === JSON.stringify(tB);
 
+// ── A child selector wider than its parent ──────────────────────────────────
+// The reported failure. `.tab-bar__btn` matched 11 elements, 6 of them inside
+// #dealTabs; the patch refused the strip, u1.fix.tabs was never called, and the
+// panel said "U1 will only decorate the ones inside it" — the opposite of what
+// happens. Fix the selector rather than describe the problem.
+{
+  const src = panelSrc;
+  const fn = /async function narrowContained[\s\S]*?\n}/.exec(src)[0];
+  narrowScopes = /commonSelectorFor\(parent, inside, job\.parentSel\)/.test(fn);
+  // A descendant combinator is not available — isU1ValidSelector splits on
+  // [>+~] and rejects a compound with a space — so every candidate is checked
+  // before it is written.
+  narrowValidates = /isU1ValidSelector\(f\.now\)/.test(fn);
+  // "None inside" is a wrong selector, not a wide one. Narrowing it would turn
+  // a loud error into a silent no-match.
+  narrowLeavesNoneInside = /inside\.length === kids\.length \|\| !inside\.length/.test(fn);
+  // Every route saves through saveMappingEntry, which is why it is the place.
+  narrowOnSave = /const narrowed = await narrowContained\(template\);/.test(src);
+  narrowOnApply = /const narrowedNow = await narrowContained\(currentTemplate\);/.test(src);
+  narrowIsSaid = /function showNarrowed/.test(src) && /narrowed to \$\{n\.now\}/.test(src);
+  // radio had no containment rule at all, so nothing reported it and nothing
+  // narrowed it.
+  radioHasRule = /radio:\s*\[\{ parent: 'radioGroup', child: 'radioButton', inside: true \}\]/.test(src);
+  // And the message that was wrong.
+  fatalNamed = /const FATAL_IF_WIDE = \['tabs'\];/.test(src) &&
+               /that is fatal, not partial/.test(src);
+}
+
 // ── Defaults must agree with the documentation written beside them ──────────
 // menu.menubar shipped as `true` while its own desc said "Default false =
 // navigation menu". Every menu mapping was therefore born with the one setting
@@ -561,6 +590,18 @@ console.log(`  ${askedOnce ? '✅' : '❌'} the role question is asked at the ca
 if (!askedOnce) failed++;
 console.log(`  ${tablesAgree ? '✅' : '❌'} …and the save-time and apply-time role tables say the same thing`);
 if (!tablesAgree) failed++;
+console.log(`  ${narrowScopes && narrowValidates ? '✅' : '❌'} a child selector wider than its parent is narrowed, and validated before it is written`);
+if (!(narrowScopes && narrowValidates)) failed++;
+console.log(`  ${narrowLeavesNoneInside ? '✅' : '❌'} …but "none inside" is left alone — that is a wrong selector, not a wide one`);
+if (!narrowLeavesNoneInside) failed++;
+console.log(`  ${narrowOnSave && narrowOnApply ? '✅' : '❌'} …on every save and on the picker's Apply, so the exported file carries it too`);
+if (!(narrowOnSave && narrowOnApply)) failed++;
+console.log(`  ${narrowIsSaid ? '✅' : '❌'} …and it is said out loud, never rewritten behind your back`);
+if (!narrowIsSaid) failed++;
+console.log(`  ${radioHasRule ? '✅' : '❌'} radio has a containment rule at last, so the same repair covers it`);
+if (!radioHasRule) failed++;
+console.log(`  ${fatalNamed ? '✅' : '❌'} …and for tabs the warning says fatal, because nothing at all is decorated`);
+if (!fatalNamed) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
@@ -584,6 +625,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 24;
+const total = results.length + 30;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

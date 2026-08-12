@@ -162,6 +162,57 @@ console.log('\na selector that matches a strip with no panels');
   check('the strip without panels is skipped instead of throwing', seen.length === 1, JSON.stringify(seen));
 }
 
+console.log('\na tab selector wider than its own list');
+{
+  // The reported failure. #dealTabs holds six tabs; five more elements share
+  // the class elsewhere on the page; the panel sits outside the list. Climbing
+  // to reach the panel picks up the strays, the count check refused, the
+  // wrapper returned before calling u1.fix.tabs — and nothing said so. The
+  // strip was simply never decorated.
+  // The panel is only reachable at .wrap, and .wrap also holds a stray tab —
+  // which is the arrangement that used to end the strip.
+  const w = new JSDOM(`<!doctype html><body>
+    <div class="wrap">
+      <div class="left"><div id="dealTabs"><b class="t">1</b><b class="t">2</b></div></div>
+      <div class="right"><b class="t">x</b><b class="t">y</b><b class="t">z</b></div>
+      <div class="panel">A</div>
+    </div>
+    </body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+  const calls = [];
+  w.window.u1 = { fix: { tabs: (ctx, props) => calls.push({ ctx, tab: props.selectors.tab }) } };
+  w.window.eval(slice(['tabs']));
+  w.window.u1.fix.tabs('#dealTabs',
+    { selectors: { tabList: '#dealTabs', tab: '.t', tabPanel: '.panel' } });
+
+  check('the strip is decorated instead of silently skipped', calls.length === 1,
+    JSON.stringify(calls));
+  const d = w.window.document;
+  check('…from a context that can see the panel',
+    calls.length === 1 && !!d.querySelector(calls[0].ctx).querySelector('.panel'));
+  check('…with the tab selector scoped to its own list, not the whole page',
+    calls.length === 1 && d.querySelectorAll(calls[0].tab).length === 2,
+    calls.length ? `${calls[0].tab} → ${d.querySelectorAll(calls[0].tab).length}` : '');
+  check('…and nothing was recorded as skipped', w.window.__u1Patch.skipped.length === 0,
+    JSON.stringify(w.window.__u1Patch.skipped));
+}
+
+console.log('\na skip is recorded rather than swallowed');
+{
+  const w = new JSDOM(`<!doctype html><body>
+    <section><div class="tab-bar"><b class="b">1</b></div><div class="grid">A</div></section>
+    <section><div class="tab-bar"><b class="b">2</b></div></section>
+    </body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+  w.window.u1 = { fix: { tabs: () => {} } };
+  w.window.eval(slice(['tabs']));
+  w.window.u1.fix.tabs('.tab-bar',
+    { selectors: { tabList: '.tab-bar', tab: '.b', tabPanel: '.grid' } });
+  const sk = w.window.__u1Patch.skipped;
+  check('the strip with no panel of its own is on the skipped list', sk.length === 1,
+    JSON.stringify(sk));
+  check('…and says which fix and which selector', sk.length === 1 &&
+    sk[0].type === 'tabs' && sk[0].selector === '.tab-bar' && !!sk[0].why);
+}
+
 console.log('\narrow keys are counted from focus, not from the library\'s index');
 {
   const k = new JSDOM(`<!doctype html><body><section>

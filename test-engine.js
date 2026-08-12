@@ -44,7 +44,7 @@
     // for them a multi-match selector is a legitimate choice rather than a
     // mistake — but only when the OTHER selectors also resolve inside each
     // match, which is the part that actually catches people out.
-    const PER_MATCH = ['tabs', 'combobox', 'listbox', 'dialog', 'tooltip', 'pagination'];
+    const PER_MATCH = ['tabs', 'combobox', 'listbox', 'dialog', 'tooltip', 'pagination', 'radio'];
     if (count > 1) {
       notes.push(PER_MATCH.includes(type)
         ? { level: 'info',
@@ -258,12 +258,61 @@
       steps.push(tabs.length ? P('role="tab" present', `${tabs.length} tabs.`, '4.1.2') : F('role="tab" present', 'No [role="tab"].', '4.1.2'));
       if (tabs.length) steps.push(tabs.every(t => t.getAttribute('aria-selected') !== null)
         ? P('aria-selected present', '', '4.1.2') : F('aria-selected present', 'Some tabs lack aria-selected.', '4.1.2'));
-      steps.push(qa('[role=tabpanel]', root).length ? P('role="tabpanel" present', '', '4.1.2') : F('role="tabpanel" present', 'No [role="tabpanel"].', '4.1.2'));
+      // OUTSIDE the tab list, not inside it. This looked in `root` — the
+      // tabList — and a panel nested in its own tab strip is the arrangement
+      // STRUCTURE_RULES exists to forbid, because U1 then hides the tabs along
+      // with the content they control. So a CORRECTLY built strip failed this
+      // check every time. Follow aria-controls first, since that is the link
+      // the tabs themselves declare, and fall back to the document.
+      const panelIds = qa('[role=tab]', root).map(t => t.getAttribute('aria-controls')).filter(Boolean);
+      const byControls = panelIds.map(id => document.getElementById(id)).filter(Boolean);
+      const panels = byControls.length ? byControls
+        : qa(sel.tabPanel).length ? qa(sel.tabPanel) : qa('[role=tabpanel]');
+      steps.push(panels.length
+        ? P('role="tabpanel" present', `${panels.length} panel${panels.length === 1 ? '' : 's'}, outside the tab list where they belong.`, '4.1.2')
+        : F('role="tabpanel" present', 'No [role="tabpanel"] anywhere, and no tab names one through aria-controls.', '4.1.2'));
     } else if (type === 'listbox') {
       steps.push(root.getAttribute('role') === 'listbox' ? P('role="listbox"', '', '4.1.2') : F('role="listbox"', `role="${root.getAttribute('role') || '(none)'}".`, '4.1.2'));
       const opts = qa(sel.options, root);
       if (opts.length) steps.push(opts.filter(o => o.getAttribute('role') === 'option').length === opts.length
         ? P('Options have role', `${opts.length}.`, '4.1.2') : W('Options have role', 'Some options lack role="option".', '4.1.2'));
+    } else if (type === 'radio') {
+      // radio had no static branch at all: it fell through to the generic
+      // "does the container have a name" check, so a radio group that U1 never
+      // touched looked exactly like one that works.
+      const group = root.getAttribute('role') === 'radiogroup' ? root : q('[role=radiogroup]', root);
+      steps.push(group ? P('role="radiogroup"', '', '4.1.2')
+        : F('role="radiogroup"', `The container has role="${root.getAttribute('role') || '(none)'}".`, '4.1.2'));
+      // The ROLE, counted on its own. Counting the mapped selector's matches
+      // here would report "3 options" for three plain divs U1 never touched,
+      // which is the failure this branch exists to catch.
+      const roled = qa('[role=radio]', root);
+      const mapped = qa(sel.radioButton, root);
+      steps.push(roled.length ? P('role="radio" present', `${roled.length} options.`, '4.1.2')
+        : F('role="radio" present',
+            mapped.length
+              ? `"${sel.radioButton}" matches ${mapped.length} elements and none of them has role="radio" — U1 has not decorated this group.`
+              : 'No [role="radio"] elements.', '4.1.2'));
+      const radios = roled.length ? roled : mapped;
+      if (roled.length) {
+        // Everything the mapping points at should have become a radio. A
+        // shortfall means U1 reached some of them and not the rest.
+        if (mapped.length) {
+          const named = mapped.filter(r => r.getAttribute('role') === 'radio').length;
+          steps.push(named === mapped.length ? P('Every option is a radio', '', '4.1.2')
+            : W('Every option is a radio', `${named}/${mapped.length} of "${sel.radioButton}" have role="radio".`, '4.1.2'));
+        }
+        const checked = radios.filter(r => r.hasAttribute('aria-checked')).length;
+        steps.push(checked === radios.length ? P('aria-checked on every option', '', '4.1.2')
+          : F('aria-checked on every option', `${checked}/${radios.length} carry it — the rest have no state to announce.`, '4.1.2'));
+        // The defect u1-patch:radio exists to correct, and nothing verified
+        // that the correction landed: getCheckedRadio() returns the first radio
+        // WITHOUT aria-checked, so the group ends up with two tab stops and Tab
+        // lands on an unselected option.
+        const stops = radios.filter(r => r.getAttribute('tabindex') === '0').length;
+        steps.push(stops === 1 ? P('Exactly one tab stop', 'Arrow keys move between the rest.', '2.1.1')
+          : F('Exactly one tab stop', `${stops} of ${radios.length} options are in the tab order. A radio group takes one stop; arrows move within it.`, '2.1.1'));
+      }
     } else if (type === 'heading') {
       steps.push(root.getAttribute('role') === 'heading' || /^H[1-6]$/.test(root.tagName)
         ? P('Is a heading', `${root.tagName.toLowerCase()}${root.getAttribute('aria-level') ? ' aria-level=' + root.getAttribute('aria-level') : ''}.`, '1.3.1')

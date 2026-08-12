@@ -20,7 +20,13 @@
   // Bump on every change that ships. The whole point is that a page can be
   // asked "which patch are you actually running" — "I reloaded, I promise" is
   // not something either of us can verify from the outside.
-  var P = (W.__u1Patch = { correctors: [], build: '2026-08-12b' });
+  // `skipped` is the record of every fix the wrapper declined to call, and it
+  // exists because the alternative was silence. A tab strip whose `tab`
+  // selector reached outside its list was refused here, u1.fix.tabs was never
+  // called, and nothing anywhere said so — the mapping simply had no effect,
+  // which is indistinguishable from a wrong selector. The panel reads this
+  // after an apply.
+  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13a' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -256,7 +262,9 @@
   // result is that a page with two tab strips, two comboboxes or two dialogs
   // gets one of each fixed. Calling the original once per match, with a selector
   // narrowed to that match, sidesteps the internals entirely.
-  var PER_MATCH = ['tabs', 'combobox', 'listbox', 'dialog', 'tooltip', 'pagination'];
+  // radio was missing here, so a page with two radio groups had one of them
+  // fixed — RadioFixer re-queries with querySelector and takes the first.
+  var PER_MATCH = ['tabs', 'combobox', 'listbox', 'dialog', 'tooltip', 'pagination', 'radio'];
   var MARK = 'data-u1p-instance';
   var seq = 0;
 
@@ -280,16 +288,34 @@
 
         var resolve = P.contextRoot[name];
         var roots = els, widened = false;
+        var perRootProps = null;
         if (resolve) {
           roots = [];
+          perRootProps = [];
           els.forEach(function (el) {
             var r = resolve(el, props);
             // false means "this one cannot work" — a selector that matched more
             // than the caller meant it to. Calling the fixer there would only
             // throw, and one throw takes the other instances down with it.
-            if (r === false) { widened = true; return; }
+            if (r === false) {
+              widened = true;
+              P.skipped.push({ type: name, selector: selector,
+                               why: 'no ancestor holds this component and its parts together' });
+              return;
+            }
+            // A resolver may hand back BOTH a root and props to call it with.
+            // Widening the context to reach one selector can pull in elements
+            // another selector must not see; the resolver is the only place
+            // that knows both, so it is allowed to narrow the props to match.
+            if (r && typeof r === 'object' && r.root) {
+              widened = true;
+              roots.push(r.root);
+              perRootProps.push(r.props || props);
+              return;
+            }
             if (r && r !== el) { widened = true; roots.push(r); }
             else roots.push(el);
+            perRootProps.push(props);
           });
           if (!roots.length) return;
         }
@@ -303,7 +329,8 @@
         for (var i = 0; i < roots.length; i++) {
           var token = 'u1p' + (seq++);
           roots[i].setAttribute(MARK, token);
-          last = orig.call(this, '[' + MARK + '="' + token + '"]', props);
+          last = orig.call(this, '[' + MARK + '="' + token + '"]',
+                           (perRootProps && perRootProps[i]) || props);
         }
         return last;
       };
@@ -527,6 +554,18 @@
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
 
+  // Its own marker, distinct from the wrapper's MARK: the wrapper's names the
+  // CONTEXT the fixer is handed, this one names the tab list inside it, and the
+  // two are different elements the moment we widen.
+  // Each tab that belongs to THIS list gets its own mark, and the scoped
+  // selector is that mark alone. A descendant combinator would be the obvious
+  // way to scope and it is not available: U1's selector validator splits on
+  // [>+~] and rejects a compound containing a space, and the tabs are not
+  // always direct children so `>` will not always reach them. A bare attribute
+  // selector has no combinator to argue about.
+  var TAB_MARK = 'data-u1p-tab';
+  var seq2 = 0;
+
   P.contextRoot.tabs = function (root, props) {
     var sel = props && props.selectors;
     if (!sel || !sel.tab || !sel.tabPanel) return null;
@@ -546,13 +585,52 @@
     var node = root, mine;
     try { mine = root.querySelectorAll(sel.tab).length; } catch (e) { return null; }
     if (!mine) return null;
+
+    // Reaching the panel means climbing, and climbing can pull in tabs that
+    // belong to something else — a button class shared with the rest of the
+    // page. That used to end the strip: return false, the wrapper takes it as
+    // "cannot work", u1.fix.tabs is never called and nothing is decorated.
+    //
+    // But the tabs were never the problem. The caller named the right list and
+    // the right panel; only the tab SELECTOR is wider than the list. So mark
+    // the list, scope the selector to it, and climb freely: the widened root
+    // reaches the panel while `tab` still means the six inside #dealTabs.
+    var scoped = null;
+    var scopeToRoot = function () {
+      if (scoped) return scoped;
+      var tok = 'u1pt' + (seq2++);
+      var ours = root.querySelectorAll(sel.tab);
+      for (var i = 0; i < ours.length; i++) ours[i].setAttribute(TAB_MARK, tok);
+      var next = {};
+      for (var k in props) if (Object.prototype.hasOwnProperty.call(props, k)) next[k] = props[k];
+      next.selectors = {};
+      for (var j in sel) if (Object.prototype.hasOwnProperty.call(sel, j)) next.selectors[j] = sel[j];
+      next.selectors.tab = '[' + TAB_MARK + '="' + tok + '"]';
+      scoped = next;
+      return scoped;
+    };
+
     while ((node = node.parentElement)) {
       try {
-        // The moment an ancestor sweeps in tabs that are not ours, it is the
-        // wrong root — and every ancestor above it is worse. Without this the
-        // walk reaches <body>, finds some other strip's panel there, and hands
-        // the fixer both strips at once.
-        if (node.querySelectorAll(sel.tab).length !== mine) return false;
+        // An ancestor that sweeps in tabs which are not ours is still the wrong
+        // root for the UNSCOPED props — so from here on, use the scoped ones.
+        if (node.querySelectorAll(sel.tab).length !== mine) {
+          var up = node;
+          do {
+            try {
+              if (!up.querySelector(sel.tabPanel)) continue;
+              // A panel is in reach — but is it OURS? An ancestor holding two
+              // tab lists holds two strips, and the panel we just found may
+              // belong to the other one. Pairing them is the mistake the plain
+              // count check was there to prevent, and it stays prevented: this
+              // widening is only for a strip whose own panel sits outside it,
+              // not for borrowing a neighbour's.
+              if (sel.tabList && up.querySelectorAll(sel.tabList).length !== 1) return false;
+              return { root: up, props: scopeToRoot() };
+            } catch (e2) { return null; }
+          } while ((up = up.parentElement));
+          return false;   // no ancestor holds a panel at all
+        }
         if (node.querySelector(sel.tabPanel)) return node;
       } catch (e) { return null; }
     }

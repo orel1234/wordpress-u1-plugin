@@ -1219,6 +1219,13 @@ async function applyMappingsBatch(items) {
           return 0;
         };
 
+        // Whatever the patch declined to call, from this apply onwards. The
+        // wrapper can refuse a fix — a tab strip whose parts it cannot reach
+        // together — and until now that refusal was silent, which made a
+        // correct-looking mapping do nothing with no explanation anywhere.
+        const patch = window.__u1Patch;
+        const skipMark = patch && patch.skipped ? patch.skipped.length : 0;
+
         let applied = 0, failed = 0, noEffect = 0, errs = [], details = [];
         let u1State = null;   // filled the first time a fix has no effect
         for (const it of list) {
@@ -1501,7 +1508,8 @@ async function applyMappingsBatch(items) {
             details.push({ type: it.type, sel, status: 'error' });
           }
         }
-        return { ok: true, applied, failed, noEffect, errs, details, u1State };
+        const skipped = patch && patch.skipped ? patch.skipped.slice(skipMark) : [];
+        return { ok: true, applied, failed, noEffect, errs, details, u1State, skipped };
       },
       args: [structured],
     });
@@ -3781,6 +3789,13 @@ const DYNAMIC_OPEN = {
 // `inside: true`  — the child elements must live within the parent, because
 //                   that is where U1 looks for them.
 // `inside: false` — they must NOT, because nesting them breaks the widget.
+// Types where a child selector reaching outside its parent is FATAL rather than
+// partial. These are the ones u1-patch wraps with a context resolver: to reach
+// one part it widens the context, widening picks up the strays, and the
+// component is refused outright. Everywhere else the extra matches are simply
+// ignored, which is the "partial" the message used to promise for everyone.
+const FATAL_IF_WIDE = ['tabs'];
+
 const STRUCTURE_RULES = {
   // The listbox is the thing that OPENS. The trigger is outside it — a button
   // that contained the list it opens would disappear along with it.
@@ -3797,7 +3812,84 @@ const STRUCTURE_RULES = {
   grid:     [{ parent: 'grid',    child: 'row',     inside: true },
              { parent: 'grid',    child: 'cell',    inside: true }],
   accordion:[{ parent: 'headerSelector', child: 'contentSelector', inside: false }],
+  // A radioButton selector reaching outside its group is the same fault as a
+  // tab reaching outside its list, and radio had no rule at all — so nothing
+  // reported it and nothing narrowed it.
+  radio:    [{ parent: 'radioGroup', child: 'radioButton', inside: true }],
 };
+
+/**
+ * Narrow a child selector so it only matches inside its parent.
+ *
+ * STRUCTURE_RULES has always known which fields must live inside which — it
+ * just reported it. For `tabs` that reporting was worse than useless: a `tab`
+ * selector matching outside the tabList makes P.contextRoot.tabs refuse the
+ * strip, u1.fix.tabs is never called at all, and the panel said "U1 will only
+ * decorate the ones inside it", which is the opposite of what happens.
+ *
+ * So: fix the selector instead of describing the problem. `.tab-bar__btn`
+ * matching eleven elements, six of them in #dealTabs, becomes
+ * `#dealTabs>.tab-bar__btn`.
+ *
+ * A DESCENDANT combinator would be the obvious move and it is not available:
+ * isU1ValidSelector splits on [>+~] and rejects a compound containing a space,
+ * so `#dealTabs .tab-bar__btn` is invalid to U1 while `#dealTabs>.tab-bar__btn`
+ * is fine. Every candidate is therefore checked against that validator before
+ * it is written, and a field with no valid narrowing is left alone and
+ * reported rather than quietly mangled.
+ *
+ * Returns [{ field, from, to, was, now }] — empty when nothing needed it.
+ */
+async function narrowContained(tpl) {
+  const rules = STRUCTURE_RULES[tpl && tpl.type] || [];
+  const sels = (tpl && tpl.config && tpl.config.selectors) || {};
+  const jobs = rules
+    .filter((r) => r.inside && sels[r.parent] && sels[r.child])
+    .map((r) => ({ field: r.child, parentSel: sels[r.parent], childSel: sels[r.child] }));
+  if (!jobs.length) return [];
+
+  const tab = await getTab();
+  if (!isInjectable(tab)) return [];
+
+  let found;
+  try {
+    found = await inPage(tab.id, (list) => {
+      const out = [];
+      for (const job of list) {
+        let parent = null, kids = [];
+        try {
+          parent = document.querySelector(job.parentSel);
+          kids = Array.from(document.querySelectorAll(job.childSel));
+        } catch { continue; }
+        if (!parent || !kids.length) continue;
+        const inside = kids.filter((el) => parent.contains(el) && el !== parent);
+        // Nothing outside, or nothing inside — neither is this function's job.
+        // "None inside" is a wrong selector, not a wide one, and narrowing it
+        // would turn a loud error into a silent no-match.
+        if (inside.length === kids.length || !inside.length) continue;
+        const scoped = window.__u1SelectorIntel.commonSelectorFor(parent, inside, job.parentSel);
+        out.push({
+          field: job.field,
+          was: job.childSel,
+          outside: kids.length - inside.length,
+          total: kids.length,
+          now: scoped && scoped.selector ? scoped.selector : null,
+        });
+      }
+      return out;
+    }, [jobs]);
+  } catch { return []; }
+
+  const done = [];
+  for (const f of found || []) {
+    if (!f.now || f.now === f.was) continue;
+    if (!isU1ValidSelector(f.now)) continue;   // rather leave it than mangle it
+    setDeep(tpl.config.selectors, f.field, f.now);
+    done.push(f);
+  }
+  if (done.length) tpl.code = mappingToCode(tpl);
+  return done;
+}
 
 // Fields that point at exactly ONE element. u1.fix.* resolves a selector rather
 // than looping, and applies to the LAST match — so several matches here is a
@@ -8201,7 +8293,7 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
     try {
       const res = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: (pairs, t, rules) => {
+        func: (pairs, t, rules, fatalIfWide) => {
           const out = { counts: {}, optionsAreLinks: false, structure: [] };
           for (const [k, sel] of pairs) {
             try { out.counts[k] = document.querySelectorAll(sel).length; }
@@ -8232,7 +8324,8 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
                 out.structure.push({ level: 'err', parent: rule.parent, child: rule.child, kind: 'none-inside' });
               } else if (outside.length) {
                 out.structure.push({ level: 'warn', parent: rule.parent, child: rule.child,
-                                     kind: 'some-outside', n: outside.length, total: kids.length });
+                                     kind: 'some-outside', n: outside.length, total: kids.length,
+                                     fatal: fatalIfWide.indexOf(t) >= 0 });
               }
             } else {
               // The reverse: these must NOT be nested, e.g. a tab panel living
@@ -8255,7 +8348,7 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
           }
           return out;
         },
-        args: [Object.entries(map), type, STRUCTURE_RULES[type] || []],
+        args: [Object.entries(map), type, STRUCTURE_RULES[type] || [], FATAL_IF_WIDE],
       });
       const r = res?.[0]?.result;
       if (r) {
@@ -8281,9 +8374,19 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
                   `point it at the panel and put the button in “trigger”.`
                 : `Check which element is really the container.`) });
           } else if (f.kind === 'some-outside') {
-            notes.push({ level: 'warn', msg:
+            // "U1 will only decorate the ones inside it" was true for most
+            // types and flatly wrong for the one that matters. For a type the
+            // patch wraps with a context resolver, a child selector reaching
+            // outside its parent makes the resolver refuse the whole component:
+            // u1.fix.* is never called and NOTHING is decorated. Saying
+            // "partial" there sent people to check selectors that were fine.
+            notes.push({ level: f.fatal ? 'err' : 'warn', msg:
               `${f.n} of the ${f.total} elements “${f.child}” matches are outside “${f.parent}”. ` +
-              `U1 will only decorate the ones inside it.` });
+              (f.fatal
+                ? `For ${f.parent === 'tabList' ? 'a tab strip' : 'this component'} that is fatal, not partial: ` +
+                  `the parts can no longer be reached together, so u1.fix.* is not run at all. ` +
+                  `Saving narrows “${f.child}” to the ones inside “${f.parent}” automatically.`
+                : `U1 will only decorate the ones inside it.`) });
           } else if (f.kind === 'wrongly-inside') {
             notes.push({ level: 'err', msg:
               `“${f.child}” is inside “${f.parent}”, and it must not be. ` +
@@ -9305,6 +9408,13 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
   // u1.fix call that does not throw, and a fix that lands on nothing does not
   // throw. The template is not saved yet, so it goes to the batch directly.
   if (!currentTemplate.custom) {
+    // The same repair as the save path, so Apply cannot look different from
+    // what a saved mapping would do.
+    const narrowedNow = await narrowContained(currentTemplate);
+    if (narrowedNow.length) {
+      $templatePreview.textContent = currentTemplate.code;
+      showNarrowed(status, narrowedNow);
+    }
     const res = await applyMappingsBatch([{
       type: currentTemplate.type, primary: currentTemplate.primary,
       firstArg: currentTemplate.firstArg, config: currentTemplate.config,
@@ -9663,6 +9773,12 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   // that reported success-shaped text. One save path, one place to ask.
   if (!(await confirmRoleOverwrite(template))) return { cancelled: true };
 
+  // A selector wider than the container it belongs to is repaired here, before
+  // anything is stored — so the mapping, its code, and the exported client file
+  // all carry the narrowed form. Every route saves through this function, which
+  // is why it is the place.
+  const narrowed = await narrowContained(template);
+
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
@@ -9705,7 +9821,7 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     loadMappingsList();
     refreshExportInfo();
   }
-  return { updated: existingIdx >= 0 };
+  return { updated: existingIdx >= 0, narrowed };
 }
 
 document.getElementById('addMappingBtn').addEventListener('click', async () => {
@@ -9720,9 +9836,9 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   }
   const btn = document.getElementById('addMappingBtn');
   btn.textContent = 'Capturing…';
-  let updated, cancelled;
+  let updated, cancelled, narrowed;
   try {
-    ({ updated, cancelled } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey }));
+    ({ updated, cancelled, narrowed } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey }));
     if (cancelled) { btn.textContent = 'Add to Mapping'; return; }
   } catch (e) {
     // A failed write used to travel up as an unhandled rejection: the button
@@ -9735,7 +9851,17 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   editingMappingKey = null;
   btn.textContent = wasEditing ? 'Updated ✓' : 'Added ✓';
   setTimeout(() => { btn.textContent = 'Add to Mapping'; }, 1500);
+  // Say it. A selector rewritten behind your back is worse than one left wrong,
+  // however good the rewrite.
+  if (narrowed && narrowed.length) showNarrowed(status, narrowed);
 });
+
+/** What was narrowed, and why it had to be. */
+function showNarrowed(status, narrowed) {
+  showNotice(status, narrowed.map((n) =>
+    `"${n.field}" matched ${n.total} elements, ${n.outside} of them outside the container — ` +
+    `narrowed to ${n.now} so the fix can land.`).join(' '), 'warn', 14000);
+}
 
 // Apply every saved mapping for the current host. `silent` suppresses the
 // "no mappings" / success notices (used by the auto-run on panel open).
@@ -9970,6 +10096,16 @@ function resetApprovedRun() {
 // callers that show an apply result.
 function describeApply(res, m, i = 0) {
   const v = describeApplyResult(res, m, i);
+  // A fix the patch declined to call. This is not "no effect" — u1.fix.* never
+  // ran at all, so the selectors are innocent and looking at them is wasted
+  // time. Say which one and why.
+  const skipped = (res.skipped || []).filter((k) => !m || !m.type || k.type === m.type);
+  if (skipped.length) {
+    v.ok = false;
+    v.msg += ` u1.fix.${skipped[0].type} was not run at all: ${skipped[0].why}.` +
+      ` Nothing on the page was touched by it — the selectors are not the problem.`;
+  }
+
   const clash = ((res.details || [])[i] || {}).roleClash;
   if (clash) {
     v.ok = false;
