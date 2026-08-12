@@ -3051,6 +3051,16 @@ button.u1-readonly-off {
   font-weight: 600;
 }
 
+/* The summary sits above the list it describes, and stays put while the list
+   scrolls under it — the decision it supports is taken while reading the rows. */
+#sweepEstimate {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin-bottom: 10px;
+  background: var(--u1-bg-base);
+}
+
 /* The stage that costs nothing, shown beside the two that do — so the answer to
    "what have I spent so far" is on the panel where the spending is decided. */
 .sweep-est-row.is-free { opacity: 0.6; }

@@ -65,7 +65,11 @@
   <div class="header">
     <div class="u1-logo">u</div>
     <h1><span class="u1-gradient-text">U1</span> Studio<span class="dot">.</span></h1>
-    <span class="version">v3.1</span>
+    <!-- The build, not just the version. Half a dozen rounds of this project
+         were spent on "I loaded the new one" against a browser still running
+         the old one, and there was no way to tell from the panel. Hover for the
+         patch build too. -->
+    <span class="version" id="buildStamp" title="">v3.1</span>
 
     <!-- Who you are signed in as is context, not a control to hunt for, so it
          sits beside the wordmark and stays visible on every tab. Sign out rides
@@ -442,14 +446,14 @@
            semantic tags and no meaningful class names — measured, not assumed.
            Operating it finds the same components on both. It costs no money and
            no model call; what it costs is pressing things on the page. -->
-      <label class="sweep-all" for="sweepProbeTick">
-        <input type="checkbox" id="sweepProbeTick" checked>
-        Open each component to see what it is
-      </label>
-      <div class="input-hint" style="display:block;margin:-4px 0 0 24px;">
-        Presses menus, tabs and accordions and watches what they reveal, then
-        closes them again. Never presses a link, a submit, or anything labelled
-        pay, delete or send — and navigation is blocked outright while it runs.
+      <!-- Not a choice any more. Opening each component is how the scan learns
+           what a thing IS rather than what it is called, and switching it off
+           only made the answers worse — there was never a reason to. What it
+           does still has to be stated, so the hint stays and the checkbox goes. -->
+      <div class="input-hint" style="display:block;">
+        Each component is opened to see what it is: menus, tabs and accordions are
+        pressed and watched, then closed again. Never a link, a submit, or anything
+        labelled pay, delete or send — and navigation is blocked while it runs.
       </div>
       <button class="btn-outline" id="sweepStopBtn" style="display:none;">■ Stop after this screen</button>
       <!-- Named per stop, so a run that visits fourteen screenfuls can be read
@@ -477,11 +481,13 @@
 
     <div class="ai-results" id="sweepPicks" style="display:none;">
       <div class="ai-summary" id="sweepPicksSummary"></div>
-      <div id="sweepPicksList"></div>
       <!-- What pressing the button will cost, in time and money, for exactly
-           what is ticked right now. Empty in the second phase, where the button
-           itself carries the number. -->
+           what is ticked right now — ABOVE the list, because on a page of
+           twenty-six screens it sat below the fold and the number you were
+           deciding on was the one thing you could not see. Empty in the second
+           phase, where the button itself carries the number. -->
       <div id="sweepEstimate"></div>
+      <div id="sweepPicksList"></div>
       <div class="ai-found-actions">
         <button class="btn-primary" id="sweepMakeBtn">✨ Make the ticked ones accessible</button>
         <button class="btn-ghost btn-sm" id="sweepPicksClearBtn">Clear</button>

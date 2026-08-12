@@ -22,6 +22,7 @@ import { JSDOM } from 'jsdom';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+let overwriteEverywhere, overwriteWhere;
 let narrowScopes, narrowValidates, narrowLeavesNoneInside, narrowOnSave, narrowOnApply, narrowIsSaid, radioHasRule, fatalNamed;
 
 // ── Pull the pure builders out of panel.js without booting the panel ────────
@@ -390,6 +391,21 @@ const tablesAgree = !!tA && !!tB && JSON.stringify(tA) === JSON.stringify(tB);
                /that is fatal, not partial/.test(src);
 }
 
+// ── overwriteRole must survive every apply path ─────────────────────────────
+// It was threaded through the single apply and dropped by the batch — so a
+// mapping whose role clash had been answered "replace it" was applied without
+// the site's role being lifted, U1 refused to write over it, and the element
+// came back undecorated. Only ever wrong in bulk, which is the only way the
+// whole-page route applies anything.
+{
+  const calls = [...panelSrc.matchAll(/applyMappingsBatch\(([\s\S]{0,400}?)\);/g)]
+    .map((m) => m[1])
+    .filter((body) => /\bconfig\b/.test(body) && !/^\s*fixes\s*$/.test(body));
+  const missing = calls.filter((body) => !/overwriteRole/.test(body));
+  overwriteEverywhere = missing.length === 0;
+  overwriteWhere = missing.map((b) => b.replace(/\s+/g, ' ').slice(0, 60));
+}
+
 // ── Defaults must agree with the documentation written beside them ──────────
 // menu.menubar shipped as `true` while its own desc said "Default false =
 // navigation menu". Every menu mapping was therefore born with the one setting
@@ -602,6 +618,8 @@ console.log(`  ${radioHasRule ? '✅' : '❌'} radio has a containment rule at l
 if (!radioHasRule) failed++;
 console.log(`  ${fatalNamed ? '✅' : '❌'} …and for tabs the warning says fatal, because nothing at all is decorated`);
 if (!fatalNamed) failed++;
+console.log(`  ${overwriteEverywhere ? '✅' : '❌'} every apply path carries overwriteRole, not just the single one${overwriteEverywhere ? '' : ' — ' + overwriteWhere.join(' | ')}`);
+if (!overwriteEverywhere) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
@@ -625,6 +643,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 30;
+const total = results.length + 31;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

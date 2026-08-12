@@ -3891,6 +3891,28 @@ async function narrowContained(tpl) {
   return done;
 }
 
+// Which build is actually running.
+//
+// "I loaded the new version" and "the browser is running the new version" are
+// different claims, and for several rounds of this project there was no way to
+// tell them apart from inside the panel — a fix would ship, the symptom would
+// persist, and both of us would be reasoning about code that was not there.
+// The manifest version rarely changes; the commit does.
+async function showBuildStamp() {
+  const el = document.getElementById('buildStamp');
+  if (!el) return;
+  try {
+    const mf = chrome.runtime.getManifest();
+    const stamp = (mf.version_name || mf.version || '').trim();
+    el.textContent = 'v' + stamp;
+    el.title = `Extension ${stamp}. If a fix looks missing, check this first: ` +
+      `chrome://extensions → Remove → Load unpacked. The Errors panel there keeps ` +
+      `old entries until you press Clear all, so an error listed is not proof of ` +
+      `an error happening.`;
+  } catch {}
+}
+showBuildStamp();
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  What is on screen — one stage at a time
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5871,8 +5893,15 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
       const to = details.length + chunk.length;
       btn.textContent = `Applying ${from}–${to} of ${saved.length}…`;
       setBulkStatus(`Applying ${from}–${to} of ${saved.length}…`, 'info', 0);
+      // overwriteRole travels with them. It was dropped here — so a mapping
+      // whose role clash had been answered "replace it" was applied WITHOUT
+      // the site's role being lifted, U1 refused to write over it, and the
+      // element came back undecorated. The single-apply path threaded it and
+      // this one did not, which is why it only ever went wrong in bulk: the
+      // whole-page route saves and applies exclusively through here.
       const res = await applyMappingsBatch(chunk.map(x => ({
-        type: x.tpl.type, primary: x.tpl.primary, firstArg: x.tpl.firstArg, config: x.tpl.config,
+        type: x.tpl.type, primary: x.tpl.primary, firstArg: x.tpl.firstArg,
+        config: x.tpl.config, overwriteRole: x.tpl.overwriteRole,
       })));
       chunk.forEach((x, j) => details.push({ x, verdict: describeApply(res, x.tpl, j) }));
       // Saving succeeded even when applying could not run, and the panel
@@ -6256,7 +6285,10 @@ async function runSweep(tab) {
       // Pressed BEFORE the picture is taken, so what the probe finds can be
       // drawn on it. The probe needs no screenshot of its own.
       let observed = [];
-      if (document.getElementById('sweepProbeTick')?.checked) {
+      // Always. It was a checkbox and turning it off only produced worse
+      // answers — the scan reads what a component is CALLED, and opening it is
+      // how it learns what the component does.
+      {
         showSweepBusy(`Screen ${n}`, 'Opening each component to see what it is.',
           pos && pos.height ? Math.min(100, ((pos.y + pos.view) / pos.height) * 100) : undefined);
         const probed = await probeScreen(tab);
@@ -7989,6 +8021,7 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
 
       const res = await applyMappingsBatch([{
         type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg, config: tpl.config,
+        overwriteRole: tpl.overwriteRole,
       }]);
       const verdict = describeApply(res, tpl);
 
@@ -8020,7 +8053,7 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
         '<div class="ai-busy-sub">Measuring what this mapping does on the page.</div></div>';
       const tpl = aiCardTemplate(idx);
       const ctx = tpl
-        ? await agentContext(tpl.type, tpl.primary, tpl.firstArg, tpl.config)
+        ? await agentContext(tpl.type, tpl.primary, tpl.firstArg, tpl.config, tpl.overwriteRole)
         : { err: 'The mapping could not be rebuilt from the form.' };
       if (ctx.err) { box.innerHTML = `<div class="ai-sel-bad">${escapeHtml(ctx.err)}</div>`; return; }
       // It already has the markup this card was built from; prefer it.
@@ -10337,7 +10370,11 @@ async function agentSend(key, box, text) {
 
 // Gather everything the agent needs to answer without being told it: the
 // component's markup, the config in force, and what applying it actually does.
-async function agentContext(type, primary, firstArg, config) {
+// `overwriteRole` matters here too: the agent is asked why a mapping did not
+// work, and to answer that it re-applies it and watches. Re-applying it
+// differently from how it really runs would have it diagnose a run that never
+// happened.
+async function agentContext(type, primary, firstArg, config, overwriteRole) {
   const sel = firstArg || primary;
   const tab = await getTab();
   if (!isInjectable(tab)) return { err: 'Cannot read this page.' };
@@ -10345,7 +10382,7 @@ async function agentContext(type, primary, firstArg, config) {
   if (!markup || markup.error || markup.notFound) {
     return { err: `Nothing on this page matches ${sel}.` };
   }
-  const res = await applyMappingsBatch([{ type, primary, firstArg, config }]);
+  const res = await applyMappingsBatch([{ type, primary, firstArg, config, overwriteRole }]);
   const d = (res.details || [])[0];
   const outcome = !res.ok
     ? (res.u1Missing ? 'window.u1 is not loaded on the page at all.' : 'Applying failed: ' + res.err)
@@ -11174,7 +11211,7 @@ async function loadMappingsList() {
       if (!agentThreads.has(key)) {
         box.innerHTML = '<div class="ai-busy"><div class="ai-busy-bar"><span></span></div>' +
           '<div class="ai-busy-sub">Reading this component and measuring what the mapping does.</div></div>';
-        const ctx = await agentContext(m.type, m.primary, m.firstArg, m.config);
+        const ctx = await agentContext(m.type, m.primary, m.firstArg, m.config, m.overwriteRole);
         if (ctx.err) { box.innerHTML = `<div class="ai-sel-bad">${escapeHtml(ctx.err)}</div>`; return; }
         agentThreads.set(key, { ctx, history: [], savedIdx: idx });
       }
