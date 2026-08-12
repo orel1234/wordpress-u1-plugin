@@ -20,7 +20,7 @@
   // Bump on every change that ships. The whole point is that a page can be
   // asked "which patch are you actually running" — "I reloaded, I promise" is
   // not something either of us can verify from the outside.
-  var P = (W.__u1Patch = { correctors: [], build: '2026-08-10e' });
+  var P = (W.__u1Patch = { correctors: [], build: '2026-08-12a' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -84,8 +84,13 @@
   try {
     new MutationObserver(schedule).observe(document.documentElement, {
       childList: true, subtree: true, attributes: true,
+      // aria-expanded is here because the listbox region corrects it against
+      // what the list is actually doing. Our own writes cannot loop: set()
+      // skips a write that would not change the value, so the pass converges
+      // after one round.
       attributeFilter: ['role', 'aria-selected', 'aria-checked', 'aria-hidden',
-                        'aria-labeledby', 'aria-current', 'tabindex', 'hidden'],
+                        'aria-labeledby', 'aria-current', 'aria-expanded',
+                        'tabindex', 'hidden'],
     });
   } catch (e) {}
   if (document.readyState === 'loading') {
@@ -207,9 +212,12 @@
       if (here === -1) return;
 
       // 'auto' asks the container, so one registration covers a page holding
-      // both a horizontal and a vertical strip.
+      // both a horizontal and a vertical strip. When the container declines to
+      // say, the DEFAULT is the role's own default and differs per role — a
+      // tablist is horizontal, a listbox is vertical — so the caller supplies
+      // it rather than this function assuming one for everybody.
       var vertical = opts.vertical === 'auto'
-        ? get(container, 'aria-orientation') === 'vertical'
+        ? (get(container, 'aria-orientation') || opts.orientationDefault || 'horizontal') === 'vertical'
         : !!opts.vertical;
       var key = e.key, n = items.length;
       var prev = vertical ? 'ArrowUp' : 'ArrowLeft';
@@ -708,7 +716,181 @@
     e.stopImmediatePropagation();
   }, true);
 
-  P.rove('[role="listbox"]', '[role="option"]', {});
+  // The roving for an open list lives in the listbox region, which a combobox
+  // export pulls in with it — the popup a combobox opens IS a listbox, and the
+  // corrections belong with the role, not with one of the two callers.
+})();
+//#endregion
+
+//#region u1-patch:listbox
+// A listbox comes out of U1 decorated and inoperable, and the two facts are not
+// in tension: everything a static check reads is present, and nothing a keyboard
+// user does works. This region is about the second half.
+//
+// It is also, until now, the only interactive type with no region at all. The
+// one listbox line in the tree sat inside the combobox region, so an export
+// containing a listbox and no combobox shipped no listbox corrections whatever.
+//
+// Four gaps, in the order a person meets them:
+//
+//   1. OPENING LEAVES FOCUS BEHIND. The trigger opens the list and focus stays
+//      on the trigger. Sighted users see the list; a keyboard user has to guess
+//      that Tab now leads somewhere new — and on a popup positioned out of DOM
+//      order it does not. APG puts focus in the list on open. Nothing does.
+//   2. ARROWS. No arrow handling reaches a standalone listbox, and the default
+//      orientation for the role is vertical, so Up/Down are the keys that must
+//      work. (In a combobox the textbox owns the arrows and focus never enters
+//      an option; the roving below is inert there by construction.)
+//   3. ESCAPE DOES NOT CLOSE, AND FOCUS DOES NOT COME BACK. Escape inside an
+//      open list leaves it open, or closes it and strands focus on a detached
+//      option — after which Tab restarts from the top of the document.
+//   4. aria-expanded GOES STALE. U1 writes it once. When the SITE'S own script
+//      opens or closes the list — which is the ordinary case, since the site
+//      had a working dropdown before anyone accessibilised it — the attribute
+//      keeps its old value and a screen reader announces "collapsed" over an
+//      open list. This is the defect most likely to read as "it says it is
+//      accessible and it is lying".
+//
+// What this region deliberately does NOT do is activate an option on
+// Enter/Space. Whether the library already does is not readable from outside,
+// and a second synthetic click on a <li><a> navigates twice. The keyboard test
+// reports that gap instead of this file guessing at it.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+
+  var OPT = '[role="option"]';
+  var TRIGGER = '[aria-haspopup="listbox"],[u1st-trigger-element="true"]';
+
+  /** The list a trigger opens — by declaration, then by position. */
+  var listFor = function (trigger) {
+    var id = u.get(trigger, 'aria-controls');
+    var byId = id && document.getElementById(id);
+    if (byId && u.get(byId, 'role') === 'listbox') return byId;
+
+    var sib = trigger.nextElementSibling;
+    while (sib) {
+      if (u.get(sib, 'role') === 'listbox') return sib;
+      var inner = sib.querySelector ? sib.querySelector('[role="listbox"]') : null;
+      if (inner) return inner;
+      sib = sib.nextElementSibling;
+    }
+    // Up a few levels only. Walking to <body> finds some other component's
+    // list and pairs the two — worse than finding nothing.
+    var node = trigger.parentElement, hops = 0;
+    while (node && hops++ < 3) {
+      var lb = node.querySelector('[role="listbox"]');
+      if (lb && !lb.contains(trigger)) return lb;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  var triggerFor = function (list) {
+    var found = null;
+    u.qsa(TRIGGER).some(function (t) {
+      if (listFor(t) === list) { found = t; return true; }
+      return false;
+    });
+    return found;
+  };
+
+  var options = function (list) { return u.qsa(OPT, list).filter(u.visible); };
+
+  /**
+   * Put focus in the list — but only if it is still on the trigger. Anything
+   * else has already decided where focus goes, and this must not overrule it.
+   */
+  var moveIn = function (trigger, list) {
+    if (document.activeElement !== trigger) return;
+    var opts = options(list);
+    if (!opts.length) return;
+    var chosen = opts.filter(function (o) { return u.get(o, 'aria-selected') === 'true'; })[0] || opts[0];
+    // One tab stop, so Tab leaves the list instead of walking every option.
+    // Native options (a link, a button) are left alone: taking a link out of
+    // the tab order to impose a roving pattern removes a stop that worked.
+    opts.forEach(function (o) { if (!u.isNative(o)) u.setTabIndex(o, o === chosen ? 0 : -1); });
+    try { chosen.focus(); } catch (e) {}
+  };
+
+  // Opening by keyboard. ArrowDown on a closed trigger is also an open command
+  // per APG, and no part of the library implements it.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+    var trigger = u.closest(e.target, TRIGGER);
+    if (!trigger) return;
+    var list = listFor(trigger);
+    if (!list) return;
+
+    if (e.key === 'ArrowDown' && !u.visible(list)) {
+      e.preventDefault();
+      trigger.click();
+    }
+    // Twice: once for a list that is already in the DOM, once for one the page
+    // builds or animates in. moveIn is idempotent and refuses to act after
+    // focus has left the trigger, so the second call costs nothing.
+    setTimeout(function () { if (u.visible(list)) moveIn(trigger, list); }, 60);
+    setTimeout(function () { if (u.visible(list)) moveIn(trigger, list); }, 260);
+  }, true);
+
+  // Escape: close, and put focus back where it came from. Give the library its
+  // chance first — if the list did close on its own, only the focus return is
+  // left to do, and clicking the trigger then would reopen it.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var list = u.closest(e.target, '[role="listbox"]');
+    if (!list) return;
+    var trigger = triggerFor(list);
+    if (!trigger) return;
+    setTimeout(function () {
+      if (u.visible(list)) trigger.click();
+      try { trigger.focus(); } catch (err) {}
+      P.schedule();
+    }, 90);
+  }, true);
+
+  // The site opening or closing the list is not something the attribute
+  // observer sees — it happens by class or by inline style, and neither is in
+  // the filter. So the click that could have caused it schedules the pass.
+  document.addEventListener('click', function (e) {
+    if (u.closest(e.target, TRIGGER) || u.closest(e.target, '[role="listbox"]')) {
+      setTimeout(P.schedule, 0);
+      setTimeout(P.schedule, 250);
+    }
+  }, true);
+
+  P.correct(function () {
+    u.qsa(TRIGGER).forEach(function (trigger) {
+      var list = listFor(trigger);
+      if (!list) return;
+
+      // aria-expanded describes the list AS IT IS, not as it was when U1 ran.
+      u.set(trigger, 'aria-expanded', u.visible(list) ? 'true' : 'false');
+
+      // Name the relationship so a screen reader can follow it, and so
+      // listFor's first branch answers next time instead of guessing.
+      if (!u.get(trigger, 'aria-controls')) {
+        if (!list.id) list.id = 'u1p-listbox-' + Math.random().toString(36).slice(2, 9);
+        u.set(trigger, 'aria-controls', list.id);
+      }
+
+      // An open list with no tab stop anywhere cannot be reached at all.
+      if (!u.visible(list)) return;
+      var opts = options(list);
+      if (!opts.length) return;
+      if (u.get(list, 'aria-activedescendant')) return;   // a different model, and a valid one
+      var reachable = opts.some(function (o) { return u.isNative(o) || o.tabIndex === 0; });
+      if (!reachable) {
+        var chosen = opts.filter(function (o) { return u.get(o, 'aria-selected') === 'true'; })[0] || opts[0];
+        u.setTabIndex(chosen, 0);
+      }
+    });
+  });
+
+  // Vertical by default: that is the role's default orientation, and unlike a
+  // tablist a listbox that says nothing means Up/Down.
+  P.rove('[role="listbox"]', OPT, { arrows: true, vertical: 'auto', orientationDefault: 'vertical' });
+  // No `activate` — arrowing through a list of links must not follow them.
 })();
 //#endregion
 

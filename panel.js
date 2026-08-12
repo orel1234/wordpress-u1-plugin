@@ -9360,9 +9360,10 @@ async function getPatchSource(types) {
 
     const wanted = new Set(['core']);
     (types || []).forEach((t) => wanted.add(t));
-    // The tabs correction reads which panel is visible, so a mapped tabpanel
-    // without a mapped tablist still needs it.
-    if (wanted.has('tabs')) wanted.add('tabs');
+    // The popup a combobox opens IS a listbox, and the corrections for the open
+    // list live with the role rather than with one of its two callers. Without
+    // this a combobox ships without them.
+    if (wanted.has('combobox')) wanted.add('listbox');
 
     const picked = [];
     const re = /\/\/#region u1-patch:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;

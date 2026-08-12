@@ -508,24 +508,85 @@
           }
         }
       } else if (type === 'listbox') {
-        const first = qa(sel.options, root)[0] || q('[role=option]', root);
-        const target = first || root;
-        target.focus(); await delay(250); rec('Focus the listbox/option', activeInside(target) ? 'pass' : 'warn', '', target);
-        // A listbox commonly keeps DOM focus on the container and tracks the choice
-        // via aria-activedescendant (or aria-selected) — so check THAT changed, not
-        // document.activeElement, which often stays put and would false-warn.
-        const beforeAD = root.getAttribute('aria-activedescendant');
-        const beforeSel = qa(sel.options, root).findIndex(o => o.getAttribute('aria-selected') === 'true');
-        const beforeFocus = document.activeElement;
+        // This used to focus the first option and press ArrowDown — on a list
+        // that was still CLOSED. focus() on a display:none element does nothing,
+        // the key went to <body>, and the whole widget came back "pass, pass".
+        // A listbox with a trigger has to be OPENED first, exactly as the dialog
+        // branch does, because everything worth testing only exists once it is.
+        const trigger = q(sel.trigger);
+        const listWasOpen = visible(root);
+
+        if (trigger && !listWasOpen) {
+          trigger.focus(); await delay(120);
+          rec('Focus the trigger', activeInside(trigger) ? 'pass' : 'warn', '', trigger);
+
+          // By KEY, not by click. A mouse click is not the thing under test, and
+          // a widget that only opens on click is precisely the failure to find.
+          press(trigger, 'Enter');
+          let opened = await waitFor(() => visible(root), 1200);
+          if (!opened) {
+            press(trigger, 'ArrowDown');
+            opened = await waitFor(() => visible(root), 1200);
+            rec('Enter on the trigger opens the list', opened ? 'warn' : 'fail',
+              opened ? 'Enter did nothing; ArrowDown opened it. A keyboard user will try Enter first.'
+                     : 'Neither Enter nor ArrowDown opened the list. It opens on mouse click only — the mapping is applied and the component is not operable by keyboard.',
+              trigger);
+          } else {
+            rec('Enter on the trigger opens the list', 'pass', '', root);
+          }
+          if (!opened) { hud.highlight(trigger); return { steps }; }
+
+          rec('aria-expanded says "open"',
+            trigger.getAttribute('aria-expanded') === 'true' ? 'pass' : 'fail',
+            trigger.getAttribute('aria-expanded') === 'true' ? ''
+              : `The list is open and the trigger still reports aria-expanded="${trigger.getAttribute('aria-expanded') || '(none)'}". A screen reader announces it as collapsed.`,
+            trigger);
+
+          await waitFor(() => activeInside(root), 600);
+          rec('Focus moves into the list', activeInside(root) ? 'pass' : 'fail',
+            activeInside(root) ? '' : 'The list opened and focus stayed on the trigger — there is nothing to arrow through yet.',
+            document.activeElement);
+        }
+
+        const opts = qa(sel.options, root).filter(visible);
+        if (!opts.length) {
+          rec('Options found', 'fail', `Nothing visible matches "${sel.options || '(not set)'}" inside the list.`);
+          return { steps };
+        }
+        rec('Options carry role="option"',
+          opts.every(o => o.getAttribute('role') === 'option') ? 'pass' : 'warn',
+          opts.every(o => o.getAttribute('role') === 'option') ? ''
+            : `${opts.filter(o => o.getAttribute('role') !== 'option').length} of ${opts.length} options have no role="option".`,
+          opts[0]);
+
+        if (!activeInside(root)) { opts[0].focus(); await delay(200); }
+
+        // Two models are both correct: DOM focus moving between options, or
+        // focus parked on the container with aria-activedescendant naming the
+        // current one. Read both, or the valid one reads as a failure.
+        const sig = () => root.getAttribute('aria-activedescendant') + '|' +
+          qa(sel.options, root).findIndex(o => o.getAttribute('aria-selected') === 'true') + '|' +
+          (document.activeElement && document.activeElement.id) + '|' +
+          qa(sel.options, root).indexOf(document.activeElement);
+        const before = sig();
         press(document.activeElement, 'ArrowDown');
-        await waitFor(() => (root.getAttribute('aria-activedescendant') !== beforeAD)
-          || (qa(sel.options, root).findIndex(o => o.getAttribute('aria-selected') === 'true') !== beforeSel)
-          || (document.activeElement !== beforeFocus), 700);
-        const afterAD = root.getAttribute('aria-activedescendant');
-        const afterSel = qa(sel.options, root).findIndex(o => o.getAttribute('aria-selected') === 'true');
-        const moved = (afterAD && afterAD !== beforeAD) || (afterSel !== beforeSel) || (document.activeElement !== beforeFocus);
-        rec('ArrowDown moves the active option', moved ? 'pass' : 'warn',
-          moved ? '' : 'No change in aria-activedescendant / aria-selected / focus after ArrowDown.', document.activeElement);
+        const moved = await waitFor(() => sig() !== before, 900);
+        rec('ArrowDown moves the active option', moved ? 'pass' : 'fail',
+          moved ? '' : 'Nothing moved: not focus, not aria-activedescendant, not aria-selected. The options are decorated and the list cannot be walked.',
+          document.activeElement);
+
+        if (trigger && !listWasOpen) {
+          press(document.activeElement, 'Escape');
+          const closed = await waitFor(() => !visible(root), 900);
+          rec('Escape closes the list', closed ? 'pass' : 'fail',
+            closed ? '' : 'The list is still open after Escape — the only way out is the mouse.', trigger);
+          if (closed) {
+            const back = await waitFor(() => document.activeElement === trigger, 500);
+            rec('Focus returns to the trigger', back ? 'pass' : 'fail',
+              back ? '' : 'The list closed and focus did not come back — Tab restarts from the top of the page.',
+              document.activeElement);
+          }
+        }
       } else if (type === 'combobox') {
         const tb = q(sel.textbox, root) || (root.matches('input,[role=combobox],[contenteditable]') ? root : q('input,[role=combobox]', root)) || root;
         tb.focus(); await delay(250); rec('Focus the combobox', activeInside(tb) ? 'pass' : 'warn', '', tb);

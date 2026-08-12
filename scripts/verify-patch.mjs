@@ -133,6 +133,101 @@ console.log('\ndialog');
   check('aria-modal supplied', dlg.getAttribute('aria-modal') === 'true');
 }
 
+// ── listbox: decorated, and inoperable ─────────────────────────────────────
+console.log('\nlistbox');
+{
+  // The region has to EXIST as its own slice. It did not: the single listbox
+  // line lived in the combobox region, so an export holding a listbox and no
+  // combobox shipped none of it. That is the regression this guards.
+  check('there is a listbox region at all', slice(['listbox']) !== SRC &&
+    slice(['listbox']).includes('[role="option"]'));
+  // The region BODY, not the slice — the slice always carries core, and core is
+  // where P.rove itself is defined.
+  const body = (name) => (new RegExp(`//#region u1-patch:${name}\\r?\\n([\\s\\S]*?)\\r?\\n//#endregion`).exec(SRC) || [, ''])[1];
+  check('the combobox region no longer owns the listbox roving',
+    !/P\.rove\(/.test(body('combobox')), body('combobox').match(/P\.rove\([^\n]*/)?.[0] || '');
+  check('the listbox region owns it instead', /P\.rove\('\[role="listbox"\]'/.test(body('listbox')));
+
+  const html = `
+    <div class="wrap">
+      <button class="t" aria-haspopup="listbox" aria-expanded="false">Sign in</button>
+      <ul class="lb" role="listbox">
+        <li role="option" tabindex="-1" id="o1">One</li>
+        <li role="option" tabindex="-1" id="o2">Two</li>
+        <li role="option" tabindex="-1" id="o3">Three</li>
+      </ul>
+    </div>`;
+
+  const dom = boot(html, ['listbox']);
+  await settle(dom);
+  const d = dom.window.document;
+  const trigger = d.querySelector('.t');
+  const list = d.querySelector('.lb');
+
+  // The list is visible in this fixture, and the trigger still said "false" —
+  // U1 writes the attribute once and the site opens the list afterwards.
+  check('aria-expanded corrected to match the list as it is now',
+    trigger.getAttribute('aria-expanded') === 'true', trigger.getAttribute('aria-expanded'));
+  check('trigger points at the list it opens',
+    trigger.getAttribute('aria-controls') === list.id, trigger.getAttribute('aria-controls'));
+  check('the open list has exactly one tab stop',
+    [...list.querySelectorAll('[role=option]')].filter(o => o.tabIndex === 0).length === 1);
+
+  // ArrowDown, from an option. A listbox is vertical by default — a tablist is
+  // not, and reading aria-orientation with a horizontal fallback got this wrong.
+  const opts = [...d.querySelectorAll('[role=option]')];
+  opts[0].focus();
+  const down = new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+  opts[0].dispatchEvent(down);
+  check('ArrowDown moves to the next option', d.activeElement === opts[1],
+    d.activeElement && d.activeElement.id);
+  check('ArrowDown is consumed, so the page does not scroll too', down.defaultPrevented);
+
+  // ArrowRight must NOT move: the list never said it was horizontal.
+  opts[0].focus();
+  opts[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+  check('ArrowRight leaves a vertical list alone', d.activeElement === opts[0]);
+
+  // Arrowing through a list of links must never follow one.
+  const nav = boot(`
+    <button class="t" aria-haspopup="listbox">Menu</button>
+    <ul class="lb" role="listbox">
+      <li role="option" id="a1"><a href="/one">One</a></li>
+      <li role="option" id="a2"><a href="/two">Two</a></li>
+    </ul>`, ['listbox']);
+  await settle(nav);
+  const navOpts = [...nav.window.document.querySelectorAll('[role=option]')];
+  let clicked = 0;
+  navOpts.forEach(o => o.addEventListener('click', () => clicked++));
+  navOpts[0].focus();
+  navOpts[0].dispatchEvent(new nav.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  check('arrowing does not activate the option it lands on', clicked === 0, `${clicked} clicks`);
+
+  // A closed list is left entirely alone.
+  const shut = boot(`
+    <button class="t" aria-haspopup="listbox" aria-expanded="true">Menu</button>
+    <ul class="lb" role="listbox" style="display:none">
+      <li role="option" tabindex="-1">One</li><li role="option" tabindex="-1">Two</li>
+    </ul>`, ['listbox']);
+  await settle(shut);
+  const sd = shut.window.document;
+  check('a closed list reports aria-expanded="false"',
+    sd.querySelector('.t').getAttribute('aria-expanded') === 'false');
+  check('a closed list gains no tab stop',
+    [...sd.querySelectorAll('[role=option]')].every(o => o.tabIndex === -1));
+
+  // aria-activedescendant is a different, valid model — do not impose a second.
+  const ad = boot(`
+    <button class="t" aria-haspopup="listbox">Menu</button>
+    <ul class="lb" role="listbox" aria-activedescendant="x2" tabindex="0">
+      <li role="option" tabindex="-1" id="x1">One</li>
+      <li role="option" tabindex="-1" id="x2" aria-selected="true">Two</li>
+    </ul>`, ['listbox']);
+  await settle(ad);
+  check('an activedescendant list is not given a roving tab stop',
+    [...ad.window.document.querySelectorAll('[role=option]')].every(o => o.tabIndex === -1));
+}
+
 // ── per-match wrapper ──────────────────────────────────────────────────────
 console.log('\nper-match wrapper for u1.fix.*');
 {
