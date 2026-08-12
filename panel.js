@@ -8799,6 +8799,26 @@ const U1_FREE_ALTERNATIVE = {
 document.getElementById('applyTemplateBtn').addEventListener('click', async () => {
   if (!currentTemplate) return;
   const status = document.getElementById('applyStatus');
+  // Measured, for the same reason Apply All is: applyOne answers ok for any
+  // u1.fix call that does not throw, and a fix that lands on nothing does not
+  // throw. The template is not saved yet, so it goes to the batch directly.
+  if (!currentTemplate.custom) {
+    const res = await applyMappingsBatch([{
+      type: currentTemplate.type, primary: currentTemplate.primary,
+      firstArg: currentTemplate.firstArg, config: currentTemplate.config,
+      overwriteRole: currentTemplate.overwriteRole,
+    }]);
+    const v = describeApply(res, currentTemplate);
+    if (res.u1Missing) {
+      const alt0 = U1_FREE_ALTERNATIVE[currentTemplate.type];
+      showNotice(status, 'U1 is not loaded on this page — inject it in Setup first' +
+        (alt0 ? `, or pick "${alt0}" in the type list, which runs without U1.` : '.'), 'error', 7000);
+      return;
+    }
+    showNotice(status, v.msg, v.ok ? 'success' : 'error', v.ok ? 4000 : 20000);
+    if (v.roleClash) offerRoleOverwrite(status, v.roleClash);
+    return;
+  }
   const result = await applyOne(currentTemplate.type, currentTemplate.firstArg || currentTemplate.primary, currentTemplate.config, currentTemplate.custom, currentTemplate);
   if (result.ok) {
     showNotice(status, 'Applied on page.', 'success');
@@ -8890,7 +8910,26 @@ document.addEventListener('click', async (e) => {
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
   const idx = list.findIndex(m => m && typeof m === 'object' && m.primary === sel);
-  if (idx < 0) { showNotice(status, 'That mapping is no longer on the list.', 'error', 6000); return; }
+  if (idx < 0) {
+    // Not saved yet — the clash was reported by the picker's own Apply. Record
+    // the answer on the template so it travels into the mapping when saved.
+    if (currentTemplate && currentTemplate.primary === sel) {
+      currentTemplate.overwriteRole = was;
+      currentTemplate.code = mappingToCode(currentTemplate);
+      const res = await applyMappingsBatch([{
+        type: currentTemplate.type, primary: currentTemplate.primary,
+        firstArg: currentTemplate.firstArg, config: currentTemplate.config,
+        overwriteRole: was,
+      }]);
+      const v = describeApply(res, currentTemplate);
+      showNotice(status, `Removed role="${was}" from ${sel}. ` + v.msg +
+        ' Save the mapping to keep this answer — the exported file will do the same.',
+        v.ok ? 'success' : 'error', 14000);
+      return;
+    }
+    showNotice(status, 'That mapping is no longer on the list.', 'error', 6000);
+    return;
+  }
   list[idx] = { ...list[idx], overwriteRole: was, code: mappingToCode({ ...list[idx], overwriteRole: was }) };
   await U1Store.set({ [key]: list });
 
@@ -9021,10 +9060,18 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
 
 // Apply every saved mapping for the current host. `silent` suppresses the
 // "no mappings" / success notices (used by the auto-run on panel open).
-async function applyAllMappings({ silent = false } = {}) {
+// `only` is a mappingKey: apply that one, through exactly this path.
+//
+// The drawer's ▶ used to call applyFix directly, and applyFix reports ok for
+// any call that does not throw — it measures nothing. So one mapping said
+// "Applied on page." while the identical mapping under Apply All was measured,
+// diagnosed and told you what was in the way. Two answers to the same question,
+// and the reassuring one was the one attached to the single-mapping button.
+async function applyAllMappings({ silent = false, only = null } = {}) {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
-  const list = stored[key] || [];
+  const all = stored[key] || [];
+  const list = only ? all.filter(m => mappingKey(m) === only) : all;
   const status = document.getElementById('applyAllStatus');
   if (list.length === 0) {
     if (!silent) showNotice(status, 'No mappings to apply.', 'error');
@@ -9099,8 +9146,11 @@ async function applyAllMappings({ silent = false } = {}) {
       // report. When the cause is a role the site wrote, say the cause: U1 does
       // not write over an author's role, so the fix cannot land however right
       // the selectors are, and re-applying will never change that.
+      // describeApply appends this sentence for any detail that went through
+      // the loop above; what is left is a clash on a mapping whose fields all
+      // moved, which never reached it.
       const clashes = details.filter(d => d.roleClash);
-      for (const d of clashes) {
+      for (const d of clashes.filter(x => !(x.fieldsNoEffect && x.fieldsNoEffect.length))) {
         msg += ` ${d.roleClash.sel} carries role="${d.roleClash.role}" in the site's own HTML.` +
           ` U1 will not write role="${d.roleClash.willWrite}" over it, so this fix cannot land while it is there.`;
       }
@@ -9233,7 +9283,22 @@ function resetApprovedRun() {
  * the in-page loop increments that counter exactly when it pushes status 'ok',
  * so for a single item the two agree, and for a batch only the former is right.
  */
+// A role the site wrote blocks the fix outright, and that is true whatever else
+// the run reported — so it is appended here, once, rather than in each of the
+// callers that show an apply result.
 function describeApply(res, m, i = 0) {
+  const v = describeApplyResult(res, m, i);
+  const clash = ((res.details || [])[i] || {}).roleClash;
+  if (clash) {
+    v.ok = false;
+    v.msg += ` ${clash.sel} carries role="${clash.role}" in the site's own HTML.` +
+      ` U1 will not write role="${clash.willWrite}" over it, so this fix cannot land while it is there.`;
+    v.roleClash = clash;
+  }
+  return v;
+}
+
+function describeApplyResult(res, m, i = 0) {
   const d = (res.details || [])[i];
   if (!res.ok) {
     return { ok: false, msg: res.u1Missing
@@ -10310,15 +10375,12 @@ async function loadMappingsList() {
       const i = parseInt(btn.dataset.idx, 10);
       const m = list[i];
       if (!m || typeof m === 'string') return;
-      const status = document.getElementById('applyAllStatus');
-      const result = await applyOne(m.type, m.firstArg || m.primary, m.config, m.custom, m);
-      if (result.ok) {
-        showNotice(status, 'Applied on page.', 'success', 2200);
-      } else if (result.u1Missing) {
-        showNotice(status, 'U1 library is not loaded — inject U1 in Setup first.', 'error', 3500);
-      } else {
-        showNotice(status, 'Error: ' + result.err, 'error', 4000);
-      }
+      // Through applyAllMappings, scoped to this one. It measures the DOM, says
+      // which fields moved and which did not, and names a role standing in the
+      // way — none of which the direct call did.
+      btn.disabled = true;
+      try { await applyAllMappings({ only: mappingKey(m) }); }
+      finally { btn.disabled = false; }
     });
   });
 }

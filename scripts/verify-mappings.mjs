@@ -314,6 +314,23 @@ const codeSrc = panelSrc.slice(panelSrc.indexOf('function mappingToCode(m)'));
 const exportsStrip = /overwriteRole/.test(codeSrc.slice(0, 2000)) &&
                      /removeAttribute\('role'\)/.test(codeSrc.slice(0, 2000));
 
+// Every apply path shows its result through describeApply, so the clash has to
+// be reported there — once — rather than in whichever caller remembered to.
+const describeApply = new Function(
+  lift('function', 'describeApply') + '\n' + lift('function', 'describeApplyResult') +
+  '\nreturn describeApply;')();
+const clashMsg = describeApply({
+  ok: true,
+  details: [{ type: 'listbox', sel: '.clicker', status: 'ok', changed: 2,
+              fieldsNoEffect: ['listbox', 'options'],
+              roleClash: { sel: '.signin-dropdown', role: 'menu', willWrite: 'listbox' } }],
+}, { type: 'listbox' });
+const clashReported = clashMsg.ok === false &&
+  (clashMsg.msg.match(/role="menu"/g) || []).length === 1 && !!clashMsg.roleClash;
+// A clean apply must not grow the sentence.
+const cleanMsg = describeApply({ ok: true, details: [{ type: 'listbox', sel: '.x', status: 'ok', changed: 3 }] }, {});
+const cleanQuiet = cleanMsg.ok === true && !/role=/.test(cleanMsg.msg);
+
 // ── Defaults must agree with the documentation written beside them ──────────
 // menu.menubar shipped as `true` while its own desc said "Default false =
 // navigation menu". Every menu mapping was therefore born with the one setting
@@ -504,6 +521,10 @@ console.log(`  ${clashNamed ? '✅' : '❌'} an apply blocked by the site's role
 if (!clashNamed) failed++;
 console.log(`  ${notAsked ? '✅' : '❌'} …and a role U1 itself wrote is not reported as a clash`);
 if (!notAsked) failed++;
+console.log(`  ${clashReported ? '✅' : '❌'} …and every apply path reports it, once, through describeApply`);
+if (!clashReported) failed++;
+console.log(`  ${cleanQuiet ? '✅' : '❌'} …while a clean apply says nothing about roles`);
+if (!cleanQuiet) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
@@ -527,6 +548,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 19;
+const total = results.length + 21;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);
