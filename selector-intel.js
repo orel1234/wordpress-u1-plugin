@@ -1100,10 +1100,25 @@
         // Descend to the tightest cluster. Asking only whether a child holds
         // ALL of them is not enough: a page with three separate forms has them
         // split across three children, so their common ancestor is the page —
-        // which is how "form?" ended up on twenty screenfuls in a row. If ANY
+        // which is how "form?" ended up on twenty sections in a row. If ANY
         // child is itself a group of fields, this element is packaging.
-        const packaging = Array.prototype.some.call(el.children,
+        let packaging = Array.prototype.some.call(el.children,
           (ch) => ch.querySelectorAll(FIELD).length >= 3);
+
+        // …unless there is exactly one way to submit all of it, in which case
+        // it is one form whose fields are laid out in rows.
+        //
+        // The shop's shoe finder is that shape: a row of five selects, a row of
+        // five checkboxes, and one "Find my shoe" button over both. The rule
+        // above called the panel packaging and named each row a form instead —
+        // two halves of one thing, and u1.fix.form applied to each decorates
+        // two halves.
+        //
+        // One submit is a form. Several means this really is the wrapper round
+        // several forms, and the tighter answer was right after all — which is
+        // the case the packaging rule was written for and still catches.
+        if (packaging && el.querySelectorAll(SUBMITISH).length === 1) packaging = false;
+
         const links = el.querySelectorAll('a[href]').length;
         if (!packaging && links <= fields) return { name: 'form', sure: false };
       }
@@ -1200,20 +1215,115 @@
    *
    * The slow path is taken ONLY when the recorder is on, which is opt-in.
    */
+  /**
+   * Wrappers that hold a cluster of form fields and say nothing about it.
+   *
+   * CANDIDATE_SEL finds things that ANNOUNCE themselves — a tag, a role, a
+   * class we recognise. A shop's filter panel announces nothing: five <select>s
+   * and five checkboxes inside `<div class="finder__panel">`. Every field is
+   * collected individually and the panel is not collected at all, so the form
+   * rule in componentHint — which exists, and is exactly right for this — never
+   * gets an element to run on.
+   *
+   * The same shape as the tab strip whose container was invisible while its six
+   * buttons were all found: the parts were seen, the thing they add up to was
+   * not. Reported by looking at the page beside the results and asking where
+   * the form went.
+   *
+   * Not the tightest ancestor — the one holding the fields AND the control
+   * that submits them.
+   *
+   * The tightest is what a first attempt reaches for, and on the real page it
+   * returned TWO forms for one: `.finder__row` with the five selects and
+   * `.finder__opts` with the five checkboxes, while the panel holding both of
+   * them and the "Find my shoe" button was named nothing at all. Those are two
+   * parts of one form, and u1.fix.form applied to each decorates two halves of
+   * a thing.
+   *
+   * A submit control is what separates "a group of fields" from "a form". It is
+   * also what separates one form whose fields are laid out in rows from a page
+   * that happens to contain three different forms: the first has one submit,
+   * the second has three, and the climb stops before it swallows them.
+   *
+   * Every wrapper up to <body> holds three fields somewhere below it, so
+   * without a stop condition this is how "form?" lands on twenty sections in a
+   * row — which it did, the last time this was tried.
+   *
+   * This decides what is LOOKED at. componentHint stays the only authority on
+   * what it is CALLED.
+   */
+  const SUBMITISH = 'button,input[type="submit"],input[type="button"],[role="button"]';
+
+  function fieldClusters(scope) {
+    const out = [];
+    let fields;
+    try { fields = qsaDeep(scope, FIELD); } catch { return out; }
+    if (fields.length < 3) return out;
+
+    const count = (el, sel) => { try { return el.querySelectorAll(sel).length; } catch { return 0; } };
+    const walked = new Set();
+
+    for (const f of fields) {
+      let tightest = null;
+      for (let p = f.parentElement; p; p = p.parentElement) {
+        if (p === document.body || p === document.documentElement) break;
+        if (walked.has(p)) { tightest = null; break; }   // this chain is answered
+        walked.add(p);
+        if (count(p, FIELD) < 3) continue;
+        if (!tightest) tightest = p;
+        // Climb only while there is still no way to submit what is here. One
+        // submit is a form; a second means the climb has left this form and
+        // reached whatever contains several of them, so keep the tighter one.
+        const submits = count(p, SUBMITISH);
+        if (submits >= 1) {
+          out.push(submits === 1 ? p : tightest);
+          tightest = null;
+          break;
+        }
+      }
+      // Fields with no submit above them anywhere — a filter bar that applies
+      // on change. Still a form; there is simply nothing better to anchor on.
+      if (tightest) out.push(tightest);
+    }
+    return out;
+  }
+
   function candidateElements(scope) {
     const rec = root.__u1EventMap;
     let recorded = null;
     try { recorded = rec && typeof rec.all === 'function' ? rec.all() : null; } catch { recorded = null; }
+    // Wrappers that hold a cluster of fields and announce nothing. They are a
+    // second source alongside the selector and the recorder, and they are
+    // merged in DOCUMENT ORDER below rather than appended — the collector's
+    // "a component inside a component of the same kind is the same component"
+    // rule reads the outermost first and depends on that order.
+    const clusters = fieldClusters(scope);
+    const merge = (base) => {
+      if (!clusters.length) return base;
+      const set = new Set(base);
+      let added = false;
+      for (const el of clusters) if (!set.has(el)) { set.add(el); added = true; }
+      if (!added) return base;
+      const all = [...set];
+      all.sort((a, b) => {
+        const rel = a.compareDocumentPosition(b);
+        if (rel & 2) return 1;        // b precedes a
+        if (rel & 4) return -1;       // a precedes b
+        return 0;
+      });
+      return all;
+    };
+
     // qsaDeep, not qsa: this is the one place that asks "what is on this page",
     // and a component behind a shadow boundary is on the page.
-    if (!recorded || !recorded.length) return qsaDeep(scope, CANDIDATES);
+    if (!recorded || !recorded.length) return merge(qsaDeep(scope, CANDIDATES));
 
     const extra = new Set();
     for (const el of recorded) {
       // A recorded element outside the scope is somebody else's problem.
       if (scope === document || (scope.contains && scope.contains(el))) extra.add(el);
     }
-    if (!extra.size) return qsaDeep(scope, CANDIDATES);
+    if (!extra.size) return merge(qsaDeep(scope, CANDIDATES));
 
     const out = [];
     for (const el of qsaDeep(scope, '*')) {
@@ -1221,7 +1331,7 @@
       if (!hit) { try { hit = el.matches(CANDIDATES); } catch { hit = false; } }
       if (hit) out.push(el);
     }
-    return out;
+    return merge(out);
   }
 
   function collectCandidates(limit, within) {

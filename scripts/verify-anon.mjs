@@ -666,6 +666,69 @@ console.log('\na <form> is a form');
   check('the divs inside a form are still not each a form', c.name('#group') !== 'form', c.name('#group'));
   check('…while the form itself is', c.name('#outer') === 'form', c.name('#outer'));
 
+  // ── The thing the fields ADD UP TO ──────────────────────────────────────
+  //
+  // Reported by putting the page beside the results: the shoe finder — five
+  // selects, five checkboxes and a "Find my shoe" button — was not in the
+  // seven components found. CANDIDATE_SEL finds what ANNOUNCES itself, and
+  // `<div class="finder__panel">` announces nothing, so every field was
+  // collected on its own and the panel was not collected at all. The form rule
+  // in componentHint is exactly right for it and never got an element to run
+  // on. The same shape as the tab strip whose container was invisible while
+  // its six buttons were all found.
+  const FINDER = `<div class="finder">
+      <div class="finder__tabs" role="tablist"><button>By sport</button><button>Size &amp; fit</button></div>
+      <div class="finder__panel">
+        <div class="finder__row">
+          <select id="f1"><option>Men</option></select><select id="f2"><option>Road</option></select>
+          <select id="f3"><option>Pavement</option></select><select id="f4"><option>$300</option></select>
+          <select id="f5"><option>Any</option></select>
+        </div>
+        <button class="finder__go">Find my shoe</button>
+        <div class="finder__opts">
+          <label><input type="checkbox">In stock</label><label><input type="checkbox">Wide fit</label>
+          <label><input type="checkbox">Waterproof</label><label><input type="checkbox">Vegan</label>
+        </div>
+      </div>
+    </div>`;
+  const finder = collectIn(FINDER);
+  check('a filter panel with no tag, role or class hint is found',
+    finder.name('.finder__panel') === 'form', finder.name('.finder__panel'));
+
+  // The tightest ancestor is what a first attempt reaches for, and it returned
+  // TWO forms for one: the row of selects and the row of checkboxes, with the
+  // panel holding both and the button named nothing. u1.fix.form applied to
+  // each decorates two halves of a thing.
+  check('…as ONE form, not one per row of fields',
+    finder.name('.finder__row') !== 'form' && finder.name('.finder__opts') !== 'form',
+    `${finder.name('.finder__row')} / ${finder.name('.finder__opts')}`);
+  check('…and the tab strip beside it is still its own component',
+    finder.name('.finder__tabs') === 'tabs', finder.name('.finder__tabs'));
+
+  // The guard this replaces was written for a real case and still catches it.
+  // One submit is a form whose fields are in rows; three submits is a page
+  // that contains three forms, and the climb must stop before it swallows them.
+  const three = collectIn(`<div class="page">
+      <div class="signup"><input><input><input><button>Join</button></div>
+      <div class="contact"><input><input><textarea></textarea><button>Send</button></div>
+      <div class="search"><input><select></select><input><button>Go</button></div>
+    </div>`);
+  check('three separate forms stay three, not one wrapper round them',
+    ['signup', 'contact', 'search'].every((c) => three.name('.' + c) === 'form') &&
+    three.name('.page') !== 'form',
+    `.page is ${three.name('.page')}`);
+
+  // A filter bar that applies on change has no submit anywhere. Still a form;
+  // there is simply nothing better to anchor on.
+  const bar = collectIn(`<div class="filters"><select id="a"></select><select id="b"></select><select id="c"></select></div>`);
+  check('a filter bar with no submit at all is still found',
+    bar.name('.filters') === 'form', bar.name('.filters'));
+
+  // Two fields are not a form. Without a floor, every pair of inputs on a page
+  // becomes a component to map.
+  const two = collectIn(`<div class="pair"><input><input></div>`);
+  check('two fields are not a form', two.name('.pair') !== 'form', two.name('.pair'));
+
   // Div-soup forms are what the three-field rule is for, and it is untouched.
   // The wrapper has to be a candidate for any of this to reach it — a bare
   // <div> with no tag, role, class or handler is not collected at all, and
