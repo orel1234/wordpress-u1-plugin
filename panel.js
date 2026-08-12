@@ -3955,14 +3955,33 @@ function renderStageTrail() {
   if (mapMode === 'manual' || idx < 0) { host.style.display = 'none'; host.innerHTML = ''; return; }
   host.style.display = '';
   host.innerHTML = trail.map(([key, label], i) => {
-    const state = i < idx ? 'was' : i === idx ? 'at' : 'ahead';
-    // Only a stage you have already been through is a way back — offering one
-    // forward would be a button that cannot do anything yet.
-    const tag = state === 'was' ? 'button' : 'span';
-    const attrs = state === 'was' ? ` type="button" data-stage="${key}"` : '';
+    // Reachable if it HAS something, not if it happens to be behind you.
+    //
+    // The first rule was "only a stage you have already been through", which
+    // reads sensibly and is wrong the moment you use it: go back to Screens and
+    // Components is suddenly ahead of you and dead, even though the components
+    // are sitting right there. Reported as "I clicked one and then I cannot
+    // click the rest". Direction is not what makes a stage available — content
+    // is, and the current stage is the only one that is never a control.
+    const state = i === idx ? 'at' : stageHasContent(key) ? 'open' : 'empty';
+    const tag = state === 'open' ? 'button' : 'span';
+    const attrs = state === 'open' ? ` type="button" data-stage="${key}"` : '';
     return `<${tag} class="crumb is-${state}"${attrs}>${escapeHtml(label)}</${tag}>` +
            (i < trail.length - 1 ? '<span class="crumb-sep" aria-hidden="true">›</span>' : '');
   }).join('');
+}
+
+/** Is there anything in that stage to go to? */
+function stageHasContent(key) {
+  const stops = (typeof aiSweep !== 'undefined' && aiSweep.stops) || [];
+  if (key === 'screens') return stops.length > 0;
+  if (key === 'components') {
+    return stops.some((x) => (x.found || []).some((f) => !f.done));
+  }
+  if (key === 'found') return document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length > 0;
+  if (key === 'cards') return document.querySelectorAll('#aiSlideTrack .ai-map-card:not([data-done])').length > 0;
+  if (key === 'applied') return document.querySelectorAll('#aiApprovedList .ai-approved-row').length > 0;
+  return false;
 }
 
 document.addEventListener('click', (e) => {

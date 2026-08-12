@@ -456,9 +456,10 @@ console.log('\none stage at a time');
       <div id="aiApprovedList"></div></details>
     </body>`);
   const ctx = { window: d.window, document: d.window.document, mapMode: 'sweep',
-                currentStage: 'none', escapeHtml: sandbox.escapeHtml };
+                currentStage: 'none', escapeHtml: sandbox.escapeHtml,
+                aiSweep: { stops: [{ n: 1, found: [{ id: 'a' }] }] } };
   ctx.globalThis = ctx;
-  const src = [lift('setStage'), lift('renderStageTrail')].join('\n') +
+  const src = [lift('setStage'), lift('renderStageTrail'), lift('stageHasContent')].join('\n') +
     '\nconst STAGE_PANELS = ' + /const STAGE_PANELS = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
     '\nconst STAGE_IDS = ' + /const STAGE_IDS = (\[[^\]]*\]);/.exec(panelSrc)[1] + ';' +
     '\nconst STAGE_TRAIL = ' + /const STAGE_TRAIL = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
@@ -494,9 +495,25 @@ console.log('\none stage at a time');
   check('the trail names the whole-page stages', /Screens.*Components.*Applied/s.test(trail.textContent),
     trail.textContent);
   check('…and marks where you are', trail.querySelector('.crumb.is-at').textContent === 'Components');
-  check('…and offers back only to a stage already behind you',
-    [...trail.querySelectorAll('[data-stage]')].map((b) => b.dataset.stage).join() === 'screens',
-    [...trail.querySelectorAll('[data-stage]')].map((b) => b.dataset.stage).join());
+  const reachable = () => [...trail.querySelectorAll('[data-stage]')].map((b) => b.dataset.stage).join();
+  check('…and the stage you came from is a way back', /screens/.test(reachable()), reachable());
+
+  // "Only what is behind you" reads sensibly and is wrong the moment you use
+  // it: go back to Screens and Components is ahead of you and dead, with the
+  // components sitting right there. Reported as "I clicked one and then I
+  // cannot click the rest".
+  ctx.setStage('screens');
+  check('…and from the first stage you can still go FORWARD to one that has content',
+    /components/.test(reachable()), reachable());
+  check('…while the stage you are on is never a control',
+    !/screens/.test(reachable()), reachable());
+  // Applied is empty in this fixture, so it must not look like a control.
+  check('…and an empty stage is not offered', !/applied/.test(reachable()), reachable());
+  const empty = trail.querySelector('.crumb.is-empty');
+  check('…it is marked as empty rather than silently inert',
+    !!empty && empty.textContent === 'Applied', empty && empty.textContent);
+
+  ctx.setStage('components');
 
   ctx.mapMode = 'auto';
   ctx.setStage('cards');

@@ -1378,11 +1378,13 @@ button {
   text-transform: inherit;
   color: var(--u1-text-dim);
 }
-.crumb.is-at  { color: var(--u1-primary); }
-/* A stage you have been through is a way back; one ahead is not a control. */
-.crumb.is-was { color: var(--u1-text-muted); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-.crumb.is-was:hover,
-.crumb.is-was:focus-visible { color: var(--u1-text); }
+.crumb.is-at { color: var(--u1-primary); }
+/* A stage with something in it is reachable from anywhere — forwards as well as
+   back. An empty one is not a control, and must not look like one. */
+.crumb.is-open { color: var(--u1-text-muted); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.crumb.is-open:hover,
+.crumb.is-open:focus-visible { color: var(--u1-text); }
+.crumb.is-empty { color: var(--u1-text-dim); opacity: 0.55; }
 .crumb-sep { color: var(--u1-border-strong); }
 
 /* ── Carousel: one mapping at a time ─────────────────────────────────────── */
