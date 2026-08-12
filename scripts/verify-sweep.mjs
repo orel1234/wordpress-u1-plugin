@@ -370,7 +370,7 @@ console.log('\nwhy a screenful yielded nothing');
     /of them DISMISSED earlier/.test(src));
   // And the run's own summary has to lead with what it did, cost and got.
   check('the summary states sections, cost and components found',
-    /Read \$\{ran\.length\} section/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
+    /Searched \$\{ran\.length\} section/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
     /\$\{total\} component/.test(src));
   check('an empty run caused by dismissals offers to clear them',
     /offerResetDismissed\(status\)/.test(src) && /data-reset-dismissed/.test(src));
@@ -394,6 +394,24 @@ console.log('\nwhy a screenful yielded nothing');
   check('…with the undo on the dialog itself', /data-reset-dismissed/.test(body));
   check('clearing it from the dialog retracts the warning it was under',
     /inDialog/.test(src) && /Dismissed list cleared — this run will look at everything/.test(src));
+}
+
+// ── Throwing the survey away ────────────────────────────────────────────────
+// It asked only when a section had been paid for. But the survey is not
+// nothing: it scrolled the whole page, photographed every screenful, and is
+// shared with everyone on the project — and one press of a small grey word took
+// all of it with no question at all.
+{
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const handler = /getElementById\('sweepPicksClearBtn'\)[\s\S]{0,600}/.exec(src)[0];
+  check('Clear always asks, not only when something was paid for',
+    /await confirmSweepClear\(\)/.test(handler) && !/some\(s => s\.scanned\)/.test(handler));
+  const dlg = /function confirmSweepClear[\s\S]*?\n}/.exec(src)[0];
+  check('…and says it goes for everyone on the project', /for everyone on this project/.test(dlg));
+  check('…and what it costs to get back, paid or free',
+    /costs the same as it did the first time/.test(dlg) && /Walking the page again is free/.test(dlg));
+  check('…and that mapped components are not affected',
+    /already mapped are not affected/.test(dlg));
 }
 
 // ── Switching tabs mid-run ──────────────────────────────────────────────────
@@ -510,7 +528,8 @@ console.log('\nchoosing screens');
 
   const btn2 = w2.document.getElementById('sweepMakeBtn');
   const est = w2.document.getElementById('sweepEstimate');
-  check('the button offers to read the ticked sections', /Read 2 sections/.test(btn2.textContent), btn2.textContent);
+  check('the button says what it will DO, not just that it will read',
+    /Find components in 2 sections/.test(btn2.textContent), btn2.textContent);
   check('the estimate counts the ticked elements, not all of them',
     /74 elements/.test(est.textContent), est.textContent.replace(/\s+/g, ' '));
   check('it prices the scan from the number of screens',
@@ -555,7 +574,7 @@ console.log('\nchoosing screens');
   check('unticking a screen takes its elements out of the estimate',
     /14 elements/.test(est.textContent) && est.textContent.includes('$0.13'),
     est.textContent.replace(/\s+/g, ' '));
-  check('and off the button', /Read 1 section\b/.test(btn2.textContent), btn2.textContent);
+  check('and off the button', /Find components in 1 section\b/.test(btn2.textContent), btn2.textContent);
 
   rows[0].querySelector('.sweep-screen-tick').checked = false;
   box.syncSweepMakeBtn();
@@ -575,7 +594,7 @@ console.log('\nchoosing screens');
     const row = (n) => w2.document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${n}"]`);
     check('a screenful already read comes back UNTICKED',
       row(1).querySelector('.sweep-screen-tick').checked === false);
-    check('…and says so on the row', /already read/i.test(row(1).textContent));
+    check('…and says so on the row', /searched/i.test(row(1).textContent));
     check('…while the unread ones are still ticked',
       row(3).querySelector('.sweep-screen-tick').checked === true);
     // A half-finished run is the ordinary state, and "what is left" is the only
@@ -584,16 +603,16 @@ console.log('\nchoosing screens');
     check('the list splits into what is left and what is read', parts.length === 2,
       parts.map(x => x.textContent.slice(0, 20)).join(' | '));
     check('what is still owed comes first, and is counted',
-      /Still to read · 1/.test(parts[0].textContent), parts[0].textContent.slice(0, 40));
+      /Still to search · 1/.test(parts[0].textContent), parts[0].textContent.slice(0, 40));
     check('what is paid for is folded away, and counted',
-      parts[1].tagName === 'DETAILS' && /Already read · 1/.test(parts[1].textContent));
+      parts[1].tagName === 'DETAILS' && /Already searched · 1/.test(parts[1].textContent));
     check('the unread rows are in the first area and the read ones are not',
       parts[0].contains(row(3)) && parts[1].contains(row(1)));
     check('"select all" counts the unread ones, not everything',
-      /Select all 1 unread screen/.test(w2.document.getElementById('sweepPicksSummary').textContent),
+      /Select all 1 unsearched section/.test(w2.document.getElementById('sweepPicksSummary').textContent),
       w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));
     check('…and says how many are already paid for',
-      /1 already read/.test(w2.document.getElementById('sweepPicksSummary').textContent));
+      /1 already searched/.test(w2.document.getElementById('sweepPicksSummary').textContent));
     box.aiSweep = was;
     box.renderSweepScreens();
   }
@@ -609,7 +628,7 @@ console.log('\nchoosing screens');
     box.markScreenRead(three);
     const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]');
     check('a screenful is marked read the moment it is read',
-      row.classList.contains('is-done') && /already read/i.test(row.textContent));
+      row.classList.contains('is-done') && /searched/i.test(row.textContent));
     check('…and unticks itself, so pressing Read again does not pay for it twice',
       row.querySelector('.sweep-screen-tick').checked === false);
     check('…and the estimate comes down as the run goes',
