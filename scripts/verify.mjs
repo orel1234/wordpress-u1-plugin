@@ -260,7 +260,7 @@ console.log('\nThe library scripts run and define their globals:');
 // ── Every model call has a deadline, measuring the right thing ──────────────
 // A request with no timeout is indistinguishable from a request that is
 // working. So is a request with the WRONG timeout: a total-elapsed deadline of
-// 150s killed a 94-element screenful that was busy answering, marked it "not
+// 150s killed a 94-element section that was busy answering, marked it "not
 // read", and left the work billed. The response is streamed now, so the
 // deadline is silence rather than duration — a long healthy answer is not a
 // hung one, and only a stream can tell them apart.

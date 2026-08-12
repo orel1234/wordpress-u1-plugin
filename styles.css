@@ -1370,6 +1370,9 @@ button {
   text-transform: uppercase;
 }
 .crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: none;
   border: 0;
   padding: 0;
@@ -1378,7 +1381,33 @@ button {
   text-transform: inherit;
   color: var(--u1-text-dim);
 }
-.crumb.is-at { color: var(--u1-primary); }
+/* The step number, in a ring. Which of three stages you are standing on was
+   carried entirely by a colour change on one word — reported as not knowing
+   what stage you are at. A number answers "how far through this am I", which
+   three nouns cannot however they are coloured. */
+.crumb-n {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.75;
+}
+.crumb.is-at {
+  color: var(--u1-primary);
+  font-weight: 700;
+}
+/* The one you are on is filled, so it reads at a glance and not by comparison. */
+.crumb.is-at .crumb-n {
+  background: var(--u1-primary);
+  border-color: var(--u1-primary);
+  color: var(--u1-bg-base);
+  opacity: 1;
+}
 /* A stage with something in it is reachable from anywhere — forwards as well as
    back. An empty one is not a control, and must not look like one. */
 .crumb.is-open { color: var(--u1-text-muted); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
@@ -2150,7 +2179,18 @@ button {
   flex-basis: 100%;
   order: 1;
 }
-.sweep-screen .ai-approved-why { order: 2; }
+/* What the first pass had guessed, kept under what the search concluded.
+   Quieter than the conclusion, because it is no longer the answer — but present,
+   because "the survey said six menus and the search returned two" is a fair
+   question and it needs both halves on screen to be answerable. */
+.sweep-screen .sweep-guess {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--u1-text-dim);
+  flex-basis: 100%;
+  order: 2;
+}
+.sweep-screen .ai-approved-why { order: 3; }
 
 /* Select all / none. Twenty-one screenfuls is twenty-one clicks to clear, and
    "only the ones with a carousel" wants to start from none. */

@@ -119,7 +119,7 @@
   </dialog>
 
   <dialog id="sweepCostDialog" class="u1-dialog">
-    <div class="dialog-title">Search the ticked screens?</div>
+    <div class="dialog-title">Search the ticked sections?</div>
     <p class="dialog-sub" id="sweepCostBody"></p>
     <div class="btn-row">
       <button class="btn-outline" id="sweepCostCancel">Cancel</button>
@@ -365,9 +365,9 @@
 
   <!-- The route, chosen once for the whole tab.
        Manual     = fill every selector by hand (the original flow).
-       Automatic  = one screenful: the analyzer proposes selectors and the AI
+       Automatic  = one section: the analyzer proposes selectors and the AI
                     says what on it needs fixing at all.
-       Whole page = the same, run over every screenful by itself.
+       Whole page = the same, run over every section by itself.
 
        This sits OUTSIDE the Element section deliberately. It governs the whole
        tab — Selectors and Preview appear or disappear with it — so presenting it
@@ -434,7 +434,7 @@
     </div>
 
     <!-- ── Whole page ────────────────────────────────────────────────────── -->
-    <!-- Same two stages as Automatic, run over every screenful without being
+    <!-- Same two stages as Automatic, run over every section without being
          asked each time. It scrolls the page itself, so the estimate is shown
          and a second press is required before anything is charged. -->
     <div class="ai-run" id="sweepOnly" style="display:none;">
@@ -452,12 +452,12 @@
            does still has to be stated, so the hint stays and the checkbox goes. -->
       <label class="sweep-all" for="sweepLabelTick">
         <input type="checkbox" id="sweepLabelTick">
-        Stop on each screen and let me say what things are
+        Stop on each section and let me say what things are
       </label>
       <div class="input-hint" style="display:block;margin:-4px 0 0 24px;">
         The scan pauses with every candidate numbered on the page. What you name is
         built by measuring the markup — no model call, nothing charged. Name everything
-        on a screen and that screen is free.
+        in a section and that section is free.
       </div>
       <div class="input-hint" style="display:block;">
         Each component is opened to see what it is: menus, tabs and accordions are

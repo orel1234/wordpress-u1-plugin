@@ -2081,7 +2081,7 @@ function reportSyncState(pulled) {
 /**
  * A colleague's survey, into this panel.
  *
- * The pictures are fetched one at a time and only for screenfuls that have one,
+ * The pictures are fetched one at a time and only for sections that have one,
  * because opening the panel on a large site must not pull a megabyte of images
  * nobody has asked to look at. They arrive after the list is already on screen.
  */
@@ -3923,13 +3923,13 @@ showBuildStamp();
 //  Saying what things are, screen by screen
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// The run stops on each screenful with every candidate numbered on the page,
+// The run stops on each section with every candidate numbered on the page,
 // and you say what they are. Two things make this worth the interruption.
 //
 // It is FREE. buildTemplate → saveMappingEntry → applyMappingsBatch is already
 // a local pipeline; the only thing the model contributes is the sub-field
 // selectors, and describeComponent measures those instead. Name everything on a
-// screenful and that screenful costs nothing.
+// section and that section costs nothing.
 //
 // And it accepts a GROUP. The collector sees six .tab-bar__btn as six buttons —
 // which is correct, they are buttons — and the component is the strip they
@@ -4000,7 +4000,7 @@ document.getElementById('exportLabelsBtn')?.addEventListener('click', async () =
 const LABEL_TYPES = () => Object.keys(COMPONENT_SCHEMAS);
 
 /**
- * Stop, show what is on this screenful, and wait.
+ * Stop, show what is on this section, and wait.
  * Resolves { labelled:[], done:boolean, stopped:boolean }.
  */
 function labelScreen(stop, collected, tab) {
@@ -4032,7 +4032,7 @@ function labelScreen(stop, collected, tab) {
   host.innerHTML = `
     <div class="lbl-box">
       <div class="lbl-head">
-        <strong>Screen ${stop.n}</strong>
+        <strong>Section ${stop.n}</strong>
         <span class="lbl-sub">${cands.length} candidate${cands.length === 1 ? '' : 's'} numbered on the page.
           Tick what belongs together, say what it is. Nothing you name costs anything.</span>
       </div>
@@ -4049,7 +4049,7 @@ function labelScreen(stop, collected, tab) {
         <button class="btn-outline btn-sm" id="lblAdd" disabled>These are one component</button>
       </div>
       <div class="lbl-go">
-        <button class="btn-primary btn-sm" id="lblFree">Nothing else here — next screen, free</button>
+        <button class="btn-primary btn-sm" id="lblFree">Nothing else here — next section, free</button>
         <button class="btn-outline btn-sm" id="lblAsk">Ask Claude about the rest (1 call)</button>
         <button class="btn-ghost btn-sm" id="lblStop">Stop the run</button>
       </div>
@@ -4185,7 +4185,7 @@ async function labelToMapping(type, marks, stop, tab) {
 // The two AI routes share every result panel, and until now every one of them
 // showed and hid itself: roughly twenty-five `style.display` writes over six
 // containers, with no single place deciding. Nothing enforced exclusion, so the
-// Whole-page route ended up stacking the screens list, a pending review card
+// Whole-page route ended up stacking the sections list, a pending review card
 // and a session-wide "approved and applied" list all at once — not by design,
 // but because no line of code was responsible for the question.
 //
@@ -4193,9 +4193,9 @@ async function labelToMapping(type, marks, stop, tab) {
 // a test in verify-sweep.mjs fails the build if anything else writes one, which
 // is what stops the stack coming back.
 const STAGE_PANELS = {
-  screens:    ['sweepPicks'],      // Whole page · which screens to search
+  screens:    ['sweepPicks'],      // Whole page · which sections to search
   components: ['sweepPicks'],      // Whole page · which components to build
-  found:      ['aiResults'],       // Automatic · what is on this screen
+  found:      ['aiResults'],       // Automatic · what is on this section
   cards:      ['aiMappings'],      // either · one card at a time
   review:     ['aiBulkReview'],    // either · approve a batch
   applied:    ['aiApproved'],      // either · what this batch did
@@ -4205,9 +4205,15 @@ const STAGE_IDS = ['aiResults', 'aiMappings', 'aiBulkReview', 'sweepPicks', 'aiA
 
 // The trail, per route. Manual has no stages; Automatic and Whole page each
 // have their own three, and the words differ because the work differs — you
-// search SCREENS on one and read one screen on the other.
+// search SCREENS on one and read one section on the other.
+// Numbered, and named after what you DO at each one rather than what lives
+// there. "SCREENS › COMPONENTS › APPLIED" are three nouns of equal weight, and
+// which of the three you are standing on was carried entirely by an underline —
+// reported as not knowing what stage you are at. A number is not decoration
+// here: it is the answer to "how far through this am I", which three nouns
+// cannot give however they are styled.
 const STAGE_TRAIL = {
-  sweep: [['screens', 'Screens'], ['components', 'Components'], ['applied', 'Applied']],
+  sweep: [['screens', 'Pick sections'], ['components', 'Choose fixes'], ['applied', 'Applied']],
   auto:  [['found', 'Found'], ['cards', 'Review'], ['applied', 'Applied']],
 };
 // Stages that are a moment inside another stage rather than one of their own.
@@ -4230,8 +4236,8 @@ function setStage(stage) {
  * Where you are and how to get back.
  *
  * This replaces the numbered captions, which were `::before` content on shared
- * containers — so the Whole-page route was labelled "1 · Found on this screen"
- * over a list of twenty-six screens it had not read yet.
+ * containers — so the Whole-page route was labelled "1 · Found on this section"
+ * over a list of twenty-six sections it had not read yet.
  */
 function renderStageTrail() {
   const host = document.getElementById('stageTrail');
@@ -4253,7 +4259,13 @@ function renderStageTrail() {
     const state = i === idx ? 'at' : stageHasContent(key) ? 'open' : 'empty';
     const tag = state === 'open' ? 'button' : 'span';
     const attrs = state === 'open' ? ` type="button" data-stage="${key}"` : '';
-    return `<${tag} class="crumb is-${state}"${attrs}>${escapeHtml(label)}</${tag}>` +
+    // The step number is part of the label, not an ornament beside it, so it
+    // survives being read aloud and being read at a glance. "Step 2 of 3,
+    // current" is what the stage actually is.
+    const where = i === idx ? ` aria-current="step"` : '';
+    return `<${tag} class="crumb is-${state}"${attrs}${where}>` +
+           `<span class="crumb-n" aria-hidden="true">${i + 1}</span>` +
+           `<span class="crumb-label">${escapeHtml(label)}</span></${tag}>` +
            (i < trail.length - 1 ? '<span class="crumb-sep" aria-hidden="true">›</span>' : '');
   }).join('');
 }
@@ -4451,7 +4463,7 @@ function setMapMode(mode) {
   }
   if ($modeHint) {
     $modeHint.textContent =
-      isSweep ? 'It scrolls the page itself, one screenful at a time, and shows you everything it found before any of it is applied.'
+      isSweep ? 'It scrolls the page itself, one section at a time, and shows you everything it found before any of it is applied.'
       : isAuto ? 'Enter the selector of the parent element only — the rest is worked out for you and shown for approval.'
       : 'Fill each selector yourself.';
   }
@@ -4503,7 +4515,7 @@ function setMapMode(mode) {
   } else if (isSweep && aiSweep.stops.length) {
     // Re-drawn rather than merely un-hidden. Testing for a pending row alone
     // missed the case where every screen read is already done: the survey is
-    // still there, the completed drawer and the unread screens are still worth
+    // still there, the completed drawer and the unread sections are still worth
     // seeing, and the panel came back empty.
     if (aiSweep.phase === 'components') renderSweepPicks(); else renderSweepScreens();
   } else {
@@ -4782,7 +4794,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
 
     // ONE region, ONE call. Sixty candidates is the collector's cap, so a whole
     // page either summarises the widget you actually care about away or costs a
-    // call per screenful — and one answer covering everything is harder to check
+    // call per section — and one answer covering everything is harder to check
     // than five answers covering one region each. Point at a container instead.
     const collected = await collectRegion(tab, scopeSel, handled);
     if (collected.err) { showNotice($aiStatus, collected.err, 'error', 5000); return; }
@@ -4905,7 +4917,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
  *
  * `opts.drop(candidate)` is an extra filter applied before anything is captured
  * or sent, so what it rejects costs nothing. The sweep uses it to leave out the
- * sticky header it already dealt with on the first screenful.
+ * sticky header it already dealt with on the first section.
  *
  * `opts.thumb` also takes a picture WITHOUT the pink numbers on it. That one is
  * never sent anywhere — it is what the approval screen shows beside "screen 4"
@@ -4914,13 +4926,13 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
  * `opts.surveyOnly` stops before the part that costs anything: the candidates
  * are collected (that is in-page code, free and instant) and the plain picture
  * is taken, but the numbers are never drawn and the big screenshot for the model
- * is never made. It is what lets the sweep photograph fifteen screenfuls in
+ * is never made. It is what lets the sweep photograph fifteen sections in
  * twenty seconds so you can choose which of them is worth paying to read.
  */
 async function collectRegion(tab, scopeSel, handled, opts) {
   // The paid scan sends every candidate to the model, so sixty is a token
   // budget. The free survey sends nothing anywhere, so the same number was
-  // simply hiding a third of a busy screenful behind a "truncated" badge.
+  // simply hiding a third of a busy section behind a "truncated" badge.
   const limit = (opts && opts.surveyOnly) ? 250 : 60;
   const context = await inPage(tab.id,
     (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [limit, scopeSel || null]);
@@ -4944,14 +4956,14 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   if (!candidates.length) return { candidates: [], headings: [], skipped, dismissed: dismissedOut };
 
   // The survey's own picture, with a labelled box round each component that was
-  // recognised. It is what the screens list is chosen from, so it shows the
+  // recognised. It is what the sections list is chosen from, so it shows the
   // finding rather than describing it — and it costs nothing, because drawing
   // and capturing never involve the model.
   let thumb = null;
   // captureVisibleTab photographs the tab in FRONT of the window, whatever id
   // it is handed. A survey keeps running while you work in another tab, so
   // taking the picture anyway would file a photograph of a different page
-  // against this screenful. No picture is honest; the wrong one is not.
+  // against this section. No picture is honest; the wrong one is not.
   // With the background camera attached the picture is always of THIS tab, so
   // there is nothing to guard against. Without it, a thumbnail of whatever the
   // user happens to be looking at is worse than no thumbnail.
@@ -4971,7 +4983,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
       await new Promise(r => setTimeout(r, 200));   // let the overlay paint
       const shot = await captureScreen(tab, 72);
       // Wide enough for the labels to be readable in the 340px hover preview and
-      // the full-size view. A sweep holds one per screenful for the session.
+      // the full-size view. A sweep holds one per section for the session.
       thumb = await scaleShot(shot, 760);
     } catch { thumb = null; }   // a missing picture must not stop the survey
     finally { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); }
@@ -5004,7 +5016,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     // fine detail. 1280 keeps them legible and costs about a third fewer tokens.
     shot = raw ? await scaleShot(raw, 1280) : null;
   } catch (err) {
-    // One screenful that could not be photographed is one screenful lost. The
+    // One section that could not be photographed is one section lost. The
     // loop above knows how to skip a screen and carry on; a throw from here
     // reached the run's outer catch and ended everything.
     shot = null;
@@ -5034,7 +5046,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
 // model call — neither of which can report progress, so the least we can do is
 // say which one is running.
 // `pct` turns the indeterminate sweep bar into a real progress bar. A scan that
-// visits twenty screenfuls needs to say how far along it is, or it reads as a
+// visits twenty sections needs to say how far along it is, or it reads as a
 // page scrolling by itself forever.
 function showAiBusy(title, sub, pct) {
   const results = document.getElementById('aiResults');
@@ -5163,17 +5175,17 @@ function clearSweepBusy() {
 }
 
 /**
- * Which screenful is being read, marked in the list itself.
+ * Which section is being read, marked in the list itself.
  *
  * The percentage says how far along a run is; this says where it is. On a list
  * of twenty-six that is the difference between "something is happening" and
  * "that one, the one I am looking at".
  */
 /**
- * A screenful that has just been read, marked in the list as it happens.
+ * A section that has just been read, marked in the list as it happens.
  *
  * Nothing updated the list during a run: it stayed exactly as it was ticked, so
- * ten screens in, the ten already paid for still looked like work to do — and
+ * ten sections in, the ten already paid for still looked like work to do — and
  * pressing Read again read them a second time. Reported as "if it already read
  * this, why does it need to again", which is the right question.
  *
@@ -6035,8 +6047,8 @@ function renderBulkReview() {
       </div>`).join('');
 
   // A sweep produces one flat list of everything on a twelve-screen page, which
-  // is a list with no sense of where anything is. Grouped by the screenful it
-  // came from — with that screenful's own picture and its own share of the cost
+  // is a list with no sense of where anything is. Grouped by the section it
+  // came from — with that section's own picture and its own share of the cost
   // — it can be read, and a whole screen can be dropped in one click.
   const groups = aiSweep.stops.filter(s => s.indexes.length);
   list.innerHTML = groups.length ? sweepGroupsHtml(groups, pending) + fails
@@ -6055,7 +6067,7 @@ function bulkRowHtml({ entry, idx }) {
   // arrangement that guarantees it does not get one.
   const weak = conf === 'low';
   // Read the template fresh so the row shows what would actually be applied,
-  // including any edit made in the carousel after this screen was opened.
+  // including any edit made in the carousel after this section was opened.
   const tpl = aiCardTemplate(idx);
   return `
       <div class="ai-approved-row ai-bulk-row" data-bulk-idx="${idx}">
@@ -6087,10 +6099,10 @@ function sweepGroupsHtml(groups, pending) {
           <input type="checkbox" class="sweep-group-tick" checked
                  aria-label="Apply everything found on screen ${stop.n}">
           ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
-                     <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
+                     <img class="mh-img" src="${img}" alt="Section ${stop.n}">
                      <img class="mh-preview" src="${img}" alt="">
                    </span>` : ''}
-          <span class="sweep-group-name">Screen ${stop.n}</span>
+          <span class="sweep-group-name">Section ${stop.n}</span>
           <span class="sweep-group-meta">${n} component${n === 1 ? '' : 's'} · $${(stop.cost || 0).toFixed(3)}</span>
         </summary>
         <div class="sweep-group-body">${mine.map(p => bulkRowHtml(p)).join('')}</div>
@@ -6098,7 +6110,7 @@ function sweepGroupsHtml(groups, pending) {
   }).join('');
 }
 
-// Ticking a whole screenful at a time is wired for both lists by
+// Ticking a whole section at a time is wired for both lists by
 // wireGroupTicks, alongside the picks list it was written for.
 
 document.getElementById('aiBulkBackBtn')?.addEventListener('click', () => {
@@ -6218,9 +6230,9 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Whole page — the same two stages, run over every screenful by itself.
+//  Whole page — the same two stages, run over every section by itself.
 //
-//  Automatic mode does one screenful per press. A real page is eight to twenty
+//  Automatic mode does one section per press. A real page is eight to twenty
 //  of them, so the actual workflow was: scroll, press, wait, scroll, press —
 //  twenty times. Every step of that already exists here; all that was missing
 //  was doing them in a row.
@@ -6235,19 +6247,19 @@ const SWEEP_OVERLAP = 0.85;
 // A page that grows as you scroll never ends. This is the backstop against
 // following an infinite feed forever.
 //
-// It used to be 15, from when every screenful cost a model call — it was a
+// It used to be 15, from when every section cost a model call — it was a
 // spending guard wearing a loop guard's clothes. The survey costs nothing now,
-// so a page taller than fifteen screens was simply being cut off with most of it
+// so a page taller than fifteen sections was simply being cut off with most of it
 // unseen. The real end condition is a scroll position that stops moving; this
 // only has to be higher than any page a person would actually scan. Sixty
-// screenfuls is about a minute and a half, and still free.
+// sections is about a minute and a half, and still free.
 const SWEEP_MAX_STOPS = 60;
 // Scrolling starts lazy images and whole sections loading. Capturing straight
 // away photographs the skeleton.
 const SWEEP_SETTLE_MS = 700;
 
 // phase: 'screens' once the free survey is done and you are choosing which
-// screenfuls to pay to read; 'components' once those have been read and you are
+// sections to pay to read; 'components' once those have been read and you are
 // choosing what to fix.
 let aiSweep = { running: false, abort: false, phase: 'screens', stops: [], tabId: null };
 
@@ -6272,7 +6284,7 @@ let sweepSaveTimer = null;
 
 /**
  * Persist the survey. Debounced: the render functions call it, and a run
- * re-renders on every screenful.
+ * re-renders on every section.
  *
  * The thumbnails travel with it — they are the whole reason the list is worth
  * looking at, and "unlimitedStorage" is already granted for exactly this kind
@@ -6315,7 +6327,7 @@ function sweepWrite() {
         },
       });
       // And to the server, so a colleague on another machine opens this site
-      // and sees the same survey — the same screens, the same pictures, the
+      // and sees the same survey — the same sections, the same pictures, the
       // same progress — instead of being asked to pay for it again.
       //
       // The sweep key is private (`__`), so U1Store.set's own sync hook does
@@ -6375,7 +6387,7 @@ async function restoreSweep() {
 
   // How old it is, said plainly. A scan from last week describes a page that
   // may have been redeployed twice since, and a stale survey that looks fresh
-  // is worse than no survey — it spends money reading screenfuls that moved.
+  // is worse than no survey — it spends money reading sections that moved.
   const summary = document.getElementById('sweepPicksSummary');
   if (summary) {
     summary.insertAdjacentHTML('beforeend',
@@ -6403,10 +6415,10 @@ function describeAge(ts) {
 /**
  * One line in the scan log.
  *
- * A tall page produces two or three lines per screenful, and thirty screenfuls
+ * A tall page produces two or three lines per section, and thirty sections
  * of that filled the panel and pushed the thing you actually came for — the
- * list of screens to pick from — off the bottom. So the log is an accordion:
- * shut by default, one nested section per screenful, and the summary line of
+ * list of sections to pick from — off the bottom. So the log is an accordion:
+ * shut by default, one nested section per section, and the summary line of
  * each carries that screen's result so the detail is there without being in
  * the way. Progress still shows while a sweep runs, because the outer summary
  * mirrors the latest line even while everything is closed.
@@ -6436,7 +6448,7 @@ function sweepLog(n, what, kind, cost) {
     `<span class="cost">${typeof cost === 'number' ? '$' + cost.toFixed(3) : ''}</span>`;
 
   if (!n) {
-    // Not about one screenful — the end of the page, a limit, a failure. These
+    // Not about one section — the end of the page, a limit, a failure. These
     // are the lines worth seeing without opening anything, so they sit loose at
     // the bottom rather than inside a section.
     row.classList.add('sweep-log-note');
@@ -6447,7 +6459,7 @@ function sweepLog(n, what, kind, cost) {
       sec = document.createElement('details');
       sec.className = 'sweep-log-screen';
       sec.dataset.n = String(n);
-      sec.innerHTML = `<summary><span class="n">Screen ${n}</span>` +
+      sec.innerHTML = `<summary><span class="n">Section ${n}</span>` +
         '<span class="sum"></span></summary>';
       body.appendChild(sec);
     }
@@ -6460,11 +6472,11 @@ function sweepLog(n, what, kind, cost) {
   }
 
   const live = wrap.querySelector('.sweep-log-live');
-  if (live) live.textContent = n ? `Screen ${n} · ${what}` : what;
+  if (live) live.textContent = n ? `Section ${n} · ${what}` : what;
   if (wrap.open) body.scrollTop = body.scrollHeight;
 }
 
-/** How tall the page is in screenfuls — the basis for the estimate. */
+/** How tall the page is in sections — the basis for the estimate. */
 async function sweepMeasure(tab) {
   return inPage(tab.id, () => ({
     height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
@@ -6477,7 +6489,7 @@ document.getElementById('sweepStopBtn')?.addEventListener('click', () => {
   aiSweep.abort = true;
   const b = document.getElementById('sweepStopBtn');
   b.disabled = true;
-  b.textContent = 'Stopping after this screen…';
+  b.textContent = 'Stopping after this section…';
 });
 
 document.getElementById('sweepStartBtn')?.addEventListener('click', async () => {
@@ -6506,7 +6518,7 @@ async function runSweep(tab) {
   const status = $sweepStatus();
   const log = document.getElementById('sweepLog');
 
-  // Pinned to the tab this ran on. Hovering a screenful scrolls the page and
+  // Pinned to the tab this ran on. Hovering a section scrolls the page and
   // draws on it, and `getTab()` answers with whatever tab is in FRONT — so
   // switching browser tabs and moving the mouse over the list scrolled and
   // marked up a completely different page. The results belong to the page they
@@ -6524,14 +6536,14 @@ async function runSweep(tab) {
   btn.disabled = true;
   stopBtn.style.display = '';
   stopBtn.disabled = false;
-  stopBtn.textContent = '■ Stop after this screen';
+  stopBtn.textContent = '■ Stop after this section';
   setStage('none');
 
   // Stamp the site these selectors come from, the same way a single scan does.
   aiWorkspaceHost = currentHostname;
 
   // Where the page was before we started moving it. A sweep ends fourteen
-  // screenfuls down, and leaving it there means the approval screen names
+  // sections down, and leaving it there means the approval screen names
   // components nowhere near what is on the page behind it.
   const startedAt = (await sweepMeasure(tab))?.y || 0;
 
@@ -6541,7 +6553,7 @@ async function runSweep(tab) {
   const handled = await alreadyHandled();
 
   // The camera that does not need the tab in front. It was written, documented
-  // at length, and never once called — so every screenful still went through
+  // at length, and never once called — so every section still went through
   // captureVisibleTab, and captureVisibleTab photographs whatever is IN FRONT.
   // The entire apparatus for carrying on in the background existed and was
   // unreachable: switch tabs and the survey stood still until you came back.
@@ -6564,16 +6576,16 @@ async function runSweep(tab) {
 
       const pos = await sweepMeasure(tab);
       stop.scrollY = pos ? pos.y : 0;
-      showSweepBusy(`Screen ${n}`, 'Photographing this screenful.',
+      showSweepBusy(`Section ${n}`, 'Photographing this section.',
         pos && pos.height ? Math.min(100, ((pos.y + pos.view) / pos.height) * 100) : undefined);
-      btn.textContent = `Screen ${n}…`;
+      btn.textContent = `Section ${n}…`;
 
       // Survey only: collect what is here and photograph it. No numbers drawn,
       // no big screenshot, no model call — so a fifteen-screen page is looked
       // at in about twenty seconds and costs nothing.
       //
       // A sticky header travels with the viewport and would be counted again at
-      // every stop, which is why it is dropped from the second screenful on.
+      // every stop, which is why it is dropped from the second section on.
       // Pressed BEFORE the picture is taken, so what the probe finds can be
       // drawn on it. The probe needs no screenshot of its own.
       let observed = [];
@@ -6581,7 +6593,7 @@ async function runSweep(tab) {
       // answers — the scan reads what a component is CALLED, and opening it is
       // how it learns what the component does.
       {
-        showSweepBusy(`Screen ${n}`, 'Opening each component to see what it is.',
+        showSweepBusy(`Section ${n}`, 'Opening each component to see what it is.',
           pos && pos.height ? Math.min(100, ((pos.y + pos.view) / pos.height) * 100) : undefined);
         const probed = await probeScreen(tab);
         await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
@@ -6617,10 +6629,10 @@ async function runSweep(tab) {
       // Read as well. The probe above covers what it could press; the reading
       // covers what announces itself, and neither is a superset of the other.
       stop.components = mergeComponents(screenComponents(collected.candidates), observed);
-      // Which components are on this screenful, by selector. The same selector
+      // Which components are on this section, by selector. The same selector
       // appearing on two consecutive stops is the same element straddling the
       // fold — a table taller than the window — and saying so is what stops you
-      // ticking the second screenful alone and mapping its bottom half.
+      // ticking the second section alone and mapping its bottom half.
       stop.compSels = collected.candidates
         .filter(c => c.component && c.selector)
         .map(c => c.selector);
@@ -6632,13 +6644,13 @@ async function runSweep(tab) {
           prev.continuesOnto = n;
         }
       }
-      // Which screenful the sticky header landed on. It is counted once, on the
-      // first screenful that sees it — so that screenful has to say so, or
+      // Which section the sticky header landed on. It is counted once, on the
+      // first section that sees it — so that section has to say so, or
       // ticking only the middle of a page would silently leave out the site's
       // main navigation.
       stop.sticky = collected.candidates.filter(c => c.sticky).length;
       // Components whose only possible selector counts siblings. Worth knowing
-      // BEFORE paying to read the screenful: the mapping will work and will be
+      // BEFORE paying to read the section: the mapping will work and will be
       // fragile, and the better move may be to ask the client for a class.
       stop.positional = collected.candidates
         .filter(c => c.component && /:nth-|:first-child|:last-child|:only-child/.test(c.selector || '')).length;
@@ -6647,18 +6659,18 @@ async function runSweep(tab) {
           ? (stop.components ? stop.components + ' — ' : 'no complex components — ') +
             `${stop.count}${stop.truncated ? '+' : ''} elements` +
             (stop.truncated ? ' · truncated' : '')
-          : 'nothing on this screenful',
+          : 'nothing on this section',
         stop.count ? '' : 'skip');
 
       if (aiSweep.abort) break;
 
-      // Down one screenful, less the overlap.
+      // Down one section, less the overlap.
       //
       // behavior:'instant' is load-bearing. A page carrying the very ordinary
       // `html { scroll-behavior: smooth }` animates scrollTo, so window.scrollY
       // on the next line still holds the OLD value — and reading it there to
       // decide whether the page moved concluded "bottom reached" after the
-      // first screenful, every time, on every site that has that one line of
+      // first section, every time, on every site that has that one line of
       // CSS. The check has to happen after the scroll has actually landed, so
       // it is a second call after the settle rather than a return value here.
       const y0 = (await sweepMeasure(tab))?.y ?? 0;
@@ -6673,7 +6685,7 @@ async function runSweep(tab) {
       if (y1 <= y0) {
         // Two very different things end a sweep here, and they look identical
         // from the outside: the page really is at its end, or it refused to
-        // scroll at all. Saying which turns "it stopped after one screen" into
+        // scroll at all. Saying which turns "it stopped after one section" into
         // something answerable.
         const atEnd = pos && (y1 + pos.view) >= pos.height - 4;
         sweepLog(0, atEnd
@@ -6684,7 +6696,7 @@ async function runSweep(tab) {
       }
     }
     if (n >= SWEEP_MAX_STOPS && !aiSweep.abort) {
-      sweepLog(0, `stopped at the ${SWEEP_MAX_STOPS}-screen limit`, 'skip');
+      sweepLog(0, `stopped at the ${SWEEP_MAX_STOPS}-section limit`, 'skip');
     }
   } catch (err) {
     sweepLog(0, 'Failed: ' + err.message, 'err');
@@ -6735,10 +6747,10 @@ async function runSweep(tab) {
 }
 
 /**
- * The COMPONENTS on this screenful, as the page itself declares them.
+ * The COMPONENTS on this section, as the page itself declares them.
  *
  * This is the line worth reading. "22 links, 19 buttons" tells you how busy a
- * screenful is; "a nav, a carousel and a tab strip" tells you whether it is
+ * section is; "a nav, a carousel and a tab strip" tells you whether it is
  * worth paying to read — and that is the choice the list exists to support.
  *
  * Free, because none of it is judgement: role="tablist" IS a tab strip and
@@ -6765,7 +6777,7 @@ function screenComponents(candidates) {
 }
 
 /**
- * Operate this screenful's components and report what they turned out to be.
+ * Operate this section's components and report what they turned out to be.
  *
  * Reading a page cannot see a widget built from bare <div>s with its handlers
  * hung in JavaScript. That is measured rather than assumed: the same page scores
@@ -6776,12 +6788,12 @@ function screenComponents(candidates) {
  * else's page, so it sits behind a switch and inside probe.js's own safety net.
  */
 /**
- * One line describing the screenful, from what was read and what was observed.
+ * One line describing the section, from what was read and what was observed.
  *
  * An observation outranks a guess about the same kind of thing: if pressing the
  * strip proved it is a tab strip, "tabs?" from a class name adds nothing and its
  * question mark is now simply wrong. Guesses about kinds nobody probed are kept
- * — the probe presses at most a dozen things per screenful, so its silence is
+ * — the probe presses at most a dozen things per section, so its silence is
  * not evidence of absence.
  */
 function mergeComponents(readLine, observed) {
@@ -6832,9 +6844,9 @@ async function probeScreen(tab) {
 }
 
 /**
- * What kind of thing is on this screenful, counted in the panel from data the
+ * What kind of thing is on this section, counted in the panel from data the
  * page already handed back. No model, no network, no wait — which is the whole
- * reason the survey can afford to look at every screenful.
+ * reason the survey can afford to look at every section.
  */
 function screenInventory(candidates) {
   const KIND = {
@@ -6843,7 +6855,7 @@ function screenInventory(candidates) {
     img: 'images', iframe: 'iframes', video: 'media', audio: 'media',
   };
   // A role is the better answer where there is one — a <div role="tab"> is a
-  // tab, not a div, and that is what you are choosing screens by.
+  // tab, not a div, and that is what you are choosing sections by.
   // A container and the things inside it are two different answers. Counting a
   // tablist among its own tabs reported the five-tab finder as six tabs — a
   // number that is wrong in the one place you are using numbers to choose.
@@ -6883,38 +6895,38 @@ const SINGULAR = {
   other: 'other',
 };
 
-// ── The screens, to choose from ─────────────────────────────────────────────
-// The survey above cost nothing. Reading a screenful costs a model call, so the
+// ── The sections, to choose from ─────────────────────────────────────────────
+// The survey above cost nothing. Reading a section costs a model call, so the
 // choice sits here, in front of the first thing that is charged for — and it is
-// made from the photographs, which is the one form in which fifteen screenfuls
+// made from the photographs, which is the one form in which fifteen sections
 // can actually be judged at a glance.
 
 // What a call costs and how long it takes. The money is measured from this
 // session as soon as there is anything to measure; the times are not measured
 // at all and are labelled as estimates wherever they are shown.
-// scanSecs was a flat 15 seconds per screenful, used by all three places that
+// scanSecs was a flat 15 seconds per section, used by all three places that
 // quote a time: the estimate box, the cost dialog, and the "Left" line of a
 // running scan. Nothing ever measured it. The COST tightens after the first
 // call — sweepAvgCall does that — while the note underneath said "Times are
 // estimates" as though that were a property of time rather than of nobody
 // having looked.
 //
-// A 94-element screenful took 1:34. All three quoted 15 seconds, and the clock
+// A 94-element section took 1:34. All three quoted 15 seconds, and the clock
 // beside the quote ran past it six times over. That is not a slightly-off
 // estimate; it is a number with nothing behind it.
 //
-// How long a screenful takes is mostly how much is on it, so the fallback
+// How long a section takes is mostly how much is on it, so the fallback
 // scales with the element count, and a measured rate replaces it as soon as one
-// screenful has actually been read.
+// section has actually been read.
 const SWEEP_EST = {
   scanBase: 10, scanPerElement: 0.85,
   fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10,
 };
 
 /**
- * How long reading a screenful of `elements` should take, in seconds.
+ * How long reading a section of `elements` should take, in seconds.
  *
- * Measured seconds-per-element from the screenfuls this session has already
+ * Measured seconds-per-element from the sections this session has already
  * read, applied to the one being quoted for — so a run over a long page gets
  * more honest with every screen, in time as well as in money.
  */
@@ -6948,14 +6960,14 @@ function renderSweepScreens() {
   const elements = stops.reduce((s, x) => s + x.count, 0);
   const pickable = stops.filter(s => s.count).length;
   const todo = stops.filter(s => s.count && !s.scanned).length;
-  summary.innerHTML = `<div class="ai-meta">${stops.length} screen${stops.length === 1 ? '' : 's'} · ` +
+  summary.innerHTML = `<div class="ai-meta">${stops.length} section${stops.length === 1 ? '' : 's'} · ` +
     `${elements} element${elements === 1 ? '' : 's'} · nothing spent yet</div>` +
-    // Twenty-one screenfuls is twenty-one clicks to clear, and "only the ones
+    // Twenty-one sections is twenty-one clicks to clear, and "only the ones
     // with a carousel" starts from none rather than from all. "All" means all
     // the UNREAD ones — the read ones are paid for and are not part of what the
     // next press will charge for.
     `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
-    `Select all ${todo} unsearched screen${todo === 1 ? '' : 's'}` +
+    `Select all ${todo} unsearched section${todo === 1 ? '' : 's'}` +
     (pickable > todo ? ` <em>(${pickable - todo} completed)</em>` : '') + `</label>`;
 
   // Two areas, because a half-finished run is the ordinary state — you start
@@ -6974,7 +6986,7 @@ function renderSweepScreens() {
     ? (left.length
         ? `<div class="sweep-part"><h4>Still to search · ${left.filter(x => x.count).length}</h4>` +
           left.map(sweepScreenRowHtml).join('') + `</div>`
-        : `<div class="sweep-part sweep-part-empty">Every screen is completed.</div>`) +
+        : `<div class="sweep-part sweep-part-empty">Every section is completed.</div>`) +
       `<details class="sweep-part sweep-part-done" open><summary>Completed · ${read.length}` +
       (foundSoFar
         ? ` · ${foundSoFar} component${foundSoFar === 1 ? '' : 's'} found` +
@@ -6994,17 +7006,17 @@ function renderSweepScreens() {
 }
 
 /**
- * One screenful, as a row you can tick to pay to read it.
+ * One section, as a row you can tick to pay to read it.
  *
  * Pulled out of renderSweepScreens so the same row can be shown again AFTER a
  * read, under "not read yet" — reading the first screen used to replace the
- * whole list with its results, and the other seventeen screenfuls simply
+ * whole list with its results, and the other seventeen sections simply
  * disappeared with no way back to them short of scanning the page again.
  */
 function sweepScreenRowHtml(stop) {
     const img = safeImg(stop.thumb);
     const empty = !stop.count;
-    // A screenful that has already been read starts UNTICKED. It was ticked, so
+    // A section that has already been read starts UNTICKED. It was ticked, so
     // pressing Read a second time — to pick up the ones that failed, or the
     // ones a longer page added — quietly paid for all of them again. Still
     // tickable by hand: re-reading one deliberately is a real thing to want,
@@ -7014,7 +7026,7 @@ function sweepScreenRowHtml(stop) {
     return `
       <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}${done ? ' is-done' : ''}${failed ? ' is-failed' : ''}" data-screen="${stop.n}">
         <input type="checkbox" class="sweep-screen-tick" ${empty ? 'disabled' : (done ? '' : 'checked')}
-               aria-label="Search screen ${stop.n}${done ? ' again' : ''}">
+               aria-label="Search section ${stop.n}${done ? ' again' : ''}">
         ${// One screen, on its own, now.
           //
           // Ticking and pressing the button at the bottom is the right shape
@@ -7029,27 +7041,50 @@ function sweepScreenRowHtml(stop) {
           // skipped, not the confirmation.
           empty ? '' :
           `<button class="btn-icon sweep-play" data-play-screen="${stop.n}"${aiSweep.running ? ' disabled' : ''}
-                   title="Search only this screen — one call"
-                   aria-label="Search only screen ${stop.n} — one call">▶</button>`}
+                   title="Search only this section — one call"
+                   aria-label="Search only section ${stop.n} — one call">▶</button>`}
         ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
-                   <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
+                   <img class="mh-img" src="${img}" alt="Section ${stop.n}">
                  </span>` : ''}
         <div class="ai-bulk-body">
-          <span class="ai-approved-label">Screen ${stop.n}${done ? ' <span class="sweep-read-flag">completed</span>' : ''}${failed ? ' <span class="sweep-fail-flag">not read</span>' : ''}</span>
+          <span class="ai-approved-label">Section ${stop.n}${done ? ' <span class="sweep-read-flag">completed</span>' : ''}${failed ? ' <span class="sweep-fail-flag">not read</span>' : ''}</span>
           ${// The components come first and in the panel's own text colour.
-            // "22 links, 19 buttons" says how busy a screenful is; the components
+            // "22 links, 19 buttons" says how busy a section is; the components
             // say whether it is worth paying to read, which is the actual choice.
             //
-            // A screenful with none says so out loud. Left blank, an unmarked
+            // A section with none says so out loud. Left blank, an unmarked
             // picture reads as "the tool missed it" rather than "there is
             // nothing here but links and text" — which is a real answer, and
             // usually a reason not to spend a call on it.
             //
-            // "no COMPLEX components", not "no components": a screenful of
+            // "no COMPLEX components", not "no components": a section of
             // links, buttons and inputs is full of components, they are just
             // the simple kind that needs no mapping. The shorter wording read
             // as "nothing here", which is wrong and reads as a failure.
-            stop.components
+            // ── Once it has been searched, the guess is no longer the answer ──
+            //
+            // The survey line is a free guess read off the markup: "6 menus ·
+            // form · dialog? · carousel?". The search then returned two
+            // components — and the row went on displaying the guess, so the
+            // panel showed one set of things in the survey and a different set
+            // in the results with nothing in between. Asked, exactly: where is
+            // this and where is that.
+            //
+            // Both are true, and they answer different questions. The guess
+            // counts what is ON the section. The search reports what is LEFT to
+            // map — and most of the difference is that the rest is already
+            // mapped, or was found in an earlier section. That sentence already
+            // existed, as stop.outcome, written into the scan log: collapsed,
+            // and two panels away from the row that raised the question.
+            //
+            // So a searched section leads with what the search concluded, and
+            // keeps the guess under it, named as the guess it was.
+            done && stop.outcome
+            ? `<span class="sweep-components">${escapeHtml(stop.outcome)}</span>` +
+              (stop.components
+                ? `<span class="sweep-guess">first pass had guessed: ${escapeHtml(stop.components)}</span>`
+                : '')
+            : stop.components
             ? `<span class="sweep-components">${escapeHtml(stop.components)}</span>`
             : stop.count
             ? `<span class="sweep-components sweep-none">no complex components — simple elements only</span>`
@@ -7058,15 +7093,15 @@ function sweepScreenRowHtml(stop) {
           ${stop.positional ? '<span class="ai-sev" data-need="1">positional</span>' : ''}
           <div class="ai-approved-why">${stop.count}${stop.truncated ? '+' : ''} element${stop.count === 1 ? '' : 's'}${
             stop.inventory ? ' · ' + escapeHtml(stop.inventory) : ''}${
-            // A sticky header is counted once, on the screenful that first sees
+            // A sticky header is counted once, on the section that first sees
             // it. Ticking only the middle of a page would otherwise leave out
             // the site's main navigation with nothing to say it had.
             stop.sticky ? ` · includes the sticky header (${stop.sticky})` : ''}${
             // Something here runs past the edge of the picture and carries on in
-            // the next screenful. Tick one without the other and you map half of
+            // the next section. Tick one without the other and you map half of
             // it — which is worth saying before the choice, not after.
-            stop.continuedFrom ? ` · continued from screen ${stop.continuedFrom}` : ''}${
-            stop.continuesOnto ? ` · continues onto screen ${stop.continuesOnto}` : ''}${
+            stop.continuedFrom ? ` · continued from section ${stop.continuedFrom}` : ''}${
+            stop.continuesOnto ? ` · continues onto section ${stop.continuesOnto}` : ''}${
             stop.positional ? ` · ${stop.positional} can only be reached by position — ask the client for a class` : ''}${
             // An observation is worth marking as one: these were not read off
             // the markup, they were opened and watched.
@@ -7076,7 +7111,7 @@ function sweepScreenRowHtml(stop) {
 }
 
 /**
- * The estimate under the screens list.
+ * The estimate under the sections list.
  *
  * Two rows, because they are two different promises. "Scan" is what pressing
  * the button now will cost. "Fix" is what would follow IF every component found
@@ -7093,16 +7128,16 @@ function sweepRunningHtml() {
   const spent = stops.reduce((a, x) => a + (x.cost || 0), 0);
   const left = Math.max(0, p.of - p.at);
   const call = sweepAvgCall();
-  // What is left is the elements on the screenfuls not yet read, not a count of
-  // screenfuls times a constant — the remaining ones may be nothing like the
+  // What is left is the elements on the sections not yet read, not a count of
+  // sections times a constant — the remaining ones may be nothing like the
   // ones already done.
   const leftEls = stops.filter((s) => !s.scanned && s.count).reduce((a, s) => a + s.count, 0);
   const found = stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done).length), 0);
   return `
     <div class="sweep-est">
-      <div class="sweep-est-head">Searching · screen ${p.screen} · ${p.at} of ${p.of}</div>
+      <div class="sweep-est-head">Searching · section ${p.screen} · ${p.at} of ${p.of}</div>
       <div class="sweep-est-row">
-        <span>Done</span><span>${p.at - 1} screen${p.at - 1 === 1 ? '' : 's'}</span>
+        <span>Done</span><span>${p.at - 1} section${p.at - 1 === 1 ? '' : 's'}</span>
         <span>$${spent.toFixed(2)}</span>
       </div>
       <div class="sweep-est-row">
@@ -7111,7 +7146,7 @@ function sweepRunningHtml() {
       </div>
       <div class="sweep-est-note">${found
         ? `${found} component${found === 1 ? '' : 's'} found so far — you can stop and build them from the drawer above.`
-        : 'Nothing found yet. You can stop at any screen; what is done stays done.'}</div>
+        : 'Nothing found yet. You can stop at any section; what is done stays done.'}</div>
     </div>`;
 }
 
@@ -7120,12 +7155,12 @@ function sweepEstimateHtml(sections, elements) {
   const comps = Math.max(1, Math.round(elements / SWEEP_EST.fixPerElements));
   const measured = aiCost > 0 && aiMapped.length;
   // "26 screens" read as twenty-six pages. They are twenty-six SECTIONS of one
-  // page — the screenfuls a scroll passes through. A sweep is pinned to a
+  // page — the sections a scroll passes through. A sweep is pinned to a
   // single tab and a single URL, so the screen count is one by construction,
   // and saying so is what makes the section count mean anything.
   return `
     <div class="sweep-est">
-      <div class="sweep-est-head">Ticked: ${sections} screen${sections === 1 ? '' : 's'} on 1 page · ${elements} element${elements === 1 ? '' : 's'}</div>
+      <div class="sweep-est-head">Ticked: ${sections} section${sections === 1 ? '' : 's'} on 1 page · ${elements} element${elements === 1 ? '' : 's'}</div>
       <!-- Three stages, each saying whether it costs anything. The survey is
            already done and was free, and leaving it off the list made the two
            paid rows look like the whole of the work — so "what have I spent so
@@ -7143,11 +7178,11 @@ function sweepEstimateHtml(sections, elements) {
         <em>costs only for the components you then tick — all ~${comps} of them here</em>
       </div>
       <div class="sweep-est-note">${measured || sweepTimesMeasured()
-        ? `From this session's own screens — ${measured ? 'prices' : ''}` +
+        ? `From this session's own sections — ${measured ? 'prices' : ''}` +
           `${measured && sweepTimesMeasured() ? ' and ' : ''}${sweepTimesMeasured() ? 'times' : ''} ` +
           `measured, not guessed.`
-        : `Estimates, and the time scales with how busy a screenful is. ` +
-          `Both tighten once the first screen has been read.`}</div>
+        : `Estimates, and the time scales with how busy a section is. ` +
+          `Both tighten once the first section has been read.`}</div>
     </div>`;
 }
 
@@ -7164,12 +7199,12 @@ function renderSweepPicks() {
   if (!wrap || !list) return;
 
   const read = aiSweep.stops.filter(s => s.found.length);
-  // A screenful whose components have all been made accessible is finished, and
+  // A section whose components have all been made accessible is finished, and
   // it is not a choice any more. It used to stay in the list with everything
   // ticked, so the next press offered to do the same work again; and hiding the
-  // whole panel after applying took the rest of the page with it. Done screens
+  // whole panel after applying took the rest of the page with it. Done sections
   // move to their own drawer, shut, where they can still be looked at.
-  // A component that could not be mapped is not done, so its screenful stays in
+  // A component that could not be mapped is not done, so its section stays in
   // the pending list carrying the reason. "Six found, five saved" must never
   // again be something you notice by counting.
   const stops = read.filter(s => !s.found.every(f => f.done));
@@ -7180,14 +7215,14 @@ function renderSweepPicks() {
   if (!total && !doneCount && !barrenCount) { setStage('none'); return; }
 
   // The way back. Stopping a run to build what it had found left you in the
-  // components view with no route to the screens that were never searched —
+  // components view with no route to the sections that were never searched —
   // the survey was still there, and unreachable, so the only apparent way on
   // was to start the whole page again.
   const unsearched = aiSweep.stops.filter(x => x.count && !x.scanned).length;
   summary.innerHTML = `<div class="ai-meta">${total} component${total === 1 ? '' : 's'} across ` +
-    `${stops.length} screen${stops.length === 1 ? '' : 's'} · $${aiCost.toFixed(3)} to find them` +
+    `${stops.length} section${stops.length === 1 ? '' : 's'} · $${aiCost.toFixed(3)} to find them` +
     (unsearched
-      ? ` · <button class="btn-outline btn-xs" data-back-to-screens>← ${unsearched} screen${unsearched === 1 ? '' : 's'} still to search</button>`
+      ? ` · <button class="btn-outline btn-xs" data-back-to-sections>← ${unsearched} section${unsearched === 1 ? '' : 's'} still to search</button>`
       : '') + `</div>`;
 
   list.innerHTML = stops.map((stop, i) => {
@@ -7199,10 +7234,10 @@ function renderSweepPicks() {
           <input type="checkbox" class="sweep-group-tick" checked
                  aria-label="Choose everything found on screen ${stop.n}">
           ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
-                     <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
+                     <img class="mh-img" src="${img}" alt="Section ${stop.n}">
                      <img class="mh-preview" src="${img}" alt="">
                    </span>` : ''}
-          <span class="sweep-group-name">Screen ${stop.n}</span>
+          <span class="sweep-group-name">Section ${stop.n}</span>
           <span class="sweep-group-meta">${k} component${k === 1 ? '' : 's'} · $${(stop.cost || 0).toFixed(3)}</span>
         </summary>
         <div class="sweep-group-body">${stop.found.map(f => `
@@ -7221,32 +7256,32 @@ function renderSweepPicks() {
       </details>`;
   }).join('');
 
-  // Done, and out of the way. Named, so "which screens have I finished" is
+  // Done, and out of the way. Named, so "which sections have I finished" is
   // answerable at a glance rather than by remembering.
   if (finished.length) {
     const doneBox = document.createElement('details');
     doneBox.className = 'sweep-done';
     doneBox.innerHTML =
-      `<summary><span class="sweep-done-name">✓ ${finished.length} screen${finished.length === 1 ? '' : 's'} completed</span>` +
+      `<summary><span class="sweep-done-name">✓ ${finished.length} section${finished.length === 1 ? '' : 's'} completed</span>` +
       `<span class="sweep-done-meta">${doneCount} component${doneCount === 1 ? '' : 's'} made accessible</span></summary>` +
       `<div class="sweep-done-body">${finished.map(stop => `
         <div class="sweep-done-row" data-screen="${stop.n}">
-          ${safeImg(stop.thumb) ? `<span class="mh-thumb"><img class="mh-img" src="${safeImg(stop.thumb)}" alt="Screen ${stop.n}"></span>` : ''}
+          ${safeImg(stop.thumb) ? `<span class="mh-thumb"><img class="mh-img" src="${safeImg(stop.thumb)}" alt="Section ${stop.n}"></span>` : ''}
           <div class="ai-bulk-body">
-            <span class="ai-approved-label">Screen ${stop.n}</span>
+            <span class="ai-approved-label">Section ${stop.n}</span>
             <div class="ai-approved-why">${stop.found.map(f => escapeHtml(f.label)).join(' · ')}</div>
           </div>
         </div>`).join('')}</div>`;
     list.appendChild(doneBox);
   }
 
-  // The screenfuls you did NOT pay to read. Reading one used to replace the
+  // The sections you did NOT pay to read. Reading one used to replace the
   // list with its results, and the rest of the page went with it — "I ticked
   // screen 1 and made it accessible, where is everything else". They are still
   // surveyed, still free, and still tickable; shut by default because the
   // components just found are what this step is about.
   // Read, and it produced nothing. Not a choice any more and not a failure —
-  // but it must be SAYABLE, because two screens ticked and one screen of
+  // but it must be SAYABLE, because two sections ticked and one section of
   // results is otherwise indistinguishable from the run having stopped early.
   const barren = read.filter(s => s.scanned && !s.found.length);
   if (barren.length) {
@@ -7254,7 +7289,7 @@ function renderSweepPicks() {
     box.className = 'sweep-barren';
     box.innerHTML = barren.map(stop => `
       <div class="sweep-barren-row" data-screen="${stop.n}">
-        <span class="sweep-barren-n">Screen ${stop.n}</span>
+        <span class="sweep-barren-n">Section ${stop.n}</span>
         <span class="sweep-barren-why">${escapeHtml(stop.outcome || 'read, nothing found')}</span>
       </div>`).join('');
     list.appendChild(box);
@@ -7265,10 +7300,10 @@ function renderSweepPicks() {
     const rest = document.createElement('details');
     rest.className = 'sweep-rest';
     rest.innerHTML =
-      `<summary><span class="sweep-rest-name">${unread.length} screen${unread.length === 1 ? '' : 's'} not read yet</span>` +
+      `<summary><span class="sweep-rest-name">${unread.length} section${unread.length === 1 ? '' : 's'} not read yet</span>` +
       `<span class="sweep-rest-meta">already surveyed · free until you read ${unread.length === 1 ? 'it' : 'them'}</span></summary>` +
       `<div class="sweep-rest-body">${unread.map(sweepScreenRowHtml).join('')}` +
-      `<button type="button" class="u1-btn u1-btn-secondary" id="sweepReadMoreBtn">Read the ticked screens</button></div>`;
+      `<button type="button" class="u1-btn u1-btn-secondary" id="sweepReadMoreBtn">Read the ticked sections</button></div>`;
     list.appendChild(rest);
     rest.querySelectorAll('.sweep-screen-tick').forEach(t => { t.checked = false; });
     rest.querySelector('#sweepReadMoreBtn').addEventListener('click', async () => {
@@ -7277,7 +7312,7 @@ function renderSweepPicks() {
         .map(r => Number(r.dataset.screen));
       if (!picks.length) {
         showNotice(document.getElementById('sweepPicksStatus'),
-          'Tick the screens you want read first.', 'warn', 4000);
+          'Tick the sections you want read first.', 'warn', 4000);
         return;
       }
       await scanPickedScreens(picks);
@@ -7286,7 +7321,7 @@ function renderSweepPicks() {
 
   // The sweep's results belong to the Whole page route. Restoring a survey on
   // panel open, or adopting a colleague's, calls this whatever route is on
-  // screen — which put "2 screens completed" and a Make-accessible button
+  // screen — which put "2 sections completed" and a Make-accessible button
   // underneath the single-element scanner, acting on nothing you were looking at.
   // One stage at a time: the components list IS this stage, and the review
   // that produced it belongs to the one before. Both on screen together, each
@@ -7320,7 +7355,7 @@ function syncSweepMakeBtn() {
 
   if (aiSweep.phase === 'screens') {
     const picked = sweepPickedScreens();
-    // Keep the master tick honest about what is under it. An empty screenful is
+    // Keep the master tick honest about what is under it. An empty section is
     // disabled and never counts either way, or "select all" could never reach
     // a fully-ticked state on a page that has one.
     const all = document.getElementById('sweepAllTick');
@@ -7339,8 +7374,8 @@ function syncSweepMakeBtn() {
     if (!aiSweep.running) {
       btn.disabled = !picked.length;
       btn.textContent = picked.length
-        ? `🔎 Find components in ${picked.length} screen${picked.length === 1 ? '' : 's'}`
-        : '🔎 No screens ticked';
+        ? `🔎 Find components in ${picked.length} section${picked.length === 1 ? '' : 's'}`
+        : '🔎 No sections ticked';
     }
     // The box under the button described the NEXT press while the button
     // described the current run — two different moments, stacked. While a run
@@ -7360,11 +7395,11 @@ function syncSweepMakeBtn() {
   if (est) est.innerHTML = '';
 }
 
-// One tick for a whole screenful, in both lists. Same behaviour, so they are
+// One tick for a whole section, in both lists. Same behaviour, so they are
 // wired the same way.
 function wireGroupTicks(rootId, after) {
   document.getElementById(rootId)?.addEventListener('change', (e) => {
-    // A screens-phase row has no group around it — it IS the unit — so it falls
+    // A sections-phase row has no group around it — it IS the unit — so it falls
     // straight through to `after`, which recomputes the estimate.
     const group = e.target.closest('.sweep-group');
     if (group) {
@@ -7395,12 +7430,12 @@ function wireGroupTicks(rootId, after) {
 wireGroupTicks('sweepPicksList', syncSweepMakeBtn);
 wireGroupTicks('aiBulkList');
 
-// ── Hovering a screenful shows it on the real page ──────────────────────────
+// ── Hovering a section shows it on the real page ──────────────────────────
 //
-// A 340px picture of a screenful answers "roughly where am I". Scrolling the
+// A 340px picture of a section answers "roughly where am I". Scrolling the
 // actual page there and outlining the components on it answers "is THAT the nav
 // I mean" — which is the question you are actually holding while you decide
-// whether a screenful is worth paying to read.
+// whether a section is worth paying to read.
 //
 // The marks are drawn from a fresh collection at that scroll position rather
 // than from what the survey stored: it is local code, it costs nothing, and it
@@ -7501,7 +7536,7 @@ const sweepCam = { tabId: null, attached: false, why: '' };
 
 // A screenshot of a big page is not instant, and killing a slow-but-working
 // camera would be its own bug. Eight seconds is far outside a normal capture
-// and far inside "why has this screen taken two minutes".
+// and far inside "why has this section taken two minutes".
 const CDP_TIMEOUT_MS = 8000;
 
 /** One debugger command, with a clock on it. Rejects rather than hanging. */
@@ -7546,7 +7581,7 @@ async function beginBackgroundCapture(tab) {
  *
  * Whether you can switch tabs and carry on working is the single most visible
  * difference between the two, so it is not something to discover by trying it.
- * It is one line at the top of the scan log, before the first screenful.
+ * It is one line at the top of the scan log, before the first section.
  */
 async function announceCamera(tab) {
   const ok = await beginBackgroundCapture(tab);
@@ -7564,7 +7599,7 @@ async function endBackgroundCapture() {
 }
 
 /**
- * One screenful, as a data URL.
+ * One section, as a data URL.
  *
  * `onWait` is only ever called on the fallback path — the background camera
  * never waits, so a run using it must not print "waiting for the page".
@@ -7581,7 +7616,7 @@ async function captureScreen(tab, quality, onWait) {
         const res = await cdp(tab.id, 'Page.captureScreenshot',
           { format: 'jpeg', quality, fromSurface: surface });
         if (res && res.data) return 'data:image/jpeg;base64,' + res.data;
-        // Attached, no error, no picture. Left as it was, every screenful would
+        // Attached, no error, no picture. Left as it was, every section would
         // pay the round trip and then fall through anyway.
         sweepCam.why = 'it returned an empty picture';
       } catch (e) {
@@ -7592,7 +7627,7 @@ async function captureScreen(tab, quality, onWait) {
     }
     // Both paths tried. Demoted for the rest of the run — retrying a camera
     // that has already cost sixteen seconds of silence on every remaining
-    // screenful is how one slow screen becomes a run nobody can sit through.
+    // section is how one slow screen becomes a run nobody can sit through.
     sweepCam.attached = false;
     sweepLog(0, `background camera stopped working (${sweepCam.why}) — ` +
       `from here this run needs its own tab in front`, 'err');
@@ -7662,10 +7697,10 @@ async function sweepPreviewEnd() {
 }
 
 document.getElementById('sweepPicksList')?.addEventListener('mouseover', (e) => {
-  // Gated on the phase, this stopped working the moment one screen had been
+  // Gated on the phase, this stopped working the moment one section had been
   // read — which is exactly when the rest of the list is most worth looking at,
-  // and when the "not read yet" rows appear. A row that names a screenful can
-  // preview that screenful whatever phase the panel is in. Both shapes qualify:
+  // and when the "not read yet" rows appear. A row that names a section can
+  // preview that section whatever phase the panel is in. Both shapes qualify:
   // an unread screen row, and a group of components found on one.
   const row = e.target.closest('.sweep-screen, .sweep-group, .sweep-done-row');
   if (!row) return;
@@ -7707,7 +7742,7 @@ document.getElementById('sweepPicksClearBtn')?.addEventListener('click', async (
   // closing the panel must not, or the durability is theatre.
   //
   // It used to ask only when a section had been paid for. But the survey itself
-  // is not nothing: it scrolled the whole page, photographed every screenful
+  // is not nothing: it scrolled the whole page, photographed every section
   // and is shared with everyone on the project — and one press of a small grey
   // word took all of it with no question at all. Always ask.
   if (!(await confirmSweepClear())) return;
@@ -7731,7 +7766,7 @@ document.getElementById('sweepPicksClearBtn')?.addEventListener('click', async (
 // time — it hands the prepared cards to the approval flow and presses its
 // button, which is the one path that saves, applies and reports. Duplicating
 // that here is how the two would drift.
-// ── The first paid step: read the ticked screens ────────────────────────────
+// ── The first paid step: read the ticked sections ────────────────────────────
 // One model call per ticked screen. The photograph the choice was made from is
 // the small one; the model needs the numbered 1280px version, and that has to be
 // taken at the right scroll position — so this scrolls back to each screen it
@@ -7741,7 +7776,7 @@ async function scanPickedScreens(numbers) {
   const btn = document.getElementById('sweepMakeBtn');
   const status = document.getElementById('sweepPicksStatus');
   // The page the survey walked, not the one in front now — this scrolls back to
-  // each screenful, and doing that to the wrong tab would both waste the calls
+  // each section, and doing that to the wrong tab would both waste the calls
   // and move somebody's work.
   const tab = await sweepTab();
   if (!tab) {
@@ -7768,7 +7803,7 @@ async function scanPickedScreens(numbers) {
   // it, and pressing ▶ on it and then switching tabs resets it — which is
   // precisely the run that was reported as never having scanned.
   //
-  // Reading a screenful pins the survey to the tab being read, whatever it was
+  // Reading a section pins the survey to the tab being read, whatever it was
   // pinned to before.
   aiSweep.tabId = tab.id;
   if (!aiSweep.url) aiSweep.url = tab.url || '';
@@ -7792,7 +7827,7 @@ async function scanPickedScreens(numbers) {
   btn.disabled = true;
   document.getElementById('sweepStopBtn').style.display = '';
   document.getElementById('sweepStopBtn').disabled = false;
-  document.getElementById('sweepStopBtn').textContent = '■ Stop after this screen';
+  document.getElementById('sweepStopBtn').textContent = '■ Stop after this section';
   // The rows are not redrawn during a run, so the ▶s that were live a moment
   // ago have to be disarmed where they stand. The finally redraws the list and
   // brings them back.
@@ -7804,22 +7839,22 @@ async function scanPickedScreens(numbers) {
       const stop = stops[i];
       const before = aiCost;
       // Beside the cost, because they answer the same question about the same
-      // screenful and only one of them was ever recorded.
+      // section and only one of them was ever recorded.
       const beganAt = Date.now();
       // "Searching section 2 of 23" was read as screen 2 — which was already
       // completed and sitting in the drawer below. The counter is the position
-      // in THIS run; the screens have numbers of their own. Two numbering
+      // in THIS run; the sections have numbers of their own. Two numbering
       // systems shown with one word, so the word is no longer alone.
-      btn.textContent = `Searching screen ${stop.n} — ${i + 1} of ${stops.length}…`;
+      btn.textContent = `Searching section ${stop.n} — ${i + 1} of ${stops.length}…`;
       aiSweep.progress = { at: i + 1, of: stops.length, screen: stop.n };
       // Word for word what the button says, because they are read together
       // and a difference between them reads as a difference in meaning.
-      // The step, not the screenful. A screenful is four steps — scroll, read,
+      // The step, not the section. A section is four steps — scroll, read,
       // photograph, ask — and one label covering all four is how "the model has
       // been thinking for ninety seconds" and "this has hung" look identical
       // from outside. Each step now names itself as it starts.
-      showSweepBusy(`Screen ${stop.n} — ${i + 1} of ${stops.length}`,
-        `Reading what is on this screenful — a few seconds, no charge.`,
+      showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
+        `Reading what is on this section — a few seconds, no charge.`,
         ((i) / stops.length) * 100);
       markScreenReading(stop.n);
 
@@ -7835,7 +7870,7 @@ async function scanPickedScreens(numbers) {
       if (collected.err) {
         sweepLog(stop.n, collected.err, 'err');
         // Attempted and failed is not the same as never tried, and it looked
-        // identical: the run moved past screens 6 and 7 and left them sitting
+        // identical: the run moved past sections 6 and 7 and left them sitting
         // in "still to search" with their original survey line, so the only
         // visible fact was that the completed drawer had holes in it.
         //
@@ -7844,22 +7879,22 @@ async function scanPickedScreens(numbers) {
         await markScreenFailed(stop, collected.err);
         continue;
       }
-      // Every candidate on this screenful was filtered out before the model was
-      // called: either already mapped, already found on an earlier screenful, or
+      // Every candidate on this section was filtered out before the model was
+      // called: either already mapped, already found on an earlier section, or
       // part of the sticky header which is counted once. Nothing was charged.
       //
       // Silently skipping made a two-screen run look like a one-screen run —
       // the second screen produced no components, so renderSweepPicks dropped
       // its row and there was nothing on screen saying it had been looked at.
-      // A screenful that was read and yielded nothing is a RESULT, and it says
+      // A section that was read and yielded nothing is a RESULT, and it says
       // so on its own row.
       if (!collected.candidates.length) {
         const why = collected.skipped
           ? `nothing new — all ${collected.skipped} element${collected.skipped === 1 ? '' : 's'} here were ` +
             (collected.dismissed === collected.skipped ? 'DISMISSED earlier'
              : collected.dismissed ? `already mapped or found earlier (${collected.dismissed} of them DISMISSED earlier)`
-             : 'already found on an earlier screen or already mapped')
-          : 'nothing on this screenful to read';
+             : 'already found in an earlier section or already mapped')
+          : 'nothing on this section to read';
         sweepLog(stop.n, why, 'skip');
         stop.scanned = true;
         stop.outcome = why;
@@ -7870,7 +7905,7 @@ async function scanPickedScreens(numbers) {
       // ── You say what it is ────────────────────────────────────────────────
       // The run stops here, with the numbers still drawn on the page, and waits.
       // Everything you name is built from measurement and costs nothing; only
-      // what is left over is sent to the model. Name it all and the screenful
+      // what is left over is sent to the model. Name it all and the section
       // is free.
       let labelled = [];
       if (!Array.isArray(stop.found)) stop.found = [];
@@ -7900,15 +7935,15 @@ async function scanPickedScreens(numbers) {
       }
 
       // The one step that is neither quick nor local, and the only one that
-      // costs. "Usually 10–30 seconds" was written for a sparse screenful and
-      // read as a promise on every screenful: this one is 94 elements with a
+      // costs. "Usually 10–30 seconds" was written for a sparse section and
+      // read as a promise on every section: this one is 94 elements with a
       // picture attached, it took a minute and a half, and the panel said
       // nothing except a clock ticking past its own estimate. A call is allowed
       // 150 seconds before it is given up on, and that is what it now says.
       const busyN = collected.candidates.filter((c) => !handled.has(c.selector)).length;
-      showSweepBusy(`Screen ${stop.n} — ${i + 1} of ${stops.length}`,
+      showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
         `Asking Claude about ${busyN} element${busyN === 1 ? '' : 's'} and a picture of this ` +
-        `screenful. A busy one takes a minute or two — it only gives up if Claude ` +
+        `section. A busy one takes a minute or two — it only gives up if Claude ` +
         `goes quiet for a minute, so a long answer is never mistaken for a stuck one.`,
         ((i) / stops.length) * 100);
       sweepLog(stop.n, `asking about ${busyN} element${busyN === 1 ? '' : 's'}`, 'skip');
@@ -7926,7 +7961,7 @@ async function scanPickedScreens(numbers) {
         sweepLog(stop.n, part.err, 'err');
         await markScreenFailed(stop, part.err);
         // A rate limit or a network blip is not a reason to abandon the other
-        // screens; a bad key is, and it would fail the same way on every one.
+        // sections; a bad key is, and it would fail the same way on every one.
         if (/API 401/.test(part.err)) break;
         continue;
       }
@@ -7941,12 +7976,12 @@ async function scanPickedScreens(numbers) {
       let seenAgain = 0;
       // Keep what you named. This used to be `stop.found = []`, which is right
       // when the model is the only source and wrong the moment it is not —
-      // everything labelled on this screenful before the call would have been
+      // everything labelled on this section before the call would have been
       // thrown away by the call's own answer.
       stop.found = (stop.found || []).filter((f) => f.done);
       for (const c of found) {
         // Never twice, whatever brought it back: a sticky bar, a repeated
-        // footer, or a component straddling the overlap between two screenfuls.
+        // footer, or a component straddling the overlap between two sections.
         if (handled.has(c.containerSelector)) { seenAgain++; continue; }
         handled.add(c.containerSelector);
         stop.found.push({
@@ -7964,10 +7999,25 @@ async function scanPickedScreens(numbers) {
       await markScreenRead(stop);
       const k = stop.found.length;
       const named = stop.found.filter((f) => f.done).length;
+      // Everything that did NOT come back, accounted for.
+      //
+      // seenAgain only counts things the model returned that we already had —
+      // the small half. The big half is dropped BEFORE the call: every
+      // candidate already mapped, already dismissed, or already found in an
+      // earlier section is filtered out of what gets sent, and that count
+      // (collected.skipped) went nowhere. So a section the survey described as
+      // "6 menus · form · dialog? · carousel?" came back as "2 components" with
+      // the other several silently missing, and the obvious reading is that the
+      // search failed.
+      //
+      // It did not. They were left out on purpose, and now it says so.
+      const held = (collected.skipped || 0) + seenAgain;
       stop.outcome = (found.length || named)
-        ? `${k} component${k === 1 ? '' : 's'}` +
+        ? `${k} component${k === 1 ? '' : 's'} to map` +
           (named ? ` · ${named} you named, free` : '') +
-          (seenAgain ? ` · ${seenAgain} already mapped or found on an earlier screen` : '')
+          (held ? ` · ${held} left out — already mapped, dismissed, or found in an earlier section` : '')
+        : held
+        ? `nothing new to map — all ${held} thing${held === 1 ? '' : 's'} here are already mapped, dismissed, or were found in an earlier section`
         : 'read, and nothing on it needs mapping';
       sweepLog(stop.n, stop.outcome, k ? '' : 'skip', stop.cost);
     }
@@ -7985,7 +8035,7 @@ async function scanPickedScreens(numbers) {
     document.getElementById('sweepStopBtn').style.display = 'none';
     // The labelling pause asks for the marks to be LEFT on the page, so the run
     // owns taking them down — including when it ends by Stop, by a throw, or in
-    // the middle of a screenful.
+    // the middle of a section.
     const lblHost = document.getElementById('sweepLabel');
     if (lblHost) { lblHost.style.display = 'none'; lblHost.innerHTML = ''; }
     try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
@@ -8003,7 +8053,7 @@ async function scanPickedScreens(numbers) {
     await followPendingSiteSwitch();
   }
 
-  // What the run actually did, per screen, in one line. Ticking two screens and
+  // What the run actually did, per screen, in one line. Ticking two sections and
   // seeing one in the results is alarming and was unexplained: the second had
   // been read and had yielded nothing, and nothing said so.
   const ran = stops.filter(s => s.scanned);
@@ -8015,14 +8065,14 @@ async function scanPickedScreens(numbers) {
   // open with a wall of per-screen prose and never say the last two at all — so
   // a run that read twenty-six sections, spent real money and found nothing
   // ended in a paragraph you had to parse to discover any of that.
-  const head = `Searched ${ran.length} screen${ran.length === 1 ? '' : 's'}` +
+  const head = `Searched ${ran.length} section${ran.length === 1 ? '' : 's'}` +
     (spent > 0 ? ` · $${spent.toFixed(2)}` : '') +
     ` · ${total} component${total === 1 ? '' : 's'} to map.`;
 
   if (total) {
     if (empty.length) {
       showNotice(status, head + ' ' +
-        empty.map(s => `Screen ${s.n}: ${s.outcome || 'nothing found'}`).join('. ') + '.', 'warn', 14000);
+        empty.map(s => `Section ${s.n}: ${s.outcome || 'nothing found'}`).join('. ') + '.', 'warn', 14000);
     }
     aiSweep.phase = 'components';
     renderSweepPicks();
@@ -8035,13 +8085,13 @@ async function scanPickedScreens(numbers) {
   showNotice(status, head + ' ' + (dismissedRun
     ? 'Most of what is here was DISMISSED in an earlier session — dismissals belong to the project and are shared, so they may not be yours. Reset them below and read again if that is wrong.'
     : empty.length
-      ? 'Everything on these screens is already mapped, or was found on a screen searched earlier.'
-      : 'Nothing on these screens needs mapping.'),
+      ? 'Everything on these sections is already mapped, or was found in a section searched earlier.'
+      : 'Nothing on these sections needs mapping.'),
     dismissedRun ? 'warn' : 'info', 20000);
   if (dismissedRun) offerResetDismissed(status);
 }
 
-// ▶ on a single row: read that one screenful and stop.
+// ▶ on a single row: read that one section and stop.
 //
 // It goes through scanPickedScreens like everything else — the function has
 // always taken a list of screen numbers, so "one" needs no separate path and
@@ -8071,8 +8121,8 @@ document.getElementById('sweepPicksList')?.addEventListener('click', async (e) =
 document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
   if (aiSweep.running) return;
   if (aiSweep.phase === 'screens') {
-    const screens = sweepPickedScreens();
-    if (!screens.length) return;
+    const sections = sweepPickedScreens();
+    if (!sections.length) return;
     // The estimate is already on screen, under the list, and it moved as the
     // ticks moved — so this is a confirmation of a number that has been visible
     // the whole time, not a figure produced at the moment of charging.
@@ -8086,10 +8136,10 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
     //
     // The guard stays, because this spends money. It just says so where it can
     // be seen.
-    const ticked = aiSweep.stops.filter((s) => screens.includes(s.n))
+    const ticked = aiSweep.stops.filter((s) => sections.includes(s.n))
       .reduce((a, s) => a + (s.count || 0), 0);
-    if (!(await confirmSweepCost(screens.length, 0, ticked))) return;
-    await scanPickedScreens(screens);
+    if (!(await confirmSweepCost(sections.length, 0, ticked))) return;
+    await scanPickedScreens(sections);
     return;
   }
 
@@ -8171,10 +8221,10 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
   // would be the same question twice. The code is still there to read on each
   // row afterwards, and every mapping stays editable in Mappings below.
   document.getElementById('aiBulkApproveBtn')?.click();
-  // And the page you were working through comes back — with the screens just
+  // And the page you were working through comes back — with the sections just
   // finished moved into the completed drawer, and the ones never read still
   // waiting. Hiding it left the review on screen and nothing else, which reads
-  // as the end of the job on a page with twenty-five screens left in it.
+  // as the end of the job on a page with twenty-five sections left in it.
   renderSweepPicks();
 });
 
@@ -10258,9 +10308,9 @@ document.addEventListener('click', async (e) => {
   renderSweepPicks();
 });
 
-// Back to the screens list, to carry on searching the ones never reached.
+// Back to the sections list, to carry on searching the ones never reached.
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('[data-back-to-screens]')) return;
+  if (!e.target.closest('[data-back-to-sections]')) return;
   aiSweep.phase = 'screens';
   renderSweepScreens();
 });
@@ -10272,7 +10322,7 @@ function confirmSweepClear() {
   const stops = aiSweep.stops || [];
   const searched = stops.filter((s) => s.scanned).length;
   document.getElementById('sweepClearBody').textContent =
-    `${stops.length} screen${stops.length === 1 ? '' : 's'} and their pictures go, for everyone on this project. ` +
+    `${stops.length} section${stops.length === 1 ? '' : 's'} and their pictures go, for everyone on this project. ` +
     (searched
       ? `${searched} of them ${searched === 1 ? 'has' : 'have'} already been searched, and searching them again costs the same as it did the first time. `
       : 'Walking the page again is free, but it takes a few minutes. ') +
@@ -10313,14 +10363,14 @@ async function confirmSweepCost(sections, rereading, elements) {
   try { skipped = (await dismissedSelectors()).length; } catch {}
 
   document.getElementById('sweepCostBody').innerHTML =
-    escapeHtml(`Searching ${sections} screen${sections === 1 ? '' : 's'} for components — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
+    escapeHtml(`Searching ${sections} section${sections === 1 ? '' : 's'} for components — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
       `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
       // The dialog quotes the same number the box above it does, from the same
       // function. Two numbers for one press, differing because one was written
       // later than the other, is how an estimate stops being read at all.
       `and roughly ${mins(sweepSecsFor(elements))}.`) +
     // A ▶ next to a completed screen is one press away from paying twice for
-    // the same screenful. The button is still there — deliberately re-reading
+    // the same section. The button is still there — deliberately re-reading
     // one is a real thing to want — but it is not something to do without
     // being told which of the two this is.
     (rereading
@@ -10329,7 +10379,7 @@ async function confirmSweepCost(sections, rereading, elements) {
       : '') +
     (skipped
       ? `<br><br><strong>${skipped} element${skipped === 1 ? '' : 's'} on this site ${skipped === 1 ? 'is' : 'are'} on the dismissed list</strong> ` +
-        `and will be left out of every screen. Dismissals belong to the project and are shared, so they may not be yours. ` +
+        `and will be left out of every section. Dismissals belong to the project and are shared, so they may not be yours. ` +
         `If a run has been coming back empty, this is why. ` +
         `<button class="btn-outline btn-xs" data-reset-dismissed>Clear the dismissed list</button>`
       : '');
@@ -12222,7 +12272,7 @@ function noteSweepHoldsPanel(tab) {
   if (!here || here === currentHostname) { host.style.display = 'none'; return; }
   host.style.display = '';
   if (sweepLeaveFor) {
-    host.textContent = `Finishing this screen, then moving to ${sweepLeaveFor}. ` +
+    host.textContent = `Finishing this section, then moving to ${sweepLeaveFor}. ` +
       `Everything read so far is saved.`;
     return;
   }
@@ -12247,7 +12297,7 @@ function clearSweepHoldsPanel() {
   if (host) { host.style.display = 'none'; host.innerHTML = ''; }
 }
 
-// "I have actually moved on." The scan finishes the screenful it is on — that
+// "I have actually moved on." The scan finishes the section it is on — that
 // call is paid for either way, and abandoning it mid-flight would waste it —
 // and the panel follows once it lets go.
 document.addEventListener('click', async (e) => {
@@ -12256,7 +12306,7 @@ document.addEventListener('click', async (e) => {
   sweepLeaveFor = btn.dataset.leaveScan;
   aiSweep.abort = true;
   const stop = document.getElementById('sweepStopBtn');
-  if (stop) { stop.disabled = true; stop.textContent = 'Stopping after this screen…'; }
+  if (stop) { stop.disabled = true; stop.textContent = 'Stopping after this section…'; }
   noteSweepHoldsPanel(await getTab());
 });
 
@@ -12295,7 +12345,7 @@ async function onTabChanged(tab) {
   // moment every save of the RUNNING scan was written under the other site's
   // key and pushed to the other site on the server. Then the cascade below
   // pulled that other site's own survey down over the top of it. Come back and
-  // the scan is gone, and its screens are unread, because that is genuinely
+  // the scan is gone, and its sections are unread, because that is genuinely
   // what is now stored under this site's name.
   //
   // A scan is pinned to one tab. Which tab you happen to be LOOKING at is not

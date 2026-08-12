@@ -3,7 +3,7 @@
 //   node scripts/verify-sweep.mjs
 //
 // A sweep over a twelve-screen page produces one list of everything on the page.
-// Grouping it by the screenful it came from is what makes "do only the first
+// Grouping it by the section it came from is what makes "do only the first
 // screen" a click instead of twenty-five unticks — so the grouping, the
 // per-screen tick and the per-screen cost are the parts worth a test.
 //
@@ -101,7 +101,7 @@ new window.Function('ctx', `with (ctx) { ${src}; ctx.bulkRowHtml = bulkRowHtml; 
 const PIXEL = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
 const entry = (label, type, conf) => ({ row: { label, type, sel: '.x' }, result: { confidence: conf } });
 
-// Three screenfuls: 2 components, none, 3 components. The empty one is what a
+// Three sections: 2 components, none, 3 components. The empty one is what a
 // sweep produces for a band of pure text, and it must not become a group.
 const pending = [
   { entry: entry('Main navigation', 'menu', 'high'), idx: 0 },
@@ -120,20 +120,20 @@ sandbox.aiSweep.stops = stops;
 const list = window.document.getElementById('aiBulkList');
 list.innerHTML = sandbox.sweepGroupsHtml(stops.filter(s => s.indexes.length), pending);
 
-console.log('\ngrouping by screenful');
+console.log('\ngrouping by section');
 const groups = [...list.querySelectorAll('.sweep-group')];
-check('a group per screenful that found something', groups.length === 2, String(groups.length));
-check('the screenful that found nothing is not a group',
+check('a group per section that found something', groups.length === 2, String(groups.length));
+check('the section that found nothing is not a group',
   !groups.some(g => g.dataset.stop === '2'), groups.map(g => g.dataset.stop).join());
 check('the first is open, the rest closed', groups[0].open && !groups[1].open);
 check('every component is present exactly once',
   list.querySelectorAll('.ai-bulk-row[data-bulk-idx]').length === 5);
-check('each row lands under its own screenful',
+check('each row lands under its own section',
   [...groups[0].querySelectorAll('[data-bulk-idx]')].map(r => r.dataset.bulkIdx).join() === '0,1' &&
   [...groups[1].querySelectorAll('[data-bulk-idx]')].map(r => r.dataset.bulkIdx).join() === '2,3,4');
 
 console.log('\nwhat the summary says');
-check('screen 3 is named', /Screen 3/.test(groups[1].querySelector('summary').textContent));
+check('section 3 is named', /Section 3/.test(groups[1].querySelector('summary').textContent));
 check('its component count is right',
   /3 components/.test(groups[1].querySelector('.sweep-group-meta').textContent),
   groups[1].querySelector('.sweep-group-meta').textContent);
@@ -145,7 +145,7 @@ check('its own cost is shown, not the running total',
 check('the costs of the groups sum to the total',
   Math.abs(stops.reduce((s, x) => s + x.cost, 0) - 0.1446) < 1e-9);
 
-console.log('\nthe screenful picture');
+console.log('\nthe section picture');
 check('the thumbnail and its hover preview are both there',
   groups[0].querySelector('.mh-img') && groups[0].querySelector('.mh-preview'));
 check('it carries the stop number, so a click can find the full image',
@@ -157,7 +157,7 @@ check('a thumb that is not an image is refused',
 
 // ── "Do only the first screen" ──────────────────────────────────────────────
 // The behaviour the grouping exists for, driven through the real listener.
-console.log('\nticking a whole screenful off');
+console.log('\nticking a whole section off');
 const onChange = (e) => {
   const group = e.target.closest('.sweep-group');
   if (!group) return;
@@ -218,7 +218,7 @@ check('ticking a screen back on restores all of its rows', ticked().join() === '
 // `html { scroll-behavior: smooth }` is one line of CSS that a great many sites
 // carry, and it makes scrollTo animate. Reading window.scrollY on the next line
 // then returns the OLD value, so a sweep that decides "did the page move?" from
-// that return value stops after the first screenful on every one of those
+// that return value stops after the first section on every one of those
 // sites. This models both kinds of page and asserts the loop reaches the bottom
 // of each.
 console.log('\nscrolling down a page that scrolls smoothly');
@@ -227,7 +227,7 @@ console.log('\nscrolling down a page that scrolls smoothly');
   check('the overlap is a real fraction below 1', OVERLAP && Number(OVERLAP[1]) > 0 && Number(OVERLAP[1]) < 1,
     OVERLAP ? OVERLAP[1] : 'not found');
 
-  const scrollSrc = panelSrc.slice(panelSrc.indexOf('// Down one screenful, less the overlap.'),
+  const scrollSrc = panelSrc.slice(panelSrc.indexOf('// Down one section, less the overlap.'),
                                    panelSrc.indexOf("sweepLog(0, 'reached the bottom of the page'"));
   check("it asks the page for behavior:'instant'", /behavior:\s*'instant'/.test(scrollSrc), scrollSrc.slice(0, 200));
   check('the position is re-read AFTER the settle, not returned by the scroll call',
@@ -268,7 +268,7 @@ console.log('\nscrolling down a page that scrolls smoothly');
 }
 
 // ── needsWork is a label, not a filter ──────────────────────────────────────
-console.log('\nwhat comes back from a screenful');
+console.log('\nwhat comes back from a section');
 {
   // Anchored to the `stop.scanned` that FOLLOWS the loop, not the first one in
   // the file — the early-skip path sets it too, and slicing to that gave an
@@ -310,7 +310,7 @@ console.log('\nthe survey is free');
 }
 
 // ── The free element count ──────────────────────────────────────────────────
-console.log('\ncounting what is on a screenful, locally');
+console.log('\ncounting what is on a section, locally');
 {
   const singular = /const SINGULAR = \{[\s\S]*?\n\};/.exec(panelSrc)[0];
   const inv = new window.Function(
@@ -346,13 +346,13 @@ console.log('\ncounting what is on a screenful, locally');
   check('nothing at all is an empty string', inv([]) === '', inv([]));
 }
 
-// ── Why a screenful yielded nothing ─────────────────────────────────────────
+// ── Why a section yielded nothing ─────────────────────────────────────────
 // "Already mapped" is finished work. "Dismissed" is a judgement made once,
 // possibly on another machine, and it is the only one of the two you might want
 // to take back. They were reported as one sentence, so a run that returned
 // nothing because everything had been dismissed read as "the tool found
 // nothing".
-console.log('\nwhy a screenful yielded nothing');
+console.log('\nwhy a section yielded nothing');
 {
   const collect = (candidates, handled) => {
     const bin = (handled && handled.dismissed) || new Set();
@@ -375,13 +375,13 @@ console.log('\nwhy a screenful yielded nothing');
   // The wording the run puts on the row, lifted from the real source so it
   // cannot drift from what ships.
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
-  check('a screenful lost entirely to dismissals says the word',
+  check('a section lost entirely to dismissals says the word',
     /collected\.dismissed === collected\.skipped \? 'DISMISSED earlier'/.test(src));
-  check('a mixed screenful still names how many were dismissed',
+  check('a mixed section still names how many were dismissed',
     /of them DISMISSED earlier/.test(src));
   // And the run's own summary has to lead with what it did, cost and got.
   check('the summary states sections, cost and components found',
-    /Searched \$\{ran\.length\} screen/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
+    /Searched \$\{ran\.length\} section/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
     /\$\{total\} component/.test(src));
   check('an empty run caused by dismissals offers to clear them',
     /offerResetDismissed\(status\)/.test(src) && /data-reset-dismissed/.test(src));
@@ -398,8 +398,8 @@ console.log('\nwhy a screenful yielded nothing');
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
   const body = /async function confirmSweepCost[\s\S]*?\n}/.exec(src)[0];
   check('the cost dialog reads the dismissed list', /dismissedSelectors\(\)/.test(body));
-  check('…and says it will be left out of every screen',
-    /on the dismissed list/.test(body) && /left out of every screen/.test(body));
+  check('…and says it will be left out of every section',
+    /on the dismissed list/.test(body) && /left out of every section/.test(body));
   check('…and names it as the reason an empty run was empty',
     /coming back empty, this is why/.test(body));
   check('…with the undo on the dialog itself', /data-reset-dismissed/.test(body));
@@ -409,7 +409,7 @@ console.log('\nwhy a screenful yielded nothing');
 
 // ── Throwing the survey away ────────────────────────────────────────────────
 // It asked only when a section had been paid for. But the survey is not
-// nothing: it scrolled the whole page, photographed every screenful, and is
+// nothing: it scrolled the whole page, photographed every section, and is
 // shared with everyone on the project — and one press of a small grey word took
 // all of it with no question at all.
 {
@@ -425,17 +425,17 @@ console.log('\nwhy a screenful yielded nothing');
     /already mapped are not affected/.test(dlg));
 }
 
-// ── The way back to the screens ─────────────────────────────────────────────
+// ── The way back to the sections ─────────────────────────────────────────────
 // Stopping a run to build what it had found left you in the components view
-// with no route to the screens that were never searched. The survey was still
+// with no route to the sections that were never searched. The survey was still
 // there and unreachable, so the only apparent way on was to start over.
 {
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
   const picks = /function renderSweepPicks[\s\S]*?\n}/.exec(src)[0];
-  check('the components view counts the screens still to search',
-    /still to search/.test(picks) && /data-back-to-screens/.test(picks));
+  check('the components view counts the sections still to search',
+    /still to search/.test(picks) && /data-back-to-sections/.test(picks));
   check('…and the way back actually goes back',
-    /data-back-to-screens/.test(src) && /aiSweep\.phase = 'screens';\n  renderSweepScreens\(\);/.test(src));
+    /data-back-to-sections/.test(src) && /aiSweep\.phase = 'screens';\n  renderSweepScreens\(\);/.test(src));
   check('…and offers nothing when there is nothing left to search',
     /unsearched\n?\s*\?/.test(picks) || /\(unsearched$/m.test(picks) || /unsearched$/m.test(picks));
 }
@@ -443,7 +443,7 @@ console.log('\nwhy a screenful yielded nothing');
 // ── One stage at a time ─────────────────────────────────────────────────────
 // The two AI routes share every result panel and each one showed and hid
 // itself — about twenty-five display writes over six containers, with nothing
-// deciding. The whole-page route therefore stacked the screens list, a pending
+// deciding. The whole-page route therefore stacked the sections list, a pending
 // review card and a session-wide applied list all at once. Not a design: an
 // absence of one.
 console.log('\none stage at a time');
@@ -492,9 +492,21 @@ console.log('\none stage at a time');
   ctx.mapMode = 'sweep';
   ctx.setStage('components');
   const trail = d.window.document.getElementById('stageTrail');
-  check('the trail names the whole-page stages', /Screens.*Components.*Applied/s.test(trail.textContent),
-    trail.textContent);
-  check('…and marks where you are', trail.querySelector('.crumb.is-at').textContent === 'Components');
+  // Named after what you DO at each stage, and numbered. Three nouns of equal
+  // weight, with which one you are on carried entirely by an underline, was
+  // reported as not knowing what stage you are at.
+  const label = (el) => el && el.querySelector('.crumb-label').textContent;
+  check('the trail names the whole-page stages by what you do at them',
+    /Pick sections.*Choose fixes.*Applied/s.test(trail.textContent), trail.textContent);
+  check('…each numbered, because three nouns cannot say how far through you are',
+    [...trail.querySelectorAll('.crumb-n')].map((n) => n.textContent).join() === '1,2,3',
+    [...trail.querySelectorAll('.crumb-n')].map((n) => n.textContent).join());
+  check('…and marks where you are', label(trail.querySelector('.crumb.is-at')) === 'Choose fixes',
+    label(trail.querySelector('.crumb.is-at')));
+  check('…in the markup too, not only in colour',
+    trail.querySelector('.crumb.is-at').getAttribute('aria-current') === 'step');
+  check('…and only one stage is ever the current one',
+    trail.querySelectorAll('[aria-current="step"]').length === 1);
   const reachable = () => [...trail.querySelectorAll('[data-stage]')].map((b) => b.dataset.stage).join();
   check('…and the stage you came from is a way back', /screens/.test(reachable()), reachable());
 
@@ -511,7 +523,7 @@ console.log('\none stage at a time');
   check('…and an empty stage is not offered', !/applied/.test(reachable()), reachable());
   const empty = trail.querySelector('.crumb.is-empty');
   check('…it is marked as empty rather than silently inert',
-    !!empty && empty.textContent === 'Applied', empty && empty.textContent);
+    !!empty && label(empty) === 'Applied', empty && empty.textContent);
 
   ctx.setStage('components');
 
@@ -523,7 +535,7 @@ console.log('\none stage at a time');
   // fourth step — the trail must not gain a crumb for it.
   ctx.setStage('review');
   check('a batch review shows as the stage it belongs to',
-    trail.querySelector('.crumb.is-at').textContent === 'Review');
+    label(trail.querySelector('.crumb.is-at')) === 'Review');
 
   ctx.mapMode = 'manual';
   ctx.setStage('none');
@@ -569,10 +581,10 @@ console.log('\none stage at a time');
 }
 
 // ── Saying what things are, screen by screen ────────────────────────────────
-// The run stops on each screenful with every candidate numbered on the page and
+// The run stops on each section with every candidate numbered on the page and
 // asks. What matters structurally: the marks have to survive the capture, the
 // pause has to honour Stop, what you name must not be thrown away by the model
-// call that follows, and a fully-named screenful must cost nothing.
+// call that follows, and a fully-named section must cost nothing.
 console.log('\nsaying what things are');
 {
   const src = panelSrc;
@@ -584,15 +596,15 @@ console.log('\nsaying what things are');
   check('…and the run takes them down however it ends',
     /const lblHost = document\.getElementById\('sweepLabel'\);[\s\S]{0,200}clearMarks/.test(src));
 
-  // Stop during a pause must leave cleanly, and the screenful must not be
+  // Stop during a pause must leave cleanly, and the section must not be
   // recorded as read — it was not.
   const pause = /if \(sweepLabel\.on\) \{[\s\S]*?\n      \}/.exec(src)[0];
   check('Stop during the pause breaks the run', /answer\.stopped\) break;/.test(pause));
-  check('…and a screenful is only marked read on a path that finishes it',
+  check('…and a section is only marked read on a path that finishes it',
     /answer\.done\)[\s\S]{0,500}markScreenRead\(stop\)/.test(pause));
 
-  // The whole point: a screenful you name completely is not sent anywhere.
-  check('a fully-named screenful costs nothing and says so',
+  // The whole point: a section you name completely is not sent anywhere.
+  check('a fully-named section costs nothing and says so',
     /stop\.cost = 0;/.test(pause) && /no model call, nothing charged/.test(pause));
   check('…and what is left over is what the model is shown, not everything',
     /candidates: collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\)/.test(src));
@@ -678,7 +690,7 @@ console.log('\nswitching tabs mid-run');
   check('Stop still stops it', (await mk(stopped)({ id: 1 })) === false);
 }
 
-// ── Choosing which screens to pay to read ───────────────────────────────────
+// ── Choosing which sections to pay to read ───────────────────────────────────
 console.log('\nchoosing screens');
 {
   const d2 = new JSDOM(`<!doctype html><body>
@@ -746,11 +758,11 @@ console.log('\nchoosing screens');
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');
   const rows = [...l2.querySelectorAll('.sweep-screen')];
-  check('every screenful is listed, including the empty one', rows.length === 3, String(rows.length));
+  check('every section is listed, including the empty one', rows.length === 3, String(rows.length));
   check('each shows its own element count and breakdown',
     /14 elements/.test(rows[0].textContent) && /6 links, 3 buttons/.test(rows[0].textContent),
     rows[0].textContent.replace(/\s+/g, ' '));
-  check('the empty screenful cannot be ticked',
+  check('the empty section cannot be ticked',
     rows[1].querySelector('.sweep-screen-tick').disabled &&
     !rows[1].querySelector('.sweep-screen-tick').checked);
   check('…and is marked as such rather than silently greyed',
@@ -759,12 +771,12 @@ console.log('\nchoosing screens');
     box.sweepPickedScreens().join());
   // The sticky header is counted once. Ticking only the middle of a page would
   // otherwise silently leave out the site's main navigation.
-  check('the screenful that took the sticky header says so',
+  check('the section that took the sticky header says so',
     /includes the sticky header \(27\)/.test(rows[0].textContent),
     rows[0].textContent.replace(/\s+/g, ' '));
-  check('and no other screenful claims it',
+  check('and no other section claims it',
     !/sticky header/.test(rows[2].textContent));
-  check('a screenful that hit the candidate cap says so in words',
+  check('a section that hit the candidate cap says so in words',
     /only the first/.test(rows[2].textContent) && /60\+ elements/.test(rows[2].textContent),
     rows[2].textContent.replace(/\s+/g, ' '));
   check('one that did not is shown as a plain count',
@@ -772,43 +784,43 @@ console.log('\nchoosing screens');
   check('the summary says nothing has been spent',
     /nothing spent yet/.test(w2.document.getElementById('sweepPicksSummary').textContent));
 
-  // ── ▶ on one row: read this screenful, now ───────────────────────────────
+  // ── ▶ on one row: read this section, now ───────────────────────────────
   //
-  // A page is worked through one screenful at a time — read one, build its
+  // A page is worked through one section at a time — read one, build its
   // fixes, apply them, look at the page, read the next. Expressing that with a
   // list of ticks and one button at the bottom takes three actions per screen,
   // and two of them are chances to pay for a screen you did not mean.
   {
     const play = [...l2.querySelectorAll('.sweep-play')];
-    check('every screenful that can be read has a ▶ of its own',
+    check('every section that can be read has a ▶ of its own',
       play.length === 2, String(play.length));
     check('…carrying the screen number it will read, not a position in the list',
       play.map(b => b.dataset.playScreen).join() === '1,3',
       play.map(b => b.dataset.playScreen).join());
-    check('the empty screenful has none — there is nothing to spend a call on',
+    check('the empty section has none — there is nothing to spend a call on',
       !rows[1].querySelector('.sweep-play'));
     // It spends money. A bare ▶ glyph is not a label.
-    check('it says out loud that it is one screen and one call',
-      /only this screen/i.test(play[0].title) && /one call/i.test(play[0].title),
+    check('it says out loud that it is one section and one call',
+      /only this section/i.test(play[0].title) && /one call/i.test(play[0].title),
       play[0].title);
     check('…and says the same to a screen reader, with the number in it',
-      /screen 1/i.test(play[0].getAttribute('aria-label')) &&
+      /section 1/i.test(play[0].getAttribute('aria-label')) &&
       /one call/i.test(play[0].getAttribute('aria-label')),
       play[0].getAttribute('aria-label'));
     // A completed screen keeps its ▶ — deliberately re-reading one is a real
     // thing to want — and the warning about paying twice lives on the dialog.
-    check('a completed screenful keeps its ▶ rather than losing the option',
+    check('a completed section keeps its ▶ rather than losing the option',
       /data-play-screen/.test(box.sweepScreenRowHtml({ ...box.aiSweep.stops[0], scanned: true })));
     check('the re-read warning is on the dialog that spends the money',
       /confirmSweepCost\(1, stop\.scanned \? n : 0, stop\.count\)/.test(panelSrc));
     check('…and confirmSweepCost has somewhere to put it',
       /function confirmSweepCost\(sections, rereading, elements\)/.test(panelSrc) &&
       /has already been searched and paid for/.test(panelSrc));
-    // A ▶ quotes the time for THAT screenful, not for an average one — which is
+    // A ▶ quotes the time for THAT section, not for an average one — which is
     // the whole point of the estimate now scaling with what is on the screen.
-    check('…and the ▶ hands it that screenful\'s own element count',
+    check('…and the ▶ hands it that section\'s own element count',
       /confirmSweepCost\(1, [^)]*, stop\.count\)/.test(panelSrc));
-    // One press, one screen, through the same function every other run uses —
+    // One press, one section, through the same function every other run uses —
     // so it gets the same stop button, log, labelling pause and saved progress.
     check('it runs through scanPickedScreens with just that number',
       /scanPickedScreens\(\[n\]\)/.test(panelSrc));
@@ -826,7 +838,7 @@ console.log('\nchoosing screens');
   const btn2 = w2.document.getElementById('sweepMakeBtn');
   const est = w2.document.getElementById('sweepEstimate');
   check('the button says what it will DO, not just that it will read',
-    /Find components in 2 screens/.test(btn2.textContent), btn2.textContent);
+    /Find components in 2 sections/.test(btn2.textContent), btn2.textContent);
   check('the estimate counts the ticked elements, not all of them',
     /74 elements/.test(est.textContent), est.textContent.replace(/\s+/g, ' '));
   check('it prices the scan from the number of screens',
@@ -834,11 +846,11 @@ console.log('\nchoosing screens');
   // "26 screens" read as twenty-six pages. They are sections of one page, and
   // the line has to say which is which.
   check('the estimate counts SCREENS of one page, not pages',
-    /Ticked: 2 screens on 1 page/.test(est.textContent), est.textContent.replace(/\s+/g, ' ').slice(0, 60));
+    /Ticked: 2 sections on 1 page/.test(est.textContent), est.textContent.replace(/\s+/g, ' ').slice(0, 60));
   // One press starts the run; there is no invisible arming step that relabels
   // the button and writes the cost below the fold.
   check('reading is one press behind a visible dialog, not two presses',
-    /confirmSweepCost\(screens\.length, 0, ticked\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
+    /confirmSweepCost\(sections\.length, 0, ticked\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
   // Progress has to be visible from wherever the eye is. Reported as "it
   // started and did not show me that it started" — true, from the bottom of a
   // twenty-six item list, with the progress bar in a block far above.
@@ -869,7 +881,7 @@ console.log('\nchoosing screens');
     /Survey/.test(est.textContent) && /free/.test(est.textContent),
     est.textContent.replace(/\s+/g, ' ').slice(0, 80));
   check('with nothing measured yet it says the numbers are estimates',
-    /tighten once the first screen has been read/.test(est.textContent),
+    /tighten once the first section has been read/.test(est.textContent),
     est.textContent.replace(/\\s+/g, " ").slice(-90));
 
   rows[2].querySelector('.sweep-screen-tick').checked = false;
@@ -877,16 +889,16 @@ console.log('\nchoosing screens');
   check('unticking a screen takes its elements out of the estimate',
     /14 elements/.test(est.textContent) && est.textContent.includes('$0.13'),
     est.textContent.replace(/\s+/g, ' '));
-  check('and off the button', /Find components in 1 screen\b/.test(btn2.textContent), btn2.textContent);
+  check('and off the button', /Find components in 1 section\b/.test(btn2.textContent), btn2.textContent);
 
   rows[0].querySelector('.sweep-screen-tick').checked = false;
   box.syncSweepMakeBtn();
   check('with none ticked the button refuses and the estimate clears',
-    btn2.disabled && /No screens ticked/.test(btn2.textContent) && est.innerHTML === '',
+    btn2.disabled && /No sections ticked/.test(btn2.textContent) && est.innerHTML === '',
     btn2.textContent);
 
   // Already paid for. It used to come back ticked, so pressing Read again to
-  // pick up the ones that failed quietly re-charged for every screen.
+  // pick up the ones that failed quietly re-charged for every section.
   {
     const withDone = { phase: 'screens', stops: box.aiSweep.stops.map((x, i) => ({ ...x, scanned: i === 0 })) };
     const was = box.aiSweep;
@@ -895,7 +907,7 @@ console.log('\nchoosing screens');
     // By screen number, not by position: the list is now split into areas, so
     // document order no longer matches stop order.
     const row = (n) => w2.document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${n}"]`);
-    check('a screenful already read comes back UNTICKED',
+    check('a section already read comes back UNTICKED',
       row(1).querySelector('.sweep-screen-tick').checked === false);
     check('…and says so on the row', /completed/i.test(row(1).textContent));
     check('…while the unread ones are still ticked',
@@ -912,7 +924,7 @@ console.log('\nchoosing screens');
     check('the unread rows are in the first area and the read ones are not',
       parts[0].contains(row(3)) && parts[1].contains(row(1)));
     check('"select all" counts the unread ones, not everything',
-      /Select all 1 unsearched screen/.test(w2.document.getElementById('sweepPicksSummary').textContent),
+      /Select all 1 unsearched section/.test(w2.document.getElementById('sweepPicksSummary').textContent),
       w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));
     check('…and says how many are already paid for',
       /1 completed/.test(w2.document.getElementById('sweepPicksSummary').textContent));
@@ -921,7 +933,7 @@ console.log('\nchoosing screens');
   }
 
   // As it happens, not only at the end. Nothing updated the list during a run:
-  // ten screens in, the ten already paid for still looked like work to do, and
+  // ten sections in, the ten already paid for still looked like work to do, and
   // pressing Read again read them a second time.
   {
     box.renderSweepScreens();
@@ -930,7 +942,7 @@ console.log('\nchoosing screens');
     three.scanned = true;
     await box.markScreenRead(three);
     const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]');
-    check('a screenful is marked read the moment it is read',
+    check('a section is marked read the moment it is read',
       row.classList.contains('is-done') && /completed/i.test(row.textContent));
     check('…and unticks itself, so pressing Read again does not pay for it twice',
       row.querySelector('.sweep-screen-tick').checked === false);
@@ -947,10 +959,10 @@ console.log('\nchoosing screens');
     check('…and a completed section shows what it gave',
       /class="sweep-outcome"/.test(psrc));
     // Two numbering systems were shown with one word: the counter is the
-    // position in THIS run, the screens have numbers of their own. "Searching
+    // position in THIS run, the sections have numbers of their own. "Searching
     // section 2 of 23" was read as screen 2, which was already completed.
     check('the progress names the screen as well as the position in the run',
-      /Searching screen \$\{stop\.n\} — \$\{i \+ 1\} of \$\{stops\.length\}/.test(psrc));
+      /Searching section \$\{stop\.n\} — \$\{i \+ 1\} of \$\{stops\.length\}/.test(psrc));
   }
 
   // A section that completes DURING a run moves into the completed area then,
@@ -968,7 +980,7 @@ console.log('\nchoosing screens');
     await box.markScreenRead(st[2]);
     const moved = w2.document.querySelector('#sweepPicksList .sweep-part-done .sweep-screen[data-screen="3"]');
     check('a section completing mid-run moves into the completed area at once', !!moved);
-    // Zero left, and correctly so: the only remaining screenful is the empty
+    // Zero left, and correctly so: the only remaining section is the empty
     // one, which was never pickable and must not be counted as owed work.
     check('…and both counts follow it',
       /Completed · 2/.test(w2.document.querySelector('.sweep-part-done summary').textContent) &&
@@ -1033,15 +1045,15 @@ console.log('\nchoosing screens');
     // The bar at the top and the button at the bottom are read together, so a
     // difference in wording between them reads as a difference in meaning.
     const psrc2 = readFileSync(join(ROOT, 'panel.js'), 'utf8');
-    const POSITION = 'Screen ${stop.n} — ${i + 1} of ${stops.length}';
+    const POSITION = 'Section ${stop.n} — ${i + 1} of ${stops.length}';
     check('the top bar and the button word the position identically',
       psrc2.includes('showSweepBusy(`' + POSITION + '`') &&
-      psrc2.includes('btn.textContent = `Searching screen ${stop.n} — ${i + 1} of ${stops.length}…`'),
+      psrc2.includes('btn.textContent = `Searching section ${stop.n} — ${i + 1} of ${stops.length}…`'),
       'they must be the same phrase in both places');
     check('while a run is going the box is about that run',
-      /Searching · screen 6 · 2 of 22/.test(est2.textContent), est2.textContent.replace(/\s+/g, ' ').slice(0, 70));
+      /Searching · section 6 · 2 of 22/.test(est2.textContent), est2.textContent.replace(/\s+/g, ' ').slice(0, 70));
     check('…and reports what has actually been spent, not a forecast',
-      /Done1screen\$0\.13/.test(est2.textContent.replace(/\s+/g, '')), est2.textContent.replace(/\s+/g, ' '));
+      /Done1section\$0\.13/.test(est2.textContent.replace(/\s+/g, '')), est2.textContent.replace(/\s+/g, ' '));
     check('…and what is left of THIS run', /Left/.test(est2.textContent) && /~\$2\.60/.test(est2.textContent),
       est2.textContent.replace(/\s+/g, ' '));
     check('…and that stopping keeps what is done',
@@ -1056,7 +1068,7 @@ console.log('\nchoosing screens');
   }
 
   // Attempted and failed is not the same as never tried, and it looked
-  // identical: the run moved past two screens and left them in "still to
+  // identical: the run moved past two sections and left them in "still to
   // search" with their original survey line, so the only evidence anything had
   // happened was a gap in the numbering of the completed drawer.
   {
@@ -1087,12 +1099,12 @@ console.log('\nchoosing screens');
     box.renderSweepScreens();
   }
 
-  // Exactly one screen can be the one being read.
+  // Exactly one section can be the one being read.
   {
     box.aiSweep.running = true;
     box.markScreenReading(1);
     box.markScreenReading(3);
-    check('only one screen is ever marked as being read',
+    check('only one section is ever marked as being read',
       w2.document.querySelectorAll('.sweep-screen.is-reading').length === 1,
       [...w2.document.querySelectorAll('.sweep-screen.is-reading')].map(x => x.dataset.screen).join(','));
     box.markScreenReading(null);
@@ -1199,7 +1211,7 @@ console.log('\nhitting the candidate cap');
     w.__u1SelectorIntel.clearMarks() === undefined || true);
 }
 
-// ── The whole page, not the first fifteen screenfuls ────────────────────────
+// ── The whole page, not the first fifteen sections ────────────────────────
 console.log('\nthe screen limit');
 {
   const cap = Number(/const SWEEP_MAX_STOPS = (\d+);/.exec(panelSrc)[1]);
@@ -1210,11 +1222,11 @@ console.log('\nthe screen limit');
 }
 
 // ── Naming the components, for free ─────────────────────────────────────────
-// "22 links, 19 buttons" says how busy a screenful is. "a nav, a carousel and a
+// "22 links, 19 buttons" says how busy a section is. "a nav, a carousel and a
 // tab strip" says whether it is worth paying to read — and that is the choice
-// the screens list exists to support. None of this needs the model, because the
+// the sections list exists to support. None of this needs the model, because the
 // page declares it: role="tablist" IS a tab strip and <form> IS a form.
-console.log('\nnaming what is on a screenful');
+console.log('\nnaming what is on a section');
 {
   const comps = new window.Function('return ' + lift('screenComponents'))();
   const c = (component, maybe) => ({ component, maybe: !!maybe });
@@ -1236,7 +1248,7 @@ console.log('\nnaming what is on a screenful');
     comps([c('carousel', true), c('form')]));
   check('elements that declare nothing are ignored',
     comps([{ component: '' }, { component: '' }, c('form')]) === 'form');
-  check('a screenful of plain text says nothing at all', comps([{ component: '' }]) === '');
+  check('a section of plain text says nothing at all', comps([{ component: '' }]) === '');
   check('at most five are named',
     comps(['menu', 'carousel', 'form', 'table', 'dialog', 'grid'].map(x => c(x))).split(' · ').length === 5);
 }
@@ -1326,7 +1338,7 @@ console.log('\nthe annotated survey picture');
     !w.document.getElementById('__u1_mark_layer__'));
 }
 
-// Some screenfuls came back with no boxes at all. Two causes, both fixed.
+// Some sections came back with no boxes at all. Two causes, both fixed.
 console.log('\nscreenfuls that used to come back unmarked');
 {
   const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
@@ -1343,7 +1355,7 @@ console.log('\nscreenfuls that used to come back unmarked');
   };
 
   // 1. A component whose selector did not validate was skipped entirely — which
-  //    drew nothing on exactly the screenful that most needed looking at.
+  //    drew nothing on exactly the section that most needed looking at.
   {
     const ww = mk('<form><input id="a"></form>');
     const got = ww.__u1SelectorIntel.collectCandidates(60, null);
@@ -1399,7 +1411,7 @@ console.log('\nselect all');
     </div></body>`);
   const w = d4.window, doc = w.document;
   doc.getElementById('sweepPicksSummary').innerHTML =
-    '<label class="sweep-all"><input type="checkbox" id="sweepAllTick" checked>Select all 2 readable screens</label>';
+    '<label class="sweep-all"><input type="checkbox" id="sweepAllTick" checked>Select all 2 readable sections</label>';
   const ticks = () => [...doc.querySelectorAll('.sweep-screen-tick:not(:disabled)')];
   // The real delegated listener.
   doc.getElementById('sweepPicksSummary').addEventListener('change', (e) => {
@@ -1417,11 +1429,11 @@ console.log('\nselect all');
     !doc.querySelector('.is-empty .sweep-screen-tick').checked);
   fire(true);
   check('setting it ticks them all back', ticks().every(t => t.checked));
-  check('an empty screenful is never ticked by it',
+  check('an empty section is never ticked by it',
     !doc.querySelector('.is-empty .sweep-screen-tick').checked);
 }
 
-console.log('\nan element cut between two screenfuls');
+console.log('\nan element cut between two sections');
 {
   // The detection, exactly as runSweep does it: the same component selector on
   // two consecutive stops is one element straddling the fold.
@@ -1438,15 +1450,15 @@ console.log('\nan element cut between two screenfuls');
   };
   record(1, ['.mega-nav']);
   record(2, ['.deals-table']);          // a table taller than the window…
-  record(3, ['.deals-table', '.faq']);  // …still here on the next screenful
+  record(3, ['.deals-table', '.faq']);  // …still here on the next section
   record(4, ['.newsletter']);
 
-  check('the screenful it starts on says it continues', stops[1].continuesOnto === 3, String(stops[1].continuesOnto));
+  check('the section it starts on says it continues', stops[1].continuesOnto === 3, String(stops[1].continuesOnto));
   check('the next one says where it came from', stops[2].continuedFrom === 2, String(stops[2].continuedFrom));
-  check('a component wholly inside one screenful is not marked',
+  check('a component wholly inside one section is not marked',
     !stops[0].continuesOnto && !stops[0].continuedFrom);
   check('nor is the one after it ends', !stops[3].continuedFrom, String(stops[3].continuedFrom));
-  check('a repeated selector two screens apart is NOT a continuation',
+  check('a repeated selector two sections apart is NOT a continuation',
     (() => { const s = []; const push = (n, sels) => {
         const st = { n, compSels: sels, continuedFrom: 0, continuesOnto: 0 };
         s.push(st); const p = s[s.length - 2];
@@ -1457,7 +1469,7 @@ console.log('\nan element cut between two screenfuls');
 }
 
 // ── Reading and operating, together ─────────────────────────────────────────
-// The probe presses at most a dozen things per screenful, so its silence is not
+// The probe presses at most a dozen things per section, so its silence is not
 // evidence of absence — a guess about something it never touched has to survive.
 // But where it DID press, what it saw outranks what a class name suggested.
 console.log('\nwhat was observed beats what was guessed');
@@ -1484,7 +1496,7 @@ console.log('\nwhat was observed beats what was guessed');
   check('the line stays short enough to read',
     merge('a? · b? · c? · d?', obs('menu','tabs','form','dialog','accordion','carousel'))
       .split(' · ').length === 5);
-  check('a screenful with nothing either way says nothing', merge('', []) === '');
+  check('a section with nothing either way says nothing', merge('', []) === '');
 }
 
 // ── The camera that lets you carry on working ──────────────────────────────
@@ -1552,7 +1564,7 @@ console.log('\nthe background camera — attached, not merely written');
 // turning it on made "switch tabs and carry on" hang the run it was meant to
 // keep going.
 //
-// Every other await in a screenful is already bounded — the model call has had
+// Every other await in a section is already bounded — the model call has had
 // its own AbortController all along. This was the one unbounded wait.
 console.log('\nthe camera that can never answer');
 {
@@ -1572,14 +1584,14 @@ console.log('\nthe camera that can never answer');
   check('a timeout is retried on the path that needs no frames',
     /for \(const surface of \[true, false\]\)/.test(cam) &&
     /fromSurface: surface/.test(cam));
-  // Sixteen seconds of silence per screenful, twenty-one screenfuls: one slow
+  // Sixteen seconds of silence per section, twenty-one sections: one slow
   // screen becomes a run nobody can sit through.
   check('and if neither answers the camera is demoted for the rest of the run',
     /sweepCam\.attached = false;\s*\n\s*sweepLog\(0, `background camera stopped working/.test(cam));
   check('…out loud, because it changes whether you can leave the tab',
     /from here this run needs its own tab in front/.test(cam));
   // Attaching is on the same protocol and can hang the same way — before the
-  // first screenful, where it would look like a scan that never started.
+  // first section, where it would look like a scan that never started.
   check('attaching is bounded too', /await cdp\(tab\.id, 'Page\.enable', \{\}, \d+\)/.test(cam));
   // The half that was already right, and must stay right.
   check('the model call keeps its own timeout',
@@ -1645,7 +1657,7 @@ console.log('\n…and it really does give up, run for real');
 // that moment every save of the RUNNING scan is written under the other site's
 // key and pushed to the other site on the server; then the same function pulls
 // that site's own survey down over the top. Come back and the scan is gone and
-// its screens are unread, because that is genuinely what is stored under this
+// its sections are unread, because that is genuinely what is stored under this
 // site's name now.
 console.log('\na running scan owns the panel');
 {
@@ -1711,9 +1723,9 @@ console.log('\na running scan owns the panel');
   // it anyway — which is the shape of the run that was actually reported.
   check('restoring a survey leaves it unpinned, as it must',
     /stops: saved\.stops, tabId: null/.test(panelSrc));
-  check('…so reading a screenful pins it to the tab being read',
+  check('…so reading a section pins it to the tab being read',
     /aiSweep\.tabId = tab\.id;/.test(panelSrc.slice(panelSrc.indexOf('async function scanPickedScreens('))));
-  check('…and that happens before the first screenful is read',
+  check('…and that happens before the first section is read',
     panelSrc.indexOf('aiSweep.tabId = tab.id;') < panelSrc.indexOf('for (let i = 0; i < stops.length; i++)'));
   // Belt and braces: sweepIsPinnedAndAlive is the whole condition the hold
   // rests on, so its requirement must not drift without this test noticing.
@@ -1741,12 +1753,12 @@ console.log('\nleaving a scan that is holding the panel');
   check('only that button can trigger the switch',
     (panelSrc.match(/sweepLeaveFor = /g) || []).length === 3,   // declare, set, clear
     String((panelSrc.match(/sweepLeaveFor = /g) || []).length));
-  // The screenful in flight is already paid for. Abandoning it mid-call would
+  // The section in flight is already paid for. Abandoning it mid-call would
   // spend the money and throw the answer away.
-  check('it stops after the current screenful rather than mid-call',
+  check('it stops after the current section rather than mid-call',
     /sweepLeaveFor = btn\.dataset\.leaveScan;\s*\n\s*aiSweep\.abort = true;/.test(panelSrc));
   check('…and says that is what it is doing',
-    /Finishing this screen, then moving to \$\{sweepLeaveFor\}/.test(panelSrc));
+    /Finishing this section, then moving to \$\{sweepLeaveFor\}/.test(panelSrc));
   check('…and that nothing already read is lost',
     /Everything read so far is saved/.test(panelSrc));
   // Both endings: a survey and a paid read are separate functions with separate
@@ -1767,14 +1779,14 @@ console.log('\nleaving a scan that is holding the panel');
 //
 // Reported as "it has been a minute and a half and found nothing". It had not
 // hung — a call is allowed 150 seconds and this one was still inside that. But
-// a screenful is four steps under one label, so "the model is thinking" and
+// a section is four steps under one label, so "the model is thinking" and
 // "this has died" looked identical, and the label promised 10–30 seconds while
 // the clock beside it read 1:34.
-console.log('\nwhich step a screenful is on');
+console.log('\nwhich step a section is on');
 {
   const scan = panelSrc.slice(panelSrc.indexOf('async function scanPickedScreens('));
   check('the local half says it is local and free',
-    /Reading what is on this screenful — a few seconds, no charge\./.test(scan));
+    /Reading what is on this section — a few seconds, no charge\./.test(scan));
   check('the paid half says it is the model, and what it was given',
     /Asking Claude about \$\{busyN\} element/.test(scan));
   check('…and describes the limit it actually has, not a stopwatch',
@@ -1788,8 +1800,8 @@ console.log('\nwhich step a screenful is on');
   check('the old blanket promise is gone',
     !/Looking for components — usually 10–30 seconds/.test(panelSrc));
   // The count is what was actually sent, not what was collected: everything
-  // already mapped or seen on an earlier screenful is filtered out first.
-  check('the count is what was sent, not what was on the screenful',
+  // already mapped or seen on an earlier section is filtered out first.
+  check('the count is what was sent, not what was on the section',
     /const busyN = collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\)\.length;/.test(scan));
 }
 
@@ -1803,7 +1815,7 @@ console.log('\nwhich step a screenful is on');
 //
 // Saying which step is running (above) told you where the minute went. This is
 // the other half: not quoting fifteen seconds for it in the first place.
-console.log('\nhow long a screenful takes, measured');
+console.log('\nhow long a section takes, measured');
 {
   check('the flat per-screen constant is gone',
     !/SWEEP_EST\.scanSecs/.test(panelSrc));
@@ -1812,7 +1824,7 @@ console.log('\nhow long a screenful takes, measured');
   check('the box and the dialog quote the same number from the same function',
     (panelSrc.match(/sweepSecsFor\(/g) || []).length >= 4,
     String((panelSrc.match(/sweepSecsFor\(/g) || []).length));
-  check('a run records how long each screenful actually took',
+  check('a run records how long each section actually took',
     (panelSrc.match(/stop\.secs = Math\.round\(\(Date\.now\(\) - beganAt\) \/ 1000\)/g) || []).length === 2,
     'both the free path and the paid one');
 
@@ -1830,35 +1842,88 @@ console.log('\nhow long a screenful takes, measured');
 
   const sparse = box.sweepSecsFor(10);
   const busy = box.sweepSecsFor(94);
-  check('with nothing measured, a busy screenful is quoted longer than a sparse one',
+  check('with nothing measured, a busy section is quoted longer than a sparse one',
     busy > sparse * 2, `${sparse}s vs ${busy}s`);
-  // The screenful that prompted all this. Quoted at 15s, took 94s.
-  check('…and the 94-element screenful is quoted in the right minute, not at 15s',
+  // The section that prompted all this. Quoted at 15s, took 94s.
+  check('…and the 94-element section is quoted in the right minute, not at 15s',
     busy >= 60 && busy <= 120, `${busy}s`);
-  check('a screenful with nothing on it still quotes the fixed overhead',
+  check('a section with nothing on it still quotes the fixed overhead',
     box.sweepSecsFor(0) === 10, String(box.sweepSecsFor(0)));
 
-  // One real reading replaces the guess — for every screenful, scaled by how
+  // One real reading replaces the guess — for every section, scaled by how
   // busy each one is rather than averaged into a single per-screen number.
   stops.push({ n: 1, scanned: true, secs: 60, count: 30 });   // 2s per element
-  check('one screenful read is enough to replace the guess',
+  check('one section read is enough to replace the guess',
     box.sweepSecsFor(30) === 60, String(box.sweepSecsFor(30)));
-  check('…and it scales to a screenful twice as busy',
+  check('…and it scales to a section twice as busy',
     box.sweepSecsFor(60) === 120, String(box.sweepSecsFor(60)));
   check('…without ever quoting less than the fixed overhead',
     box.sweepSecsFor(1) === 10, String(box.sweepSecsFor(1)));
-  // A screenful read for free by naming it takes seconds and would drag the
+  // A section read for free by naming it takes seconds and would drag the
   // measured rate down for the paid ones — but it is a real reading of a real
-  // screenful, and excluding it would be picking the data that flatters.
-  check('a screenful with no elements cannot poison the rate',
+  // section, and excluding it would be picking the data that flatters.
+  check('a section with no elements cannot poison the rate',
     (() => { stops.push({ n: 2, scanned: true, secs: 5, count: 0 });
              return box.sweepSecsFor(30) === 60; })(), String(box.sweepSecsFor(30)));
 
   check('the note stops hedging once a time has been measured',
-    /From this session's own screens/.test(panelSrc) &&
+    /From this session's own sections/.test(panelSrc) &&
     /measured, not guessed/.test(panelSrc));
-  check('…and before that says the time depends on how busy the screen is',
-    /the time scales with how busy a screenful is/.test(panelSrc));
+  check('…and before that says the time depends on how busy the section is',
+    /the time scales with how busy a section is/.test(panelSrc));
+}
+
+// ── "Where is this and where is that" ──────────────────────────────────────
+//
+// The survey guessed "6 menus · form · dialog? · carousel?". The search
+// returned two components. The row went on displaying the guess, so the panel
+// showed one set of things in the survey and a different set in the results
+// with nothing in between — and the obvious reading is that the search failed.
+//
+// It did not. The guess counts what is ON the section; the search reports what
+// is LEFT to map, and the difference is everything already mapped, dismissed,
+// or found in an earlier section. That count existed and went nowhere:
+// seenAgain counts only what the model handed back that we already had — the
+// small half — while the big half is filtered out BEFORE the call and lived
+// only in collected.skipped, which nothing read.
+console.log('\nwhat the survey guessed against what the search found');
+{
+  const scan = panelSrc.slice(panelSrc.indexOf('async function scanPickedScreens('));
+  check('everything left out of the call is counted, not just what came back',
+    /const held = \(collected\.skipped \|\| 0\) \+ seenAgain;/.test(scan));
+  check('…and the outcome says why those are missing',
+    /left out — already mapped, dismissed, or found in an earlier section/.test(scan));
+  check('a section where everything was already handled says so plainly',
+    /nothing new to map — all \$\{held\} thing/.test(scan));
+
+  // Two numbers with nothing between them is the whole complaint, so both stay
+  // on the row: the conclusion leads, the guess is kept and named as a guess.
+  const row = lift('sweepScreenRowHtml');
+  check('a searched section leads with what the search concluded',
+    /done && stop\.outcome/.test(row) && /escapeHtml\(stop\.outcome\)/.test(row));
+  check('…and keeps the first pass\'s guess underneath, labelled as one',
+    /first pass had guessed: \$\{escapeHtml\(stop\.components\)\}/.test(row));
+
+  // On the real renderer, in both states. It needs only escapeHtml, safeImg and
+  // aiSweep, so it runs without a DOM — and it is lifted rather than restated,
+  // or this would be testing a copy.
+  const rowBox = { escapeHtml: sandbox.escapeHtml, safeImg: sandbox.safeImg,
+                   aiSweep: { running: false, stops: [] } };
+  rowBox.globalThis = rowBox;
+  new Function('ctx', `with (ctx) { ${row}\n ctx.sweepScreenRowHtml = sweepScreenRowHtml; }`)(rowBox);
+
+  const guessed = { n: 1, count: 94, components: '6 menus · form · dialog? · carousel?',
+                    inventory: '28 buttons, 21 links', thumb: null, found: [] };
+  const before = rowBox.sweepScreenRowHtml(guessed);
+  check('before a search, only the guess is shown',
+    /6 menus · form/.test(before) && !/first pass had guessed/.test(before));
+
+  const after = rowBox.sweepScreenRowHtml({ ...guessed, scanned: true,
+    outcome: '2 components to map · 12 left out — already mapped, dismissed, or found in an earlier section' });
+  check('after one, the conclusion leads', /2 components to map/.test(after));
+  check('…the ones that did not come back are accounted for', /12 left out/.test(after));
+  check('…and the guess is still readable, so the two can be compared',
+    /first pass had guessed/.test(after) && /6 menus · form/.test(after));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
