@@ -469,6 +469,7 @@ console.log('\nchoosing screens');
     // here, so it is a no-op — the point is that rendering still works without
     // a chrome.storage behind it.
     saveSweep: () => { saved++; },
+    saveSweepNow: () => { saved++; return Promise.resolve(); },
     // The sweep panel belongs to the Whole page route, so the render functions
     // ask which route is on screen. These tests are about that route.
     mapMode: 'sweep',
@@ -564,8 +565,13 @@ console.log('\nchoosing screens');
       !host.classList.contains('pinned') &&
       !w2.document.querySelector('#sweepPicksList .sweep-screen.is-reading'));
   }
-  check('the fix row is marked as conditional, not a forecast',
-    /only if you then tick/.test(est.textContent));
+  check('the build row is marked as conditional, not a forecast',
+    /costs only for the components you then tick/.test(est.textContent));
+  // Three stages, each saying whether it costs anything. With the free one left
+  // off, the two paid rows looked like the whole of the work.
+  check('the free stage is listed beside the two that cost',
+    /Survey/.test(est.textContent) && /free/.test(est.textContent),
+    est.textContent.replace(/\s+/g, ' ').slice(0, 80));
   check('with nothing measured yet it says the numbers are estimates',
     /tighten once the first call/.test(est.textContent));
 
@@ -594,7 +600,7 @@ console.log('\nchoosing screens');
     const row = (n) => w2.document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${n}"]`);
     check('a screenful already read comes back UNTICKED',
       row(1).querySelector('.sweep-screen-tick').checked === false);
-    check('…and says so on the row', /searched/i.test(row(1).textContent));
+    check('…and says so on the row', /completed/i.test(row(1).textContent));
     check('…while the unread ones are still ticked',
       row(3).querySelector('.sweep-screen-tick').checked === true);
     // A half-finished run is the ordinary state, and "what is left" is the only
@@ -605,14 +611,14 @@ console.log('\nchoosing screens');
     check('what is still owed comes first, and is counted',
       /Still to search · 1/.test(parts[0].textContent), parts[0].textContent.slice(0, 40));
     check('what is paid for is folded away, and counted',
-      parts[1].tagName === 'DETAILS' && /Already searched · 1/.test(parts[1].textContent));
+      parts[1].tagName === 'DETAILS' && /Completed · 1/.test(parts[1].textContent));
     check('the unread rows are in the first area and the read ones are not',
       parts[0].contains(row(3)) && parts[1].contains(row(1)));
     check('"select all" counts the unread ones, not everything',
       /Select all 1 unsearched section/.test(w2.document.getElementById('sweepPicksSummary').textContent),
       w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));
     check('…and says how many are already paid for',
-      /1 already searched/.test(w2.document.getElementById('sweepPicksSummary').textContent));
+      /1 completed/.test(w2.document.getElementById('sweepPicksSummary').textContent));
     box.aiSweep = was;
     box.renderSweepScreens();
   }
@@ -625,10 +631,10 @@ console.log('\nchoosing screens');
     const three = box.aiSweep.stops[2];
     const before = w2.document.getElementById('sweepMakeBtn').textContent;
     three.scanned = true;
-    box.markScreenRead(three);
+    await box.markScreenRead(three);
     const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]');
     check('a screenful is marked read the moment it is read',
-      row.classList.contains('is-done') && /searched/i.test(row.textContent));
+      row.classList.contains('is-done') && /completed/i.test(row.textContent));
     check('…and unticks itself, so pressing Read again does not pay for it twice',
       row.querySelector('.sweep-screen-tick').checked === false);
     check('…and the estimate comes down as the run goes',
@@ -636,6 +642,13 @@ console.log('\nchoosing screens');
       `${before} -> ${w2.document.getElementById('sweepMakeBtn').textContent}`);
     check('…and it is persisted, so stopping halfway keeps what was paid for',
       saved > 0, `${saved} saves`);
+    // Awaited at the boundary, not left on a debounce that may not have fired
+    // when the panel closes. "Finish one, save it, move to the next."
+    const psrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+    check('…and the save at a section boundary is awaited, not debounced',
+      /return saveSweepNow\(\);/.test(psrc) && /await markScreenRead\(stop\);/.test(psrc));
+    check('…and a completed section shows what it gave',
+      /class="sweep-outcome"/.test(psrc));
     three.scanned = false;
     box.renderSweepScreens();
   }

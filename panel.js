@@ -4705,15 +4705,23 @@ function markScreenRead(stop) {
     if (tick) tick.checked = false;
     const label = row.querySelector('.ai-approved-label');
     if (label && !label.querySelector('.sweep-read-flag')) {
-      label.insertAdjacentHTML('beforeend', ' <span class="sweep-read-flag">searched</span>');
+      label.insertAdjacentHTML('beforeend', ' <span class="sweep-read-flag">completed</span>');
+    }
+    // And what it gave. A completed section with no result on it answers "is it
+    // done" and not "was it worth it", and the second is the one you need when
+    // deciding whether to carry on.
+    const body = row.querySelector('.ai-bulk-body');
+    if (body && stop.outcome && !body.querySelector('.sweep-outcome')) {
+      body.insertAdjacentHTML('beforeend',
+        `<div class="sweep-outcome">${escapeHtml(stop.outcome)}</div>`);
     }
   }
   // The estimate under the list is what the NEXT press will cost, so it has to
   // come down as the run goes.
   syncSweepMakeBtn();
-  // And persist it. A run stopped halfway used to save nothing until the whole
-  // thing ended, so closing the panel mid-run lost which screens were paid for.
-  saveSweep();
+  // And persist it before the next section begins — awaited, not debounced, so
+  // stopping after any section leaves that section recorded.
+  return saveSweepNow();
 }
 
 let sweepReadingNow = null;
@@ -5713,9 +5721,24 @@ let sweepSaveTimer = null;
  * of payload. `running`, `abort` and `tabId` are deliberately dropped: a
  * restored sweep is finished, and its tab is gone.
  */
+// The debounce is right for typing and ticking, and wrong for a section
+// boundary. "Finish one, save it, move to the next" has to mean the write
+// actually happened before the next one starts — otherwise a run of quick
+// sections coalesces into one save that has not landed yet when the panel is
+// closed. saveSweepNow is the same write, awaited, with the pending debounce
+// cancelled so it cannot fire again behind it.
+function saveSweepNow() {
+  clearTimeout(sweepSaveTimer);
+  return sweepWrite();
+}
+
 function saveSweep() {
   clearTimeout(sweepSaveTimer);
-  sweepSaveTimer = setTimeout(async () => {
+  sweepSaveTimer = setTimeout(sweepWrite, 400);
+}
+
+function sweepWrite() {
+  return (async () => {
     try {
       if (!aiSweep.stops.length) return;
       await U1Store.set({
@@ -5753,7 +5776,7 @@ function saveSweep() {
       showNotice(document.getElementById('sweepPicksStatus'),
         'The scan is on screen but could not be saved: ' + err.message, 'warn', 8000);
     }
-  }, 400);
+  })();
 }
 
 /** Throw the stored survey away. Only Clear does this — never a tab change. */
@@ -6308,7 +6331,7 @@ function renderSweepScreens() {
     // next press will charge for.
     `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
     `Select all ${todo} unsearched section${todo === 1 ? '' : 's'}` +
-    (pickable > todo ? ` <em>(${pickable - todo} already searched)</em>` : '') + `</label>`;
+    (pickable > todo ? ` <em>(${pickable - todo} completed)</em>` : '') + `</label>`;
 
   // Two areas, because a half-finished run is the ordinary state — you start
   // one, you stop it, you come back tomorrow. "Which of these have I paid for
@@ -6321,8 +6344,8 @@ function renderSweepScreens() {
     ? (left.length
         ? `<div class="sweep-part"><h4>Still to search · ${left.filter(x => x.count).length}</h4>` +
           left.map(sweepScreenRowHtml).join('') + `</div>`
-        : `<div class="sweep-part sweep-part-empty">Every section has been searched.</div>`) +
-      `<details class="sweep-part sweep-part-done"><summary>Already searched · ${read.length}</summary>` +
+        : `<div class="sweep-part sweep-part-empty">Every section is completed.</div>`) +
+      `<details class="sweep-part sweep-part-done"><summary>Completed · ${read.length}</summary>` +
       read.map(sweepScreenRowHtml).join('') + `</details>`
     : stops.map(sweepScreenRowHtml).join('');
   list.innerHTML = listHtml;
@@ -6360,7 +6383,7 @@ function sweepScreenRowHtml(stop) {
                    <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
                  </span>` : ''}
         <div class="ai-bulk-body">
-          <span class="ai-approved-label">Screen ${stop.n}${done ? ' <span class="sweep-read-flag">searched</span>' : ''}</span>
+          <span class="ai-approved-label">Screen ${stop.n}${done ? ' <span class="sweep-read-flag">completed</span>' : ''}</span>
           ${// The components come first and in the panel's own text colour.
             // "22 links, 19 buttons" says how busy a screenful is; the components
             // say whether it is worth paying to read, which is the actual choice.
@@ -6419,6 +6442,13 @@ function sweepEstimateHtml(sections, elements) {
   return `
     <div class="sweep-est">
       <div class="sweep-est-head">Ticked: ${sections} section${sections === 1 ? '' : 's'} in 1 screen · ${elements} element${elements === 1 ? '' : 's'}</div>
+      <!-- Three stages, each saying whether it costs anything. The survey is
+           already done and was free, and leaving it off the list made the two
+           paid rows look like the whole of the work — so "what have I spent so
+           far" had no answer on the one panel where it is decided. -->
+      <div class="sweep-est-row is-free">
+        <span>Survey</span><span>done</span><span>free</span>
+      </div>
       <div class="sweep-est-row">
         <span>Find</span><span>${mins(sections * SWEEP_EST.scanSecs)}</span>
         <span>~$${(sections * call).toFixed(2)}</span>
@@ -6426,7 +6456,7 @@ function sweepEstimateHtml(sections, elements) {
       <div class="sweep-est-row">
         <span>Build</span><span>${mins(comps * SWEEP_EST.fixSecs)}</span>
         <span>~$${(comps * SWEEP_EST.fixCall).toFixed(2)}</span>
-        <em>only if you then tick all ~${comps}</em>
+        <em>costs only for the components you then tick — all ~${comps} of them here</em>
       </div>
       <div class="sweep-est-note">${measured
         ? `Prices from this session's own calls. Times are estimates.`
@@ -7007,7 +7037,7 @@ async function scanPickedScreens(numbers) {
         sweepLog(stop.n, why, 'skip');
         stop.scanned = true;
         stop.outcome = why;
-        markScreenRead(stop);
+        await markScreenRead(stop);
         continue;
       }
 
@@ -7053,7 +7083,7 @@ async function scanPickedScreens(numbers) {
       }
       stop.scanned = true;
       stop.cost = aiCost - before;
-      markScreenRead(stop);
+      await markScreenRead(stop);
       const k = stop.found.length;
       stop.outcome = found.length
         ? `${k} component${k === 1 ? '' : 's'}` +

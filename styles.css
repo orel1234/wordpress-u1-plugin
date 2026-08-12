@@ -3032,6 +3032,11 @@ button.u1-readonly-off {
   font-weight: 600;
 }
 
+/* The stage that costs nothing, shown beside the two that do — so the answer to
+   "what have I spent so far" is on the panel where the spending is decided. */
+.sweep-est-row.is-free { opacity: 0.6; }
+.sweep-est-row.is-free > span:last-child { font-style: italic; }
+
 /* A half-finished run is the ordinary state: start it, stop it, come back
    tomorrow. The list then has one job — what is still owed, and what is paid
    for — so those are two areas rather than one list with tags in it. */
@@ -3068,6 +3073,14 @@ button.u1-readonly-off {
   border-radius: 4px;
   padding: 1px 5px;
   margin-left: 6px;
+}
+
+/* What a completed section actually gave. "Done" answers whether to stop;
+   "3 components" answers whether it was worth it. */
+.sweep-outcome {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--u1-text-muted);
 }
 
 /* The row being read, in the list you are already looking at. A percentage
