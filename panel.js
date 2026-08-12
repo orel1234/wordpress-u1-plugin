@@ -3920,6 +3920,265 @@ async function showBuildStamp() {
 showBuildStamp();
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Saying what things are, screen by screen
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The run stops on each screenful with every candidate numbered on the page,
+// and you say what they are. Two things make this worth the interruption.
+//
+// It is FREE. buildTemplate → saveMappingEntry → applyMappingsBatch is already
+// a local pipeline; the only thing the model contributes is the sub-field
+// selectors, and describeComponent measures those instead. Name everything on a
+// screenful and that screenful costs nothing.
+//
+// And it accepts a GROUP. The collector sees six .tab-bar__btn as six buttons —
+// which is correct, they are buttons — and the component is the strip they
+// form. There is no single candidate to label, so labelling one at a time could
+// never have described it. That strip is the one the model failed to identify.
+const sweepLabel = { on: false, resolve: null, marks: new Set(), busy: false };
+
+document.getElementById('sweepLabelTick')?.addEventListener('change', (e) => {
+  sweepLabel.on = !!e.target.checked;
+});
+
+/**
+ * Every component a person named, in the corpus's own shape.
+ *
+ * Local and private (`__`), because it is evidence rather than site
+ * configuration: it belongs to whoever is building the detector, not to the
+ * client's site, and it must never travel in a project export.
+ */
+const LABELS_KEY = (U1Store.PRIVATE_PREFIX || '__') + 'labels';
+
+async function rememberLabel(entry) {
+  try {
+    const got = await U1Store.get([LABELS_KEY]);
+    const list = got[LABELS_KEY] || [];
+    // One per root per type — naming the same thing twice is a correction, not
+    // a second example.
+    const at = list.findIndex((x) => x.root === entry.root && x.type === entry.type);
+    if (at >= 0) list[at] = { ...list[at], ...entry, at: Date.now() };
+    else list.push({ ...entry, at: Date.now() });
+    await U1Store.set({ [LABELS_KEY]: list.slice(-500) });
+  } catch {}
+}
+
+document.getElementById('exportLabelsBtn')?.addEventListener('click', async () => {
+  const got = await U1Store.get([LABELS_KEY]);
+  const list = got[LABELS_KEY] || [];
+  const status = document.getElementById('sweepPicksStatus');
+  if (!list.length) {
+    showNotice(status, 'Nothing named yet. Turn on "let me say what things are" and name something.', 'info', 6000);
+    return;
+  }
+  // The shape verify-detect reads, field for field.
+  const doc = {
+    url: list[0].url || currentHostname,
+    note: [
+      'Written by naming components in the panel while looking at the page —',
+      'not by running the tool and blessing what it found. That distinction is',
+      'the whole value of this file: a corpus built from the tool\'s own output',
+      'can only ever score 100%.',
+    ],
+    components: list.map((l) => {
+      const c = { type: l.type, root: l.root, why: l.why };
+      if (l.fields && Object.keys(l.fields).length) c.fields = l.fields;
+      if (l.matches > 1) c.matches = l.matches;
+      return c;
+    }),
+  };
+  const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${currentHostname || 'site'}.labels.json`;
+  a.click();
+  showNotice(status, `${list.length} named component${list.length === 1 ? '' : 's'} exported. ` +
+    'Drop it in fixtures/ and verify-detect will score against it from then on.', 'success', 9000);
+});
+
+/** Types worth offering. Everything the builder can actually create. */
+const LABEL_TYPES = () => Object.keys(COMPONENT_SCHEMAS);
+
+/**
+ * Stop, show what is on this screenful, and wait.
+ * Resolves { labelled:[], done:boolean, stopped:boolean }.
+ */
+function labelScreen(stop, collected, tab) {
+  const host = document.getElementById('sweepLabel');
+  if (!host) return Promise.resolve({ labelled: [], done: false });
+
+  sweepLabel.marks = new Set();
+  const made = [];
+  const cands = collected.candidates || [];
+  // Worth asking about: anything the collector has a guess for, or that showed
+  // a click signal. The rest are links, buttons and text — real elements, but
+  // not a question. They stay one fold away, because sometimes the noise IS the
+  // component: six plain buttons that are a tab strip.
+  const interesting = cands.filter((c) => c.component || (c.signals && c.signals.length));
+  const plain = cands.filter((c) => interesting.indexOf(c) === -1);
+
+  const row = (c) => `
+    <label class="lbl-row" data-mark="${c.mark}">
+      <input type="checkbox" class="lbl-tick" value="${c.mark}">
+      <span class="lbl-n">${c.mark}</span>
+      <span class="lbl-tag">${escapeHtml(c.tag)}</span>
+      <span class="lbl-sel">${escapeHtml(c.selector || '(no selector)')}</span>
+      ${c.component ? `<span class="lbl-guess">${escapeHtml(c.component)}${c.maybe ? '?' : ''}</span>` : ''}
+      ${c.closed ? '<span class="lbl-flag">closed</span>' : ''}
+      ${c.matches > 1 ? `<span class="lbl-flag">${c.matches} matches</span>` : ''}
+    </label>`;
+
+  host.style.display = '';
+  host.innerHTML = `
+    <div class="lbl-box">
+      <div class="lbl-head">
+        <strong>Screen ${stop.n}</strong>
+        <span class="lbl-sub">${cands.length} candidate${cands.length === 1 ? '' : 's'} numbered on the page.
+          Tick what belongs together, say what it is. Nothing you name costs anything.</span>
+      </div>
+      <div class="lbl-list">${interesting.map(row).join('') || '<p class="lbl-sub">Nothing here carries a hint.</p>'}</div>
+      ${plain.length ? `<details class="lbl-plain"><summary>${plain.length} plain element${plain.length === 1 ? '' : 's'} — links, buttons, text</summary>
+        <p class="lbl-sub">Tick several of these when they are one component: six buttons that are a tab strip do not
+        appear as a tab strip here, they appear as six buttons.</p>
+        <div class="lbl-list">${plain.map(row).join('')}</div></details>` : ''}
+      <div class="lbl-made" id="lblMade"></div>
+      <div class="lbl-act">
+        <select id="lblType" aria-label="What is it?">
+          ${LABEL_TYPES().map((t) => `<option value="${t}">${t}</option>`).join('')}
+        </select>
+        <button class="btn-outline btn-sm" id="lblAdd" disabled>These are one component</button>
+      </div>
+      <div class="lbl-go">
+        <button class="btn-primary btn-sm" id="lblFree">Nothing else here — next screen, free</button>
+        <button class="btn-outline btn-sm" id="lblAsk">Ask Claude about the rest (1 call)</button>
+        <button class="btn-ghost btn-sm" id="lblStop">Stop the run</button>
+      </div>
+      <div class="map-mode-hint" id="lblStatus"></div>
+    </div>`;
+
+  const status = document.getElementById('lblStatus');
+  const addBtn = document.getElementById('lblAdd');
+  const sync = () => {
+    sweepLabel.marks = new Set([...host.querySelectorAll('.lbl-tick:checked')].map((t) => Number(t.value)));
+    addBtn.disabled = sweepLabel.marks.size === 0 || sweepLabel.busy;
+  };
+
+  return new Promise((resolve) => {
+    const finish = (out) => {
+      host.onchange = host.onclick = host.onmouseover = host.onmouseout = null;
+      host.style.display = 'none';
+      host.innerHTML = '';
+      resolve(out);
+    };
+
+    host.onchange = sync;
+
+    // Hover a row, light the element on the page. showMark has been written and
+    // exported since the set-of-mark work and never had a caller.
+    host.onmouseover = (e) => {
+      const r = e.target.closest('.lbl-row');
+      if (!r || !tab) return;
+      inPage(tab.id, (n) => window.__u1SelectorIntel.showMark(n), [Number(r.dataset.mark)]).catch(() => {});
+    };
+
+    host.onclick = async (e) => {
+      if (sweepLabel.busy) return;
+      if (e.target.closest('#lblStop')) { aiSweep.abort = true; finish({ stopped: true }); return; }
+      if (e.target.closest('#lblAsk')) { finish({ labelled: made, done: false }); return; }
+      if (e.target.closest('#lblFree')) { finish({ labelled: made, done: true }); return; }
+
+      if (!e.target.closest('#lblAdd')) return;
+      const marks = [...sweepLabel.marks];
+      if (!marks.length) return;
+      const type = document.getElementById('lblType').value;
+      sweepLabel.busy = true;
+      addBtn.disabled = true;
+      try {
+        const res = await labelToMapping(type, marks, stop, tab);
+        if (res.err) { showNotice(status, res.err, 'error', 9000); }
+        else {
+          made.push(res.found);
+          document.getElementById('lblMade').insertAdjacentHTML('beforeend',
+            `<div class="lbl-done">✓ ${escapeHtml(res.found.type)} on <code>${escapeHtml(res.found.sel)}</code>` +
+            `<span class="lbl-sub"> — ${escapeHtml(res.found.why)}</span></div>`);
+          host.querySelectorAll('.lbl-tick:checked').forEach((t) => {
+            t.checked = false;
+            t.closest('.lbl-row').classList.add('is-used');
+          });
+        }
+      } finally {
+        sweepLabel.busy = false;
+        sync();
+      }
+    };
+    sync();
+  });
+}
+
+/**
+ * A type and some marks become a saved, applied mapping — with no model call.
+ *
+ * describeComponent measures the sub-fields; buildTemplate, saveMappingEntry and
+ * applyMappingsBatch are the same three the manual route has always used, so
+ * this mapping is indistinguishable from a hand-built one and carries the same
+ * narrowing, role question and export.
+ */
+async function labelToMapping(type, marks, stop, tab) {
+  let desc;
+  try {
+    desc = await inPage(tab.id,
+      (t, m) => window.__u1SelectorIntel.describeComponent(t, m), [type, marks]);
+  } catch (e) { return { err: 'Could not read the page: ' + e.message }; }
+  if (!desc) return { err: 'Could not read the page.' };
+  if (desc.err) return { err: desc.err };
+
+  const tpl = buildTemplate(type, desc.root, desc.fields || {}, {});
+  if (!tpl) return { err: `Could not build a ${type} mapping from that.` };
+
+  let saved;
+  try { saved = await saveMappingEntry(tpl, { refreshUi: false }); }
+  catch (e) { return { err: 'Could not save it: ' + e.message }; }
+  if (saved && saved.cancelled) return { err: 'Not saved — the role question was declined.' };
+
+  const res = await applyMappingsBatch([{
+    type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg,
+    config: tpl.config, overwriteRole: tpl.overwriteRole,
+  }]);
+  const verdict = describeApply(res, tpl);
+  loadMappingsList();
+
+  // Keep it as ground truth too.
+  //
+  // fixtures/step.labels.json is the corpus verify-detect scores against, and
+  // its own header insists it be written by reading the markup rather than by
+  // running the tool and blessing the output — "a corpus built from the tool's
+  // own output can only ever score 100%". A label you typed is exactly that
+  // kind of source: you looked at the page and said what it is.
+  //
+  // Kept locally and exported on request; nothing writes the fixture directly.
+  rememberLabel({
+    type,
+    root: desc.root,
+    fields: desc.fields || {},
+    matches: (desc.counts && desc.counts[Object.keys(desc.fields || {})[0]]) || undefined,
+    why: desc.why || 'named by hand during a scan',
+    url: (stop && stop.url) || currentHostname,
+  });
+
+  return {
+    found: {
+      id: `s${stop.n}L${marks.join('_')}`,
+      label: `${type} — you named it`,
+      type,
+      sel: desc.root,
+      why: (desc.why || 'measured from what you ticked') + (verdict.ok ? '' : ' · ' + verdict.msg),
+      needsWork: true,
+      done: true,          // already saved and applied; not work for a later stage
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  What is on screen — one stage at a time
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -4750,7 +5009,14 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     // reached the run's outer catch and ended everything.
     shot = null;
   } finally {
-    await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+    // `keepMarks` leaves the numbers on the page. They are the only binding
+    // between a row in the panel and an element in the page — clearMarks strips
+    // the attribute — so anything that wants to ask "which element is number 7"
+    // after the capture has to hold onto them. The caller that does is the
+    // labelling pause; everyone else still gets the page left as it was found.
+    if (!(opts && opts.keepMarks)) {
+      await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+    }
   }
   if (!shot) return { err: 'Could not capture the page.' };
 
@@ -7366,7 +7632,12 @@ async function scanPickedScreens(numbers) {
       await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
       await new Promise(r => setTimeout(r, SWEEP_SETTLE_MS));
 
-      const collected = await collectRegion(tab, '', handled, { drop: (c) => c.sticky && stop.n > 1 });
+      const collected = await collectRegion(tab, '', handled, {
+        drop: (c) => c.sticky && stop.n > 1,
+        // The numbers stay on the page while you label, because they are the
+        // only binding between a row here and an element there.
+        keepMarks: sweepLabel.on,
+      });
       if (collected.err) {
         sweepLog(stop.n, collected.err, 'err');
         // Attempted and failed is not the same as never tried, and it looked
@@ -7402,10 +7673,41 @@ async function scanPickedScreens(numbers) {
         continue;
       }
 
+      // ── You say what it is ────────────────────────────────────────────────
+      // The run stops here, with the numbers still drawn on the page, and waits.
+      // Everything you name is built from measurement and costs nothing; only
+      // what is left over is sent to the model. Name it all and the screenful
+      // is free.
+      let labelled = [];
+      if (!Array.isArray(stop.found)) stop.found = [];
+      if (sweepLabel.on) {
+        const answer = await labelScreen(stop, collected, tab);
+        if (answer.stopped) break;
+        labelled = answer.labelled || [];
+        if (labelled.length) {
+          for (const made of labelled) {
+            stop.found.push(made);
+            handled.add(made.sel);
+          }
+        }
+        // Nothing left for the model to look at: the screen is done, unpaid.
+        if (answer.done) {
+          stop.scanned = true;
+          stop.cost = 0;
+          const k = labelled.length;
+          stop.outcome = k
+            ? `${k} component${k === 1 ? '' : 's'} you named — no model call, nothing charged`
+            : 'you marked nothing here as a component — no model call, nothing charged';
+          sweepLog(stop.n, stop.outcome, k ? '' : 'skip', 0);
+          await markScreenRead(stop);
+          continue;
+        }
+      }
+
       const part = await U1AI.discover({
         screenshot: collected.shot,
         context: {
-          candidates: collected.candidates,
+          candidates: collected.candidates.filter((c) => !handled.has(c.selector)),
           headings: collected.headings,
           title: collected.title,
           url: collected.url,
@@ -7428,7 +7730,11 @@ async function scanPickedScreens(numbers) {
       // empty even though every component on it still needed mapping.
       const found = (part.components || []).filter(c => c && c.containerSelector);
       let seenAgain = 0;
-      stop.found = [];
+      // Keep what you named. This used to be `stop.found = []`, which is right
+      // when the model is the only source and wrong the moment it is not —
+      // everything labelled on this screenful before the call would have been
+      // thrown away by the call's own answer.
+      stop.found = (stop.found || []).filter((f) => f.done);
       for (const c of found) {
         // Never twice, whatever brought it back: a sticky bar, a repeated
         // footer, or a component straddling the overlap between two screenfuls.
@@ -7447,8 +7753,10 @@ async function scanPickedScreens(numbers) {
       stop.cost = aiCost - before;
       await markScreenRead(stop);
       const k = stop.found.length;
-      stop.outcome = found.length
+      const named = stop.found.filter((f) => f.done).length;
+      stop.outcome = (found.length || named)
         ? `${k} component${k === 1 ? '' : 's'}` +
+          (named ? ` · ${named} you named, free` : '') +
           (seenAgain ? ` · ${seenAgain} already mapped or found on an earlier screen` : '')
         : 'read, and nothing on it needs mapping';
       sweepLog(stop.n, stop.outcome, k ? '' : 'skip', stop.cost);
@@ -7465,6 +7773,11 @@ async function scanPickedScreens(numbers) {
     aiSweep.progress = null;
     btn.disabled = false;
     document.getElementById('sweepStopBtn').style.display = 'none';
+    // The labelling pause asks for the marks to be LEFT on the page, so the run
+    // owns taking them down — including when it ends by Stop, by a throw, or in
+    // the middle of a screenful.
+    const lblHost = document.getElementById('sweepLabel');
+    if (lblHost) { lblHost.style.display = 'none'; lblHost.innerHTML = ''; }
     try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
     try { await inPage(tab.id, (y) => window.scrollTo(0, y), [startedAt]); } catch {}
     // Regroup: the rows were marked one by one while the run went, and now the

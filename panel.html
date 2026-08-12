@@ -450,6 +450,15 @@
            what a thing IS rather than what it is called, and switching it off
            only made the answers worse — there was never a reason to. What it
            does still has to be stated, so the hint stays and the checkbox goes. -->
+      <label class="sweep-all" for="sweepLabelTick">
+        <input type="checkbox" id="sweepLabelTick">
+        Stop on each screen and let me say what things are
+      </label>
+      <div class="input-hint" style="display:block;margin:-4px 0 0 24px;">
+        The scan pauses with every candidate numbered on the page. What you name is
+        built by measuring the markup — no model call, nothing charged. Name everything
+        on a screen and that screen is free.
+      </div>
       <div class="input-hint" style="display:block;">
         Each component is opened to see what it is: menus, tabs and accordions are
         pressed and watched, then closed again. Never a link, a submit, or anything
@@ -463,6 +472,10 @@
            "Clear" buttons — so a running sweep put two buttons on screen that
            belonged to the other route and would have acted on nothing. -->
       <div id="sweepBusy"></div>
+      <!-- The run stops on each screenful and asks. Everything named here is
+           built from measurement and costs nothing; only what is left over is
+           sent to the model. -->
+      <div id="sweepLabel" style="display:none;"></div>
       <div class="sweep-log" id="sweepLog" style="display:none;"></div>
       <div class="map-mode-hint" id="sweepStatus" style="margin:4px 0 0;"></div>
     </div>
@@ -490,6 +503,8 @@
       <div id="sweepPicksList"></div>
       <div class="ai-found-actions">
         <button class="btn-primary" id="sweepMakeBtn">✨ Make the ticked ones accessible</button>
+        <button class="btn-ghost btn-sm" id="exportLabelsBtn"
+                title="Everything you named by hand, in the format the detection score reads. Drop it in fixtures/ and it is measured from then on.">Export what I named</button>
         <button class="btn-ghost btn-sm" id="sweepPicksClearBtn">Clear</button>
       </div>
       <div class="map-mode-hint" id="sweepPicksStatus" style="margin:4px 0 0;"></div>

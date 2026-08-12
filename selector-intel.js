@@ -1401,6 +1401,221 @@
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  //  F2. A human's answer, turned into a component — with no model call.
+  //
+  //  The pipeline that turns a type and a selector into a working mapping is
+  //  already local: buildTemplate → saveMappingEntry → applyMappingsBatch. The
+  //  only thing the model supplies is the SUB-FIELDS, and several of those can
+  //  be measured instead of asked. So a person saying "these six buttons are a
+  //  tab strip" is enough, and it costs nothing.
+  //
+  //  It has to accept a GROUP, not one element. The collector sees six
+  //  .tab-bar__btn as six buttons — which is correct, they are buttons — and the
+  //  component is the strip they form. There is no single candidate to label.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // The field that holds the repeated parts, per type. Everything else is either
+  // the root or something no measurement can supply.
+  const ITEM_FIELD = {
+    menu: 'items', tabs: 'tab', listbox: 'options', combobox: 'options',
+    radio: 'radioButton', carousel: 'slide', pagination: 'pageButtons',
+    table: 'row', grid: 'row', accordion: 'headerSelector',
+  };
+  // Roots too broad to be a component. A selection whose common ancestor is one
+  // of these is spread across the page, not around a component, and building a
+  // mapping on it quietly would be worse than refusing.
+  const TOO_BROAD = { BODY: 1, HTML: 1, MAIN: 1 };
+
+  /**
+   * A field selector that means what it says GLOBALLY.
+   *
+   * commonSelectorFor answers for the container it is handed: given a <ul>, `a`
+   * covers its links exactly and nothing more. U1 resolves against the whole
+   * document, where `a` is every link on the site. This is the same fault that
+   * was fixed for listbox options earlier, and it belongs here once rather than
+   * in each branch — a bare tag is refused even when it matches the right count
+   * today, because it is right only by accident of what else is on the page.
+   */
+  function scopedField(rootEl, rootSel, els) {
+    if (!els.length) return null;
+    const got = commonSelectorFor(rootEl, els, rootSel);
+    if (!got || !got.selector) return null;
+    const bare = got.selector;
+    const countOf = (sel) => { try { return document.querySelectorAll(sel).length; } catch (e) { return -1; } };
+    const isTagOnly = /^[a-z][a-z0-9]*$/i.test(bare);
+    if (!isTagOnly && countOf(bare) === els.length && isU1Valid(bare)) return bare;
+    // Anchor it on the root. `>` is a legal U1 combinator; a descendant space is
+    // not, and neither is `*` — so the chain has to be built out of the real
+    // structure rather than wildcarded. The overwhelmingly common shape is one
+    // level of wrapper: <ul> > <li> > <a>. Ask what the parents have in common
+    // and put that in the middle.
+    const cands = [rootSel + '>' + bare];
+    const parents = [];
+    for (const el of els) {
+      const p = el.parentElement;
+      if (p && p !== rootEl && rootEl.contains(p) && parents.indexOf(p) === -1) parents.push(p);
+    }
+    if (parents.length) {
+      const mid = commonSelectorFor(rootEl, parents, rootSel);
+      if (mid && mid.selector) {
+        // mid may already come back anchored on the root; do not anchor twice.
+        const midBare = mid.selector.indexOf(rootSel + '>') === 0
+          ? mid.selector.slice(rootSel.length + 1) : mid.selector;
+        cands.push(rootSel + '>' + midBare + '>' + bare);
+      }
+    }
+    for (const cand of cands) {
+      const n = normalize(cand);
+      if (isU1Valid(n) && countOf(n) === els.length) return n;
+    }
+    if (!isTagOnly && isU1Valid(bare)) return bare;   // wider than asked, but honest
+    return null;
+  }
+
+  /** The nearest element containing all of them. */
+  function commonAncestor(els) {
+    if (!els.length) return null;
+    let node = els[0];
+    for (let i = 1; i < els.length; i++) {
+      while (node && !node.contains(els[i])) node = node.parentElement;
+      if (!node) return null;
+    }
+    // A single element is its own answer, not its parent's.
+    return node;
+  }
+
+  /**
+   * Resolve marks to elements. The mark attribute is the only binding there is,
+   * and it is stripped by clearMarks — so a caller that wants to use this after
+   * a capture has to have asked for the marks to be left up.
+   */
+  function elementsForMarks(marks) {
+    const out = [];
+    for (const m of marks || []) {
+      const el = document.querySelector('[' + MARK_ATTR + '="' + String(m) + '"]');
+      if (el && out.indexOf(el) === -1) out.push(el);
+    }
+    return out;
+  }
+  function elementForMark(mark) {
+    return document.querySelector('[' + MARK_ATTR + '="' + String(mark) + '"]');
+  }
+
+  /**
+   * `type` plus the marks a person ticked → the selectors a mapping needs.
+   *
+   * Returns { root, fields, why } or { err }. Nothing here calls a model, and
+   * every selector is checked against U1's own validator before it is returned:
+   * a field that would be rejected at runtime is worse than an absent one,
+   * because it fails silently.
+   */
+  function describeComponent(type, marks) {
+    const els = elementsForMarks(marks);
+    if (!els.length) return { err: 'None of those marks are on the page any more.' };
+
+    const single = els.length === 1;
+    // One element ticked: it IS the component's root. Several: the component is
+    // whatever contains them all, and they are its parts.
+    let rootEl = single ? els[0] : commonAncestor(els);
+    if (!rootEl) return { err: 'Those elements have no common parent.' };
+    if (!single && TOO_BROAD[rootEl.tagName]) {
+      return { err: 'Those elements only share <' + rootEl.tagName.toLowerCase() +
+                    '> as a parent, so they are spread across the page rather than ' +
+                    'forming one component. Tick a tighter group.' };
+    }
+
+    let rootSel = robustSelector(rootEl);
+    if (!rootSel || !isU1Valid(rootSel)) {
+      return { err: 'No selector U1 will accept could be built for that container.' };
+    }
+
+    const fields = {};
+    const why = [];
+    const itemField = ITEM_FIELD[type];
+
+    if (!single && itemField) {
+      const got = scopedField(rootEl, rootSel, els);
+      if (got) {
+        fields[itemField] = got;
+        why.push(itemField + ' from the ' + els.length + ' elements you ticked');
+      }
+    }
+
+    // Type-specific measurements, the same ones the tool already trusts over
+    // the model elsewhere.
+    if (type === 'menu' && !fields.items) {
+      // menuItemsRoot DESCENDS to the item level, so handed the item level
+      // itself it answers null — correctly, there is nowhere further down. When
+      // a person ticks the <ul> directly that is the answer already, so fall
+      // back to the element itself rather than treating null as failure.
+      const root = menuItemsRoot(rootSel);
+      const rsel = (root && (root.selector || root)) || rootSel;
+      if (isU1Valid(rsel)) {
+        const holder = document.querySelector(rsel);
+        // The items are what a person ACTIVATES, which is the rule that already
+        // governs listbox options: where every row holds exactly one link or
+        // button, that is the item — role on a wrapper puts the focus on one
+        // element and the action on another.
+        const kids = holder ? Array.prototype.slice.call(holder.children) : [];
+        const inner = kids.map((k) => {
+          const hits = k.querySelectorAll('a[href],button');
+          return hits.length === 1 ? hits[0] : k;
+        });
+        const use = inner.every((x, i) => x !== kids[i]) ? inner : kids;
+        const got = use.length ? scopedField(holder, rsel, use) : null;
+        if (got) {
+          fields.items = got;
+          why.push('items measured from the item level inside ' + rsel);
+        }
+      }
+    }
+    if (type === 'tabs') {
+      const panels = tabPanelsFor(rootSel, fields.tab || 'button');
+      const psel = panels && (panels.selector || panels);
+      if (psel && isU1Valid(psel)) {
+        fields.tabPanel = psel;
+        why.push('tabPanel measured from what the tabs control');
+      }
+    }
+    if (type === 'listbox' || type === 'combobox') {
+      const shape = listboxShape(rootSel);
+      if (shape) {
+        // The listbox is the LIST — not the wrapper that also holds the button.
+        // Ticking the wrapper is the natural thing to do and the wrong root, and
+        // the measurement already knows which is which.
+        if (shape.listbox && isU1Valid(shape.listbox) && shape.listbox !== rootSel) {
+          rootSel = shape.listbox;
+          why.push('rooted on the list itself, not the wrapper around it');
+        }
+        if (shape.options && isU1Valid(shape.options)) fields.options = shape.options;
+        if (shape.trigger && isU1Valid(shape.trigger)) fields.trigger = shape.trigger;
+        why.push('the list, its trigger and its options measured from the shape');
+      }
+    }
+    if (type === 'dialog') {
+      const t = openedBy(rootSel);
+      const tsel = t && (t.selector || t);
+      if (tsel && isU1Valid(tsel)) {
+        fields.trigger = tsel;
+        why.push('trigger measured from what opens it');
+      }
+    }
+
+    return {
+      root: rootSel,
+      fields,
+      // The count is what tells you a selector has quietly widened past the
+      // elements you actually ticked.
+      counts: Object.keys(fields).reduce((a, k) => {
+        try { a[k] = document.querySelectorAll(fields[k]).length; } catch (e) { a[k] = -1; }
+        return a;
+      }, {}),
+      picked: els.length,
+      why: why.join(' · '),
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   //  G. extractComponent — what stage 2 of the AI flow reads.
   //
   //  The container's real markup, cleaned of everything that is noise to a
@@ -1982,6 +2197,8 @@
     // set-of-mark (AI review)
     collectCandidates, drawMarks, drawComponentMarks, clearMarks, showMark, extractComponent,
     highlightSelector,
+    // a human's answer, without a model
+    describeComponent, elementForMark, elementsForMarks, commonAncestor, ITEM_FIELD,
   };
 
   root.__u1SelectorIntel = api;

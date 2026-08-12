@@ -568,6 +568,79 @@ console.log('\none stage at a time');
     stray.length === 0, stray.join(' | '));
 }
 
+// ── Saying what things are, screen by screen ────────────────────────────────
+// The run stops on each screenful with every candidate numbered on the page and
+// asks. What matters structurally: the marks have to survive the capture, the
+// pause has to honour Stop, what you name must not be thrown away by the model
+// call that follows, and a fully-named screenful must cost nothing.
+console.log('\nsaying what things are');
+{
+  const src = panelSrc;
+
+  // clearMarks strips the only binding between a row here and an element there.
+  check('the capture can be asked to leave the numbers on the page',
+    /keepMarks: sweepLabel\.on/.test(src) &&
+    /if \(!\(opts && opts\.keepMarks\)\) \{\n\s*await inPage\(tab\.id, \(\) => window\.__u1SelectorIntel\.clearMarks\(\)\);/.test(src));
+  check('…and the run takes them down however it ends',
+    /const lblHost = document\.getElementById\('sweepLabel'\);[\s\S]{0,200}clearMarks/.test(src));
+
+  // Stop during a pause must leave cleanly, and the screenful must not be
+  // recorded as read — it was not.
+  const pause = /if \(sweepLabel\.on\) \{[\s\S]*?\n      \}/.exec(src)[0];
+  check('Stop during the pause breaks the run', /answer\.stopped\) break;/.test(pause));
+  check('…and a screenful is only marked read on a path that finishes it',
+    /answer\.done\)[\s\S]{0,400}markScreenRead\(stop\)/.test(pause));
+
+  // The whole point: a screenful you name completely is not sent anywhere.
+  check('a fully-named screenful costs nothing and says so',
+    /stop\.cost = 0;/.test(pause) && /no model call, nothing charged/.test(pause));
+  check('…and what is left over is what the model is shown, not everything',
+    /candidates: collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\)/.test(src));
+
+  // The model's answer used to replace stop.found wholesale, which is right
+  // when it is the only source and wrong the moment it is not.
+  check('the model call does not throw away what you named',
+    /stop\.found = \(stop\.found \|\| \[\]\)\.filter\(\(f\) => f\.done\);/.test(src));
+
+  // A label becomes a mapping through the same three functions the manual route
+  // uses, so it carries the narrowing, the role question and the export.
+  const toMap = /async function labelToMapping[\s\S]*?\n}/.exec(src)[0];
+  check('a label goes through buildTemplate → saveMappingEntry → applyMappingsBatch',
+    /buildTemplate\(type, desc\.root/.test(toMap) &&
+    /saveMappingEntry\(tpl/.test(toMap) &&
+    /applyMappingsBatch\(/.test(toMap));
+  check('…and asks the page to measure the fields rather than a model',
+    /describeComponent\(t, m\)/.test(toMap) && !/U1AI\./.test(toMap));
+  check('…and a declined role question does not leave a half-made mapping',
+    /saved\.cancelled\) return \{ err/.test(toMap));
+
+  // Hovering a row lights the element. showMark has been exported since the
+  // set-of-mark work and never had a caller.
+  check('hovering a row lights that element on the page',
+    /showMark\(n\)/.test(src));
+  // And the group case, which is the reason this exists at all.
+  check('several ticked rows can be declared ONE component',
+    /These are one component/.test(src) && /const marks = \[\.\.\.sweepLabel\.marks\]/.test(src));
+  check('…including from the folded-away plain elements',
+    /lbl-plain/.test(src) && /six buttons that are a tab strip/.test(src));
+
+  // What you name is also ground truth. fixtures/step.labels.json is what
+  // verify-detect scores against, and its own header insists it be written by
+  // reading the page rather than by blessing the tool's output — which is
+  // exactly what a hand-typed label is.
+  const exp = /getElementById\('exportLabelsBtn'\)[\s\S]*?\n\}\);/.exec(src)[0];
+  check('what you named is kept as ground truth',
+    /rememberLabel\(\{/.test(src) && /LABELS_KEY/.test(src));
+  check('…privately, so it never travels in a project export',
+    /PRIVATE_PREFIX \|\| '__'\) \+ 'labels'/.test(src));
+  check('…and exports in the corpus shape, field for field',
+    /components: list\.map/.test(exp) && /type: l\.type, root: l\.root, why: l\.why/.test(exp));
+  check('…carrying the warning about what makes a corpus worthless',
+    /can only ever score 100%/.test(exp));
+  check('naming the same thing twice is a correction, not a second example',
+    /findIndex\(\(x\) => x\.root === entry\.root && x\.type === entry\.type\)/.test(src));
+}
+
 // ── Switching tabs mid-run ──────────────────────────────────────────────────
 // captureVisibleTab throws when the window is minimised, and that throw used to
 // escape collectRegion and end the whole run. Reported: minimise, switch tabs,

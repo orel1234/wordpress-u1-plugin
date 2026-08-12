@@ -184,6 +184,97 @@ console.log('\na class a person wrote beats a description of the element');
     sel('<div data-t id="tt" class="finder__tabs" aria-label="x"></div>') === '#tt');
 }
 
+console.log('\na person says what it is, and no model is asked');
+{
+  // The pipeline from a type and a selector to a working mapping is already
+  // local. All the model supplies is the sub-fields, and these can be measured
+  // — so "these six buttons are a tab strip" is enough, and it costs nothing.
+  const bench = (body) => {
+    const d = new JSDOM(`<body><main>${body}</main></body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+    const P = d.window.HTMLElement.prototype;
+    Object.defineProperty(P, 'offsetWidth', { get() { return 40; } });
+    Object.defineProperty(P, 'offsetHeight', { get() { return 20; } });
+    P.getClientRects = function () { return [{ width: 40, height: 20, top: 5, left: 5, bottom: 25, right: 45 }]; };
+    P.getBoundingClientRect = function () { return { width: 40, height: 20, top: 5, left: 5, bottom: 25, right: 45 }; };
+    d.window.eval(INTEL);
+    const doc = d.window.document;
+    let n = 0;
+    const mark = (sel) => {
+      const got = [...doc.querySelectorAll(sel)];
+      const marks = got.map((el) => { el.setAttribute('data-u1-mark', String(++n)); return n; });
+      return marks;
+    };
+    return { I: d.window.__u1SelectorIntel, mark, doc };
+  };
+
+  // The strip the model could not identify: six buttons over ONE re-rendered
+  // region, data-controls naming an id that is not on the page. The collector
+  // sees six buttons, correctly — the component is the strip they form, and
+  // there is no single candidate to label.
+  {
+    const b = bench(
+      '<div class="tab-bar" id="dealTabs">' +
+      ['week', 'running', 'sneakers', 'boots', 'kids', 'clearance'].map((t, i) =>
+        `<button class="tab-bar__btn" id="dealTab-${t}" data-controls="dealPanel" data-selected="${i === 0}">${t}</button>`).join('') +
+      '</div><div class="deal-grid" id="dealGrid" data-labelledby="dealTab-week"></div>');
+    const marks = b.mark('.tab-bar__btn');
+    const got = b.I.describeComponent('tabs', marks);
+    check('six ticked buttons become a tab strip rooted on their container',
+      got.root === '#dealTabs', JSON.stringify(got));
+    check('…with the tab selector taken from what was ticked',
+      got.fields.tab === '.tab-bar__btn' && got.counts.tab === 6, JSON.stringify(got.fields));
+    check('…and the panel measured, on the strip the model could not identify',
+      got.fields.tabPanel === '.deal-grid', JSON.stringify(got.fields));
+  }
+
+  // The field must mean the same thing to U1, which resolves against the whole
+  // document. `a` is exact inside a <ul> and means every link on the site.
+  {
+    const b = bench('<nav><ul class="nav-list"><li><a href="/a">A</a></li>' +
+      '<li><a href="/b">B</a></li><li><a href="/c">C</a></li></ul></nav>' +
+      '<a href="/x">stray</a><a href="/y">stray</a>');
+    const [ul] = b.mark('.nav-list');
+    const got = b.I.describeComponent('menu', [ul]);
+    check('a menu\'s items are scoped, not left as a bare tag',
+      got.fields.items === '.nav-list>li>a', JSON.stringify(got.fields));
+    check('…and match only the three in the menu, not the five on the page',
+      got.counts.items === 3, String(got.counts.items));
+  }
+
+  // Ticking the wrapper is the natural thing to do and the wrong root. The
+  // measurement already knows which element is the list.
+  {
+    const b = bench('<div class="click-nav"><button class="clicker">Sign In</button>' +
+      '<ul class="signin-dropdown"><li><a href="/m">M</a></li><li><a href="/p">P</a></li></ul></div>');
+    const [wrap] = b.mark('.click-nav');
+    const got = b.I.describeComponent('listbox', [wrap]);
+    check('a listbox is rooted on the list, not the wrapper that also holds the button',
+      got.root === '.signin-dropdown', got.root);
+    check('…with the trigger and the options measured',
+      got.fields.trigger === '.clicker' && got.fields.options === '.signin-dropdown>li>a',
+      JSON.stringify(got.fields));
+  }
+
+  // A selection spread across the page is not a component, and building a
+  // mapping on <body> quietly would be worse than refusing.
+  {
+    const b = bench('<div class="one"><button class="x">a</button></div>' +
+      '<div class="two"><button class="x">b</button></div>');
+    const marks = b.mark('.x');
+    // Their common ancestor here is <main>, which is in the too-broad list.
+    const got = b.I.describeComponent('tabs', marks);
+    check('elements with only a landmark in common are refused, and told why',
+      !!got.err && /spread across the page/.test(got.err), JSON.stringify(got));
+  }
+
+  {
+    const b = bench('<div class="k"><button class="x">a</button></div>');
+    check('a mark that is no longer on the page is refused rather than throwing',
+      /no longer|not .*on the page|any more/i.test(b.I.describeComponent('tabs', [99]).err || ''),
+      JSON.stringify(b.I.describeComponent('tabs', [99])));
+  }
+}
+
 console.log('\nthe hover highlight follows the page it is drawn on');
 {
   const boot = () => {
