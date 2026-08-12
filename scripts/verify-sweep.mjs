@@ -589,7 +589,7 @@ console.log('\nsaying what things are');
   const pause = /if \(sweepLabel\.on\) \{[\s\S]*?\n      \}/.exec(src)[0];
   check('Stop during the pause breaks the run', /answer\.stopped\) break;/.test(pause));
   check('…and a screenful is only marked read on a path that finishes it',
-    /answer\.done\)[\s\S]{0,400}markScreenRead\(stop\)/.test(pause));
+    /answer\.done\)[\s\S]{0,500}markScreenRead\(stop\)/.test(pause));
 
   // The whole point: a screenful you name completely is not sent anywhere.
   check('a fully-named screenful costs nothing and says so',
@@ -708,7 +708,7 @@ console.log('\nchoosing screens');
     sweepBusyTimer: null,
     setInterval: (...a) => w2.setInterval(...a),
     clearInterval: (...a) => w2.clearInterval(...a),
-    SWEEP_EST: { scanSecs: 15, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 },
+    SWEEP_EST: { scanBase: 10, scanPerElement: 0.85, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 },
     aiSweep: { phase: 'screens', stops: [
       { n: 1, thumb: PIXEL, count: 14, inventory: '6 links, 3 buttons', sticky: 27, truncated: false, found: [] },
       { n: 2, thumb: PIXEL, count: 0,  inventory: '',                   sticky: 0,  truncated: false, found: [] },
@@ -720,7 +720,7 @@ console.log('\nchoosing screens');
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
                 lift('markScreenReading'), lift('markScreenRead'),
                 lift('sweepRunningHtml'), lift('markScreenFailed'),
-                lift('setPlayButtons'),
+                lift('setPlayButtons'), lift('sweepSecsFor'),
                 // The real stage owner, so these tests exercise the thing that
                 // ships rather than a stand-in that cannot drift with it.
                 lift('setStage'), lift('renderStageTrail'), lift('resumeStage'),
@@ -732,6 +732,7 @@ console.log('\nchoosing screens');
     '\nconst sweepPicked = ' + /const sweepPicked = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepPickedScreens = ' + /const sweepPickedScreens = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepAvgCall = ' + /const sweepAvgCall =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
+    '\nconst sweepTimesMeasured = ' + /const sweepTimesMeasured =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst mins = ' + /const mins = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';';
   new w2.Function('ctx', `with (ctx) { ${src2}
     ctx.renderSweepScreens = renderSweepScreens; ctx.sweepPickedScreens = sweepPickedScreens;
@@ -740,7 +741,7 @@ console.log('\nchoosing screens');
     ctx.markScreenRead = markScreenRead; ctx.markScreenFailed = markScreenFailed;
     ctx.sweepRunningHtml = sweepRunningHtml; ctx.setStage = setStage;
     ctx.resumeStage = resumeStage; ctx.setPlayButtons = setPlayButtons;
-    ctx.sweepScreenRowHtml = sweepScreenRowHtml; }`)(box);
+    ctx.sweepScreenRowHtml = sweepScreenRowHtml; ctx.sweepSecsFor = sweepSecsFor; }`)(box);
 
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');
@@ -799,10 +800,14 @@ console.log('\nchoosing screens');
     check('a completed screenful keeps its ▶ rather than losing the option',
       /data-play-screen/.test(box.sweepScreenRowHtml({ ...box.aiSweep.stops[0], scanned: true })));
     check('the re-read warning is on the dialog that spends the money',
-      /confirmSweepCost\(1, stop\.scanned \? n : 0\)/.test(panelSrc));
+      /confirmSweepCost\(1, stop\.scanned \? n : 0, stop\.count\)/.test(panelSrc));
     check('…and confirmSweepCost has somewhere to put it',
-      /function confirmSweepCost\(sections, rereading\)/.test(panelSrc) &&
+      /function confirmSweepCost\(sections, rereading, elements\)/.test(panelSrc) &&
       /has already been searched and paid for/.test(panelSrc));
+    // A ▶ quotes the time for THAT screenful, not for an average one — which is
+    // the whole point of the estimate now scaling with what is on the screen.
+    check('…and the ▶ hands it that screenful\'s own element count',
+      /confirmSweepCost\(1, [^)]*, stop\.count\)/.test(panelSrc));
     // One press, one screen, through the same function every other run uses —
     // so it gets the same stop button, log, labelling pause and saved progress.
     check('it runs through scanPickedScreens with just that number',
@@ -833,7 +838,7 @@ console.log('\nchoosing screens');
   // One press starts the run; there is no invisible arming step that relabels
   // the button and writes the cost below the fold.
   check('reading is one press behind a visible dialog, not two presses',
-    /confirmSweepCost\(screens\.length\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
+    /confirmSweepCost\(screens\.length, 0, ticked\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
   // Progress has to be visible from wherever the eye is. Reported as "it
   // started and did not show me that it started" — true, from the bottom of a
   // twenty-six item list, with the progress bar in a block far above.
@@ -864,7 +869,8 @@ console.log('\nchoosing screens');
     /Survey/.test(est.textContent) && /free/.test(est.textContent),
     est.textContent.replace(/\s+/g, ' ').slice(0, 80));
   check('with nothing measured yet it says the numbers are estimates',
-    /tighten once the first call/.test(est.textContent));
+    /tighten once the first screen has been read/.test(est.textContent),
+    est.textContent.replace(/\\s+/g, " ").slice(-90));
 
   rows[2].querySelector('.sweep-screen-tick').checked = false;
   box.syncSweepMakeBtn();
@@ -1783,6 +1789,74 @@ console.log('\nwhich step a screenful is on');
   // already mapped or seen on an earlier screenful is filtered out first.
   check('the count is what was sent, not what was on the screenful',
     /const busyN = collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\)\.length;/.test(scan));
+}
+
+// ── The estimate that quoted 15 seconds for a 94-second screen ─────────────
+//
+// scanSecs was a flat 15, used by all three places that quote a time: the box,
+// the dialog and the "Left" line of a running scan. Nothing measured it. The
+// COST tightens after the first call — sweepAvgCall does exactly that — while
+// the note underneath read "Times are estimates", as though that were a
+// property of time rather than of nobody having looked.
+//
+// Saying which step is running (above) told you where the minute went. This is
+// the other half: not quoting fifteen seconds for it in the first place.
+console.log('\nhow long a screenful takes, measured');
+{
+  check('the flat per-screen constant is gone',
+    !/SWEEP_EST\.scanSecs/.test(panelSrc));
+  // Two numbers for one press, differing because one was written later than
+  // the other, is how an estimate stops being read at all.
+  check('the box and the dialog quote the same number from the same function',
+    (panelSrc.match(/sweepSecsFor\(/g) || []).length >= 4,
+    String((panelSrc.match(/sweepSecsFor\(/g) || []).length));
+  check('a run records how long each screenful actually took',
+    (panelSrc.match(/stop\.secs = Math\.round\(\(Date\.now\(\) - beganAt\) \/ 1000\)/g) || []).length === 2,
+    'both the free path and the paid one');
+
+  // The function itself, on real numbers. It reads only aiSweep.stops and
+  // SWEEP_EST, so it needs no DOM — and it is lifted out of panel.js rather
+  // than restated here, or this would be testing a copy.
+  const est = { aiSweep: { stops: [] } };
+  est.globalThis = est;
+  new Function('ctx', `with (ctx) {
+    const SWEEP_EST = ${/const SWEEP_EST = (\{[\s\S]*?\n\});/.exec(panelSrc)[1]};
+    ${lift('sweepSecsFor')}
+    ctx.sweepSecsFor = sweepSecsFor; ctx.SWEEP_EST = SWEEP_EST; }`)(est);
+  const stops = est.aiSweep.stops;
+  const box = est;   // same shape, read the same way below
+
+  const sparse = box.sweepSecsFor(10);
+  const busy = box.sweepSecsFor(94);
+  check('with nothing measured, a busy screenful is quoted longer than a sparse one',
+    busy > sparse * 2, `${sparse}s vs ${busy}s`);
+  // The screenful that prompted all this. Quoted at 15s, took 94s.
+  check('…and the 94-element screenful is quoted in the right minute, not at 15s',
+    busy >= 60 && busy <= 120, `${busy}s`);
+  check('a screenful with nothing on it still quotes the fixed overhead',
+    box.sweepSecsFor(0) === 10, String(box.sweepSecsFor(0)));
+
+  // One real reading replaces the guess — for every screenful, scaled by how
+  // busy each one is rather than averaged into a single per-screen number.
+  stops.push({ n: 1, scanned: true, secs: 60, count: 30 });   // 2s per element
+  check('one screenful read is enough to replace the guess',
+    box.sweepSecsFor(30) === 60, String(box.sweepSecsFor(30)));
+  check('…and it scales to a screenful twice as busy',
+    box.sweepSecsFor(60) === 120, String(box.sweepSecsFor(60)));
+  check('…without ever quoting less than the fixed overhead',
+    box.sweepSecsFor(1) === 10, String(box.sweepSecsFor(1)));
+  // A screenful read for free by naming it takes seconds and would drag the
+  // measured rate down for the paid ones — but it is a real reading of a real
+  // screenful, and excluding it would be picking the data that flatters.
+  check('a screenful with no elements cannot poison the rate',
+    (() => { stops.push({ n: 2, scanned: true, secs: 5, count: 0 });
+             return box.sweepSecsFor(30) === 60; })(), String(box.sweepSecsFor(30)));
+
+  check('the note stops hedging once a time has been measured',
+    /From this session's own screens/.test(panelSrc) &&
+    /measured, not guessed/.test(panelSrc));
+  check('…and before that says the time depends on how busy the screen is',
+    /the time scales with how busy a screenful is/.test(panelSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

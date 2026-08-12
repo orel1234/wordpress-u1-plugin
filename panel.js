@@ -6892,7 +6892,45 @@ const SINGULAR = {
 // What a call costs and how long it takes. The money is measured from this
 // session as soon as there is anything to measure; the times are not measured
 // at all and are labelled as estimates wherever they are shown.
-const SWEEP_EST = { scanSecs: 15, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 };
+// scanSecs was a flat 15 seconds per screenful, used by all three places that
+// quote a time: the estimate box, the cost dialog, and the "Left" line of a
+// running scan. Nothing ever measured it. The COST tightens after the first
+// call — sweepAvgCall does that — while the note underneath said "Times are
+// estimates" as though that were a property of time rather than of nobody
+// having looked.
+//
+// A 94-element screenful took 1:34. All three quoted 15 seconds, and the clock
+// beside the quote ran past it six times over. That is not a slightly-off
+// estimate; it is a number with nothing behind it.
+//
+// How long a screenful takes is mostly how much is on it, so the fallback
+// scales with the element count, and a measured rate replaces it as soon as one
+// screenful has actually been read.
+const SWEEP_EST = {
+  scanBase: 10, scanPerElement: 0.85,
+  fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10,
+};
+
+/**
+ * How long reading a screenful of `elements` should take, in seconds.
+ *
+ * Measured seconds-per-element from the screenfuls this session has already
+ * read, applied to the one being quoted for — so a run over a long page gets
+ * more honest with every screen, in time as well as in money.
+ */
+function sweepSecsFor(elements) {
+  const n = elements || 0;
+  const done = (aiSweep.stops || []).filter((s) => s.scanned && s.secs > 0 && s.count > 0);
+  if (done.length) {
+    const perEl = done.reduce((a, s) => a + s.secs / s.count, 0) / done.length;
+    return Math.max(SWEEP_EST.scanBase, Math.round(perEl * n));
+  }
+  return Math.round(SWEEP_EST.scanBase + n * SWEEP_EST.scanPerElement);
+}
+
+/** True once a real duration has been recorded, so the note can stop hedging. */
+const sweepTimesMeasured = () =>
+  (aiSweep.stops || []).some((s) => s.scanned && s.secs > 0 && s.count > 0);
 
 const sweepAvgCall = () =>
   (aiCost > 0 && aiMapped.length ? aiCost / aiMapped.length : SWEEP_EST.fallbackCall);
@@ -7055,6 +7093,10 @@ function sweepRunningHtml() {
   const spent = stops.reduce((a, x) => a + (x.cost || 0), 0);
   const left = Math.max(0, p.of - p.at);
   const call = sweepAvgCall();
+  // What is left is the elements on the screenfuls not yet read, not a count of
+  // screenfuls times a constant — the remaining ones may be nothing like the
+  // ones already done.
+  const leftEls = stops.filter((s) => !s.scanned && s.count).reduce((a, s) => a + s.count, 0);
   const found = stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done).length), 0);
   return `
     <div class="sweep-est">
@@ -7064,7 +7106,7 @@ function sweepRunningHtml() {
         <span>$${spent.toFixed(2)}</span>
       </div>
       <div class="sweep-est-row">
-        <span>Left</span><span>${mins(left * SWEEP_EST.scanSecs)}</span>
+        <span>Left</span><span>${mins(sweepSecsFor(leftEls))}</span>
         <span>~$${(left * call).toFixed(2)}</span>
       </div>
       <div class="sweep-est-note">${found
@@ -7092,7 +7134,7 @@ function sweepEstimateHtml(sections, elements) {
         <span>Survey</span><span>done</span><span>free</span>
       </div>
       <div class="sweep-est-row">
-        <span>Find</span><span>${mins(sections * SWEEP_EST.scanSecs)}</span>
+        <span>Find</span><span>${mins(sweepSecsFor(elements))}</span>
         <span>~$${(sections * call).toFixed(2)}</span>
       </div>
       <div class="sweep-est-row">
@@ -7100,9 +7142,12 @@ function sweepEstimateHtml(sections, elements) {
         <span>~$${(comps * SWEEP_EST.fixCall).toFixed(2)}</span>
         <em>costs only for the components you then tick — all ~${comps} of them here</em>
       </div>
-      <div class="sweep-est-note">${measured
-        ? `Prices from this session's own calls. Times are estimates.`
-        : `Estimates. They tighten once the first call has been made.`}</div>
+      <div class="sweep-est-note">${measured || sweepTimesMeasured()
+        ? `From this session's own screens — ${measured ? 'prices' : ''}` +
+          `${measured && sweepTimesMeasured() ? ' and ' : ''}${sweepTimesMeasured() ? 'times' : ''} ` +
+          `measured, not guessed.`
+        : `Estimates, and the time scales with how busy a screenful is. ` +
+          `Both tighten once the first screen has been read.`}</div>
     </div>`;
 }
 
@@ -7758,6 +7803,9 @@ async function scanPickedScreens(numbers) {
       if (aiSweep.abort) break;
       const stop = stops[i];
       const before = aiCost;
+      // Beside the cost, because they answer the same question about the same
+      // screenful and only one of them was ever recorded.
+      const beganAt = Date.now();
       // "Searching section 2 of 23" was read as screen 2 — which was already
       // completed and sitting in the drawer below. The counter is the position
       // in THIS run; the screens have numbers of their own. Two numbering
@@ -7840,6 +7888,7 @@ async function scanPickedScreens(numbers) {
         if (answer.done) {
           stop.scanned = true;
           stop.cost = 0;
+          stop.secs = Math.round((Date.now() - beganAt) / 1000);
           const k = labelled.length;
           stop.outcome = k
             ? `${k} component${k === 1 ? '' : 's'} you named — no model call, nothing charged`
@@ -7910,6 +7959,7 @@ async function scanPickedScreens(numbers) {
       }
       stop.scanned = true;
       stop.cost = aiCost - before;
+      stop.secs = Math.round((Date.now() - beganAt) / 1000);
       await markScreenRead(stop);
       const k = stop.found.length;
       const named = stop.found.filter((f) => f.done).length;
@@ -8013,7 +8063,7 @@ document.getElementById('sweepPicksList')?.addEventListener('click', async (e) =
   if (!stop || !stop.count) return;
   // Re-reading a screen that is already paid for is a real thing to want and a
   // waste to do by accident, so it says which of the two this is.
-  if (!(await confirmSweepCost(1, stop.scanned ? n : 0))) return;
+  if (!(await confirmSweepCost(1, stop.scanned ? n : 0, stop.count))) return;
   await scanPickedScreens([n]);
 });
 
@@ -8035,7 +8085,9 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
     //
     // The guard stays, because this spends money. It just says so where it can
     // be seen.
-    if (!(await confirmSweepCost(screens.length))) return;
+    const ticked = aiSweep.stops.filter((s) => screens.includes(s.n))
+      .reduce((a, s) => a + (s.count || 0), 0);
+    if (!(await confirmSweepCost(screens.length, 0, ticked))) return;
     await scanPickedScreens(screens);
     return;
   }
@@ -10251,7 +10303,7 @@ function confirmSweepClear() {
  * until AFTER a run comes back empty, which is the one moment the information
  * is worth nothing. It belongs on the dialog that spends the money.
  */
-async function confirmSweepCost(sections, rereading) {
+async function confirmSweepCost(sections, rereading, elements) {
   const dlg = document.getElementById('sweepCostDialog');
   const each = sweepAvgCall();
   if (!dlg) return true;
@@ -10262,7 +10314,10 @@ async function confirmSweepCost(sections, rereading) {
   document.getElementById('sweepCostBody').innerHTML =
     escapeHtml(`Searching ${sections} screen${sections === 1 ? '' : 's'} for components — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
       `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
-      `and roughly ${mins(sections * SWEEP_EST.scanSecs)}.`) +
+      // The dialog quotes the same number the box above it does, from the same
+      // function. Two numbers for one press, differing because one was written
+      // later than the other, is how an estimate stops being read at all.
+      `and roughly ${mins(sweepSecsFor(elements))}.`) +
     // A ▶ next to a completed screen is one press away from paying twice for
     // the same screenful. The button is still there — deliberately re-reading
     // one is a real thing to want — but it is not something to do without
