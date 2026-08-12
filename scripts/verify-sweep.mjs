@@ -402,11 +402,19 @@ console.log('\nchoosing screens');
 
   const btn2 = w2.document.getElementById('sweepMakeBtn');
   const est = w2.document.getElementById('sweepEstimate');
-  check('the button offers to read the ticked screens', /Read 2 screens/.test(btn2.textContent), btn2.textContent);
+  check('the button offers to read the ticked sections', /Read 2 sections/.test(btn2.textContent), btn2.textContent);
   check('the estimate counts the ticked elements, not all of them',
     /74 elements/.test(est.textContent), est.textContent.replace(/\s+/g, ' '));
   check('it prices the scan from the number of screens',
     est.textContent.includes('$0.26'), est.textContent.replace(/\s+/g, ' '));
+  // "26 screens" read as twenty-six pages. They are sections of one page, and
+  // the line has to say which is which.
+  check('the estimate counts SECTIONS of one screen, not screens',
+    /Ticked: 2 sections in 1 screen/.test(est.textContent), est.textContent.replace(/\s+/g, ' ').slice(0, 60));
+  // One press starts the run; there is no invisible arming step that relabels
+  // the button and writes the cost below the fold.
+  check('reading is one press behind a visible dialog, not two presses',
+    /confirmSweepCost\(screens\.length\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
   check('the fix row is marked as conditional, not a forecast',
     /only if you then tick/.test(est.textContent));
   check('with nothing measured yet it says the numbers are estimates',
@@ -417,12 +425,12 @@ console.log('\nchoosing screens');
   check('unticking a screen takes its elements out of the estimate',
     /14 elements/.test(est.textContent) && est.textContent.includes('$0.13'),
     est.textContent.replace(/\s+/g, ' '));
-  check('and off the button', /Read 1 screen/.test(btn2.textContent), btn2.textContent);
+  check('and off the button', /Read 1 section\b/.test(btn2.textContent), btn2.textContent);
 
   rows[0].querySelector('.sweep-screen-tick').checked = false;
   box.syncSweepMakeBtn();
   check('with none ticked the button refuses and the estimate clears',
-    btn2.disabled && /No screens ticked/.test(btn2.textContent) && est.innerHTML === '',
+    btn2.disabled && /No sections ticked/.test(btn2.textContent) && est.innerHTML === '',
     btn2.textContent);
 }
 

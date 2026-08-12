@@ -2079,7 +2079,7 @@ function reportSyncState(pulled) {
  */
 async function adoptServerSweep(sweep) {
   aiSweep = {
-    running: false, abort: false, armed: false,
+    running: false, abort: false,
     phase: sweep.phase === 'components' ? 'components' : 'screens',
     stops: sweep.stops || [], tabId: null, url: sweep.url || '',
   };
@@ -4131,7 +4131,7 @@ function resetAiWorkspace() {
   // A sweep in flight is scrolling the page, so clearing the workspace under it
   // has to stop it too — and its stops index into the aiMapped that just went.
   aiSweep.abort = true;
-  aiSweep = { running: false, abort: false, armed: false, phase: 'screens', stops: [] };
+  aiSweep = { running: false, abort: false, phase: 'screens', stops: [] };
   aiWorkspaceHost = null;
   const hide = (id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
   const empty = (id) => { const el = document.getElementById(id); if (el) el.innerHTML = ''; };
@@ -5567,7 +5567,7 @@ const SWEEP_SETTLE_MS = 700;
 // phase: 'screens' once the free survey is done and you are choosing which
 // screenfuls to pay to read; 'components' once those have been read and you are
 // choosing what to fix.
-let aiSweep = { running: false, abort: false, armed: false, phase: 'screens', stops: [], tabId: null };
+let aiSweep = { running: false, abort: false, phase: 'screens', stops: [], tabId: null };
 
 const $sweepStatus = () => document.getElementById('sweepStatus');
 
@@ -5660,7 +5660,7 @@ async function restoreSweep() {
   if (!saved || !Array.isArray(saved.stops) || !saved.stops.length) return false;
 
   aiSweep = {
-    running: false, abort: false, armed: false,
+    running: false, abort: false,
     phase: saved.phase === 'components' ? 'components' : 'screens',
     stops: saved.stops, tabId: null, url: saved.url || '',
   };
@@ -5807,7 +5807,7 @@ async function runSweep(tab) {
   // switching browser tabs and moving the mouse over the list scrolled and
   // marked up a completely different page. The results belong to the page they
   // came from, and so does everything that acts on them.
-  aiSweep = { running: true, abort: false, armed: false, phase: 'screens', stops: [],
+  aiSweep = { running: true, abort: false, phase: 'screens', stops: [],
               tabId: tab.id, url: tab.url || '' };
   aiBulk.failed = [];
   if (log) { log.innerHTML = ''; log.style.display = 'none'; }
@@ -6257,16 +6257,20 @@ function sweepScreenRowHtml(stop) {
  * were then ticked — a ceiling, not a forecast, and said so on the line itself.
  * Rolling them into one number would quote a bill nobody has agreed to yet.
  */
-function sweepEstimateHtml(screens, elements) {
+function sweepEstimateHtml(sections, elements) {
   const call = sweepAvgCall();
   const comps = Math.max(1, Math.round(elements / SWEEP_EST.fixPerElements));
   const measured = aiCost > 0 && aiMapped.length;
+  // "26 screens" read as twenty-six pages. They are twenty-six SECTIONS of one
+  // page — the screenfuls a scroll passes through. A sweep is pinned to a
+  // single tab and a single URL, so the screen count is one by construction,
+  // and saying so is what makes the section count mean anything.
   return `
     <div class="sweep-est">
-      <div class="sweep-est-head">Ticked: ${screens} screen${screens === 1 ? '' : 's'} · ${elements} element${elements === 1 ? '' : 's'}</div>
+      <div class="sweep-est-head">Ticked: ${sections} section${sections === 1 ? '' : 's'} in 1 screen · ${elements} element${elements === 1 ? '' : 's'}</div>
       <div class="sweep-est-row">
-        <span>Scan</span><span>${mins(screens * SWEEP_EST.scanSecs)}</span>
-        <span>~$${(screens * call).toFixed(2)}</span>
+        <span>Scan</span><span>${mins(sections * SWEEP_EST.scanSecs)}</span>
+        <span>~$${(sections * call).toFixed(2)}</span>
       </div>
       <div class="sweep-est-row">
         <span>Fix</span><span>${mins(comps * SWEEP_EST.fixSecs)}</span>
@@ -6448,8 +6452,8 @@ function syncSweepMakeBtn() {
     const elements = aiSweep.stops.filter(s => picked.includes(s.n)).reduce((a, s) => a + s.count, 0);
     btn.disabled = !picked.length;
     btn.textContent = picked.length
-      ? `🔎 Read ${picked.length} screen${picked.length === 1 ? '' : 's'}`
-      : '🔎 No screens ticked';
+      ? `🔎 Read ${picked.length} section${picked.length === 1 ? '' : 's'}`
+      : '🔎 No sections ticked';
     if (est) est.innerHTML = picked.length ? sweepEstimateHtml(picked.length, elements) : '';
     return;
   }
@@ -6834,20 +6838,17 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
     // The estimate is already on screen, under the list, and it moved as the
     // ticks moved — so this is a confirmation of a number that has been visible
     // the whole time, not a figure produced at the moment of charging.
-    if (!aiSweep.armed) {
-      aiSweep.armed = true;
-      const btn = document.getElementById('sweepMakeBtn');
-      const was = btn.textContent;
-      btn.textContent = `Yes — read ${screens.length} screen${screens.length === 1 ? '' : 's'}`;
-      showNotice(document.getElementById('sweepPicksStatus'),
-        `That is ${screens.length} call${screens.length === 1 ? '' : 's'} to Claude, at about $${sweepAvgCall().toFixed(2)} each. Press again to start.`,
-        'warn', 12000);
-      setTimeout(() => {
-        if (!aiSweep.running && aiSweep.armed) { aiSweep.armed = false; btn.textContent = was; }
-      }, 12000);
-      return;
-    }
-    aiSweep.armed = false;
+    // One press, one dialog, and the run starts.
+    //
+    // It used to take two presses: the first re-labelled the button and wrote
+    // the cost into the status line under the list — which on a long list is
+    // below the fold. Reported as "I press it and nothing happens", and that is
+    // exactly right: the confirmation was real and invisible, and twelve
+    // seconds later it silently disarmed itself.
+    //
+    // The guard stays, because this spends money. It just says so where it can
+    // be seen.
+    if (!(await confirmSweepCost(screens.length))) return;
     await scanPickedScreens(screens);
     return;
   }
@@ -8940,6 +8941,32 @@ function askRoleClash(clash) {
     const onOver = () => done(true);
     const onCancel = () => done(false);
     over.addEventListener('click', onOver);
+    cancel.addEventListener('click', onCancel);
+    dlg.showModal();
+  });
+}
+
+/** The cost of a sweep run, stated before it is spent. */
+function confirmSweepCost(sections) {
+  const dlg = document.getElementById('sweepCostDialog');
+  const each = sweepAvgCall();
+  if (!dlg) return Promise.resolve(true);
+  document.getElementById('sweepCostBody').textContent =
+    `${sections} section${sections === 1 ? '' : 's'} — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
+    `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
+    `and roughly ${mins(sections * SWEEP_EST.scanSecs)}.`;
+  return new Promise((resolve) => {
+    const go = document.getElementById('sweepCostGo');
+    const cancel = document.getElementById('sweepCostCancel');
+    const done = (answer) => {
+      dlg.close();
+      go.removeEventListener('click', onGo);
+      cancel.removeEventListener('click', onCancel);
+      resolve(answer);
+    };
+    const onGo = () => done(true);
+    const onCancel = () => done(false);
+    go.addEventListener('click', onGo);
     cancel.addEventListener('click', onCancel);
     dlg.showModal();
   });
