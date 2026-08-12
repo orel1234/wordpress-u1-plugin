@@ -4454,10 +4454,17 @@ async function collectRegion(tab, scopeSel, handled, opts) {
 
   const drop = (opts && opts.drop) || null;
   const before = context.candidates.length;
-  const candidates = context.candidates.filter(c =>
-    (!c.selector || !handled.has(c.selector)) && !(drop && drop(c)));
+  const bin = (handled && handled.dismissed) || new Set();
+  let dismissedOut = 0;
+  const candidates = context.candidates.filter((c) => {
+    if (c.selector && handled.has(c.selector)) {
+      if (bin.has(c.selector)) dismissedOut++;
+      return false;
+    }
+    return !(drop && drop(c));
+  });
   const skipped = before - candidates.length;
-  if (!candidates.length) return { candidates: [], headings: [], skipped };
+  if (!candidates.length) return { candidates: [], headings: [], skipped, dismissed: dismissedOut };
 
   // The survey's own picture, with a labelled box round each component that was
   // recognised. It is what the screens list is chosen from, so it shows the
@@ -4498,7 +4505,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     // never calls the model, so it stops here — and leaves the page untouched,
     // since the numbers were never drawn.
     return {
-      shot: null, thumb, candidates, skipped, truncated: !!context.truncated,
+      shot: null, thumb, candidates, skipped, dismissed: dismissedOut, truncated: !!context.truncated,
       headings: context.headings || [], title: context.title || '', url: context.url || '',
     };
   }
@@ -4530,7 +4537,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   if (!shot) return { err: 'Could not capture the page.' };
 
   return {
-    shot, thumb, candidates, skipped,
+    shot, thumb, candidates, skipped, dismissed: dismissedOut,
     headings: context.headings || [],
     title: context.title || '',
     url: context.url || '',
@@ -5060,8 +5067,17 @@ async function rememberDismissed(sel) {
 }
 
 // Everything already settled on this site: skipped, or already mapped.
+// Everything the scan should not look at again — and WHY, kept apart.
+//
+// The two reasons are not equivalent and were being reported as one. "Already
+// mapped" is finished work. "Dismissed" is a judgement you made once, months
+// ago perhaps, on another machine — dismissals are per-project and shared —
+// and it is the only one of the two you might want to take back. A run that
+// returns nothing because everything on the page was dismissed must say that
+// word, or the only available reading is "the tool found nothing".
 async function alreadyHandled() {
-  const out = new Set(await dismissedSelectors());
+  const dismissed = new Set(await dismissedSelectors());
+  const out = new Set(dismissed);
   try {
     const key = storageKey('mappings', currentHostname);
     for (const m of (await U1Store.get([key]))[key] || []) {
@@ -5069,6 +5085,8 @@ async function alreadyHandled() {
       if (m && m.firstArg) out.add(m.firstArg);
     }
   } catch {}
+  // A property on the Set, so every `handled.has(...)` call site is untouched.
+  out.dismissed = dismissed;
   return out;
 }
 
@@ -6073,6 +6091,11 @@ async function runSweep(tab) {
     // Regroup: the rows were marked one by one while the run went, and now the
     // list can settle into "still to read" and "already read".
     if (aiSweep.phase === 'screens') renderSweepScreens();
+    // Whatever the outcome. A run that found nothing still read those sections
+    // and still paid for them, and that has to survive a panel reload — it did
+    // not, because the only save on this path hung off a render that an empty
+    // run never reached.
+    saveSweep();
   }
 
   const total = aiSweep.stops.reduce((s, x) => s + x.count, 0);
@@ -6956,7 +6979,10 @@ async function scanPickedScreens(numbers) {
       // so on its own row.
       if (!collected.candidates.length) {
         const why = collected.skipped
-          ? `nothing new — all ${collected.skipped} element${collected.skipped === 1 ? '' : 's'} here were already found on an earlier screen or already mapped`
+          ? `nothing new — all ${collected.skipped} element${collected.skipped === 1 ? '' : 's'} here were ` +
+            (collected.dismissed === collected.skipped ? 'DISMISSED earlier'
+             : collected.dismissed ? `already mapped or found earlier (${collected.dismissed} of them DISMISSED earlier)`
+             : 'already found on an earlier screen or already mapped')
           : 'nothing on this screenful to read';
         sweepLog(stop.n, why, 'skip');
         stop.scanned = true;
@@ -7031,6 +7057,11 @@ async function scanPickedScreens(numbers) {
     // Regroup: the rows were marked one by one while the run went, and now the
     // list can settle into "still to read" and "already read".
     if (aiSweep.phase === 'screens') renderSweepScreens();
+    // Whatever the outcome. A run that found nothing still read those sections
+    // and still paid for them, and that has to survive a panel reload — it did
+    // not, because the only save on this path hung off a render that an empty
+    // run never reached.
+    saveSweep();
   }
 
   // What the run actually did, per screen, in one line. Ticking two screens and
@@ -7039,20 +7070,36 @@ async function scanPickedScreens(numbers) {
   const ran = stops.filter(s => s.scanned);
   const empty = ran.filter(s => !s.found.length);
   const total = aiSweep.stops.reduce((s, x) => s + x.found.length, 0);
-  if (ran.length && empty.length) {
-    showNotice(status,
-      `Read ${ran.length} screen${ran.length === 1 ? '' : 's'}. ` +
-      empty.map(s => `Screen ${s.n}: ${s.outcome || 'nothing found'}`).join('. ') + '.',
-      total ? 'warn' : 'info', 12000);
-  }
-  if (!total) {
-    if (!empty.length) {
-      showNotice(status, 'Nothing on those screens needs mapping that is not already mapped.', 'success', 8000);
+  const spent = stops.reduce((a, x) => a + (x.cost || 0), 0);
+
+  // One line, in this order: what it did, what it cost, what it got. It used to
+  // open with a wall of per-screen prose and never say the last two at all — so
+  // a run that read twenty-six sections, spent real money and found nothing
+  // ended in a paragraph you had to parse to discover any of that.
+  const head = `Read ${ran.length} section${ran.length === 1 ? '' : 's'}` +
+    (spent > 0 ? ` · $${spent.toFixed(2)}` : '') +
+    ` · ${total} component${total === 1 ? '' : 's'} to map.`;
+
+  if (total) {
+    if (empty.length) {
+      showNotice(status, head + ' ' +
+        empty.map(s => `Screen ${s.n}: ${s.outcome || 'nothing found'}`).join('. ') + '.', 'warn', 14000);
     }
+    aiSweep.phase = 'components';
+    renderSweepPicks();
     return;
   }
-  aiSweep.phase = 'components';
-  renderSweepPicks();
+
+  // Nothing found. The reason decides what to say, because one of the three is
+  // yours to undo and the other two are not.
+  const dismissedRun = ran.some(s => /DISMISSED/.test(s.outcome || ''));
+  showNotice(status, head + ' ' + (dismissedRun
+    ? 'Most of what is here was DISMISSED in an earlier session — dismissals belong to the project and are shared, so they may not be yours. Reset them below and read again if that is wrong.'
+    : empty.length
+      ? 'Everything on these sections is already mapped, or was found on a section read earlier.'
+      : 'Nothing on these sections needs mapping.'),
+    dismissedRun ? 'warn' : 'info', 20000);
+  if (dismissedRun) offerResetDismissed(status);
 }
 
 document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
@@ -9196,6 +9243,21 @@ function confirmSweepCost(sections) {
     dlg.showModal();
   });
 }
+
+// The one cause of an empty run that you can undo, with the undo attached.
+function offerResetDismissed(status) {
+  if (!status || status.querySelector('[data-reset-dismissed]')) return;
+  status.insertAdjacentHTML('beforeend',
+    ' <button class="btn-outline btn-xs" data-reset-dismissed>Clear the dismissed list</button>');
+}
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('[data-reset-dismissed]')) return;
+  await U1Store.remove([storageKey('dismissed', currentHostname)]);
+  showNotice(document.getElementById('sweepPicksStatus'),
+    'Dismissed list cleared for this site. Tick the sections again and read — they will come back with everything on them.',
+    'success', 10000);
+});
 
 // A one-click way to act on that, since the fix is always the same.
 function offerReload(status) {

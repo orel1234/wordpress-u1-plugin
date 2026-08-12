@@ -335,6 +335,50 @@ console.log('\ncounting what is on a screenful, locally');
   check('nothing at all is an empty string', inv([]) === '', inv([]));
 }
 
+// ── Why a screenful yielded nothing ─────────────────────────────────────────
+// "Already mapped" is finished work. "Dismissed" is a judgement made once,
+// possibly on another machine, and it is the only one of the two you might want
+// to take back. They were reported as one sentence, so a run that returned
+// nothing because everything had been dismissed read as "the tool found
+// nothing".
+console.log('\nwhy a screenful yielded nothing');
+{
+  const collect = (candidates, handled) => {
+    const bin = (handled && handled.dismissed) || new Set();
+    let dismissedOut = 0;
+    const kept = candidates.filter((c) => {
+      if (c.selector && handled.has(c.selector)) {
+        if (bin.has(c.selector)) dismissedOut++;
+        return false;
+      }
+      return true;
+    });
+    return { kept: kept.length, skipped: candidates.length - kept.length, dismissed: dismissedOut };
+  };
+  const handled = new Set(['.a', '.b', '.c']);
+  handled.dismissed = new Set(['.a', '.b']);
+  const r = collect([{ selector: '.a' }, { selector: '.b' }, { selector: '.c' }], handled);
+  check('the two reasons are counted apart', r.skipped === 3 && r.dismissed === 2,
+    JSON.stringify(r));
+
+  // The wording the run puts on the row, lifted from the real source so it
+  // cannot drift from what ships.
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  check('a screenful lost entirely to dismissals says the word',
+    /collected\.dismissed === collected\.skipped \? 'DISMISSED earlier'/.test(src));
+  check('a mixed screenful still names how many were dismissed',
+    /of them DISMISSED earlier/.test(src));
+  // And the run's own summary has to lead with what it did, cost and got.
+  check('the summary states sections, cost and components found',
+    /Read \$\{ran\.length\} section/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
+    /\$\{total\} component/.test(src));
+  check('an empty run caused by dismissals offers to clear them',
+    /offerResetDismissed\(status\)/.test(src) && /data-reset-dismissed/.test(src));
+  // A run that found nothing still read those sections and still paid for them.
+  check('a run persists what it read whatever the outcome',
+    /if \(aiSweep\.phase === 'screens'\) renderSweepScreens\(\);\n[\s\S]{0,400}?\n    saveSweep\(\);/.test(src));
+}
+
 // ── Switching tabs mid-run ──────────────────────────────────────────────────
 // captureVisibleTab throws when the window is minimised, and that throw used to
 // escape collectRegion and end the whole run. Reported: minimise, switch tabs,
