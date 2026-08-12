@@ -1357,6 +1357,7 @@ async function applyMappingsBatch(items) {
               listbox: 'listbox', combobox: 'combobox', menu: 'menu', tabs: 'tablist',
               dialog: 'dialog', grid: 'grid', table: 'table', radio: 'radiogroup',
               tooltip: 'tooltip', button: 'button', checkbox: 'checkbox',
+              accordion: 'button', heading: 'heading', link: 'link',
             };
             let roleClash;
             (() => {
@@ -5452,7 +5453,10 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
       btn.textContent = `Saving ${n + 1} of ${items.length}…`;
       setBulkStatus(`Saving ${n + 1} of ${items.length} — ${it.tpl.primary}`, 'info', 0);
       try {
-        await saveMappingEntry(it.tpl, { refreshUi: false });
+        const r = await saveMappingEntry(it.tpl, { refreshUi: false });
+        // Declining the role question is an answer, not a failure — it must not
+        // land in the failed list beside real errors.
+        if (r && r.cancelled) continue;
         saved.push(it);
       } catch (err) {
         aiBulk.failed.push({ label: it.tpl.primary, err: err.message });
@@ -7254,7 +7258,12 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
     save.disabled = true; save.textContent = 'Saving…';
 
     try {
-      await saveMappingEntry(tpl);
+      const r = await saveMappingEntry(tpl);
+      if (r && r.cancelled) {
+        save.disabled = false; save.textContent = '✓ Approve & apply';
+        showNotice(status, 'Not saved — the role the site wrote is still there. Nothing was changed.', 'info', 6000);
+        return;
+      }
     } catch (e) {
       save.disabled = false; save.textContent = '✓ Approve & apply';
       showNotice(status, e.message, 'error', 12000);
@@ -9009,6 +9018,16 @@ async function overlappingMappings(primary, list) {
 // should repaint; saving twelve in a row should repaint once at the end, not
 // twelve times — each loadMappingsList() runs an executeScript against the page.
 async function saveMappingEntry(template, { editingKey = null, refreshUi = true } = {}) {
+  // The site may already have said what this element is, and overruling an
+  // author's role is a decision for a person.
+  //
+  // This lives HERE, not in the button handlers, because there are three ways
+  // to create a mapping — the manual Add, the AI card's "Approve & apply", and
+  // the bulk save — and only the first one asked. An AI-approved mapping went
+  // straight past the question and was only discovered later, after an apply
+  // that reported success-shaped text. One save path, one place to ask.
+  if (!(await confirmRoleOverwrite(template))) return { cancelled: true };
+
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
@@ -9064,17 +9083,12 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
     showNotice(status, 'Enter a CSS selector and pick a component type first.', 'error', 3500);
     return;
   }
-  // The site may already have said what this element is. Overruling an author's
-  // role is a decision for a person, so the save stops here — before anything is
-  // written — rather than quietly putting our role on top of theirs and leaving
-  // the two to disagree at runtime.
-  if (!(await confirmRoleOverwrite(currentTemplate))) return;
-
   const btn = document.getElementById('addMappingBtn');
   btn.textContent = 'Capturing…';
-  let updated;
+  let updated, cancelled;
   try {
-    ({ updated } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey }));
+    ({ updated, cancelled } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey }));
+    if (cancelled) { btn.textContent = 'Add to Mapping'; return; }
   } catch (e) {
     // A failed write used to travel up as an unhandled rejection: the button
     // sat on "Capturing…" and the mapping was simply never saved.

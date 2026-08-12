@@ -1828,10 +1828,19 @@
    *
    * Returns { role, willWrite } when there is a genuine conflict, else null.
    */
+  // What u1.fix.<type> writes on the PRIMARY element. Only types where the
+  // repo can say so from its own record — test-engine.js asserts each of these
+  // roles after an apply — so a question here is never a guess.
+  //
+  // accordion's primary is the header, which U1 makes a button; heading's is
+  // the element it promotes. Types absent from this list either write no role
+  // on the primary or write one this tool has not verified, and asking about a
+  // role we are not sure we will write is worse than not asking.
   const ROLE_BY_TYPE = {
     listbox: 'listbox', combobox: 'combobox', menu: 'menu', tabs: 'tablist',
     dialog: 'dialog', grid: 'grid', table: 'table', radio: 'radiogroup',
     tooltip: 'tooltip', button: 'button', checkbox: 'checkbox',
+    accordion: 'button', heading: 'heading', link: 'link',
   };
 
   function authoredRoleConflict(sel, type) {

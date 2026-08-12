@@ -336,6 +336,24 @@ const cleanQuiet = cleanMsg.ok === true && !/role=/.test(cleanMsg.msg);
 const asksOnScreen = /function askRoleClash[\s\S]{0,2000}?showModal\(\)/.test(panelSrc) &&
                      !panelSrc.includes('data-role-overwrite');
 
+// Every route that creates a mapping has to ask. There are three — the manual
+// Add, the AI card's "Approve & apply", and the bulk save — and only the first
+// one did. The guarantee is structural: the question lives inside
+// saveMappingEntry, which all three go through, and nowhere else.
+const askInSave = /async function saveMappingEntry[\s\S]{0,1200}?confirmRoleOverwrite\(template\)/.test(panelSrc);
+const askedOnce = (panelSrc.match(/await confirmRoleOverwrite\(/g) || []).length === 1;
+
+// The two ROLE_BY_TYPE tables — one in selector-intel for the save-time
+// question, one inside the in-page apply, which cannot reach it — must agree.
+// Drifting apart means asking about a role at save time and staying silent
+// about the same role at apply time, or the reverse.
+const roleTable = (src) => {
+  const m = /ROLE_BY_TYPE = \{([\s\S]*?)\};/.exec(src);
+  return m ? new Function('return {' + m[1] + '};')() : null;
+};
+const tA = roleTable(readFileSync(join(ROOT, 'selector-intel.js'), 'utf8')), tB = roleTable(panelSrc);
+const tablesAgree = !!tA && !!tB && JSON.stringify(tA) === JSON.stringify(tB);
+
 // ── Defaults must agree with the documentation written beside them ──────────
 // menu.menubar shipped as `true` while its own desc said "Default false =
 // navigation menu". Every menu mapping was therefore born with the one setting
@@ -532,6 +550,10 @@ console.log(`  ${cleanQuiet ? '✅' : '❌'} …while a clean apply says nothing
 if (!cleanQuiet) failed++;
 console.log(`  ${asksOnScreen ? '✅' : '❌'} …and the question is a dialog on screen, not a link under the fold`);
 if (!asksOnScreen) failed++;
+console.log(`  ${askInSave && askedOnce ? '✅' : '❌'} every route that saves a mapping asks — the check is inside saveMappingEntry, once`);
+if (!(askInSave && askedOnce)) failed++;
+console.log(`  ${tablesAgree ? '✅' : '❌'} …and the save-time and apply-time role tables say the same thing`);
+if (!tablesAgree) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
@@ -555,6 +577,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 22;
+const total = results.length + 24;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);
