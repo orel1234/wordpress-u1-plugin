@@ -9218,15 +9218,34 @@ function askRoleClash(clash) {
   });
 }
 
-/** The cost of a sweep run, stated before it is spent. */
-function confirmSweepCost(sections) {
+/**
+ * The cost of a sweep run, stated before it is spent — and what will be left
+ * out of it.
+ *
+ * A run of twenty-six sections cost $3.38 and returned nothing, because
+ * everything on the page was on the dismissed list. That list is invisible
+ * until AFTER a run comes back empty, which is the one moment the information
+ * is worth nothing. It belongs on the dialog that spends the money.
+ */
+async function confirmSweepCost(sections) {
   const dlg = document.getElementById('sweepCostDialog');
   const each = sweepAvgCall();
-  if (!dlg) return Promise.resolve(true);
-  document.getElementById('sweepCostBody').textContent =
-    `${sections} section${sections === 1 ? '' : 's'} — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
-    `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
-    `and roughly ${mins(sections * SWEEP_EST.scanSecs)}.`;
+  if (!dlg) return true;
+
+  let skipped = 0;
+  try { skipped = (await dismissedSelectors()).length; } catch {}
+
+  document.getElementById('sweepCostBody').innerHTML =
+    escapeHtml(`${sections} section${sections === 1 ? '' : 's'} — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
+      `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
+      `and roughly ${mins(sections * SWEEP_EST.scanSecs)}.`) +
+    (skipped
+      ? `<br><br><strong>${skipped} element${skipped === 1 ? '' : 's'} on this site ${skipped === 1 ? 'is' : 'are'} on the dismissed list</strong> ` +
+        `and will be left out of every section. Dismissals belong to the project and are shared, so they may not be yours. ` +
+        `If a run has been coming back empty, this is why. ` +
+        `<button class="btn-outline btn-xs" data-reset-dismissed>Clear the dismissed list</button>`
+      : '');
+
   return new Promise((resolve) => {
     const go = document.getElementById('sweepCostGo');
     const cancel = document.getElementById('sweepCostCancel');
@@ -9252,8 +9271,19 @@ function offerResetDismissed(status) {
 }
 
 document.addEventListener('click', async (e) => {
-  if (!e.target.closest('[data-reset-dismissed]')) return;
+  const btn = e.target.closest('[data-reset-dismissed]');
+  if (!btn) return;
   await U1Store.remove([storageKey('dismissed', currentHostname)]);
+  // It can be pressed from inside the cost dialog, where the warning it belongs
+  // to is still on screen and would otherwise go on claiming a list that is now
+  // empty. Take the paragraph out rather than leaving a stale reason up.
+  const inDialog = btn.closest('#sweepCostDialog');
+  if (inDialog) {
+    const body = document.getElementById('sweepCostBody');
+    if (body) body.innerHTML = body.innerHTML.replace(/<br><br><strong>[\s\S]*$/, '') +
+      '<br><br><em>Dismissed list cleared — this run will look at everything.</em>';
+    return;
+  }
   showNotice(document.getElementById('sweepPicksStatus'),
     'Dismissed list cleared for this site. Tick the sections again and read — they will come back with everything on them.',
     'success', 10000);

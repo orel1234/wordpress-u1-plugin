@@ -379,6 +379,23 @@ console.log('\nwhy a screenful yielded nothing');
     /if \(aiSweep\.phase === 'screens'\) renderSweepScreens\(\);\n[\s\S]{0,400}?\n    saveSweep\(\);/.test(src));
 }
 
+// ── What a run will leave out, said before it is paid for ───────────────────
+// Twenty-six sections, $3.38, nothing returned — because everything on the page
+// was on the dismissed list. That list was only ever shown AFTER a run came
+// back empty, which is the one moment the information is worth nothing.
+{
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const body = /async function confirmSweepCost[\s\S]*?\n}/.exec(src)[0];
+  check('the cost dialog reads the dismissed list', /dismissedSelectors\(\)/.test(body));
+  check('…and says it will be left out of every section',
+    /on the dismissed list/.test(body) && /left out of every section/.test(body));
+  check('…and names it as the reason an empty run was empty',
+    /coming back empty, this is why/.test(body));
+  check('…with the undo on the dialog itself', /data-reset-dismissed/.test(body));
+  check('clearing it from the dialog retracts the warning it was under',
+    /inDialog/.test(src) && /Dismissed list cleared — this run will look at everything/.test(src));
+}
+
 // ── Switching tabs mid-run ──────────────────────────────────────────────────
 // captureVisibleTab throws when the window is minimised, and that throw used to
 // escape collectRegion and end the whole run. Reported: minimise, switch tabs,
