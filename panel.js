@@ -4503,12 +4503,26 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   await inPage(tab.id, () => window.__u1SelectorIntel.drawMarks());
   await new Promise(r => setTimeout(r, 250)); // let the overlay paint
   let shot = null;
+  // The picture IS the request, so it has to be a picture of THIS page. Wait
+  // for the page to be in front rather than photographing whatever is, and
+  // rather than dying — which is what happened before.
+  if (!(await awaitTabVisible(tab, () => showSweepBusy(
+        'Waiting for the page',
+        'The scan needs its own tab in front to photograph it. Switch back and it carries on from here — nothing is lost.')))) {
+    await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
+    return { err: 'Stopped while waiting for the page to come back to the front.' };
+  }
   try {
     const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
     // 1568 is the size Anthropic recommends for maximum image fidelity, and this
     // task does not need it: the model is reading two-digit pink numbers, not
     // fine detail. 1280 keeps them legible and costs about a third fewer tokens.
     shot = await scaleShot(raw, 1280);
+  } catch (err) {
+    // One screenful that could not be photographed is one screenful lost. The
+    // loop above knows how to skip a screen and carry on; a throw from here
+    // reached the run's outer catch and ended everything.
+    shot = null;
   } finally {
     await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
   }
@@ -4611,6 +4625,9 @@ function clearMapBusy() {
 function showSweepBusy(title, sub, pct) {
   const host = document.getElementById('sweepBusy');
   if (!host) return;
+  // Pinned for the duration, because the picks list below it is long enough
+  // that the progress bar sits off-screen for the whole run.
+  host.classList.add('pinned');
   const determinate = typeof pct === 'number' && isFinite(pct);
   const clamped = determinate ? Math.max(0, Math.min(100, Math.round(pct))) : 0;
   host.innerHTML = `
@@ -4625,7 +4642,25 @@ function showSweepBusy(title, sub, pct) {
 
 function clearSweepBusy() {
   const host = document.getElementById('sweepBusy');
-  if (host) host.innerHTML = '';
+  if (host) { host.innerHTML = ''; host.classList.remove('pinned'); }
+  markScreenReading(null);
+}
+
+/**
+ * Which screenful is being read, marked in the list itself.
+ *
+ * The percentage says how far along a run is; this says where it is. On a list
+ * of twenty-six that is the difference between "something is happening" and
+ * "that one, the one I am looking at".
+ */
+function markScreenReading(n) {
+  document.querySelectorAll('#sweepPicksList .sweep-screen.is-reading')
+    .forEach((r) => r.classList.remove('is-reading'));
+  if (n == null) return;
+  const row = document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${n}"]`);
+  if (!row) return;
+  row.classList.add('is-reading');
+  try { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch {}
 }
 
 // The inventory. Every row's component type and container selector are inputs,
@@ -6554,6 +6589,31 @@ async function sweepIsPinnedAndAlive() {
  * a different page, with no error. A sweep that keeps running while you work in
  * another tab must therefore skip its thumbnails rather than store wrong ones.
  */
+/**
+ * Block until the sweep's own page is at the front again.
+ *
+ * captureVisibleTab photographs whatever is in front and throws outright when
+ * the window is minimised — and that throw used to escape collectRegion (its
+ * try had a finally and no catch), reach the run's outer catch and end a
+ * twenty-six section scan on the spot. Switching tabs mid-run is ordinary; it
+ * must cost nothing but the wait.
+ *
+ * Resolves IMMEDIATELY when the tab is already in front, so a run that is never
+ * interrupted pays nothing for this. The poll is 120ms, which is below what
+ * anyone perceives as a delay on coming back.
+ */
+async function awaitTabVisible(tab, onWait) {
+  if (await pinnedTabIsVisible(tab)) return true;
+  let told = false;
+  for (let waited = 0; waited < 10 * 60 * 1000; waited += 120) {
+    if (aiSweep.abort) return false;
+    if (!told && onWait) { told = true; onWait(); }
+    await new Promise((r) => setTimeout(r, 120));
+    if (await pinnedTabIsVisible(tab)) return true;
+  }
+  return false;
+}
+
 async function pinnedTabIsVisible(tab) {
   try {
     const t = await chrome.tabs.get(tab.id);
@@ -6716,9 +6776,11 @@ async function scanPickedScreens(numbers) {
       if (aiSweep.abort) break;
       const stop = stops[i];
       const before = aiCost;
-      btn.textContent = `Reading screen ${stop.n}…`;
-      showSweepBusy(`Screen ${stop.n}`, `Claude is reading it — usually 10–30 seconds.`,
+      btn.textContent = `Reading section ${i + 1} of ${stops.length}…`;
+      showSweepBusy(`Section ${i + 1} of ${stops.length} — screen ${stop.n}`,
+        `Claude is reading it — usually 10–30 seconds.`,
         ((i) / stops.length) * 100);
+      markScreenReading(stop.n);
 
       await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
       await new Promise(r => setTimeout(r, SWEEP_SETTLE_MS));

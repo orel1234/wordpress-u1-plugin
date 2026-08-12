@@ -335,12 +335,50 @@ console.log('\ncounting what is on a screenful, locally');
   check('nothing at all is an empty string', inv([]) === '', inv([]));
 }
 
+// ── Switching tabs mid-run ──────────────────────────────────────────────────
+// captureVisibleTab throws when the window is minimised, and that throw used to
+// escape collectRegion and end the whole run. Reported: minimise, switch tabs,
+// and a twenty-six section scan is over. Waiting is the only honest answer —
+// the picture IS the request, so photographing whatever happens to be in front
+// would spend a call on the wrong page.
+console.log('\nswitching tabs mid-run');
+{
+  // `lift` finds "function <name>(", which drops a leading `async`.
+  const src = 'async ' + lift('awaitTabVisible');
+  const mk = (state) => {
+    const ctx = { aiSweep: state.sweep, pinnedTabIsVisible: async () => state.visible };
+    ctx.globalThis = ctx;
+    new Function('ctx', `with (ctx) { ${src}; ctx.awaitTabVisible = awaitTabVisible; }`)(ctx);
+    return ctx.awaitTabVisible;
+  };
+
+  const inFront = { visible: true, sweep: { abort: false } };
+  let t0 = Date.now();
+  check('a run that is never interrupted waits for nothing',
+    (await mk(inFront)({ id: 1 })) === true && Date.now() - t0 < 20, `${Date.now() - t0}ms`);
+
+  const away = { visible: false, sweep: { abort: false } };
+  const fn = mk(away);
+  let told = 0;
+  t0 = Date.now();
+  setTimeout(() => { away.visible = true; }, 300);
+  const back = await fn({ id: 1 }, () => told++);
+  const took = Date.now() - t0;
+  check('it waits while you are on another tab, then carries on', back === true);
+  check('and picks up immediately — not on a slow poll', took < 600, `${took}ms after a 300ms absence`);
+  check('it says why it is waiting, once, not once per poll', told === 1, `${told} times`);
+
+  const stopped = { visible: false, sweep: { abort: true } };
+  check('Stop still stops it', (await mk(stopped)({ id: 1 })) === false);
+}
+
 // ── Choosing which screens to pay to read ───────────────────────────────────
 console.log('\nchoosing screens');
 {
   const d2 = new JSDOM(`<!doctype html><body>
     <div id="sweepPicks"><div id="sweepPicksSummary"></div><div id="sweepPicksList"></div>
     <div id="sweepEstimate"></div><button id="sweepMakeBtn"></button></div>
+    <div id="sweepBusy"></div>
     <div id="aiBulkReview"></div></body>`);
   const w2 = d2.window;
   const box = {
@@ -362,14 +400,17 @@ console.log('\nchoosing screens');
     ] },
   };
   box.globalThis = box;
-  const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'), lift('syncSweepMakeBtn')].join('\n') +
+  const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
+                lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
+                lift('markScreenReading')].join('\n') +
     '\nconst sweepPicked = ' + /const sweepPicked = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepPickedScreens = ' + /const sweepPickedScreens = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepAvgCall = ' + /const sweepAvgCall =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst mins = ' + /const mins = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';';
   new w2.Function('ctx', `with (ctx) { ${src2}
     ctx.renderSweepScreens = renderSweepScreens; ctx.sweepPickedScreens = sweepPickedScreens;
-    ctx.syncSweepMakeBtn = syncSweepMakeBtn; }`)(box);
+    ctx.syncSweepMakeBtn = syncSweepMakeBtn; ctx.showSweepBusy = showSweepBusy;
+    ctx.clearSweepBusy = clearSweepBusy; ctx.markScreenReading = markScreenReading; }`)(box);
 
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');
@@ -415,6 +456,23 @@ console.log('\nchoosing screens');
   // the button and writes the cost below the fold.
   check('reading is one press behind a visible dialog, not two presses',
     /confirmSweepCost\(screens\.length\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
+  // Progress has to be visible from wherever the eye is. Reported as "it
+  // started and did not show me that it started" — true, from the bottom of a
+  // twenty-six item list, with the progress bar in a block far above.
+  {
+    const host = w2.document.getElementById('sweepBusy');
+    box.showSweepBusy('Section 4 of 26 — screen 4', 'reading', 12);
+    box.markScreenReading(2);
+    const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="2"]');
+    check('the progress bar pins itself for the run', host.classList.contains('pinned'));
+    check('and the row being read is marked in the list', !!row && row.classList.contains('is-reading'));
+    check('progress counts sections done, not the screen number',
+      /Section 4 of 26/.test(host.textContent), host.textContent.replace(/\s+/g, ' ').slice(0, 50));
+    box.clearSweepBusy();
+    check('both come off when the run ends',
+      !host.classList.contains('pinned') &&
+      !w2.document.querySelector('#sweepPicksList .sweep-screen.is-reading'));
+  }
   check('the fix row is marked as conditional, not a forecast',
     /only if you then tick/.test(est.textContent));
   check('with nothing measured yet it says the numbers are estimates',

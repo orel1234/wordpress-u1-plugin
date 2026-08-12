@@ -3003,6 +3003,29 @@ button.u1-readonly-off {
    the step, and show the shape of what is coming. */
 .ai-busy { padding: 4px 0 2px; }
 
+/* While a sweep runs, its progress is the most important thing on screen — and
+   it used to live in the survey block, far above a list of twenty-six screens
+   and the button at the bottom of it. Reported as "it started and did not show
+   me that it started", which was true from where the eye was. Pinned to the top
+   of the panel, it is visible from anywhere in the scroll. */
+#sweepBusy.pinned {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 60;
+  padding: 8px 12px 10px;
+  background: var(--u1-bg-base);
+  border-bottom: 1px solid var(--u1-border-strong);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* The row being read, in the list you are already looking at. A percentage
+   says how far along; this says WHERE. */
+.sweep-screen.is-reading {
+  outline: 2px solid var(--u1-primary);
+  outline-offset: 1px;
+  background: var(--u1-primary-dim);
+}
+
 .ai-busy-bar {
   display: block;
   width: 100%;
