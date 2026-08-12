@@ -181,8 +181,19 @@ const fire = (el, prop, value) => {
   el.dispatchEvent(new window.Event('change', { bubbles: true }));
 };
 
-check('everything starts ticked',
-  [...list.querySelectorAll('.ai-bulk-tick')].every(t => t.checked));
+// Everything except what the model itself called weak. Those were ticked too,
+// and the approve-all that follows applied them — so a guess flagged "no h1
+// anywhere, I set level=2 as a guess, a specialist should verify" went onto the
+// page beside the work that was actually asked for.
+check('everything starts ticked except the low-confidence ones',
+  [...list.querySelectorAll('.ai-bulk-row')].every((r) => {
+    const low = /low/.test(r.querySelector('.ai-conf')?.textContent || '');
+    return r.querySelector('.ai-bulk-tick').checked === !low;
+  }));
+check('…and a low-confidence row says why it is not ticked',
+  [...list.querySelectorAll('.ai-bulk-row')]
+    .filter(r => /low/.test(r.querySelector('.ai-conf')?.textContent || ''))
+    .every(r => /read it first/.test(r.textContent)));
 
 fire(groups[1].querySelector('.sweep-group-tick'), 'checked', false);
 // What the approve handler actually reads.
@@ -412,6 +423,21 @@ console.log('\nwhy a screenful yielded nothing');
     /costs the same as it did the first time/.test(dlg) && /Walking the page again is free/.test(dlg));
   check('…and that mapped components are not affected',
     /already mapped are not affected/.test(dlg));
+}
+
+// ── The way back to the screens ─────────────────────────────────────────────
+// Stopping a run to build what it had found left you in the components view
+// with no route to the screens that were never searched. The survey was still
+// there and unreachable, so the only apparent way on was to start over.
+{
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const picks = /function renderSweepPicks[\s\S]*?\n}/.exec(src)[0];
+  check('the components view counts the screens still to search',
+    /still to search/.test(picks) && /data-back-to-screens/.test(picks));
+  check('…and the way back actually goes back',
+    /data-back-to-screens/.test(src) && /aiSweep\.phase = 'screens';\n  renderSweepScreens\(\);/.test(src));
+  check('…and offers nothing when there is nothing left to search',
+    /unsearched\n?\s*\?/.test(picks) || /\(unsearched$/m.test(picks) || /unsearched$/m.test(picks));
 }
 
 // ── Switching tabs mid-run ──────────────────────────────────────────────────

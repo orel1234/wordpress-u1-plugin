@@ -5535,8 +5535,12 @@ function renderBulkReview() {
   document.getElementById('aiMappings').style.display = 'none';
   wrap.style.display = 'block';
 
+  // Say how many are being held back, or they read as missing rather than as
+  // waiting for a decision.
+  const weak = pending.filter(({ entry }) => entry.result.confidence === 'low').length;
   summary.innerHTML =
-    `<div class="ai-meta">${pending.length} ready to apply` +
+    `<div class="ai-meta">${pending.length - weak} ready to apply` +
+    (weak ? ` · <strong>${weak} left unticked — the model called ${weak === 1 ? 'it' : 'them'} low confidence</strong>` : '') +
     (aiBulk.failed.length ? ` · ${aiBulk.failed.length} could not be prepared` : '') +
     ` · ~$${aiCost.toFixed(3)} spent preparing these</div>`;
 
@@ -5560,16 +5564,26 @@ function renderBulkReview() {
 
 function bulkRowHtml({ entry, idx }) {
   const conf = ['high', 'medium', 'low'].includes(entry.result.confidence) ? entry.result.confidence : 'medium';
+  // Low confidence is not ticked. Everything was, and the approve-all that
+  // follows applied it — so a guess the model itself flagged as weak ("no h1
+  // anywhere, I set level=2 as a guess, a specialist should verify") went onto
+  // the page beside the work that was actually asked for.
+  //
+  // It stays in the list, with its warning and its reasoning, one tick away.
+  // The judgement it needs is a person's, and ticked-by-default is the one
+  // arrangement that guarantees it does not get one.
+  const weak = conf === 'low';
   // Read the template fresh so the row shows what would actually be applied,
   // including any edit made in the carousel after this screen was opened.
   const tpl = aiCardTemplate(idx);
   return `
       <div class="ai-approved-row ai-bulk-row" data-bulk-idx="${idx}">
-        <input type="checkbox" class="ai-bulk-tick" checked aria-label="Apply ${escapeHtml(entry.row.label)}">
+        <input type="checkbox" class="ai-bulk-tick"${weak ? '' : ' checked'} aria-label="Apply ${escapeHtml(entry.row.label)}">
         <div class="ai-bulk-body">
           <span class="ai-approved-label">${escapeHtml(entry.row.label)}</span>
           <code>u1.fix.${escapeHtml(entry.row.type)}</code>
           <span class="ai-conf" data-c="${conf}">${conf}</span>
+          ${weak ? '<span class="ai-sev" data-need="1">not ticked — read it first</span>' : ''}
           ${entry.row.needsWork === false
             ? '<span class="ai-sev" data-need="0">already looks correct</span>' : ''}
           <button class="btn-ghost btn-xs" data-bulk-edit="${idx}">Edit</button>
@@ -6590,8 +6604,16 @@ function renderSweepPicks() {
   const barrenCount = read.filter(s => s.scanned && !s.found.length).length;
   if (!total && !doneCount && !barrenCount) { wrap.style.display = 'none'; return; }
 
+  // The way back. Stopping a run to build what it had found left you in the
+  // components view with no route to the screens that were never searched —
+  // the survey was still there, and unreachable, so the only apparent way on
+  // was to start the whole page again.
+  const unsearched = aiSweep.stops.filter(x => x.count && !x.scanned).length;
   summary.innerHTML = `<div class="ai-meta">${total} component${total === 1 ? '' : 's'} across ` +
-    `${stops.length} screen${stops.length === 1 ? '' : 's'} · $${aiCost.toFixed(3)} to find them</div>`;
+    `${stops.length} screen${stops.length === 1 ? '' : 's'} · $${aiCost.toFixed(3)} to find them` +
+    (unsearched
+      ? ` · <button class="btn-outline btn-xs" data-back-to-screens>← ${unsearched} screen${unsearched === 1 ? '' : 's'} still to search</button>`
+      : '') + `</div>`;
 
   list.innerHTML = stops.map((stop, i) => {
     const img = safeImg(stop.thumb);
@@ -9421,6 +9443,13 @@ document.addEventListener('click', async (e) => {
   if (!total) return;
   aiSweep.phase = 'components';
   renderSweepPicks();
+});
+
+// Back to the screens list, to carry on searching the ones never reached.
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('[data-back-to-screens]')) return;
+  aiSweep.phase = 'screens';
+  renderSweepScreens();
 });
 
 /** Throwing away the survey — always asked, because it is never nothing. */
