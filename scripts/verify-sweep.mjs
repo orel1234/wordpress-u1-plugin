@@ -370,7 +370,7 @@ console.log('\nwhy a screenful yielded nothing');
     /of them DISMISSED earlier/.test(src));
   // And the run's own summary has to lead with what it did, cost and got.
   check('the summary states sections, cost and components found',
-    /Searched \$\{ran\.length\} section/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
+    /Searched \$\{ran\.length\} screen/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
     /\$\{total\} component/.test(src));
   check('an empty run caused by dismissals offers to clear them',
     /offerResetDismissed\(status\)/.test(src) && /data-reset-dismissed/.test(src));
@@ -387,8 +387,8 @@ console.log('\nwhy a screenful yielded nothing');
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
   const body = /async function confirmSweepCost[\s\S]*?\n}/.exec(src)[0];
   check('the cost dialog reads the dismissed list', /dismissedSelectors\(\)/.test(body));
-  check('…and says it will be left out of every section',
-    /on the dismissed list/.test(body) && /left out of every section/.test(body));
+  check('…and says it will be left out of every screen',
+    /on the dismissed list/.test(body) && /left out of every screen/.test(body));
   check('…and names it as the reason an empty run was empty',
     /coming back empty, this is why/.test(body));
   check('…with the undo on the dialog itself', /data-reset-dismissed/.test(body));
@@ -487,7 +487,8 @@ console.log('\nchoosing screens');
   box.globalThis = box;
   const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
-                lift('markScreenReading'), lift('markScreenRead')].join('\n') +
+                lift('markScreenReading'), lift('markScreenRead'),
+                lift('sweepRunningHtml')].join('\n') +
     '\nconst sweepPicked = ' + /const sweepPicked = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepPickedScreens = ' + /const sweepPickedScreens = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepAvgCall = ' + /const sweepAvgCall =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
@@ -530,15 +531,15 @@ console.log('\nchoosing screens');
   const btn2 = w2.document.getElementById('sweepMakeBtn');
   const est = w2.document.getElementById('sweepEstimate');
   check('the button says what it will DO, not just that it will read',
-    /Find components in 2 sections/.test(btn2.textContent), btn2.textContent);
+    /Find components in 2 screens/.test(btn2.textContent), btn2.textContent);
   check('the estimate counts the ticked elements, not all of them',
     /74 elements/.test(est.textContent), est.textContent.replace(/\s+/g, ' '));
   check('it prices the scan from the number of screens',
     est.textContent.includes('$0.26'), est.textContent.replace(/\s+/g, ' '));
   // "26 screens" read as twenty-six pages. They are sections of one page, and
   // the line has to say which is which.
-  check('the estimate counts SECTIONS of one screen, not screens',
-    /Ticked: 2 sections in 1 screen/.test(est.textContent), est.textContent.replace(/\s+/g, ' ').slice(0, 60));
+  check('the estimate counts SCREENS of one page, not pages',
+    /Ticked: 2 screens on 1 page/.test(est.textContent), est.textContent.replace(/\s+/g, ' ').slice(0, 60));
   // One press starts the run; there is no invisible arming step that relabels
   // the button and writes the cost below the fold.
   check('reading is one press behind a visible dialog, not two presses',
@@ -580,12 +581,12 @@ console.log('\nchoosing screens');
   check('unticking a screen takes its elements out of the estimate',
     /14 elements/.test(est.textContent) && est.textContent.includes('$0.13'),
     est.textContent.replace(/\s+/g, ' '));
-  check('and off the button', /Find components in 1 section\b/.test(btn2.textContent), btn2.textContent);
+  check('and off the button', /Find components in 1 screen\b/.test(btn2.textContent), btn2.textContent);
 
   rows[0].querySelector('.sweep-screen-tick').checked = false;
   box.syncSweepMakeBtn();
   check('with none ticked the button refuses and the estimate clears',
-    btn2.disabled && /No sections ticked/.test(btn2.textContent) && est.innerHTML === '',
+    btn2.disabled && /No screens ticked/.test(btn2.textContent) && est.innerHTML === '',
     btn2.textContent);
 
   // Already paid for. It used to come back ticked, so pressing Read again to
@@ -615,7 +616,7 @@ console.log('\nchoosing screens');
     check('the unread rows are in the first area and the read ones are not',
       parts[0].contains(row(3)) && parts[1].contains(row(1)));
     check('"select all" counts the unread ones, not everything',
-      /Select all 1 unsearched section/.test(w2.document.getElementById('sweepPicksSummary').textContent),
+      /Select all 1 unsearched screen/.test(w2.document.getElementById('sweepPicksSummary').textContent),
       w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));
     check('…and says how many are already paid for',
       /1 completed/.test(w2.document.getElementById('sweepPicksSummary').textContent));
@@ -721,6 +722,41 @@ console.log('\nchoosing screens');
     check('the offer stops the run rather than racing it',
       /aiSweep\.abort = true/.test(h) && /while.*aiSweep\.running|aiSweep\.running;/.test(h));
     check('…and does not fold the drawer it lives in', /stopPropagation\(\)/.test(h));
+  }
+
+  // The box under the button described the NEXT press while the button
+  // described the run in progress — two different moments, stacked.
+  {
+    const st = box.aiSweep.stops;
+    st[0].scanned = true; st[0].cost = 0.13;
+    st[0].found = [{ id: 'a', label: 'Nav', type: 'menu', sel: '#n' }];
+    box.aiSweep.running = true;
+    box.aiSweep.progress = { at: 2, of: 22, screen: 6 };
+    box.syncSweepMakeBtn();
+    const est2 = w2.document.getElementById('sweepEstimate');
+    // The bar at the top and the button at the bottom are read together, so a
+    // difference in wording between them reads as a difference in meaning.
+    const psrc2 = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+    const POSITION = 'Screen ${stop.n} — ${i + 1} of ${stops.length}';
+    check('the top bar and the button word the position identically',
+      psrc2.includes('showSweepBusy(`' + POSITION + '`') &&
+      psrc2.includes('btn.textContent = `Searching screen ${stop.n} — ${i + 1} of ${stops.length}…`'),
+      'they must be the same phrase in both places');
+    check('while a run is going the box is about that run',
+      /Searching · screen 6 · 2 of 22/.test(est2.textContent), est2.textContent.replace(/\s+/g, ' ').slice(0, 70));
+    check('…and reports what has actually been spent, not a forecast',
+      /Done1screen\$0\.13/.test(est2.textContent.replace(/\s+/g, '')), est2.textContent.replace(/\s+/g, ' '));
+    check('…and what is left of THIS run', /Left/.test(est2.textContent) && /~\$2\.60/.test(est2.textContent),
+      est2.textContent.replace(/\s+/g, ' '));
+    check('…and that stopping keeps what is done',
+      /you can stop and build them/.test(est2.textContent));
+
+    box.aiSweep.running = false;
+    box.aiSweep.progress = null;
+    st[0].scanned = false; st[0].cost = 0; st[0].found = [];
+    box.renderSweepScreens();
+    check('and when nothing is running it is back to what the next press costs',
+      /Ticked:/.test(w2.document.getElementById('sweepEstimate').textContent));
   }
 
   // A run owns the button, and the mark must survive a redraw. The bar could

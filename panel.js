@@ -6358,7 +6358,7 @@ function renderSweepScreens() {
     // the UNREAD ones — the read ones are paid for and are not part of what the
     // next press will charge for.
     `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
-    `Select all ${todo} unsearched section${todo === 1 ? '' : 's'}` +
+    `Select all ${todo} unsearched screen${todo === 1 ? '' : 's'}` +
     (pickable > todo ? ` <em>(${pickable - todo} completed)</em>` : '') + `</label>`;
 
   // Two areas, because a half-finished run is the ordinary state — you start
@@ -6377,7 +6377,7 @@ function renderSweepScreens() {
     ? (left.length
         ? `<div class="sweep-part"><h4>Still to search · ${left.filter(x => x.count).length}</h4>` +
           left.map(sweepScreenRowHtml).join('') + `</div>`
-        : `<div class="sweep-part sweep-part-empty">Every section is completed.</div>`) +
+        : `<div class="sweep-part sweep-part-empty">Every screen is completed.</div>`) +
       `<details class="sweep-part sweep-part-done" open><summary>Completed · ${read.length}` +
       (foundSoFar
         ? ` · ${foundSoFar} component${foundSoFar === 1 ? '' : 's'} found` +
@@ -6470,6 +6470,34 @@ function sweepScreenRowHtml(stop) {
  * were then ticked — a ceiling, not a forecast, and said so on the line itself.
  * Rolling them into one number would quote a bill nobody has agreed to yet.
  */
+/**
+ * The same box, for a run in progress: what it has done and spent, and what is
+ * left of THIS run — not what a press that is not going to happen would cost.
+ */
+function sweepRunningHtml() {
+  const p = aiSweep.progress || { at: 0, of: 0, screen: 0 };
+  const stops = aiSweep.stops || [];
+  const spent = stops.reduce((a, x) => a + (x.cost || 0), 0);
+  const left = Math.max(0, p.of - p.at);
+  const call = sweepAvgCall();
+  const found = stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done).length), 0);
+  return `
+    <div class="sweep-est">
+      <div class="sweep-est-head">Searching · screen ${p.screen} · ${p.at} of ${p.of}</div>
+      <div class="sweep-est-row">
+        <span>Done</span><span>${p.at - 1} screen${p.at - 1 === 1 ? '' : 's'}</span>
+        <span>$${spent.toFixed(2)}</span>
+      </div>
+      <div class="sweep-est-row">
+        <span>Left</span><span>${mins(left * SWEEP_EST.scanSecs)}</span>
+        <span>~$${(left * call).toFixed(2)}</span>
+      </div>
+      <div class="sweep-est-note">${found
+        ? `${found} component${found === 1 ? '' : 's'} found so far — you can stop and build them from the drawer above.`
+        : 'Nothing found yet. You can stop at any screen; what is done stays done.'}</div>
+    </div>`;
+}
+
 function sweepEstimateHtml(sections, elements) {
   const call = sweepAvgCall();
   const comps = Math.max(1, Math.round(elements / SWEEP_EST.fixPerElements));
@@ -6480,7 +6508,7 @@ function sweepEstimateHtml(sections, elements) {
   // and saying so is what makes the section count mean anything.
   return `
     <div class="sweep-est">
-      <div class="sweep-est-head">Ticked: ${sections} section${sections === 1 ? '' : 's'} in 1 screen · ${elements} element${elements === 1 ? '' : 's'}</div>
+      <div class="sweep-est-head">Ticked: ${sections} screen${sections === 1 ? '' : 's'} on 1 page · ${elements} element${elements === 1 ? '' : 's'}</div>
       <!-- Three stages, each saying whether it costs anything. The survey is
            already done and was free, and leaving it off the list made the two
            paid rows look like the whole of the work — so "what have I spent so
@@ -6679,10 +6707,17 @@ function syncSweepMakeBtn() {
     if (!aiSweep.running) {
       btn.disabled = !picked.length;
       btn.textContent = picked.length
-        ? `🔎 Find components in ${picked.length} section${picked.length === 1 ? '' : 's'}`
-        : '🔎 No sections ticked';
+        ? `🔎 Find components in ${picked.length} screen${picked.length === 1 ? '' : 's'}`
+        : '🔎 No screens ticked';
     }
-    if (est) est.innerHTML = picked.length ? sweepEstimateHtml(picked.length, elements) : '';
+    // The box under the button described the NEXT press while the button
+    // described the current run — two different moments, stacked. While a run
+    // is going the box is about the run.
+    if (est) {
+      est.innerHTML = aiSweep.running
+        ? sweepRunningHtml()
+        : (picked.length ? sweepEstimateHtml(picked.length, elements) : '');
+    }
     return;
   }
 
@@ -7047,7 +7082,10 @@ async function scanPickedScreens(numbers) {
       // in THIS run; the screens have numbers of their own. Two numbering
       // systems shown with one word, so the word is no longer alone.
       btn.textContent = `Searching screen ${stop.n} — ${i + 1} of ${stops.length}…`;
-      showSweepBusy(`Section ${i + 1} of ${stops.length} — screen ${stop.n}`,
+      aiSweep.progress = { at: i + 1, of: stops.length, screen: stop.n };
+      // Word for word what the button says, because they are read together
+      // and a difference between them reads as a difference in meaning.
+      showSweepBusy(`Screen ${stop.n} — ${i + 1} of ${stops.length}`,
         `Looking for components — usually 10–30 seconds.`,
         ((i) / stops.length) * 100);
       markScreenReading(stop.n);
@@ -7143,6 +7181,7 @@ async function scanPickedScreens(numbers) {
     await endBackgroundCapture();
     clearSweepBusy();
     aiSweep.running = false;
+    aiSweep.progress = null;
     btn.disabled = false;
     document.getElementById('sweepStopBtn').style.display = 'none';
     try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
@@ -7169,7 +7208,7 @@ async function scanPickedScreens(numbers) {
   // open with a wall of per-screen prose and never say the last two at all — so
   // a run that read twenty-six sections, spent real money and found nothing
   // ended in a paragraph you had to parse to discover any of that.
-  const head = `Searched ${ran.length} section${ran.length === 1 ? '' : 's'}` +
+  const head = `Searched ${ran.length} screen${ran.length === 1 ? '' : 's'}` +
     (spent > 0 ? ` · $${spent.toFixed(2)}` : '') +
     ` · ${total} component${total === 1 ? '' : 's'} to map.`;
 
@@ -7189,8 +7228,8 @@ async function scanPickedScreens(numbers) {
   showNotice(status, head + ' ' + (dismissedRun
     ? 'Most of what is here was DISMISSED in an earlier session — dismissals belong to the project and are shared, so they may not be yours. Reset them below and read again if that is wrong.'
     : empty.length
-      ? 'Everything on these sections is already mapped, or was found on a section read earlier.'
-      : 'Nothing on these sections needs mapping.'),
+      ? 'Everything on these screens is already mapped, or was found on a screen searched earlier.'
+      : 'Nothing on these screens needs mapping.'),
     dismissedRun ? 'warn' : 'info', 20000);
   if (dismissedRun) offerResetDismissed(status);
 }
@@ -9352,7 +9391,7 @@ function confirmSweepClear() {
   const stops = aiSweep.stops || [];
   const searched = stops.filter((s) => s.scanned).length;
   document.getElementById('sweepClearBody').textContent =
-    `${stops.length} section${stops.length === 1 ? '' : 's'} and their pictures go, for everyone on this project. ` +
+    `${stops.length} screen${stops.length === 1 ? '' : 's'} and their pictures go, for everyone on this project. ` +
     (searched
       ? `${searched} of them ${searched === 1 ? 'has' : 'have'} already been searched, and searching them again costs the same as it did the first time. `
       : 'Walking the page again is free, but it takes a few minutes. ') +
@@ -9393,12 +9432,12 @@ async function confirmSweepCost(sections) {
   try { skipped = (await dismissedSelectors()).length; } catch {}
 
   document.getElementById('sweepCostBody').innerHTML =
-    escapeHtml(`Searching ${sections} section${sections === 1 ? '' : 's'} for components — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
+    escapeHtml(`Searching ${sections} screen${sections === 1 ? '' : 's'} for components — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
       `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
       `and roughly ${mins(sections * SWEEP_EST.scanSecs)}.`) +
     (skipped
       ? `<br><br><strong>${skipped} element${skipped === 1 ? '' : 's'} on this site ${skipped === 1 ? 'is' : 'are'} on the dismissed list</strong> ` +
-        `and will be left out of every section. Dismissals belong to the project and are shared, so they may not be yours. ` +
+        `and will be left out of every screen. Dismissals belong to the project and are shared, so they may not be yours. ` +
         `If a run has been coming back empty, this is why. ` +
         `<button class="btn-outline btn-xs" data-reset-dismissed>Clear the dismissed list</button>`
       : '');
