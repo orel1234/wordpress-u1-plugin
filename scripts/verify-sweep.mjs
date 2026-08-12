@@ -649,8 +649,78 @@ console.log('\nchoosing screens');
       /return saveSweepNow\(\);/.test(psrc) && /await markScreenRead\(stop\);/.test(psrc));
     check('…and a completed section shows what it gave',
       /class="sweep-outcome"/.test(psrc));
-    three.scanned = false;
+    // Two numbering systems were shown with one word: the counter is the
+    // position in THIS run, the screens have numbers of their own. "Searching
+    // section 2 of 23" was read as screen 2, which was already completed.
+    check('the progress names the screen as well as the position in the run',
+      /Searching screen \$\{stop\.n\} — \$\{i \+ 1\} of \$\{stops\.length\}/.test(psrc));
+  }
+
+  // A section that completes DURING a run moves into the completed area then,
+  // not when the run ends. Screen 1 finished and sat under "still to search"
+  // while the drawer below said COMPLETED · 3 — answering for the previous run.
+  {
+    const st = box.aiSweep.stops;
+    st[0].scanned = true;                 // one already done, so both areas exist
     box.renderSweepScreens();
+    const doneArea = w2.document.querySelector('#sweepPicksList .sweep-part-done');
+    check('with one completed there are two areas to move between', !!doneArea);
+
+    st[2].scanned = true;
+    st[2].outcome = '3 components';
+    await box.markScreenRead(st[2]);
+    const moved = w2.document.querySelector('#sweepPicksList .sweep-part-done .sweep-screen[data-screen="3"]');
+    check('a section completing mid-run moves into the completed area at once', !!moved);
+    // Zero left, and correctly so: the only remaining screenful is the empty
+    // one, which was never pickable and must not be counted as owed work.
+    check('…and both counts follow it',
+      /Completed · 2/.test(w2.document.querySelector('.sweep-part-done summary').textContent) &&
+      /Still to search · 0/.test(w2.document.querySelector('#sweepPicksList .sweep-part > h4').textContent),
+      w2.document.querySelector('.sweep-part-done summary').textContent + ' | ' +
+      w2.document.querySelector('#sweepPicksList .sweep-part > h4').textContent);
+    st[0].scanned = false; st[2].scanned = false; delete st[2].outcome;
+    box.renderSweepScreens();
+  }
+
+  // What the completed sections are WORTH, and a way to act on it before the
+  // rest of the run finishes. The components found in completed sections were
+  // unreachable until the whole run ended — eight minutes on a page like this.
+  {
+    const st = box.aiSweep.stops;
+    st[0].scanned = true;
+    st[0].found = [{ id: 'a', label: 'Main nav', type: 'menu', sel: '#nav' },
+                   { id: 'b', label: 'Search', type: 'combobox', sel: '#q' }];
+    box.renderSweepScreens();
+    const sum = w2.document.querySelector('.sweep-part-done summary');
+    check('the completed drawer says how many components are in it',
+      /2 components found/.test(sum.textContent), sum.textContent);
+    check('…and offers to build them without finishing the run',
+      !!sum.querySelector('[data-build-found]'));
+    check('…and the drawer opens itself once it holds something',
+      w2.document.querySelector('.sweep-part-done').hasAttribute('open'));
+
+    // Nothing found yet is not an offer.
+    st[0].found = [];
+    box.renderSweepScreens();
+    check('a drawer with nothing in it makes no offer',
+      !w2.document.querySelector('.sweep-part-done summary [data-build-found]'));
+
+    // Components already built are not offered a second time.
+    st[0].found = [{ id: 'a', label: 'Main nav', type: 'menu', sel: '#nav', done: true }];
+    box.renderSweepScreens();
+    check('…nor are components already built',
+      !w2.document.querySelector('.sweep-part-done summary [data-build-found]'));
+
+    st[0].scanned = false; st[0].found = [];
+    box.renderSweepScreens();
+
+    // Stopping is what releases them, so the button presses Stop rather than
+    // inventing a second path into the same place.
+    const psrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+    const h = /closest\('\[data-build-found\]'\)[\s\S]{0,1400}/.exec(psrc)[0];
+    check('the offer stops the run rather than racing it',
+      /aiSweep\.abort = true/.test(h) && /while.*aiSweep\.running|aiSweep\.running;/.test(h));
+    check('…and does not fold the drawer it lives in', /stopPropagation\(\)/.test(h));
   }
 
   // A run owns the button, and the mark must survive a redraw. The bar could

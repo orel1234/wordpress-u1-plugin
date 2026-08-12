@@ -4716,6 +4716,34 @@ function markScreenRead(stop) {
         `<div class="sweep-outcome">${escapeHtml(stop.outcome)}</div>`);
     }
   }
+  // …and moves into the completed area, now, rather than staying where it was
+  // until the run ends. Screen 1 finished and was still sitting under "still to
+  // search" while the drawer below said COMPLETED · 3 — so the drawer was
+  // answering for the previous run and this one was invisible in it.
+  //
+  // The node is moved rather than the list redrawn: twenty-six rows carry
+  // twenty-six screenshots, and rebuilding them would throw away the scroll
+  // position of the list being watched. The one case that needs a redraw is the
+  // first completion, when the two areas do not exist yet.
+  const done = document.querySelector('#sweepPicksList .sweep-part-done');
+  if (row && done) {
+    done.appendChild(row);
+    const left = document.querySelector('#sweepPicksList .sweep-part > h4');
+    const stops = aiSweep.stops || [];
+    if (left) left.textContent = `Still to search · ${stops.filter(x => x.count && !x.scanned).length}`;
+    const head = done.querySelector('summary');
+    if (head) {
+      const readNow = stops.filter(x => x.scanned);
+      const found = readNow.reduce((a, x) => a + ((x.found || []).filter(f => !f.done).length), 0);
+      head.innerHTML = `Completed · ${readNow.length}` + (found
+        ? ` · ${found} component${found === 1 ? '' : 's'} found` +
+          `<button class="btn-outline btn-xs" data-build-found>Stop and build these</button>`
+        : '');
+    }
+  } else if (row) {
+    renderSweepScreens();
+  }
+
   // The estimate under the list is what the NEXT press will cost, so it has to
   // come down as the run goes.
   syncSweepMakeBtn();
@@ -6340,12 +6368,23 @@ function renderSweepScreens() {
   // not answer it at a glance.
   const left = stops.filter(x => !x.scanned);
   const read = stops.filter(x => x.scanned);
+  // What the completed sections are actually WORTH. A drawer that only counts
+  // sections answers "how far have I got" and not "is there anything in there
+  // for me yet" — and the second is what decides whether the rest of the run
+  // has to finish before any of it can be used.
+  const foundSoFar = read.reduce((a, x) => a + ((x.found || []).filter(f => !f.done).length), 0);
   const listHtml = read.length
     ? (left.length
         ? `<div class="sweep-part"><h4>Still to search · ${left.filter(x => x.count).length}</h4>` +
           left.map(sweepScreenRowHtml).join('') + `</div>`
         : `<div class="sweep-part sweep-part-empty">Every section is completed.</div>`) +
-      `<details class="sweep-part sweep-part-done"><summary>Completed · ${read.length}</summary>` +
+      `<details class="sweep-part sweep-part-done" open><summary>Completed · ${read.length}` +
+      (foundSoFar
+        ? ` · ${foundSoFar} component${foundSoFar === 1 ? '' : 's'} found` +
+          `<button class="btn-outline btn-xs" data-build-found>${aiSweep.running
+            ? 'Stop and build these' : 'Build fixes for these'}</button>`
+        : '') +
+      `</summary>` +
       read.map(sweepScreenRowHtml).join('') + `</details>`
     : stops.map(sweepScreenRowHtml).join('');
   list.innerHTML = listHtml;
@@ -7003,7 +7042,11 @@ async function scanPickedScreens(numbers) {
       if (aiSweep.abort) break;
       const stop = stops[i];
       const before = aiCost;
-      btn.textContent = `Searching section ${i + 1} of ${stops.length}…`;
+      // "Searching section 2 of 23" was read as screen 2 — which was already
+      // completed and sitting in the drawer below. The counter is the position
+      // in THIS run; the screens have numbers of their own. Two numbering
+      // systems shown with one word, so the word is no longer alone.
+      btn.textContent = `Searching screen ${stop.n} — ${i + 1} of ${stops.length}…`;
       showSweepBusy(`Section ${i + 1} of ${stops.length} — screen ${stop.n}`,
         `Looking for components — usually 10–30 seconds.`,
         ((i) / stops.length) * 100);
@@ -9267,6 +9310,40 @@ function askRoleClash(clash) {
     dlg.showModal();
   });
 }
+
+// Work on what is already found, without waiting for the rest of the run.
+//
+// The components discovered in completed sections existed and were unreachable:
+// the list only turned into the components view when the whole run ended. On a
+// twenty-six section page that means the first thing found is unusable for
+// eight minutes, and if you stop early it was never clear that stopping is what
+// releases it.
+//
+// Stopping IS the release — the run's tail already moves to the components view
+// — so this presses Stop for you and waits, rather than inventing a second path
+// into the same place.
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-build-found]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();          // it lives inside a <summary>; do not toggle the drawer
+
+  if (aiSweep.running) {
+    btn.disabled = true;
+    btn.textContent = 'Finishing this section…';
+    aiSweep.abort = true;
+    // The current section is paid for either way, so it is allowed to land.
+    for (let i = 0; i < 400 && aiSweep.running; i++) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    return;                     // the run's own tail moves to the components view
+  }
+
+  const total = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done).length), 0);
+  if (!total) return;
+  aiSweep.phase = 'components';
+  renderSweepPicks();
+});
 
 /** Throwing away the survey — always asked, because it is never nothing. */
 function confirmSweepClear() {

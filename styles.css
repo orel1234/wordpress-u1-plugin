@@ -3051,6 +3051,9 @@ button.u1-readonly-off {
   color: var(--u1-text-muted);
 }
 .sweep-part > summary { cursor: pointer; }
+/* The drawer's own call to action sits in its heading, so pressing it must not
+   also fold the drawer it is in. */
+.sweep-part > summary .btn-xs { margin-left: 8px; text-transform: none; letter-spacing: 0; }
 .sweep-part-done { opacity: 0.9; }
 .sweep-part-empty {
   padding: 8px 10px;
