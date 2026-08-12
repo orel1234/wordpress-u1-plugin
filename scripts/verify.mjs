@@ -270,5 +270,29 @@ console.log('\nThe library scripts run and define their globals:');
   else fail(`the model call can hang forever — controller:${aborts} message:${says}`);
 }
 
+// ── The background camera ───────────────────────────────────────────────────
+// captureVisibleTab photographs whatever is in front, so with it as the only
+// camera a run can only ever WAIT while you work elsewhere. Page.captureScreenshot
+// over the debugger protocol photographs the tab it is attached to, unfocused —
+// which is the whole difference between pausing and running in the background.
+{
+  const mf = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const perm = (mf.permissions || []).includes('debugger');
+  const uses = /Page\.captureScreenshot/.test(src);
+  // Attached for the run and detached the moment it ends: Chrome's banner stays
+  // up for exactly as long as we are attached.
+  const detaches = /await endBackgroundCapture\(\);/.test(src) &&
+                   /chrome\.debugger\.detach/.test(src);
+  // And it must degrade rather than fail: DevTools open on that tab is an
+  // ordinary reason to be refused, and Chrome allows one debugger at a time.
+  const degrades = /already attached/i.test(src) && /awaitTabVisible\(tab, onWait\)/.test(src);
+  if (perm && uses && detaches && degrades) {
+    pass('the sweep can photograph a tab that is not in front, and lets go afterwards');
+  } else {
+    fail(`background capture incomplete — permission:${perm} uses:${uses} detaches:${detaches} degrades:${degrades}`);
+  }
+}
+
 console.log(failures === 0 ? '\n✅ All extension checks passed.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

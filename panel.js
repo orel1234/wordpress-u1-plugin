@@ -4468,7 +4468,12 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   // it is handed. A survey keeps running while you work in another tab, so
   // taking the picture anyway would file a photograph of a different page
   // against this screenful. No picture is honest; the wrong one is not.
-  if (opts && opts.thumb && !(await pinnedTabIsVisible(tab))) opts = { ...opts, thumb: false };
+  // With the background camera attached the picture is always of THIS tab, so
+  // there is nothing to guard against. Without it, a thumbnail of whatever the
+  // user happens to be looking at is worse than no thumbnail.
+  if (opts && opts.thumb && !sweepCam.attached && !(await pinnedTabIsVisible(tab))) {
+    opts = { ...opts, thumb: false };
+  }
   if (opts && opts.thumb) {
     try {
       // Including what the PROBE found. The boxes were drawn from the read
@@ -4480,7 +4485,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
       })));
       await inPage(tab.id, (list) => window.__u1SelectorIntel.drawComponentMarks(list), [drawn]);
       await new Promise(r => setTimeout(r, 200));   // let the overlay paint
-      const shot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 72 });
+      const shot = await captureScreen(tab, 72);
       // Wide enough for the labels to be readable in the 340px hover preview and
       // the full-size view. A sweep holds one per screenful for the session.
       thumb = await scaleShot(shot, 760);
@@ -4506,18 +4511,14 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   // The picture IS the request, so it has to be a picture of THIS page. Wait
   // for the page to be in front rather than photographing whatever is, and
   // rather than dying — which is what happened before.
-  if (!(await awaitTabVisible(tab, () => showSweepBusy(
-        'Waiting for the page',
-        'The scan needs its own tab in front to photograph it. Switch back and it carries on from here — nothing is lost.')))) {
-    await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks());
-    return { err: 'Stopped while waiting for the page to come back to the front.' };
-  }
   try {
-    const raw = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 });
+    const raw = await captureScreen(tab, 85, () => showSweepBusy(
+      'Waiting for the page',
+      'Without the background camera the scan needs its own tab in front. Switch back and it carries on from here — nothing is lost.'));
     // 1568 is the size Anthropic recommends for maximum image fidelity, and this
     // task does not need it: the model is reading two-digit pink numbers, not
     // fine detail. 1280 keeps them legible and costs about a third fewer tokens.
-    shot = await scaleShot(raw, 1280);
+    shot = raw ? await scaleShot(raw, 1280) : null;
   } catch (err) {
     // One screenful that could not be photographed is one screenful lost. The
     // loop above knows how to skip a screen and carry on; a throw from here
@@ -6245,7 +6246,21 @@ function renderSweepScreens() {
     `Select all ${todo} unread screen${todo === 1 ? '' : 's'}` +
     (pickable > todo ? ` <em>(${pickable - todo} already read)</em>` : '') + `</label>`;
 
-  list.innerHTML = stops.map(sweepScreenRowHtml).join('');
+  // Two areas, because a half-finished run is the ordinary state — you start
+  // one, you stop it, you come back tomorrow. "Which of these have I paid for
+  // and which are still owed" is the only question the list has to answer then,
+  // and a flat list of twenty-six rows with a small tag on some of them does
+  // not answer it at a glance.
+  const left = stops.filter(x => !x.scanned);
+  const read = stops.filter(x => x.scanned);
+  list.innerHTML = read.length
+    ? (left.length
+        ? `<div class="sweep-part"><h4>Still to read · ${left.filter(x => x.count).length}</h4>` +
+          left.map(sweepScreenRowHtml).join('') + `</div>`
+        : `<div class="sweep-part sweep-part-empty">Every screenful has been read.</div>`) +
+      `<details class="sweep-part sweep-part-done"><summary>Already read · ${read.length}</summary>` +
+      read.map(sweepScreenRowHtml).join('') + `</details>`
+    : stops.map(sweepScreenRowHtml).join('');
 
   wrap.style.display = mapMode === 'sweep' ? 'block' : 'none';
   document.getElementById('aiBulkReview').style.display = 'none';
@@ -6636,6 +6651,77 @@ async function sweepIsPinnedAndAlive() {
  * interrupted pays nothing for this. The poll is 120ms, which is below what
  * anyone perceives as a delay on coming back.
  */
+// ── Photographing a page that is not in front ───────────────────────────────
+//
+// captureVisibleTab photographs whatever tab is in FRONT, whatever id it is
+// handed, and throws when the window is minimised. Everything the sweep does is
+// built on a photograph, so with that as the only camera "leave it running and
+// carry on working" is not something the tool can offer — it can only wait, and
+// waiting is what it did.
+//
+// The debugger protocol has a camera that does not care: Page.captureScreenshot
+// photographs the tab it is attached to, in the background, unfocused. That is
+// the whole difference between pausing and running.
+//
+// It is attached for the length of a run and detached the moment it ends —
+// Chrome shows its own banner on the page for as long as it is attached, which
+// is right: the browser saying out loud that something is driving this tab.
+//
+// It can fail to attach for one ordinary reason: DevTools is already open on
+// that tab, and Chrome allows one debugger at a time. That is not an error to
+// hide — it changes what the run can do — so it is reported and the run falls
+// back to the focus-bound camera.
+const sweepCam = { tabId: null, attached: false, why: '' };
+
+async function beginBackgroundCapture(tab) {
+  sweepCam.tabId = tab.id;
+  sweepCam.attached = false;
+  sweepCam.why = '';
+  if (!chrome.debugger) { sweepCam.why = 'this browser has no debugger API'; return false; }
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+    sweepCam.attached = true;
+    return true;
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    sweepCam.why = /already attached/i.test(msg)
+      ? 'DevTools is open on that tab, and Chrome allows one debugger at a time'
+      : msg;
+    return false;
+  }
+}
+
+async function endBackgroundCapture() {
+  if (!sweepCam.attached || sweepCam.tabId == null) { sweepCam.attached = false; return; }
+  try { await chrome.debugger.detach({ tabId: sweepCam.tabId }); } catch {}
+  sweepCam.attached = false;
+}
+
+/**
+ * One screenful, as a data URL.
+ *
+ * `onWait` is only ever called on the fallback path — the background camera
+ * never waits, so a run using it must not print "waiting for the page".
+ */
+async function captureScreen(tab, quality, onWait) {
+  if (sweepCam.attached && sweepCam.tabId === tab.id) {
+    try {
+      const res = await chrome.debugger.sendCommand(
+        { tabId: tab.id }, 'Page.captureScreenshot', { format: 'jpeg', quality });
+      if (res && res.data) return 'data:image/jpeg;base64,' + res.data;
+    } catch (e) {
+      // A detach mid-run (the tab navigated, DevTools opened) drops us onto the
+      // focus-bound camera rather than ending the run.
+      sweepCam.attached = false;
+      sweepCam.why = String((e && e.message) || e);
+    }
+  }
+  if (!(await awaitTabVisible(tab, onWait))) return null;
+  try {
+    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality });
+  } catch { return null; }
+}
+
 async function awaitTabVisible(tab, onWait) {
   if (await pinnedTabIsVisible(tab)) return true;
   let told = false;
@@ -6896,6 +6982,10 @@ async function scanPickedScreens(numbers) {
   } catch (err) {
     sweepLog(0, 'Failed: ' + err.message, 'err');
   } finally {
+    // Detach first. Chrome's "is debugging this browser" banner stays up for
+    // exactly as long as we are attached, and leaving it there after a run has
+    // ended is its own small lie about what is happening to the page.
+    await endBackgroundCapture();
     clearSweepBusy();
     aiSweep.running = false;
     btn.disabled = false;

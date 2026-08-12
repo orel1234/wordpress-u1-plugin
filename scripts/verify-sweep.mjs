@@ -507,12 +507,25 @@ console.log('\nchoosing screens');
     const was = box.aiSweep;
     box.aiSweep = withDone;
     box.renderSweepScreens();
-    const rows = [...w2.document.querySelectorAll('#sweepPicksList .sweep-screen')];
+    // By screen number, not by position: the list is now split into areas, so
+    // document order no longer matches stop order.
+    const row = (n) => w2.document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${n}"]`);
     check('a screenful already read comes back UNTICKED',
-      rows[0].querySelector('.sweep-screen-tick').checked === false);
-    check('…and says so on the row', /already read/i.test(rows[0].textContent));
+      row(1).querySelector('.sweep-screen-tick').checked === false);
+    check('…and says so on the row', /already read/i.test(row(1).textContent));
     check('…while the unread ones are still ticked',
-      rows[2].querySelector('.sweep-screen-tick').checked === true);
+      row(3).querySelector('.sweep-screen-tick').checked === true);
+    // A half-finished run is the ordinary state, and "what is left" is the only
+    // question the list has to answer then.
+    const parts = [...w2.document.querySelectorAll('#sweepPicksList .sweep-part')];
+    check('the list splits into what is left and what is read', parts.length === 2,
+      parts.map(x => x.textContent.slice(0, 20)).join(' | '));
+    check('what is still owed comes first, and is counted',
+      /Still to read · 1/.test(parts[0].textContent), parts[0].textContent.slice(0, 40));
+    check('what is paid for is folded away, and counted',
+      parts[1].tagName === 'DETAILS' && /Already read · 1/.test(parts[1].textContent));
+    check('the unread rows are in the first area and the read ones are not',
+      parts[0].contains(row(3)) && parts[1].contains(row(1)));
     check('"select all" counts the unread ones, not everything',
       /Select all 1 unread screen/.test(w2.document.getElementById('sweepPicksSummary').textContent),
       w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));

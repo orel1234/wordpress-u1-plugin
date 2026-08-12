@@ -3032,6 +3032,29 @@ button.u1-readonly-off {
   font-weight: 600;
 }
 
+/* A half-finished run is the ordinary state: start it, stop it, come back
+   tomorrow. The list then has one job — what is still owed, and what is paid
+   for — so those are two areas rather than one list with tags in it. */
+.sweep-part { margin: 0 0 10px; }
+.sweep-part > h4,
+.sweep-part > summary {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--u1-text-muted);
+}
+.sweep-part > summary { cursor: pointer; }
+.sweep-part-done { opacity: 0.9; }
+.sweep-part-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--u1-text-muted);
+  border: 1px dashed var(--u1-border-dashed);
+  border-radius: 6px;
+}
+
 /* Already paid for. Not hidden — re-reading one is a real thing to want — but
    it must not look like part of what the next press will charge for. */
 .sweep-screen.is-done { opacity: 0.72; }
