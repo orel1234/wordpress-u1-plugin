@@ -488,7 +488,7 @@ console.log('\nchoosing screens');
   const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
                 lift('markScreenReading'), lift('markScreenRead'),
-                lift('sweepRunningHtml')].join('\n') +
+                lift('sweepRunningHtml'), lift('markScreenFailed')].join('\n') +
     '\nconst sweepPicked = ' + /const sweepPicked = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepPickedScreens = ' + /const sweepPickedScreens = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepAvgCall = ' + /const sweepAvgCall =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
@@ -497,7 +497,8 @@ console.log('\nchoosing screens');
     ctx.renderSweepScreens = renderSweepScreens; ctx.sweepPickedScreens = sweepPickedScreens;
     ctx.syncSweepMakeBtn = syncSweepMakeBtn; ctx.showSweepBusy = showSweepBusy;
     ctx.clearSweepBusy = clearSweepBusy; ctx.markScreenReading = markScreenReading;
-    ctx.markScreenRead = markScreenRead; }`)(box);
+    ctx.markScreenRead = markScreenRead; ctx.markScreenFailed = markScreenFailed;
+    ctx.sweepRunningHtml = sweepRunningHtml; }`)(box);
 
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');
@@ -757,6 +758,50 @@ console.log('\nchoosing screens');
     box.renderSweepScreens();
     check('and when nothing is running it is back to what the next press costs',
       /Ticked:/.test(w2.document.getElementById('sweepEstimate').textContent));
+  }
+
+  // Attempted and failed is not the same as never tried, and it looked
+  // identical: the run moved past two screens and left them in "still to
+  // search" with their original survey line, so the only evidence anything had
+  // happened was a gap in the numbering of the completed drawer.
+  {
+    const st = box.aiSweep.stops;
+    box.renderSweepScreens();
+    await box.markScreenFailed(st[2], 'Could not capture the page.');
+    const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]');
+    check('a screen that failed says so', /not read/i.test(row.textContent));
+    check('…with the reason and what to do about it',
+      /Could not capture the page/.test(row.textContent) && /press again to retry/.test(row.textContent));
+    check('…and keeps its tick, because it really was not searched',
+      row.querySelector('.sweep-screen-tick').checked === true);
+    check('…and stays out of the completed drawer',
+      !w2.document.querySelector('.sweep-part-done .sweep-screen[data-screen="3"]'));
+
+    // Redrawn from storage, the failure has to still be there.
+    box.renderSweepScreens();
+    check('…and the mark survives a redraw',
+      /not read/i.test(w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]').textContent));
+
+    // And a retry that works clears it.
+    st[2].scanned = true; st[2].outcome = '2 components';
+    await box.markScreenRead(st[2]);
+    const after = w2.document.querySelector('.sweep-screen[data-screen="3"]');
+    check('a successful retry clears the failure', !/not read/i.test(after.textContent) &&
+      /completed/i.test(after.textContent));
+    st[2].scanned = false; st[2].failed = null; delete st[2].outcome;
+    box.renderSweepScreens();
+  }
+
+  // Exactly one screen can be the one being read.
+  {
+    box.aiSweep.running = true;
+    box.markScreenReading(1);
+    box.markScreenReading(3);
+    check('only one screen is ever marked as being read',
+      w2.document.querySelectorAll('.sweep-screen.is-reading').length === 1,
+      [...w2.document.querySelectorAll('.sweep-screen.is-reading')].map(x => x.dataset.screen).join(','));
+    box.markScreenReading(null);
+    box.aiSweep.running = false;
   }
 
   // A run owns the button, and the mark must survive a redraw. The bar could

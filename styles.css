@@ -3078,6 +3078,22 @@ button.u1-readonly-off {
   margin-left: 6px;
 }
 
+/* Tried and could not be finished. It keeps its tick and its place in the
+   still-to-search list, because it really was not searched — the tag is there
+   so a gap in the completed drawer is not the only evidence it happened. */
+.sweep-screen.is-failed { outline: 1px solid var(--u1-warn, #F5A524); outline-offset: -1px; }
+.sweep-fail-flag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--u1-warn, #F5A524);
+  border: 1px solid var(--u1-warn, #F5A524);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 6px;
+}
+
 /* What a completed section actually gave. "Done" answers whether to stop;
    "3 components" answers whether it was worth it. */
 .sweep-outcome {

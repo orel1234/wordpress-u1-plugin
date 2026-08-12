@@ -4698,8 +4698,12 @@ function clearSweepBusy() {
  * of the list you are watching.
  */
 function markScreenRead(stop) {
+  stop.failed = null;
   const row = document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${stop.n}"]`);
   if (row) {
+    row.classList.remove('is-failed');
+    row.querySelector('.sweep-fail-flag')?.remove();
+    row.querySelector('.sweep-outcome')?.remove();
     row.classList.add('is-done');
     const tick = row.querySelector('.sweep-screen-tick');
     if (tick) tick.checked = false;
@@ -4754,13 +4758,39 @@ function markScreenRead(stop) {
 
 let sweepReadingNow = null;
 
+/**
+ * A screen the run tried and could not finish.
+ *
+ * It keeps its tick and its place in "still to search", because it really was
+ * not searched and pressing again should pick it up. What it gains is the
+ * reason — otherwise the only evidence that anything happened to it is a gap in
+ * the numbering of the completed drawer.
+ */
+function markScreenFailed(stop, why) {
+  stop.failed = why || 'could not be read';
+  const row = document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${stop.n}"]`);
+  if (row) {
+    row.classList.add('is-failed');
+    const label = row.querySelector('.ai-approved-label');
+    if (label && !label.querySelector('.sweep-fail-flag')) {
+      label.insertAdjacentHTML('beforeend', ' <span class="sweep-fail-flag">not read</span>');
+    }
+    const body = row.querySelector('.ai-bulk-body');
+    if (body && !body.querySelector('.sweep-outcome')) {
+      body.insertAdjacentHTML('beforeend',
+        `<div class="sweep-outcome">${escapeHtml(stop.failed)} — still ticked, press again to retry</div>`);
+    }
+  }
+  return saveSweepNow();
+}
+
 function markScreenReading(n) {
   // Remembered, because the list is redrawn during a run — switching route and
   // back, a restore, the regroup at the end — and a mark that only lives in the
   // DOM comes back attached to whichever row happened to hold it last. That is
   // how the bar could say "section 1" while a row far down the list was lit.
   sweepReadingNow = n;
-  document.querySelectorAll('#sweepPicksList .sweep-screen.is-reading')
+  document.querySelectorAll('.sweep-screen.is-reading')
     .forEach((r) => r.classList.remove('is-reading'));
   if (n == null) return;
   const row = document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${n}"]`);
@@ -6414,15 +6444,16 @@ function sweepScreenRowHtml(stop) {
     // tickable by hand: re-reading one deliberately is a real thing to want,
     // and it should cost a deliberate click.
     const done = !!stop.scanned;
+    const failed = !done && !!stop.failed;
     return `
-      <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}${done ? ' is-done' : ''}" data-screen="${stop.n}">
+      <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}${done ? ' is-done' : ''}${failed ? ' is-failed' : ''}" data-screen="${stop.n}">
         <input type="checkbox" class="sweep-screen-tick" ${empty ? 'disabled' : (done ? '' : 'checked')}
                aria-label="Search screen ${stop.n}${done ? ' again' : ''}">
         ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
                    <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
                  </span>` : ''}
         <div class="ai-bulk-body">
-          <span class="ai-approved-label">Screen ${stop.n}${done ? ' <span class="sweep-read-flag">completed</span>' : ''}</span>
+          <span class="ai-approved-label">Screen ${stop.n}${done ? ' <span class="sweep-read-flag">completed</span>' : ''}${failed ? ' <span class="sweep-fail-flag">not read</span>' : ''}</span>
           ${// The components come first and in the panel's own text colour.
             // "22 links, 19 buttons" says how busy a screenful is; the components
             // say whether it is worth paying to read, which is the actual choice.
@@ -7096,7 +7127,14 @@ async function scanPickedScreens(numbers) {
       const collected = await collectRegion(tab, '', handled, { drop: (c) => c.sticky && stop.n > 1 });
       if (collected.err) {
         sweepLog(stop.n, collected.err, 'err');
-        stop.outcome = collected.err;
+        // Attempted and failed is not the same as never tried, and it looked
+        // identical: the run moved past screens 6 and 7 and left them sitting
+        // in "still to search" with their original survey line, so the only
+        // visible fact was that the completed drawer had holes in it.
+        //
+        // It stays in "still to search" — it genuinely was not searched, and it
+        // is still worth a retry — but it says what happened.
+        await markScreenFailed(stop, collected.err);
         continue;
       }
       // Every candidate on this screenful was filtered out before the model was
@@ -7133,6 +7171,7 @@ async function scanPickedScreens(numbers) {
       });
       if (part && part.err) {
         sweepLog(stop.n, part.err, 'err');
+        await markScreenFailed(stop, part.err);
         // A rate limit or a network blip is not a reason to abandon the other
         // screens; a bad key is, and it would fail the same way on every one.
         if (/API 401/.test(part.err)) break;
