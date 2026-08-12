@@ -331,6 +331,11 @@ const clashReported = clashMsg.ok === false &&
 const cleanMsg = describeApply({ ok: true, details: [{ type: 'listbox', sel: '.x', status: 'ok', changed: 3 }] }, {});
 const cleanQuiet = cleanMsg.ok === true && !/role=/.test(cleanMsg.msg);
 
+// The clash is a decision, so it is asked as one — on screen, not as a button
+// appended to the status line at the bottom, where it went unread.
+const asksOnScreen = /function askRoleClash[\s\S]{0,2000}?showModal\(\)/.test(panelSrc) &&
+                     !panelSrc.includes('data-role-overwrite');
+
 // ── Defaults must agree with the documentation written beside them ──────────
 // menu.menubar shipped as `true` while its own desc said "Default false =
 // navigation menu". Every menu mapping was therefore born with the one setting
@@ -525,6 +530,8 @@ console.log(`  ${clashReported ? '✅' : '❌'} …and every apply path reports 
 if (!clashReported) failed++;
 console.log(`  ${cleanQuiet ? '✅' : '❌'} …while a clean apply says nothing about roles`);
 if (!cleanQuiet) failed++;
+console.log(`  ${asksOnScreen ? '✅' : '❌'} …and the question is a dialog on screen, not a link under the fold`);
+if (!asksOnScreen) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
@@ -548,6 +555,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 21;
+const total = results.length + 22;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

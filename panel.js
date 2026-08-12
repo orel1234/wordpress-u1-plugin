@@ -8816,7 +8816,9 @@ document.getElementById('applyTemplateBtn').addEventListener('click', async () =
       return;
     }
     showNotice(status, v.msg, v.ok ? 'success' : 'error', v.ok ? 4000 : 20000);
-    if (v.roleClash) offerRoleOverwrite(status, v.roleClash);
+    if (v.roleClash && await askRoleClash(v.roleClash)) {
+      await applyRoleOverwrite(v.roleClash.sel, v.roleClash.role, status);
+    }
     return;
   }
   const result = await applyOne(currentTemplate.type, currentTemplate.firstArg || currentTemplate.primary, currentTemplate.config, currentTemplate.custom, currentTemplate);
@@ -8862,14 +8864,49 @@ async function revertApplied(receipt) {
   } catch { return 0; }
 }
 
-// The same, for a role the site wrote: the message says what is in the way, and
-// this is the one action that takes it out.
-function offerRoleOverwrite(status, clash) {
-  if (!status || !clash) return;
-  if (status.querySelector('[data-role-overwrite]')) return;
-  status.insertAdjacentHTML('beforeend',
-    ` <button class="btn-outline btn-xs" data-role-overwrite="${escapeHtml(clash.sel)}"` +
-    ` data-role-was="${escapeHtml(clash.role)}">Replace role="${escapeHtml(clash.role)}" and apply</button>`);
+// A role the site wrote blocks the fix, and the answer is a decision — so it is
+// asked as one, in the middle of the screen.
+//
+// It was a small button appended to the status line at the bottom of the panel,
+// where it went unread: the apply had just reported success-shaped text, the
+// eye had already moved on, and the one thing standing between the mapping and
+// working was a link below the fold. Same question as the save-time clash, so
+// it uses the same dialog rather than inventing a second look for it.
+function askRoleClash(clash) {
+  const dlg = document.getElementById('roleClashDialog');
+  if (!dlg || !clash) return Promise.resolve(false);
+
+  document.getElementById('roleClashBody').innerHTML =
+    `<code>${escapeHtml(clash.sel)}</code> carries <code>role="${escapeHtml(clash.role)}"</code> ` +
+    `in the site's own HTML — we did not put it there. U1 will not write ` +
+    `<code>role="${escapeHtml(clash.willWrite)}"</code> over it, so this fix cannot land while it is there.`;
+
+  // "Map it as <role>" belongs to the save-time question, where the type can
+  // still be changed before anything exists. Here the mapping is already built
+  // and applied; the choice is replace it or leave it.
+  const switchBtn = document.getElementById('roleClashSwitch');
+  switchBtn.style.display = 'none';
+  const over = document.getElementById('roleClashOverwrite');
+  const cancel = document.getElementById('roleClashCancel');
+  over.textContent = `Replace role="${clash.role}"`;
+  cancel.textContent = 'Leave it';
+
+  return new Promise((resolve) => {
+    const done = (answer) => {
+      dlg.close();
+      over.textContent = 'Overwrite it';
+      cancel.textContent = 'Cancel';
+      switchBtn.style.display = '';
+      over.removeEventListener('click', onOver);
+      cancel.removeEventListener('click', onCancel);
+      resolve(answer);
+    };
+    const onOver = () => done(true);
+    const onCancel = () => done(false);
+    over.addEventListener('click', onOver);
+    cancel.addEventListener('click', onCancel);
+    dlg.showModal();
+  });
 }
 
 // A one-click way to act on that, since the fix is always the same.
@@ -8898,14 +8935,7 @@ document.addEventListener('click', async (e) => {
 // in a page load, so re-running the fix here would be theatre — but the patch's
 // own corrector fills in role="listbox" and role="option" the moment the
 // author's role is gone, which is what actually makes the component work.
-document.addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-role-overwrite]');
-  if (!btn) return;
-  const sel = btn.getAttribute('data-role-overwrite');
-  const was = btn.getAttribute('data-role-was');
-  const status = btn.closest('.notice') || document.getElementById('applyStatus');
-  btn.disabled = true;
-
+async function applyRoleOverwrite(sel, was, status) {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
@@ -8937,10 +8967,10 @@ document.addEventListener('click', async (e) => {
                            list[idx].config, list[idx].custom, list[idx]);
   await loadMappingsList();
   showNotice(status,
-    r.ok ? `Removed role="${escapeHtml(was)}" from ${escapeHtml(sel)} and re-applied. The exported file now does the same, so the client gets this too.`
-         : `Removed role="${escapeHtml(was)}" from ${escapeHtml(sel)}, but the fix reported: ${escapeHtml(r.err || 'no result')}`,
+    r.ok ? `Removed role="${was}" from ${sel} and re-applied. The exported file now does the same, so the client gets this too.`
+         : `Removed role="${was}" from ${sel}, but the fix reported: ${r.err || 'no result'}`,
     r.ok ? 'success' : 'error', 12000);
-});
+}
 
 // Which saved mappings target the same DOM as `primary`?
 //
@@ -9159,7 +9189,10 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
         (noEffect || failed || unblocked.length || clashes.length) ? 20000 : 4000);
       // showNotice writes textContent, so the action has to be appended as
       // markup afterwards — the same shape offerReload uses.
-      if (clashes.length) offerRoleOverwrite(status, clashes[0].roleClash);
+      if (clashes.length && !silent) {
+        const c = clashes[0].roleClash;
+        if (await askRoleClash(c)) await applyRoleOverwrite(c.sel, c.role, status);
+      }
     }
     // Per-mapping detail. console.debug, not warn: these are expected outcomes
     // of a normal run, and at warn level an error collector files each one as a
