@@ -649,7 +649,8 @@ console.log('\nchoosing screens');
                 lift('sweepRunningHtml'), lift('markScreenFailed'),
                 // The real stage owner, so these tests exercise the thing that
                 // ships rather than a stand-in that cannot drift with it.
-                lift('setStage'), lift('renderStageTrail'), lift('resumeStage')].join('\n') +
+                lift('setStage'), lift('renderStageTrail'), lift('resumeStage'),
+                lift('stageHasContent')].join('\n') +
     '\nconst STAGE_PANELS = ' + /const STAGE_PANELS = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
     '\nconst STAGE_IDS = ' + /const STAGE_IDS = (\[[^\]]*\]);/.exec(panelSrc)[1] + ';' +
     '\nconst STAGE_TRAIL = ' + /const STAGE_TRAIL = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
