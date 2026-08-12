@@ -923,12 +923,15 @@ async function applyAriaLabel(target, config) {
 }
 
 // Routes a mapping/template to the right apply path (u1.fix vs custom script).
-async function applyOne(type, primary, config, custom) {
+// `owner` carries the parts of the mapping that are not arguments to u1.fix:
+// today that is the answer to "the site already wrote a role here", which has
+// to reach the page before the fix does.
+async function applyOne(type, primary, config, custom, owner) {
   if (custom === 'ariaLabel') return applyAriaLabel(primary, config);
   if (custom === 'keyboardGrid') return applyKeyboardGrid(primary, config);
   if (custom === 'keyboardClickable') return applyKeyboardClickable(primary, config);
   if (custom === 'keyboardTabs') return applyKeyboardTabs(primary, config);
-  return applyFix(type, primary, config);
+  return applyFix(type, primary, config, owner);
 }
 
 // A readable preview of what the keyboard-grid datepicker mapping does.
@@ -1064,10 +1067,26 @@ async function ensurePatchOnPage(tabId) {
   } catch { return false; }  // never block an apply on the corrections
 }
 
-async function applyFix(type, primary, config) {
+async function applyFix(type, primary, config, owner) {
   const tab = await getTab();
   if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
   await ensurePatchOnPage(tab.id);
+  // The role the site authored comes off first, exactly as the exported file
+  // does it — otherwise Apply and the client's own run disagree about what the
+  // component says it is.
+  if (owner && owner.overwriteRole && owner.primary) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: 'MAIN',
+        func: (selector, role) => {
+          document.querySelectorAll(selector).forEach((el) => {
+            if (el.getAttribute('role') === role) el.removeAttribute('role');
+          });
+        },
+        args: [owner.primary, owner.overwriteRole],
+      });
+    } catch {}
+  }
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -1304,6 +1323,15 @@ async function applyMappingsBatch(items) {
             }
 
             stripEmpty(it.config && it.config.selectors);
+            // Same lift the exported file performs, so Apply cannot look
+            // different from what the client will actually run.
+            if (it.overwriteRole && it.primary) {
+              try {
+                document.querySelectorAll(it.primary).forEach((el) => {
+                  if (el.getAttribute('role') === it.overwriteRole) el.removeAttribute('role');
+                });
+              } catch {}
+            }
             raw.fix[it.type](sel, it.config);
 
             // U1 decorates asynchronously (RxJS + MutationObserver), and how
@@ -1705,7 +1733,17 @@ function mappingToCode(m) {
     return buildAriaLabelCode(m.primary, sel.middleText || (m.config && m.config.middleText) || '', sel.headingSelector || (m.config && m.config.headingSelector) || '');
   }
   if (m.type && m.primary && m.config) {
-    return `window.u1?.fix.${m.type}(${JSON.stringify(m.firstArg || m.primary)}, ${formatJsObject(m.config)});`;
+    // The site wrote a role here and it was decided, explicitly, to replace it.
+    // U1 will not write over an author's role, so the attribute has to come off
+    // first or the fix lands on a component that still says it is something
+    // else. Only ever emitted for a mapping that carries the answer.
+    const strip = m.overwriteRole
+      ? `/* The site's own role="${m.overwriteRole}" is replaced by this fix. */\n` +
+        `document.querySelectorAll(${JSON.stringify(m.primary)}).forEach(function (el) {\n` +
+        `  if (el.getAttribute('role') === ${JSON.stringify(m.overwriteRole)}) el.removeAttribute('role');\n` +
+        `});\n`
+      : '';
+    return strip + `window.u1?.fix.${m.type}(${JSON.stringify(m.firstArg || m.primary)}, ${formatJsObject(m.config)});`;
   }
   return '';
 }
@@ -7857,7 +7895,15 @@ async function confirmRoleOverwrite(tpl) {
     const cancel = document.getElementById('roleClashCancel');
     const over = document.getElementById('roleClashOverwrite');
     const onCancel = () => done(false);
-    const onOver = () => done(true);
+    const onOver = () => {
+      // Answering "overwrite" used to do nothing but let the save through, and
+      // U1 then met the author's role exactly as before — the question was
+      // asked and the answer was discarded. Record it on the mapping: apply and
+      // the exported file both lift the attribute before u1.fix runs, which is
+      // the only thing that makes the word true.
+      tpl.overwriteRole = clash.role;
+      done(true);
+    };
     const onSwitch = () => {
       // Change the type and let them regenerate: the fields a menu wants are
       // not the fields a listbox wants, so saving straight through would
@@ -8717,7 +8763,7 @@ const U1_FREE_ALTERNATIVE = {
 document.getElementById('applyTemplateBtn').addEventListener('click', async () => {
   if (!currentTemplate) return;
   const status = document.getElementById('applyStatus');
-  const result = await applyOne(currentTemplate.type, currentTemplate.firstArg || currentTemplate.primary, currentTemplate.config, currentTemplate.custom);
+  const result = await applyOne(currentTemplate.type, currentTemplate.firstArg || currentTemplate.primary, currentTemplate.config, currentTemplate.custom, currentTemplate);
   if (result.ok) {
     showNotice(status, 'Applied on page.', 'success');
   } else if (result.u1Missing) {
@@ -8828,6 +8874,10 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     custom: template.custom || null,
     config: template.config,
     code: template.code,
+    // The answer to "the site already wrote a role here". Kept on the record,
+    // not on the moment: apply, re-apply and export all have to make the same
+    // choice, and a decision that lives only in a dialog cannot be repeated.
+    overwriteRole: template.overwriteRole || (prev && prev.overwriteRole) || null,
     // Keep the previous screenshot if a fresh capture wasn't possible.
     screenshot: screenshot || (prev && prev.screenshot) || null,
     pageUrl: tab?.url || (prev && prev.pageUrl) || '',
@@ -8918,7 +8968,7 @@ async function applyAllMappings({ silent = false } = {}) {
     else { err = result.err; }
   }
   for (const m of custom) {
-    const r = await applyOne(m.type, m.firstArg || m.primary, m.config, m.custom);
+    const r = await applyOne(m.type, m.firstArg || m.primary, m.config, m.custom, m);
     if (r.ok) applied++; else failed++;
   }
 
@@ -10163,7 +10213,7 @@ async function loadMappingsList() {
       const m = list[i];
       if (!m || typeof m === 'string') return;
       const status = document.getElementById('applyAllStatus');
-      const result = await applyOne(m.type, m.firstArg || m.primary, m.config, m.custom);
+      const result = await applyOne(m.type, m.firstArg || m.primary, m.config, m.custom, m);
       if (result.ok) {
         showNotice(status, 'Applied on page.', 'success', 2200);
       } else if (result.u1Missing) {

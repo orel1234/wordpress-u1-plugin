@@ -761,18 +761,66 @@
 
   var OPT = '[role="option"]';
   var TRIGGER = '[aria-haspopup="listbox"],[u1st-trigger-element="true"]';
+  var ITEM = 'li,[role="option"],[role="menuitem"],a[href],button';
 
-  /** The list a trigger opens — by declaration, then by position. */
+  // ── The defect that leaves the list untouched entirely ─────────────────────
+  // ListboxFixer is handed the TRIGGER as its context and then resolves
+  // selectors.listbox and selectors.options against it — and the list is never
+  // inside the button that opens it. getElement finds nothing and throws, and
+  // the throw lands AFTER the trigger has been decorated and BEFORE anything
+  // else is. Photographed on a live site: the button carries role="button",
+  // aria-haspopup="listbox", aria-expanded and u1st-trigger-element, while the
+  // <ul> and every <li> carry nothing at all.
+  //
+  // It is the same shape as the TabsFixer defect above and it takes the same
+  // remedy: widen the context to the nearest ancestor holding both. Only when
+  // the list is genuinely unreachable from the trigger — a site where the
+  // current arrangement resolves is left exactly as it is.
+  P.contextRoot.listbox = function (root, props) {
+    var sel = props && props.selectors;
+    if (!sel || !sel.listbox) return null;
+    try {
+      if (root.matches && root.matches(sel.listbox)) return null;
+      if (root.querySelector(sel.listbox)) return null;
+    } catch (e) { return null; }
+
+    var node = root;
+    while ((node = node.parentElement)) {
+      try {
+        // The moment an ancestor sweeps in a second trigger it is the wrong
+        // root: the fixer would pair one component's button with another's
+        // list. Every ancestor above it is worse, so stop rather than widen.
+        if (sel.trigger && node.querySelectorAll(sel.trigger).length > 1) return false;
+        if (node.querySelector(sel.listbox)) return node;
+      } catch (e) { return null; }
+    }
+    return false;
+  };
+
+  /**
+   * The popup a trigger opens.
+   *
+   * Deliberately NOT keyed on role="listbox". The case worth fixing is the one
+   * where that role was never written — looking for it there finds nothing and
+   * every correction below silently does nothing, which is how the first
+   * version of this region managed to change absolutely nothing on the page it
+   * was written for.
+   */
   var listFor = function (trigger) {
     var id = u.get(trigger, 'aria-controls');
     var byId = id && document.getElementById(id);
-    if (byId && u.get(byId, 'role') === 'listbox') return byId;
+    if (byId && !byId.contains(trigger)) return byId;
 
-    var sib = trigger.nextElementSibling;
-    while (sib) {
+    // A sibling that is a CONTAINER OF ITEMS. Two or more children, each of
+    // them an item or holding one — the same homogeneity test that separates a
+    // <ul> from the <nav> around it everywhere else in this tool.
+    var sib = trigger.nextElementSibling, seen = 0;
+    while (sib && seen++ < 4) {
       if (u.get(sib, 'role') === 'listbox') return sib;
-      var inner = sib.querySelector ? sib.querySelector('[role="listbox"]') : null;
-      if (inner) return inner;
+      var kids = u.qsa(':scope > *', sib);
+      if (kids.length >= 2 && kids.every(function (k) {
+        return (k.matches && k.matches(ITEM)) || u.qsa(ITEM, k).length > 0;
+      })) return sib;
       sib = sib.nextElementSibling;
     }
     // Up a few levels only. Walking to <body> finds some other component's
@@ -866,6 +914,34 @@
 
       // aria-expanded describes the list AS IT IS, not as it was when U1 ran.
       u.set(trigger, 'aria-expanded', u.visible(list) ? 'true' : 'false');
+
+      // The trigger promises a listbox and the popup is not one.
+      //
+      // Where the popup carries NO role, writing it is repairing a broken
+      // promise and destroys nothing. Where the SITE wrote a role — a <ul
+      // role="menu"> is the common one — the decision to overwrite it belongs
+      // to the person mapping the site, is asked in Studio, and is carried out
+      // there by removing the attribute before u1.fix runs. If it is still
+      // here, the answer was no: leave the role, and leave the items alone too,
+      // because half-converting a menu into a listbox is worse than either.
+      var authored = u.get(list, 'role');
+      if (u.get(trigger, 'aria-haspopup') === 'listbox' && authored !== 'listbox') {
+        if (authored) return;
+        u.set(list, 'role', 'listbox');
+      }
+
+      // Rows that never got role="option", for the same reason.
+      if (u.get(list, 'role') === 'listbox' && !list.querySelector(OPT)) {
+        u.qsa(':scope > *', list).forEach(function (row) {
+          // The element a person ACTIVATES. role="option" on a wrapper holding
+          // a single link puts the focus on one element and the action on
+          // another; where the row is ambiguous, the row itself is the safer
+          // answer.
+          var hits = u.qsa('a[href],button', row);
+          var target = hits.length === 1 ? hits[0] : row;
+          if (!u.get(target, 'role')) u.set(target, 'role', 'option');
+        });
+      }
 
       // Name the relationship so a screen reader can follow it, and so
       // listFor's first branch answers next time instead of guessing.

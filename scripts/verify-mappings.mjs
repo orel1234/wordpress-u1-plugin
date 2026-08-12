@@ -254,6 +254,49 @@ const harmCaught = !!(harmDetail.harm && harmDetail.harm.length) && harmRes.appl
 // It must NOT revert: undoing U1's work on a heuristic is worse than warning.
 const harmKept = navAfter.getAttribute('aria-hidden') === 'true';
 
+// ── "Overwrite" has to actually overwrite ───────────────────────────────────
+// The role-clash dialog asks whether to replace a role the SITE wrote, and the
+// "overwrite" answer used to do nothing but let the save through: U1 will not
+// write over an author's role, so the component kept saying role="menu" and the
+// listbox never existed. The answer only means something if the attribute comes
+// off before the fix runs — here, and identically in the exported file.
+const owDom = new JSDOM(`<!doctype html><body>
+  <button id="lbt">Pick</button>
+  <ul id="lb" role="menu"><li class="op">A</li><li class="op">B</li></ul></body>`);
+const owDoc = owDom.window.document;
+global.window = owDom.window; global.document = owDoc;
+let sawRole = 'not called';
+owDom.window.u1 = { fix: { listbox: (first, cfg) => {
+  const list = owDoc.querySelector(cfg.selectors.listbox);
+  sawRole = list.getAttribute('role');                  // what U1 meets when it arrives
+  if (!sawRole) list.setAttribute('role', 'listbox');   // the real library will not overwrite
+} } };
+const owTpl = buildTemplate('listbox', '#lb', { trigger: '#lbt', options: '#lb>li' }, {});
+await eval('(' + applyFnSrc + ')')([
+  { type: 'listbox', primary: '#lb', firstArg: owTpl.firstArg, config: owTpl.config, overwriteRole: 'menu' },
+]);
+const overwritten = sawRole === null && owDoc.querySelector('#lb').getAttribute('role') === 'listbox';
+
+// Without the answer the site's role is untouched and U1 meets it — the state
+// that has to stay reachable, because "leave it alone" is one of the three
+// answers the dialog offers.
+const keepDom = new JSDOM(`<!doctype html><body>
+  <button id="lbt">Pick</button>
+  <ul id="lb" role="menu"><li class="op">A</li></ul></body>`);
+const keepDoc = keepDom.window.document;
+global.window = keepDom.window; global.document = keepDoc;
+keepDom.window.u1 = { fix: { listbox: () => {} } };
+await eval('(' + applyFnSrc + ')')([
+  { type: 'listbox', primary: '#lb', firstArg: owTpl.firstArg, config: owTpl.config },
+]);
+const kept = keepDoc.querySelector('#lb').getAttribute('role') === 'menu';
+
+// And the exported file must make the same choice, or Apply and the client's
+// own run disagree about what the component says it is.
+const codeSrc = panelSrc.slice(panelSrc.indexOf('function mappingToCode(m)'));
+const exportsStrip = /overwriteRole/.test(codeSrc.slice(0, 2000)) &&
+                     /removeAttribute\('role'\)/.test(codeSrc.slice(0, 2000));
+
 // ── Defaults must agree with the documentation written beside them ──────────
 // menu.menubar shipped as `true` while its own desc said "Default false =
 // navigation menu". Every menu mapping was therefore born with the one setting
@@ -434,6 +477,12 @@ console.log(`  ${harmCaught ? '✅' : '❌'} an apply that hides the page from s
 if (!harmCaught) failed++;
 console.log(`  ${harmKept ? '✅' : '❌'} …and is NOT silently reverted — the warning is loud, the work stays`);
 if (!harmKept) failed++;
+console.log(`  ${overwritten ? '✅' : '❌'} "overwrite the site's role" actually removes it before u1.fix runs`);
+if (!overwritten) failed++;
+console.log(`  ${kept ? '✅' : '❌'} …and a mapping without that answer leaves the site's role alone`);
+if (!kept) failed++;
+console.log(`  ${exportsStrip ? '✅' : '❌'} …and the exported file makes the same choice, not just Apply`);
+if (!exportsStrip) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
@@ -457,6 +506,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 14;
+const total = results.length + 17;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

@@ -216,6 +216,79 @@ console.log('\nlistbox');
   check('a closed list gains no tab stop',
     [...sd.querySelectorAll('[role=option]')].every(o => o.tabIndex === -1));
 
+  // ── The shape that was photographed on the live site ─────────────────────
+  // The trigger fully decorated, the <ul> and every <li> untouched, the list
+  // open while the trigger says collapsed. The first version of this region
+  // keyed on role="listbox" and therefore changed nothing here at all.
+  const real = boot(`
+    <div class="click-nav">
+      <button class="clicker" role="button" aria-haspopup="listbox" aria-expanded="false"
+              u1st-trigger-element="true" u1st-avoid-change-detection="true">Sign In</button>
+      <ul class="signin-dropdown" style="display:block">
+        <li><a href="#a" aria-label="Member">Member</a></li>
+        <li><a href="#b">Health Care Professional</a></li>
+      </ul>
+    </div>`, ['listbox']);
+  await settle(real);
+  const rd = real.window.document;
+  check('the popup is found even with no role="listbox" on it',
+    rd.querySelector('.clicker').getAttribute('aria-controls') === rd.querySelector('.signin-dropdown').id);
+  check('a role-less popup promised as a listbox is given the role',
+    rd.querySelector('.signin-dropdown').getAttribute('role') === 'listbox');
+  check('the stale aria-expanded is corrected over an open list',
+    rd.querySelector('.clicker').getAttribute('aria-expanded') === 'true');
+  check('role="option" lands on the link, not on the <li>',
+    [...rd.querySelectorAll('a')].every(a => a.getAttribute('role') === 'option') &&
+    [...rd.querySelectorAll('li')].every(li => !li.getAttribute('role')),
+    rd.querySelector('li').outerHTML);
+
+  // A role the SITE wrote is not ours to replace from here.
+  const authored = boot(`
+    <button class="clicker" aria-haspopup="listbox" aria-expanded="false">Sign In</button>
+    <ul class="signin-dropdown" role="menu" style="display:block">
+      <li><a href="#a">Member</a></li><li><a href="#b">Pro</a></li>
+    </ul>`, ['listbox']);
+  await settle(authored);
+  const ad2 = authored.window.document;
+  check('an author\'s role="menu" survives the patch',
+    ad2.querySelector('.signin-dropdown').getAttribute('role') === 'menu');
+  check('and its items are left alone rather than half-converted',
+    [...ad2.querySelectorAll('a,li')].every(e => !e.getAttribute('role')));
+
+  // ── contextRoot: the reason nothing was written in the first place ────────
+  {
+    const ctx = boot(`
+      <div class="click-nav">
+        <button class="clicker">Sign In</button>
+        <ul class="signin-dropdown"><li>a</li><li>b</li></ul>
+      </div>`, ['listbox']);
+    await settle(ctx);
+    const resolve = ctx.window.__u1Patch.contextRoot.listbox;
+    const props = { selectors: { listbox: '.signin-dropdown', options: '.signin-dropdown>li', trigger: '.clicker' } };
+    const btn = ctx.window.document.querySelector('.clicker');
+    check('the trigger context is widened to the element holding both',
+      resolve(btn, props) === ctx.window.document.querySelector('.click-nav'));
+
+    // A page where the list IS reachable from the given context is untouched.
+    const fine = boot(`<div class="clicker"><ul class="signin-dropdown"><li>a</li></ul></div>`, ['listbox']);
+    await settle(fine);
+    check('a context that already resolves is left exactly as it is',
+      fine.window.__u1Patch.contextRoot.listbox(
+        fine.window.document.querySelector('.clicker'), props) === null);
+
+    // Two triggers under one ancestor: pairing them is worse than skipping.
+    const two = boot(`
+      <div class="wrap">
+        <div class="click-nav"><button class="clicker">A</button></div>
+        <div class="click-nav"><button class="clicker">B</button></div>
+        <ul class="signin-dropdown"><li>a</li></ul>
+      </div>`, ['listbox']);
+    await settle(two);
+    check('widening stops before it pairs another component\'s trigger',
+      two.window.__u1Patch.contextRoot.listbox(
+        two.window.document.querySelector('.clicker'), props) === false);
+  }
+
   // aria-activedescendant is a different, valid model — do not impose a second.
   const ad = boot(`
     <button class="t" aria-haspopup="listbox">Menu</button>
