@@ -511,6 +511,93 @@
   const uniq = (arr) => arr.filter((v, i) => v && arr.indexOf(v) === i);
   const qsa = (root, sel) => { try { return Array.from(root.querySelectorAll(sel)); } catch { return []; } };
 
+  // ── Open shadow roots ──────────────────────────────────────────────────────
+  //
+  // querySelectorAll does not cross a shadow boundary. A component inside one is
+  // not hidden, not off-screen and not filtered out — it is simply not in the
+  // answer, and every count, every drawn number and every selector behaves as
+  // though that part of the page did not exist. Nothing said so, because from
+  // the outside "there is nothing there" and "I cannot see in there" produce
+  // identical output.
+  //
+  // Only OPEN roots. A closed one has no `shadowRoot` to read by design, and
+  // there is no honest way around that — so it is reported rather than worked
+  // around, below.
+  //
+  // Depth-limited: shadow roots nest, and a component library can nest them
+  // several deep, but an unbounded walk over a page that puts a root on every
+  // list item is a way to hang the panel on somebody's design system.
+  const SHADOW_DEPTH = 6;
+
+  /** Every open shadow root under `node`, outermost first. */
+  function shadowRoots(node, depth) {
+    if ((depth || 0) >= SHADOW_DEPTH) return [];
+    const found = [];
+    let hosts;
+    try { hosts = Array.from((node.querySelectorAll ? node : document).querySelectorAll('*')); }
+    catch { return []; }
+    for (const el of hosts) {
+      const sr = el.shadowRoot;          // null for closed roots, and for most elements
+      if (!sr) continue;
+      found.push(sr);
+      found.push(...shadowRoots(sr, (depth || 0) + 1));
+    }
+    return found;
+  }
+
+  /**
+   * querySelectorAll, but it also looks inside open shadow roots.
+   *
+   * Same signature and same return type as qsa, so it is a drop-in at the one
+   * place that needs it — the candidate sweep. Everything else keeps the plain
+   * one deliberately: a fixer measuring the shape of a component it already has
+   * should stay inside that component.
+   */
+  function qsaDeep(root, sel) {
+    const out = qsa(root, sel);
+    const roots = shadowRoots(root, 0);
+    if (!roots.length) return out;
+    const seen = new Set(out);
+    for (const sr of roots) {
+      for (const el of qsa(sr, sel)) if (!seen.has(el)) { seen.add(el); out.push(el); }
+    }
+    return out;
+  }
+
+  /**
+   * The chain of hosts you would have to go through to reach this element.
+   *
+   * "It is in a shadow root" is not actionable on its own; "it is inside
+   * <my-header> → <nav-menu>" is something a developer can go and look at, and
+   * it is the only thing we can honestly offer about an element no selector of
+   * ours will ever reach.
+   */
+  function shadowHostPath(el) {
+    const hops = [];
+    let node = el;
+    for (let i = 0; i < SHADOW_DEPTH + 1; i++) {
+      const rootNode = node.getRootNode && node.getRootNode();
+      if (!rootNode || rootNode === document || !rootNode.host) break;
+      hops.unshift(rootNode.host.tagName.toLowerCase());
+      node = rootNode.host;
+    }
+    return hops.join(' → ');
+  }
+
+  /** Open roots found, and hosts whose root is closed and cannot be read. */
+  function shadowReport() {
+    let closed = 0;
+    try {
+      for (const el of document.querySelectorAll('*')) {
+        // A custom element with no open root is the usual shape of a closed one.
+        // Not proof — plenty of custom elements have no shadow at all — so this
+        // is worded as "may be" wherever it is shown.
+        if (!el.shadowRoot && el.tagName.includes('-')) closed++;
+      }
+    } catch {}
+    return { open: shadowRoots(document, 0).length, closedHosts: closed };
+  }
+
   // Elements inside `container` that look like they open something.
   //
   // The evidence must be POSITIVE — an aria relationship, a data-* trigger
@@ -888,11 +975,56 @@
     [/pagination|pager/i, 'pagination'],
     [/tooltip|popover/i, 'tooltip'],
     [/breadcrumb/i, 'breadcrumb'],
+
+    // ── Library fingerprints ────────────────────────────────────────────────
+    //
+    // Everything above is a word a human chose. These are strings a FRAMEWORK
+    // emitted, and they are worth having for the opposite reason: nobody types
+    // `react-datepicker__input-container`, so when it appears it is not a
+    // coincidence and not a false friend. A hand-written `class="calendar"` is
+    // a guess about intent; `mat-datepicker` is a fact about what was rendered.
+    //
+    // Added AFTER the generic patterns on purpose — a site that says "carousel"
+    // in its own words should be read in its own words first. These only decide
+    // the cases the words above leave undecided.
+    //
+    // Kept to fingerprints that name a COMPONENT. The generic build artefacts
+    // from the same libraries — `_ngcontent-`, `ng-star-inserted`, `sc-` and
+    // the rest — are deliberately not here: they appear on every element a
+    // framework renders, so they identify the framework and say nothing at all
+    // about what any individual element is.
+    [/react-datepicker|mat-datepicker|\bdatepicker__|-datepicker\b/i, 'datepicker'],
+    [/mat-autocomplete|downshift|react-select|select2|choices__/i, 'combobox'],
+    [/mat-tab\b|mat-tab-|data-reach-tab|react-tabs__/i, 'tabs'],
+    [/mat-expansion|MuiAccordion|chakra-accordion/i, 'accordion'],
+    [/mat-menu|MuiMenu|headlessui-menu/i, 'menu'],
+    [/mat-dialog|MuiDialog|headlessui-dialog|ReactModal/i, 'dialog'],
+    [/swiper|slick-slider|glide__|embla/i, 'carousel'],
+
+    // NOTE for anything added below: these run in order, and the generic
+    // vocabulary above wins. `downshift-1-menu` contains the word "menu" and is
+    // read as a menu, which for a combobox's popup list is a fair answer — the
+    // fingerprints are here to name what the words leave unnamed, not to
+    // overrule them.
+
     // `search` is deliberately absent. It matched NINETEEN elements on one page
     // — the overlay, the panel, the field, the button and every suggestion chip
     // — and a search box is usually just an input anyway. A combobox needs a
     // popup list of suggestions, which a class name cannot tell you and a
     // behavioural probe can.
+  ];
+
+  // Fingerprints a library writes as an ATTRIBUTE NAME, with no value and often
+  // no class beside it. Matched against attribute names only.
+  //
+  // Deliberately short. `data-radix-*-trigger` and `data-headlessui-state` are
+  // the obvious next entries and both are wrong: Radix and Headless UI put the
+  // same attribute on dropdowns, dialogs, tooltips and popovers alike, so it
+  // identifies the LIBRARY and not the component — exactly the mistake that
+  // keeps `_ngcontent-` and `sc-` out of the class list above. An attribute
+  // earns a place here only when it names one kind of thing.
+  const COMPONENT_BY_ATTR = [
+    [/^data-reach-tab-list$|^data-reach-tabs$/i, 'tabs'],
   ];
 
   const FIELD = 'input:not([type="hidden"]),select,textarea';
@@ -915,6 +1047,21 @@
       }
     } catch (e) { /* :scope is old enough to rely on, but never worth throwing for */ }
 
+    // Some libraries put their fingerprint in a data- attribute and leave the
+    // class empty — Reach UI's tab strip is `<div data-reach-tab-list>` and
+    // nothing else, so no class pattern can ever see it however it is spelled.
+    // Matched against the attribute NAMES: the name is the whole statement,
+    // and it has no value at all.
+    //
+    // Ahead of the class patterns, because an attribute a library emitted is a
+    // firmer statement than a word in a class list that may well be describing
+    // something else on the same element.
+    try {
+      for (const attr of el.getAttributeNames()) {
+        for (const [re, name] of COMPONENT_BY_ATTR) if (re.test(attr)) return { name, sure: true };
+      }
+    } catch (e) {}
+
     const cls = (el.className && typeof el.className === 'string') ? el.className : '';
     if (cls) {
       for (const [re, name] of COMPONENT_BY_CLASS) if (re.test(cls)) return { name, sure: false };
@@ -934,6 +1081,20 @@
     //   · it is not mostly navigation — a form is fields with a few links in
     //     it, not a page of links that happens to contain a search box
     try {
+      // A real <form> IS a form, and could never say so.
+      //
+      // The guard below is `!el.closest('form')`, there to stop every div INSIDE
+      // a real form being called one too. But closest() starts at the element
+      // itself, so a <form> matched its own guard — the one element on the page
+      // that needs no heuristic at all was the only one the heuristic could not
+      // name. Reported as, exactly: funny, it did not catch the form.
+      //
+      // No field threshold here. A search form is one input and a button and is
+      // still a form; the three-field rule exists to find forms built out of
+      // divs, where there is no tag to go on. A <form> inside a <form> is
+      // invalid HTML, so there is no nesting case to resolve.
+      if (el.tagName === 'FORM') return { name: 'form', sure: true };
+
       const fields = el.querySelectorAll(FIELD).length;
       if (fields >= 3 && !el.closest('form')) {
         // Descend to the tightest cluster. Asking only whether a child holds
@@ -965,6 +1126,25 @@
     'tooltip', 'popover', 'breadcrumb',
   ];
 
+  // The library fingerprints from COMPONENT_BY_CLASS, as things to LOOK at.
+  //
+  // Kept as a second list rather than folded into the one above for two
+  // reasons. They are matched case-insensitively — `MuiAccordion` and
+  // `ReactModal` are camelCase, and a CSS substring match is case-sensitive
+  // without the `i` flag, so they would be collected by nothing. And they are
+  // fingerprints rather than words: if one of them ever needs removing, it
+  // should be removable without touching the hand-written vocabulary that has
+  // been tuned against the corpus.
+  //
+  // Only the names the first list does not already cover — `mat-datepicker`
+  // contains "datepicker" and is collected by that.
+  const LIB_HINTS = [
+    'autocomplete', 'downshift', 'react-select', 'select2', 'choices__',
+    'mat-expansion', 'MuiAccordion', 'MuiMenu', 'MuiDialog',
+    'mat-dialog', 'ReactModal', 'headlessui',
+    'swiper', 'glide__', 'embla',
+  ];
+
   // Elements worth showing the model: anything interactive, plus the structural
   // landmarks and media that carry the most common accessibility defects.
   const CANDIDATE_SEL = [
@@ -973,7 +1153,30 @@
     'nav', 'form', 'table', 'dialog', 'iframe', 'video', 'audio',
     'img', 'svg[aria-label]', 'h1', 'h2', 'h3',
     ...CLASS_HINTS.map(t => `[class*="${t}"]`),
+    // ` i` — case-insensitive. Without it MuiAccordion and ReactModal are
+    // collected by nothing, which is the whole reason these are a separate list.
+    ...LIB_HINTS.map(t => `[class*="${t}" i]`),
+    // Reach UI names its tabs with a data- attribute and no class at all, so a
+    // class hint cannot see it however it is spelled.
+    '[data-reach-tab-list]', '[data-reach-tabs]',
   ].join(',');
+
+  // CANDIDATE_SEL is ONE selector. If any fragment of it fails to parse, the
+  // whole thing throws and qsa's catch returns an empty list — so an engine
+  // that does not know the `i` flag would not degrade to "no library
+  // fingerprints", it would degrade to "this page has nothing on it", silently,
+  // everywhere. That is far too much to risk on a syntax addition, so it is
+  // tried once and dropped if it does not parse.
+  const CANDIDATES = (function () {
+    try { document.querySelector(CANDIDATE_SEL); return CANDIDATE_SEL; }
+    catch (e) {
+      try {
+        const plain = CANDIDATE_SEL.replace(/" i\]/g, '"]');
+        document.querySelector(plain);
+        return plain;
+      } catch (e2) { return 'a[href],button,input,select,textarea,[role],nav,form,table'; }
+    }
+  })();
 
   // `within` confines the scan to one element's subtree. Scanning the whole
   // screen is the wrong tool for "this datepicker" — a widget with forty cells
@@ -1001,19 +1204,21 @@
     const rec = root.__u1EventMap;
     let recorded = null;
     try { recorded = rec && typeof rec.all === 'function' ? rec.all() : null; } catch { recorded = null; }
-    if (!recorded || !recorded.length) return qsa(scope, CANDIDATE_SEL);
+    // qsaDeep, not qsa: this is the one place that asks "what is on this page",
+    // and a component behind a shadow boundary is on the page.
+    if (!recorded || !recorded.length) return qsaDeep(scope, CANDIDATES);
 
     const extra = new Set();
     for (const el of recorded) {
       // A recorded element outside the scope is somebody else's problem.
       if (scope === document || (scope.contains && scope.contains(el))) extra.add(el);
     }
-    if (!extra.size) return qsa(scope, CANDIDATE_SEL);
+    if (!extra.size) return qsaDeep(scope, CANDIDATES);
 
     const out = [];
-    for (const el of qsa(scope, '*')) {
+    for (const el of qsaDeep(scope, '*')) {
       let hit = extra.has(el);
-      if (!hit) { try { hit = el.matches(CANDIDATE_SEL); } catch { hit = false; } }
+      if (!hit) { try { hit = el.matches(CANDIDATES); } catch { hit = false; } }
       if (hit) out.push(el);
     }
     return out;
@@ -1072,7 +1277,16 @@
       const mark = out.length + 1;
       el.setAttribute(MARK_ATTR, String(mark));
       const sel = robustSelector(el);
-      const usable = isU1Valid(sel) ? sel : '';
+      // Behind a shadow boundary. document.querySelector cannot reach it, and
+      // neither can u1.fix.* — so a selector for it is not a selector, it is a
+      // string that resolves to nothing on every page load.
+      //
+      // It is still COLLECTED, because "there is a menu in here I cannot touch"
+      // is a real answer and far better than the element simply not existing in
+      // the survey. But it carries no usable selector, so nothing downstream can
+      // quietly build a mapping out of it that would fail in silence.
+      const inShadow = !!(el.getRootNode && el.getRootNode() !== document);
+      const usable = (!inShadow && isU1Valid(sel)) ? sel : '';
       const hint = componentHint(el);
       let nested = false;
       if (hint) {
@@ -1108,6 +1322,11 @@
         // Travels with the viewport, so a page-wide scan meets it again at every
         // scroll position. The panel drops these after the first stop.
         sticky: lastWasSticky,
+        // Inside an open shadow root: visible, real, and unreachable from a
+        // document-level selector. Said out loud rather than left to look like
+        // a component whose selector mysteriously matches nothing.
+        inShadow,
+        shadowHost: inShadow ? shadowHostPath(el) : '',
         // How many elements this selector actually hits. >1 is fine for a field
         // meant to match many (menu items), and wrong for one meant to match a
         // single element — u1.fix.* decorates only one of them.

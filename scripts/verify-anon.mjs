@@ -615,5 +615,162 @@ console.log('\nthe options selector is checked against the whole page, not the l
     `${r.options} matches ${d.window.document.querySelectorAll(r.options).length}`);
 }
 
+// A page, booted, with the collector's answer indexed by element.
+function collectIn(body, script) {
+  const d = new JSDOM(`<!doctype html><body>${body}</body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+  const w = d.window;
+  w.getComputedStyle = () => ({ position: 'static', visibility: 'visible', display: 'block', opacity: '1' });
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+  };
+  Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return 40; } });
+  if (script) w.eval(script);
+  w.eval(INTEL);
+  const got = w.__u1SelectorIntel.collectCandidates(60, null);
+  const at = (sel, root) => {
+    const el = (root || w.document).querySelector(sel);
+    return got.candidates.find((x) => x.mark != null &&
+      (w.document.querySelector(`[data-u1-mark="${x.mark}"]`) === el ||
+       (root && root.querySelector(`[data-u1-mark="${x.mark}"]`) === el))) || null;
+  };
+  return { w, got, at, name: (sel, root) => (at(sel, root) || {}).component || '(not collected)' };
+}
+
+// ── A real <form> could never say it was a form ────────────────────────────
+//
+// componentHint's form rule is guarded by `!el.closest('form')`, there to stop
+// every div inside a real form being called one too. closest() starts at the
+// element itself, so a <form> matched its own guard: the one element on a page
+// that needs no heuristic at all was the only one the heuristic could not name.
+//
+// Reported as, exactly: funny, it did not catch the form.
+console.log('\na <form> is a form');
+{
+  // The case that failed — a real form, with the field count that used to be
+  // required sitting right there inside it.
+  const a = collectIn(`<form id="signup" action="/go">
+      <label for="e">Email</label><input id="e" type="email">
+      <input id="n" type="text"><select id="s"><option>A</option></select>
+      <button type="submit">Send</button></form>`);
+  check('a <form> with three fields is named a form', a.name('#signup') === 'form', a.name('#signup'));
+
+  // And the case no field threshold could ever reach: a search form is one
+  // input and a button, and it is still a form.
+  const b = collectIn(`<form id="search" role="search"><input id="q" type="search"><button>Go</button></form>`);
+  check('…and so is a two-field search form', b.name('#search') === 'form', b.name('#search'));
+
+  // The guard's real job has to survive.
+  const c = collectIn(`<form id="outer">
+      <div id="group"><input type="text"><input type="text"><input type="text"></div>
+      <button>Send</button></form>`);
+  check('the divs inside a form are still not each a form', c.name('#group') !== 'form', c.name('#group'));
+  check('…while the form itself is', c.name('#outer') === 'form', c.name('#outer'));
+
+  // Div-soup forms are what the three-field rule is for, and it is untouched.
+  // The wrapper has to be a candidate for any of this to reach it — a bare
+  // <div> with no tag, role, class or handler is not collected at all, and
+  // that is the pre-existing behaviour this change does not touch.
+  const e = collectIn(`<div id="soup" tabindex="-1"><input type="text"><input type="email"><select><option>A</option></select></div>`);
+  check('a form built out of divs is still found by counting fields',
+    e.name('#soup') === 'form', e.name('#soup'));
+}
+
+// ── Open shadow roots ──────────────────────────────────────────────────────
+//
+// querySelectorAll does not cross a shadow boundary. A component inside one is
+// not hidden, not off-screen and not filtered out — it is simply absent from
+// the answer, and from outside "there is nothing there" and "I cannot see in
+// there" produce identical output.
+console.log('\nlooking inside an open shadow root');
+{
+  const { got } = collectIn(
+    `<a href="/">Ordinary link in the light DOM</a><site-header id="host"></site-header>`,
+    `var sr = document.getElementById('host').attachShadow({ mode: 'open' });
+     sr.innerHTML = '<nav class="mega-nav" id="inner"><a href="/a">A</a><a href="/b">B</a></nav>';`);
+
+  const inner = got.candidates.filter((c) => c.inShadow);
+  check('a component behind a shadow boundary is found at all', inner.length > 0,
+    `${got.candidates.length} candidates, none of them in a shadow root`);
+  check('…and is named for what it is', inner.some((c) => c.component === 'menu'),
+    inner.map((c) => c.component).join());
+
+  // The honest half. document.querySelector cannot reach it and neither can
+  // u1.fix.* — so a selector for it is not a selector, it is a string that
+  // resolves to nothing on every page load. Collecting it WITH one would be
+  // worse than not collecting it at all: it would build mappings that fail in
+  // silence, on a page where everything looked fine when it was mapped.
+  check('it carries no selector, because no selector can reach it',
+    inner.every((c) => !c.selector), inner.map((c) => c.selector).join());
+  check('…and names the hosts you would have to go through instead',
+    inner.every((c) => /site-header/.test(c.shadowHost)), inner.map((c) => c.shadowHost).join());
+
+  // This adds reach; it must not change what was already reachable.
+  const light = got.candidates.filter((c) => !c.inShadow);
+  check('the ordinary page is collected exactly as before',
+    light.some((c) => c.tag === 'a' && c.selector), `${light.length} light-DOM candidates`);
+}
+
+// ── Library fingerprints ───────────────────────────────────────────────────
+//
+// The words in CLASS_HINTS are ones a human chose. These are strings a
+// FRAMEWORK emitted, and they are worth having for the opposite reason: nobody
+// types `react-datepicker__input-container` by accident, so when it appears it
+// is a fact about what was rendered rather than a guess about intent.
+console.log('\nfingerprints a framework left behind');
+{
+  const named = (body, sel) => collectIn(body).name(sel);
+
+  check('a Material datepicker is a datepicker',
+    named('<div id="x" class="mat-datepicker-content"><input></div>', '#x') === 'datepicker',
+    named('<div id="x" class="mat-datepicker-content"><input></div>', '#x'));
+  check('a react-select control is a combobox',
+    named('<div id="x" class="react-select__control"><a href="/">A</a></div>', '#x') === 'combobox',
+    named('<div id="x" class="react-select__control"><a href="/">A</a></div>', '#x'));
+  // Order matters and the generic vocabulary wins. `downshift-1-menu` contains
+  // the word "menu" and is read as a menu — which for a combobox's popup list
+  // is a fair answer. The fingerprints name what the words leave unnamed; they
+  // do not overrule them.
+  check('…while a library class containing a plain word is read as that word',
+    named('<div id="x" class="downshift-1-menu"><a href="/">A</a></div>', '#x') === 'menu',
+    named('<div id="x" class="downshift-1-menu"><a href="/">A</a></div>', '#x'));
+  check('a Swiper is a carousel',
+    named('<div id="x" class="swiper-container"><a href="/">A</a></div>', '#x') === 'carousel',
+    named('<div id="x" class="swiper-container"><a href="/">A</a></div>', '#x'));
+
+  // camelCase is exactly why these need the case-insensitive flag: a CSS
+  // substring match is case-SENSITIVE, so without ` i` these are collected by
+  // nothing at all and never reach the naming step.
+  check('a MUI accordion is found although it is camelCase',
+    named('<div id="x" class="MuiAccordion-root"><a href="/">A</a></div>', '#x') === 'accordion',
+    named('<div id="x" class="MuiAccordion-root"><a href="/">A</a></div>', '#x'));
+  check('a ReactModal is found although it is camelCase',
+    named('<div id="x" class="ReactModal__Content"><a href="/">A</a></div>', '#x') === 'dialog',
+    named('<div id="x" class="ReactModal__Content"><a href="/">A</a></div>', '#x'));
+  check('Reach UI tabs are found by their data- attribute, having no class',
+    named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x') === 'tabs',
+    named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x'));
+
+  // A site that says "carousel" in its own words is read in its own words. The
+  // fingerprints only decide what the vocabulary above leaves undecided.
+  check('a hand-written class still wins over a library fingerprint',
+    named('<div id="x" class="carousel headlessui-menu"><a href="/">A</a></div>', '#x') === 'carousel',
+    named('<div id="x" class="carousel headlessui-menu"><a href="/">A</a></div>', '#x'));
+
+  // Build artefacts are NOT fingerprints: _ngcontent, ng-star-inserted and sc-
+  // are on every element those frameworks render, so they identify the
+  // framework and say nothing about what any one element is. Naming from them
+  // would put a component label on every div on an Angular page.
+  check('a generic build artefact names nothing',
+    named('<div id="x" class="ng-star-inserted sc-bdvvtL"><a href="/">A</a></div>', '#x') !== 'menu',
+    named('<div id="x" class="ng-star-inserted sc-bdvvtL"><a href="/">A</a></div>', '#x'));
+
+  // CANDIDATE_SEL is ONE selector, so an engine that rejected the ` i` flag
+  // would not lose the fingerprints — it would throw on the whole thing and
+  // collect nothing, everywhere, in silence.
+  check('the candidate selector is validated before it is relied on',
+    /document\.querySelector\(CANDIDATE_SEL\); return CANDIDATE_SEL/.test(INTEL) &&
+    /replace\(\/" i\\\]\/g, '"\]'\)/.test(INTEL));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
