@@ -392,6 +392,10 @@ console.log('\nchoosing screens');
     // The sweep panel belongs to the Whole page route, so the render functions
     // ask which route is on screen. These tests are about that route.
     mapMode: 'sweep',
+    // showSweepBusy owns a module-level interval handle in panel.js.
+    sweepBusyTimer: null,
+    setInterval: (...a) => w2.setInterval(...a),
+    clearInterval: (...a) => w2.clearInterval(...a),
     SWEEP_EST: { scanSecs: 15, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 },
     aiSweep: { phase: 'screens', stops: [
       { n: 1, thumb: PIXEL, count: 14, inventory: '6 links, 3 buttons', sticky: 27, truncated: false, found: [] },
@@ -465,6 +469,11 @@ console.log('\nchoosing screens');
     box.markScreenReading(2);
     const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="2"]');
     check('the progress bar pins itself for the run', host.classList.contains('pinned'));
+    // "It has been five minutes on the last screen — how do I know what state
+    // it is in?" A percentage says how far along the RUN is and nothing about
+    // whether this step is alive.
+    check('the current step carries an elapsed clock',
+      !!w2.document.getElementById('sweepBusyClock'), host.textContent.replace(/\s+/g, ' '));
     check('and the row being read is marked in the list', !!row && row.classList.contains('is-reading'));
     check('progress counts sections done, not the screen number',
       /Section 4 of 26/.test(host.textContent), host.textContent.replace(/\s+/g, ' ').slice(0, 50));
@@ -490,6 +499,28 @@ console.log('\nchoosing screens');
   check('with none ticked the button refuses and the estimate clears',
     btn2.disabled && /No sections ticked/.test(btn2.textContent) && est.innerHTML === '',
     btn2.textContent);
+
+  // Already paid for. It used to come back ticked, so pressing Read again to
+  // pick up the ones that failed quietly re-charged for every screen.
+  {
+    const withDone = { phase: 'screens', stops: box.aiSweep.stops.map((x, i) => ({ ...x, scanned: i === 0 })) };
+    const was = box.aiSweep;
+    box.aiSweep = withDone;
+    box.renderSweepScreens();
+    const rows = [...w2.document.querySelectorAll('#sweepPicksList .sweep-screen')];
+    check('a screenful already read comes back UNTICKED',
+      rows[0].querySelector('.sweep-screen-tick').checked === false);
+    check('…and says so on the row', /already read/i.test(rows[0].textContent));
+    check('…while the unread ones are still ticked',
+      rows[2].querySelector('.sweep-screen-tick').checked === true);
+    check('"select all" counts the unread ones, not everything',
+      /Select all 1 unread screen/.test(w2.document.getElementById('sweepPicksSummary').textContent),
+      w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));
+    check('…and says how many are already paid for',
+      /1 already read/.test(w2.document.getElementById('sweepPicksSummary').textContent));
+    box.aiSweep = was;
+    box.renderSweepScreens();
+  }
 }
 
 // ── Sticky detection, against the shape that actually broke ─────────────────

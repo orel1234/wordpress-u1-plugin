@@ -4622,6 +4622,14 @@ function clearMapBusy() {
 // which also holds "✨ Make all of these accessible" and "Clear". A running
 // sweep therefore showed two buttons from the other route, both of which would
 // have acted on an empty inventory. Same look, its own container.
+// A clock on the current step.
+//
+// "It has been five minutes on the last screen — how do I know what state it is
+// in?" A percentage answers how far along the RUN is and says nothing about
+// whether this step is alive. Under a line reading "usually 10-30 seconds", an
+// elapsed count of 4:37 is the whole answer, and it needs no interpretation.
+let sweepBusyTimer = null;
+
 function showSweepBusy(title, sub, pct) {
   const host = document.getElementById('sweepBusy');
   if (!host) return;
@@ -4636,11 +4644,27 @@ function showSweepBusy(title, sub, pct) {
         <span${determinate ? ` style="width:${clamped}%"` : ''}></span>
       </div>
       <div class="ai-busy-title">${escapeHtml(title)}${determinate ? ` — ${clamped}%` : ''}</div>
-      <div class="ai-busy-sub">${escapeHtml(sub || '')}</div>
+      <div class="ai-busy-sub">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
     </div>`;
+
+  // Restarted per step, because the number that matters is how long THIS step
+  // has taken — a total would keep rising through a run that is behaving.
+  clearInterval(sweepBusyTimer);
+  const startedAt = Date.now();
+  const paint = () => {
+    const el = document.getElementById('sweepBusyClock');
+    if (!el) { clearInterval(sweepBusyTimer); return; }
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    el.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    el.classList.toggle('is-long', secs > 60);
+  };
+  sweepBusyTimer = setInterval(paint, 1000);
+  paint();
 }
 
 function clearSweepBusy() {
+  clearInterval(sweepBusyTimer);
+  sweepBusyTimer = null;
   const host = document.getElementById('sweepBusy');
   if (host) { host.innerHTML = ''; host.classList.remove('pinned'); }
   markScreenReading(null);
@@ -6210,12 +6234,16 @@ function renderSweepScreens() {
   const stops = aiSweep.stops;
   const elements = stops.reduce((s, x) => s + x.count, 0);
   const pickable = stops.filter(s => s.count).length;
+  const todo = stops.filter(s => s.count && !s.scanned).length;
   summary.innerHTML = `<div class="ai-meta">${stops.length} screen${stops.length === 1 ? '' : 's'} · ` +
     `${elements} element${elements === 1 ? '' : 's'} · nothing spent yet</div>` +
     // Twenty-one screenfuls is twenty-one clicks to clear, and "only the ones
-    // with a carousel" starts from none rather than from all.
-    `<label class="sweep-all"><input type="checkbox" id="sweepAllTick" checked>` +
-    `Select all ${pickable} readable screen${pickable === 1 ? '' : 's'}</label>`;
+    // with a carousel" starts from none rather than from all. "All" means all
+    // the UNREAD ones — the read ones are paid for and are not part of what the
+    // next press will charge for.
+    `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
+    `Select all ${todo} unread screen${todo === 1 ? '' : 's'}` +
+    (pickable > todo ? ` <em>(${pickable - todo} already read)</em>` : '') + `</label>`;
 
   list.innerHTML = stops.map(sweepScreenRowHtml).join('');
 
@@ -6236,15 +6264,21 @@ function renderSweepScreens() {
 function sweepScreenRowHtml(stop) {
     const img = safeImg(stop.thumb);
     const empty = !stop.count;
+    // A screenful that has already been read starts UNTICKED. It was ticked, so
+    // pressing Read a second time — to pick up the ones that failed, or the
+    // ones a longer page added — quietly paid for all of them again. Still
+    // tickable by hand: re-reading one deliberately is a real thing to want,
+    // and it should cost a deliberate click.
+    const done = !!stop.scanned;
     return `
-      <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}" data-screen="${stop.n}">
-        <input type="checkbox" class="sweep-screen-tick" ${empty ? 'disabled' : 'checked'}
-               aria-label="Read screen ${stop.n}">
+      <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}${done ? ' is-done' : ''}" data-screen="${stop.n}">
+        <input type="checkbox" class="sweep-screen-tick" ${empty ? 'disabled' : (done ? '' : 'checked')}
+               aria-label="Read screen ${stop.n}${done ? ' again' : ''}">
         ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
                    <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
                  </span>` : ''}
         <div class="ai-bulk-body">
-          <span class="ai-approved-label">Screen ${stop.n}</span>
+          <span class="ai-approved-label">Screen ${stop.n}${done ? ' <span class="sweep-read-flag">already read</span>' : ''}</span>
           ${// The components come first and in the panel's own text colour.
             // "22 links, 19 buttons" says how busy a screenful is; the components
             // say whether it is worth paying to read, which is the actual choice.

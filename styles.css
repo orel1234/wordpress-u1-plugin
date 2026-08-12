@@ -3018,6 +3018,35 @@ button.u1-readonly-off {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
+/* How long THIS step has taken. Under "usually 10-30 seconds", a count that has
+   reached 4:37 needs no further explanation — so past a minute it stops looking
+   like ordinary progress. */
+.ai-busy-clock {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  margin-left: 4px;
+}
+.ai-busy-clock.is-long {
+  color: var(--u1-warn, #F5A524);
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* Already paid for. Not hidden — re-reading one is a real thing to want — but
+   it must not look like part of what the next press will charge for. */
+.sweep-screen.is-done { opacity: 0.72; }
+.sweep-read-flag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--u1-text-dim);
+  border: 1px solid var(--u1-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 6px;
+}
+
 /* The row being read, in the list you are already looking at. A percentage
    says how far along; this says WHERE. */
 .sweep-screen.is-reading {

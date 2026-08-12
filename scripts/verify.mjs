@@ -257,5 +257,18 @@ console.log('\nThe library scripts run and define their globals:');
   if (!broken) pass(`all ${Object.keys(GLOBALS).length} library scripts define their global`);
 }
 
+// ── Every model call has a deadline ─────────────────────────────────────────
+// A request with no timeout is indistinguishable from a request that is
+// working. Reported as five minutes on one screenful, under a panel saying
+// "usually 10-30 seconds", with no way to tell a hung call from a slow one.
+{
+  const src = readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8');
+  const calls = (src.match(/await fetch\(endpoint\(\)/g) || []).length;
+  const aborts = /new AbortController\(\)/.test(src) && /signal: ctl \? ctl\.signal/.test(src);
+  const says = /AbortError/.test(src) && /did not answer within/.test(src);
+  if (calls && aborts && says) pass('the model call has a deadline, and says so when it passes');
+  else fail(`the model call can hang forever — controller:${aborts} message:${says}`);
+}
+
 console.log(failures === 0 ? '\n✅ All extension checks passed.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

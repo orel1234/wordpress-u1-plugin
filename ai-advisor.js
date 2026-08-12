@@ -33,6 +33,9 @@
   // response text together, so the budget below has headroom for both.
   // Pricing: $3 / $15 per MTok — roughly a third of Opus for this workload.
   const MODEL = 'claude-sonnet-5';
+  // Generous: a vision call over a dense screenful is slow, and cutting off
+  // real work would be worse than the wait. It is a deadline, not a target.
+  const CALL_TIMEOUT_MS = 150000;
   const MAX_TOKENS = 16000;
 
   // The component types the builder can actually create. Used as a schema enum
@@ -422,15 +425,29 @@ WHAT "changed nothing" USUALLY MEANS
       messages: (messages && messages.length) ? messages : [{ role: 'user', content }],
     };
 
+    // A request with no deadline is indistinguishable from a request that is
+    // working. Reported: five minutes on one screenful, under a panel saying
+    // "usually 10-30 seconds", with no way to tell a hung call from a slow one.
+    // A vision call on a dense page can genuinely take a while, so the deadline
+    // is generous — but it exists, and when it passes this says so instead of
+    // waiting forever.
     let res;
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(function () { ctl.abort(); }, CALL_TIMEOUT_MS) : null;
     try {
       res = await fetch(endpoint(), {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...authHeaders(key) },
         body: JSON.stringify(body),
+        signal: ctl ? ctl.signal : undefined,
       });
     } catch (e) {
+      if (e && e.name === 'AbortError') {
+        return { err: `Claude did not answer within ${Math.round(CALL_TIMEOUT_MS / 1000)}s. The call was dropped — nothing was charged for an answer that never arrived.` };
+      }
       return { err: 'Could not reach the Claude API: ' + e.message };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
 
     if (!res.ok) {
