@@ -3891,6 +3891,91 @@ async function narrowContained(tpl) {
   return done;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  What is on screen — one stage at a time
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The two AI routes share every result panel, and until now every one of them
+// showed and hid itself: roughly twenty-five `style.display` writes over six
+// containers, with no single place deciding. Nothing enforced exclusion, so the
+// Whole-page route ended up stacking the screens list, a pending review card
+// and a session-wide "approved and applied" list all at once — not by design,
+// but because no line of code was responsible for the question.
+//
+// setStage is that line. It is the ONLY writer of `display` for these six, and
+// a test in verify-sweep.mjs fails the build if anything else writes one, which
+// is what stops the stack coming back.
+const STAGE_PANELS = {
+  screens:    ['sweepPicks'],      // Whole page · which screens to search
+  components: ['sweepPicks'],      // Whole page · which components to build
+  found:      ['aiResults'],       // Automatic · what is on this screen
+  cards:      ['aiMappings'],      // either · one card at a time
+  review:     ['aiBulkReview'],    // either · approve a batch
+  applied:    ['aiApproved'],      // either · what this batch did
+  none:       [],
+};
+const STAGE_IDS = ['aiResults', 'aiMappings', 'aiBulkReview', 'sweepPicks', 'aiApproved'];
+
+// The trail, per route. Manual has no stages; Automatic and Whole page each
+// have their own three, and the words differ because the work differs — you
+// search SCREENS on one and read one screen on the other.
+const STAGE_TRAIL = {
+  sweep: [['screens', 'Screens'], ['components', 'Components'], ['applied', 'Applied']],
+  auto:  [['found', 'Found'], ['cards', 'Review'], ['applied', 'Applied']],
+};
+// Stages that are a moment inside another stage rather than one of their own.
+const STAGE_STANDS_FOR = { review: 'cards' };
+
+let currentStage = 'none';
+
+function setStage(stage) {
+  if (!STAGE_PANELS[stage]) stage = 'none';
+  currentStage = stage;
+  const show = STAGE_PANELS[stage];
+  for (const id of STAGE_IDS) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show.includes(id) ? 'block' : 'none';
+  }
+  renderStageTrail();
+}
+
+/**
+ * Where you are and how to get back.
+ *
+ * This replaces the numbered captions, which were `::before` content on shared
+ * containers — so the Whole-page route was labelled "1 · Found on this screen"
+ * over a list of twenty-six screens it had not read yet.
+ */
+function renderStageTrail() {
+  const host = document.getElementById('stageTrail');
+  if (!host) return;
+  const trail = STAGE_TRAIL[mapMode === 'sweep' ? 'sweep' : 'auto'];
+  const at = STAGE_STANDS_FOR[currentStage] || currentStage;
+  const idx = trail.findIndex(([k]) => k === at);
+  if (mapMode === 'manual' || idx < 0) { host.style.display = 'none'; host.innerHTML = ''; return; }
+  host.style.display = '';
+  host.innerHTML = trail.map(([key, label], i) => {
+    const state = i < idx ? 'was' : i === idx ? 'at' : 'ahead';
+    // Only a stage you have already been through is a way back — offering one
+    // forward would be a button that cannot do anything yet.
+    const tag = state === 'was' ? 'button' : 'span';
+    const attrs = state === 'was' ? ` type="button" data-stage="${key}"` : '';
+    return `<${tag} class="crumb is-${state}"${attrs}>${escapeHtml(label)}</${tag}>` +
+           (i < trail.length - 1 ? '<span class="crumb-sep" aria-hidden="true">›</span>' : '');
+  }).join('');
+}
+
+document.addEventListener('click', (e) => {
+  const back = e.target.closest('#stageTrail [data-stage]');
+  if (!back) return;
+  const to = back.dataset.stage;
+  if (to === 'screens') { aiSweep.phase = 'screens'; renderSweepScreens(); return; }
+  if (to === 'components') { aiSweep.phase = 'components'; renderSweepPicks(); return; }
+  if (to === 'found') { setStage('found'); return; }
+  if (to === 'cards') { setStage('cards'); return; }
+  setStage(to);
+});
+
 // Fields that point at exactly ONE element. u1.fix.* resolves a selector rather
 // than looping, and applies to the LAST match — so several matches here is a
 // real defect, not a style note. (Plural fields like `items` are meant to match
@@ -4105,39 +4190,33 @@ function setMapMode(mode) {
   // ONE stage on screen. Restoring both — which is what happened when each had
   // content and they were toggled independently — puts the found list and the
   // mapping cards up together: two carousels with two positions again.
-  // Whichever stage still has work to do is the one that comes back.
-  const found = document.getElementById('aiResults');
-  const maps = document.getElementById('aiMappings');
-  const approved = document.getElementById('aiApproved');
-  const pendingCards = document.querySelectorAll('#aiSlideTrack .ai-map-card:not([data-done])').length;
-  const pendingFound = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
-  if (found) found.style.display = (isAi && !pendingCards && pendingFound) ? 'block' : 'none';
-  if (maps) maps.style.display = (isAi && pendingCards) ? 'block' : 'none';
-  // Count the ROWS. The section is a <details> with a summary and a list in
-  // the markup, so it always has children — which made it show itself even
-  // when it had nothing to report.
-  const approvedRows = document.querySelectorAll('#aiApprovedList .ai-approved-row').length;
-  if (approved) approved.style.display = (isAi && approvedRows) ? 'block' : 'none';
-  // The approval screen belongs to both AI routes and is the one panel that can
-  // be on screen with no cards behind it — leaving it up in Manual mode would
-  // put an "Approve & apply all" button under a hand-filled form.
-  const bulk = document.getElementById('aiBulkReview');
-  if (bulk && !isAi) bulk.style.display = 'none';
-  // The sweep's own list of what to make accessible belongs to that route only,
-  // and it holds a "make these accessible" button that must not sit under a
-  // hand-filled form.
-  const picks = document.getElementById('sweepPicks');
-  if (picks && !isSweep) picks.style.display = 'none';
-  else if (picks && isSweep && aiSweep.stops.length) {
+  // Whichever stage still has work to do is the one that comes back — and only
+  // that one. setStage decides; nothing here writes display itself.
+  if (!isAi) {
+    setStage('none');
+  } else if (isSweep && aiSweep.stops.length) {
     // Re-drawn rather than merely un-hidden. Testing for a pending row alone
     // missed the case where every screen read is already done: the survey is
     // still there, the completed drawer and the unread screens are still worth
     // seeing, and the panel came back empty.
     if (aiSweep.phase === 'components') renderSweepPicks(); else renderSweepScreens();
+  } else {
+    setStage(resumeStage());
   }
   // Leaving the sweep running while its own controls are hidden means a page
   // scrolling by itself with no way to stop it. Switching route stops it.
   if (!isSweep && aiSweep.running) aiSweep.abort = true;
+}
+
+/** Which stage still has work in it, for coming back to a route. */
+function resumeStage() {
+  if (document.querySelectorAll('#aiSlideTrack .ai-map-card:not([data-done])').length) return 'cards';
+  if (document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length) return 'found';
+  // Count the ROWS. The section is a <details> with a summary and a list in
+  // the markup, so it always has children — which made it show itself even
+  // when it had nothing to report.
+  if (document.querySelectorAll('#aiApprovedList .ai-approved-row').length) return 'applied';
+  return 'none';
 }
 
 document.getElementById('aiSettingsBtn')?.addEventListener('click', () => {
@@ -4985,13 +5064,11 @@ function renderAiComponents(found) {
       </div>`;
   }).join('') || '<div class="advisor-note ok">✅ Nothing found that needs a mapping.</div>';
 
-  document.getElementById('aiResults').style.display = 'block';
-  document.getElementById('aiMappings').style.display = 'none';
+  setStage('found');
   // Clear the CARDS, not the container: the carousel head and track are static
   // markup now, and wiping innerHTML took them out with the cards.
   document.getElementById('aiSlideTrack').innerHTML = '';
-  document.getElementById('aiApproved').style.display = 'none';
-  document.getElementById('aiApproved').innerHTML = '';
+  clearApproved();
   syncAllTriggerFields();
   showCompSlide(0);
   paintAiRowStrength();
@@ -5296,7 +5373,7 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
     const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
     if (left) showCompSlide(Math.min(carouselAt.aiComp || 0, left - 1));
     else {
-      document.getElementById('aiResults').style.display = 'none';
+      setStage('none');
       showNotice(document.getElementById('aiStatus'),
         'Nothing left on the list. Scan again, or switch to Manual.', 'success', 5000);
     }
@@ -5343,7 +5420,7 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   const host = document.getElementById('aiMappings');
   const track = document.getElementById('aiSlideTrack');
   host.style.display = 'block';
-  document.getElementById('aiResults').style.display = 'none';
+  setStage('cards');
 
   btn.disabled = true;
   const original = btn.textContent;
@@ -5568,11 +5645,11 @@ document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
   const tab = await getTab();
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
+  clearApproved();   // this list is the batch, not the session
   aiBulk = { running: true, abort: false, failed: [], armed: false };
   btn.disabled = true;
   stopBtn.style.display = '';
-  document.getElementById('aiMappings').style.display = 'block';
-  document.getElementById('aiResults').style.display = 'none';
+  setStage('cards');
 
   try {
     for (let i = 0; i < rows.length; i++) {
@@ -5622,10 +5699,9 @@ function renderBulkReview() {
     .map((entry, idx) => ({ entry, idx }))
     .filter(({ idx }) => !document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${idx}"]`)?.dataset.done);
 
-  if (!pending.length && !aiBulk.failed.length) { wrap.style.display = 'none'; return; }
+  if (!pending.length && !aiBulk.failed.length) { setStage(resumeStage()); return; }
 
-  document.getElementById('aiMappings').style.display = 'none';
-  wrap.style.display = 'block';
+  setStage('review');
 
   // Say how many are being held back, or they read as missing rather than as
   // waiting for a decision.
@@ -5713,8 +5789,7 @@ function sweepGroupsHtml(groups, pending) {
 // wireGroupTicks, alongside the picks list it was written for.
 
 document.getElementById('aiBulkBackBtn')?.addEventListener('click', () => {
-  document.getElementById('aiBulkReview').style.display = 'none';
-  document.getElementById('aiMappings').style.display = 'block';
+  setStage('cards');
   showSlide(slideIndex('aiSlide'));
 });
 
@@ -5722,8 +5797,7 @@ document.getElementById('aiBulkList')?.addEventListener('click', (e) => {
   const edit = e.target.closest('[data-bulk-edit]');
   if (!edit) return;
   const idx = Number(edit.dataset.bulkEdit);
-  document.getElementById('aiBulkReview').style.display = 'none';
-  document.getElementById('aiMappings').style.display = 'block';
+  setStage('cards');
   showSlide(slideIndex('aiSlide'));
   document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${idx}"]`)
     ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -5809,7 +5883,7 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
       addApproved(entry.row, verdict, x.tpl.code);
     }
 
-    document.getElementById('aiBulkReview').style.display = 'none';
+    setStage(resumeStage());
     const bad = details.filter(d => !d.verdict.ok).length;
     showNotice(document.getElementById('aiMapStatus'),
       `${details.length} mapping${details.length === 1 ? '' : 's'} saved and applied` +
@@ -6118,8 +6192,7 @@ async function runSweep(tab) {
   stopBtn.style.display = '';
   stopBtn.disabled = false;
   stopBtn.textContent = '■ Stop after this screen';
-  document.getElementById('aiBulkReview').style.display = 'none';
-  document.getElementById('sweepPicks').style.display = 'none';
+  setStage('none');
 
   // Stamp the site these selectors come from, the same way a single scan does.
   aiWorkspaceHost = currentHostname;
@@ -6527,8 +6600,7 @@ function renderSweepScreens() {
   // Re-apply the "reading now" mark the redraw just threw away.
   if (aiSweep.running && sweepReadingNow != null) markScreenReading(sweepReadingNow);
 
-  wrap.style.display = mapMode === 'sweep' ? 'block' : 'none';
-  document.getElementById('aiBulkReview').style.display = 'none';
+  setStage(mapMode === 'sweep' ? 'screens' : 'none');
   syncSweepMakeBtn();
   saveSweep();
 }
@@ -6694,7 +6766,7 @@ function renderSweepPicks() {
   const total = stops.reduce((s, x) => s + x.found.length, 0);
   const doneCount = finished.reduce((s, x) => s + x.found.length, 0);
   const barrenCount = read.filter(s => s.scanned && !s.found.length).length;
-  if (!total && !doneCount && !barrenCount) { wrap.style.display = 'none'; return; }
+  if (!total && !doneCount && !barrenCount) { setStage('none'); return; }
 
   // The way back. Stopping a run to build what it had found left you in the
   // components view with no route to the screens that were never searched —
@@ -6805,12 +6877,10 @@ function renderSweepPicks() {
   // panel open, or adopting a colleague's, calls this whatever route is on
   // screen — which put "2 screens completed" and a Make-accessible button
   // underneath the single-element scanner, acting on nothing you were looking at.
-  wrap.style.display = mapMode === 'sweep' ? 'block' : 'none';
-  // Two panels with two "apply" buttons is the thing this guards against — but
-  // only while there is still something pending to choose. Once everything read
-  // has been applied, the review IS the result and hiding it leaves the press
-  // looking like it did nothing.
-  if (total) document.getElementById('aiBulkReview').style.display = 'none';
+  // One stage at a time: the components list IS this stage, and the review
+  // that produced it belongs to the one before. Both on screen together, each
+  // with its own apply button, is the stack this replaced.
+  setStage(mapMode === 'sweep' ? 'components' : 'none');
   syncSweepMakeBtn();
   saveSweep();
 }
@@ -7162,7 +7232,7 @@ document.getElementById('sweepPicksClearBtn')?.addEventListener('click', async (
   if (await U1Auth.isLoggedIn()) {
     try { await U1Sync.deleteSweep(currentHostname); } catch {}
   }
-  document.getElementById('sweepPicks').style.display = 'none';
+  setStage('none');
   document.getElementById('sweepPicksList').innerHTML = '';
   document.getElementById('sweepLog').style.display = 'none';
   document.getElementById('sweepLog').innerHTML = '';
@@ -7210,6 +7280,7 @@ async function scanPickedScreens(numbers) {
   const stops = aiSweep.stops.filter(s => numbers.includes(s.n));
   const handled = await alreadyHandled();
   const startedAt = (await sweepMeasure(tab))?.y || 0;
+  clearApproved();   // a new run, a new answer to "what did I just do"
   aiSweep.running = true;
   aiSweep.abort = false;
   btn.disabled = true;
@@ -7428,10 +7499,11 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
     for (const f of stop.found) if (picked.has(f.id)) jobs.push({ stop, f });
   }
 
+  clearApproved();   // this list is the batch, not the session
   aiBulk = { running: true, abort: false, failed: [], armed: false };
   btn.disabled = true;
   const original = btn.textContent;
-  document.getElementById('aiMappings').style.display = 'block';
+  setStage('cards');
 
   try {
     for (let i = 0; i < jobs.length; i++) {
@@ -7482,7 +7554,6 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
     btn.textContent = original;
   }
 
-  document.getElementById('sweepPicks').style.display = 'none';
   renderBulkReview();
   // Everything on that screen is what was just ticked, so approving it again
   // would be the same question twice. The code is still there to read on each
@@ -7566,13 +7637,12 @@ document.getElementById('aiApproved')?.addEventListener('click', (e) => {
   if (!btn) return;
   const what = btn.dataset.ainext;
   if (what === 'cards') {
-    document.getElementById('aiMappings').style.display = 'block';
+    setStage('cards');
     showSlide(slideIndex('aiSlide'));
     document.querySelector('#aiSlideTrack .ai-map-card:not([data-done])')
       ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   } else if (what === 'list') {
-    document.getElementById('aiResults').style.display = 'block';
-    document.getElementById('aiMappings').style.display = 'none';
+    setStage('found');
     showCompSlide(slideIndex('aiComp'));
     document.getElementById('aiResults').scrollIntoView({ block: 'start', behavior: 'smooth' });
   } else {
@@ -7613,18 +7683,18 @@ function slideTo(id, i, sel, onShow) {
   const head = track.previousElementSibling;
   if (!cards.length) {
     if (head) head.style.display = 'none';
-    const host = track.closest('.ai-results');
-    if (host) host.style.display = 'none';
+    // The stage owns display, not the carousel inside it. An empty track is a
+    // reason to move ON, and where to is a stage question.
+    if (track.closest('.ai-results')) setStage(resumeStage());
     // Handling the last card must not strand you on an empty panel. If there
     // is still an inventory to work through, go back to it — skipping one
     // element is not a reason to end the run.
     if (id === 'aiSlide') {
       const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
       if (left) {
-        const found = document.getElementById('aiResults');
-        if (found) found.style.display = 'block';
+        setStage('found');
         showCompSlide(carouselAt.aiComp || 0);
-        found?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        document.getElementById('aiResults')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       }
     }
     return;
@@ -7665,14 +7735,34 @@ document.getElementById('tab-picker')?.addEventListener('click', (e) => {
 // on the page — the same measured verdict the Apply button reports.
 let approvedSeq = 0;
 
+/**
+ * Empty the applied list — the LIST, not the section.
+ *
+ * This used to be `#aiApproved.innerHTML = ''`, which took the <summary> and
+ * the count badge with it. addApproved rebuilds only the inner list, so after
+ * one re-scan the heading was gone for the rest of the session.
+ *
+ * It is called at the start of every batch, because the list answers "what did
+ * I just do". Left to accumulate it answered "what has happened since the panel
+ * opened" — a number that, in the whole-page route, crossed every run and every
+ * route switch and read as the current batch. The permanent record is the
+ * Mappings list below, which nothing here touches.
+ */
+function clearApproved() {
+  const box = document.getElementById('aiApproved');
+  if (!box) return;
+  const list = box.querySelector('#aiApprovedList');
+  if (list) list.innerHTML = '';
+  const n = document.getElementById('aiApprovedN');
+  if (n) n.textContent = '';
+  if (currentStage === 'applied') setStage(resumeStage());
+}
+
 function addApproved(row, verdict, code) {
   const box = document.getElementById('aiApproved');
   if (!box) return null;
-  box.style.display = 'block';
-  // The stage caption comes from CSS (#aiApproved::before), so this only needs
-  // the list container.
+  setStage('applied');
   box.open = true;
-  box.style.display = 'block';
   const cls = verdict.ok ? 'ok' : 'warn';
   // A conflicting older mapping is actionable, so offer the action rather than
   // just naming the problem — but never delete anything without being asked.

@@ -440,6 +440,117 @@ console.log('\nwhy a screenful yielded nothing');
     /unsearched\n?\s*\?/.test(picks) || /\(unsearched$/m.test(picks) || /unsearched$/m.test(picks));
 }
 
+// ── One stage at a time ─────────────────────────────────────────────────────
+// The two AI routes share every result panel and each one showed and hid
+// itself — about twenty-five display writes over six containers, with nothing
+// deciding. The whole-page route therefore stacked the screens list, a pending
+// review card and a session-wide applied list all at once. Not a design: an
+// absence of one.
+console.log('\none stage at a time');
+{
+  const d = new JSDOM(`<!doctype html><body>
+    <nav id="stageTrail"></nav>
+    <div id="aiResults"></div><div id="aiMappings"></div><div id="aiBulkReview"></div>
+    <div id="sweepPicks"></div>
+    <details id="aiApproved"><summary>x<span id="aiApprovedN"></span></summary>
+      <div id="aiApprovedList"></div></details>
+    </body>`);
+  const ctx = { window: d.window, document: d.window.document, mapMode: 'sweep',
+                currentStage: 'none', escapeHtml: sandbox.escapeHtml };
+  ctx.globalThis = ctx;
+  const src = [lift('setStage'), lift('renderStageTrail')].join('\n') +
+    '\nconst STAGE_PANELS = ' + /const STAGE_PANELS = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
+    '\nconst STAGE_IDS = ' + /const STAGE_IDS = (\[[^\]]*\]);/.exec(panelSrc)[1] + ';' +
+    '\nconst STAGE_TRAIL = ' + /const STAGE_TRAIL = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
+    '\nconst STAGE_STANDS_FOR = ' + /const STAGE_STANDS_FOR = (\{[^}]*\});/.exec(panelSrc)[1] + ';';
+  new d.window.Function('c', `with (c) { ${src}; c.setStage = setStage;
+    c.STAGE_PANELS = STAGE_PANELS; c.STAGE_IDS = STAGE_IDS; }`)(ctx);
+
+  const shown = () => ctx.STAGE_IDS.filter((id) => d.window.document.getElementById(id).style.display !== 'none');
+
+  let worst = null;
+  for (const stage of Object.keys(ctx.STAGE_PANELS)) {
+    ctx.setStage(stage);
+    const on = shown();
+    const want = ctx.STAGE_PANELS[stage];
+    if (on.length !== want.length || on.some((x) => !want.includes(x))) {
+      worst = `${stage}: showed ${on.join()} wanted ${want.join()}`;
+      break;
+    }
+  }
+  check('every stage shows its own panel and nothing else', !worst, worst || '');
+
+  // The stack in the screenshot, reproduced and then dispelled by one call.
+  for (const id of ctx.STAGE_IDS) d.window.document.getElementById(id).style.display = 'block';
+  check('four panels can be stacked by hand — that was the bug', shown().length === 5);
+  ctx.setStage('screens');
+  check('…and one setStage call takes the other four down',
+    shown().join() === 'sweepPicks', shown().join());
+
+  // The trail, per route.
+  ctx.mapMode = 'sweep';
+  ctx.setStage('components');
+  const trail = d.window.document.getElementById('stageTrail');
+  check('the trail names the whole-page stages', /Screens.*Components.*Applied/s.test(trail.textContent),
+    trail.textContent);
+  check('…and marks where you are', trail.querySelector('.crumb.is-at').textContent === 'Components');
+  check('…and offers back only to a stage already behind you',
+    [...trail.querySelectorAll('[data-stage]')].map((b) => b.dataset.stage).join() === 'screens',
+    [...trail.querySelectorAll('[data-stage]')].map((b) => b.dataset.stage).join());
+
+  ctx.mapMode = 'auto';
+  ctx.setStage('cards');
+  check('the Automatic route gets its own words, not the sweep\'s',
+    /Found.*Review.*Applied/s.test(trail.textContent), trail.textContent);
+  // "Review and approve a batch" is a moment inside the card stage, not a
+  // fourth step — the trail must not gain a crumb for it.
+  ctx.setStage('review');
+  check('a batch review shows as the stage it belongs to',
+    trail.querySelector('.crumb.is-at').textContent === 'Review');
+
+  ctx.mapMode = 'manual';
+  ctx.setStage('none');
+  check('Manual has no stages and shows no trail', trail.style.display === 'none');
+}
+
+// ── The applied list belongs to the batch, not the session ──────────────────
+{
+  const src = panelSrc;
+  const fn = /function clearApproved\(\)[\s\S]*?\n}/.exec(src)[0];
+  // It used to be `#aiApproved.innerHTML = ''`, which took the <summary> and
+  // the count badge with it — and addApproved rebuilds only the inner list, so
+  // after one re-scan the heading was gone for the rest of the session.
+  check('clearing empties the list, not the section around it',
+    /querySelector\('#aiApprovedList'\)/.test(fn) && !/aiApproved'\)\.innerHTML/.test(src));
+  check('…and clears the count badge with it', /aiApprovedN/.test(fn));
+  // Left to accumulate, the number crossed every run and every route switch and
+  // read as the current batch.
+  const starts = (src.match(/clearApproved\(\);/g) || []).length;
+  check('every batch and every run starts it empty', starts >= 4, `${starts} call sites`);
+  check('…and the heading says which it is',
+    /Applied in this batch/.test(readFileSync(join(ROOT, 'panel.html'), 'utf8')));
+  // The permanent record is elsewhere, which is why resetting loses nothing.
+  check('…while the Mappings list, the real record, is untouched',
+    !/clearApproved[\s\S]{0,200}mappingsList/.test(src));
+}
+
+// ── Nothing else may write display on those six ─────────────────────────────
+{
+  const ids = ['aiResults', 'aiMappings', 'aiBulkReview', 'sweepPicks', 'aiApproved'];
+  const stray = [];
+  panelSrc.split('\n').forEach((line, i) => {
+    for (const id of ids) {
+      if (new RegExp(`getElementById\\('${id}'\\)[^\\n]*\\.style\\.display\\s*=`).test(line)) {
+        stray.push(`${i + 1}: ${line.trim().slice(0, 60)}`);
+      }
+    }
+  });
+  // This is the check that stops the stack coming back. Not "it looks right
+  // today" — "there is exactly one place that can make it wrong".
+  check('setStage is the only writer of display for the stage panels',
+    stray.length === 0, stray.join(' | '));
+}
+
 // ── Switching tabs mid-run ──────────────────────────────────────────────────
 // captureVisibleTab throws when the window is minimised, and that throw used to
 // escape collectRegion and end the whole run. Reported: minimise, switch tabs,
@@ -484,7 +595,10 @@ console.log('\nchoosing screens');
     <div id="sweepPicks"><div id="sweepPicksSummary"></div><div id="sweepPicksList"></div>
     <div id="sweepEstimate"></div><button id="sweepMakeBtn"></button></div>
     <div id="sweepBusy"></div>
-    <div id="aiBulkReview"></div></body>`);
+    <nav id="stageTrail"></nav>
+    <div id="aiResults"></div><div id="aiMappings"></div>
+    <div id="aiBulkReview"></div><details id="aiApproved"><div id="aiApprovedList"></div></details>
+    </body>`);
   const w2 = d2.window;
   let saved = 0;
   const box = {
@@ -499,6 +613,7 @@ console.log('\nchoosing screens');
     // The sweep panel belongs to the Whole page route, so the render functions
     // ask which route is on screen. These tests are about that route.
     mapMode: 'sweep',
+    currentStage: 'none',
     // showSweepBusy owns a module-level interval handle in panel.js.
     sweepBusyTimer: null,
     setInterval: (...a) => w2.setInterval(...a),
@@ -514,7 +629,14 @@ console.log('\nchoosing screens');
   const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
                 lift('markScreenReading'), lift('markScreenRead'),
-                lift('sweepRunningHtml'), lift('markScreenFailed')].join('\n') +
+                lift('sweepRunningHtml'), lift('markScreenFailed'),
+                // The real stage owner, so these tests exercise the thing that
+                // ships rather than a stand-in that cannot drift with it.
+                lift('setStage'), lift('renderStageTrail'), lift('resumeStage')].join('\n') +
+    '\nconst STAGE_PANELS = ' + /const STAGE_PANELS = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
+    '\nconst STAGE_IDS = ' + /const STAGE_IDS = (\[[^\]]*\]);/.exec(panelSrc)[1] + ';' +
+    '\nconst STAGE_TRAIL = ' + /const STAGE_TRAIL = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
+    '\nconst STAGE_STANDS_FOR = ' + /const STAGE_STANDS_FOR = (\{[^}]*\});/.exec(panelSrc)[1] + ';' +
     '\nconst sweepPicked = ' + /const sweepPicked = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepPickedScreens = ' + /const sweepPickedScreens = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepAvgCall = ' + /const sweepAvgCall =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
@@ -524,7 +646,8 @@ console.log('\nchoosing screens');
     ctx.syncSweepMakeBtn = syncSweepMakeBtn; ctx.showSweepBusy = showSweepBusy;
     ctx.clearSweepBusy = clearSweepBusy; ctx.markScreenReading = markScreenReading;
     ctx.markScreenRead = markScreenRead; ctx.markScreenFailed = markScreenFailed;
-    ctx.sweepRunningHtml = sweepRunningHtml; }`)(box);
+    ctx.sweepRunningHtml = sweepRunningHtml; ctx.setStage = setStage;
+    ctx.resumeStage = resumeStage; }`)(box);
 
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');

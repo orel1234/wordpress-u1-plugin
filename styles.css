@@ -1352,21 +1352,38 @@ button {
 #aiResults  { margin-bottom: 14px; }
 #aiMappings { margin-bottom: 14px; }
 
-/* A quiet caption so each block says which stage it is. */
-#aiResults::before,
-#aiMappings::before,
-#aiApproved::before {
-  display: block;
-  margin: -2px 0 8px;
-  font-size: 9px;
+/* The numbered captions used to live here as ::before content — "1 · Found on
+   this screen" and "2 · Review and approve" on containers BOTH AI routes share.
+   In the whole-page route that labelled a list of twenty-six unread screens as
+   "found on this screen", and no CSS rule can know which route is running.
+   #stageTrail says it instead, written per route by setStage. */
+
+/* ── Where you are, and the way back ─────────────────────────────────────── */
+.stage-trail {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 10px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--u1-primary);
 }
-#aiResults::before  { content: "1 · Found on this screen"; }
-#aiMappings::before { content: "2 · Review and approve"; }
-/* #aiApproved carries a real <summary> heading — no generated label. */
+.crumb {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--u1-text-dim);
+}
+.crumb.is-at  { color: var(--u1-primary); }
+/* A stage you have been through is a way back; one ahead is not a control. */
+.crumb.is-was { color: var(--u1-text-muted); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.crumb.is-was:hover,
+.crumb.is-was:focus-visible { color: var(--u1-text); }
+.crumb-sep { color: var(--u1-border-strong); }
 
 /* ── Carousel: one mapping at a time ─────────────────────────────────────── */
 .ai-carousel-head {

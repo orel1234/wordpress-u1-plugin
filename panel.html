@@ -468,6 +468,13 @@
          the selectors for a component is a call of its own, so it happens for
          the ticked rows and nothing else — which is what makes ticking one
          screen out of fourteen a real saving rather than a tidier list. -->
+    <!-- Where you are in the route, and the way back to a stage you have
+         already been through. Replaces the numbered CSS captions, which were
+         ::before content on containers both AI routes share — so the whole-page
+         route was labelled "1 · Found on this screen" over a list of screens it
+         had not read. -->
+    <nav class="stage-trail" id="stageTrail" aria-label="Progress" style="display:none;"></nav>
+
     <div class="ai-results" id="sweepPicks" style="display:none;">
       <div class="ai-summary" id="sweepPicksSummary"></div>
       <div id="sweepPicksList"></div>
@@ -532,7 +539,7 @@
 
     <!-- What you have approved, kept below the carousel as it fills up. -->
     <details class="ai-approved" id="aiApproved" style="display:none;" open>
-      <summary class="ai-stage-head">3 · Approved and applied<span class="ai-approved-n" id="aiApprovedN"></span></summary>
+      <summary class="ai-stage-head">Applied in this batch<span class="ai-approved-n" id="aiApprovedN"></span></summary>
       <div id="aiApprovedList"></div>
     </details>
 
