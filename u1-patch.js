@@ -20,7 +20,7 @@
   // Bump on every change that ships. The whole point is that a page can be
   // asked "which patch are you actually running" — "I reloaded, I promise" is
   // not something either of us can verify from the outside.
-  var P = (W.__u1Patch = { correctors: [], build: '2026-08-12a' });
+  var P = (W.__u1Patch = { correctors: [], build: '2026-08-12b' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -881,30 +881,68 @@
     setTimeout(function () { if (u.visible(list)) moveIn(trigger, list); }, 260);
   }, true);
 
-  // Escape: close, and put focus back where it came from. Give the library its
-  // chance first — if the list did close on its own, only the focus return is
-  // left to do, and clicking the trigger then would reopen it.
+  /**
+   * Answer "is this open?" only once it has stopped moving.
+   *
+   * A dropdown that slides shut is still visible for the whole animation —
+   * mid-slide a jQuery slideUp reads height:5.08px, overflow:hidden — so any
+   * fixed delay is a coin toss on a slow machine and a wrong answer on a fast
+   * one. Poll until two consecutive measurements agree, then decide.
+   */
+  var whenSettled = function (el, cb) {
+    var last = -1, waited = 0;
+    var tick = function () {
+      var now = el.offsetHeight + ':' + el.offsetWidth;
+      if (now === last || waited >= 900) { cb(u.visible(el)); return; }
+      last = now;
+      waited += 80;
+      setTimeout(tick, 80);
+    };
+    setTimeout(tick, 80);
+  };
+
+  // Escape: put focus back, and close it if nobody else is going to.
+  //
+  // This used to wait a flat 90ms and then click the trigger if the list still
+  // looked visible. On a site that animates the dropdown, 90ms lands in the
+  // middle of the slide: the list reads as open, the click REOPENS it, the
+  // site closes it again, and the thing flickers three times before settling.
+  // Reported exactly that way.
+  //
+  // So: the focus return happens at once — it is ours and it conflicts with
+  // nothing — and the decision to close waits until the list has stopped
+  // moving. On a site that closes on Escape by itself, that decision is
+  // "already shut", and this touches nothing.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     var list = u.closest(e.target, '[role="listbox"]');
     if (!list) return;
     var trigger = triggerFor(list);
     if (!trigger) return;
-    setTimeout(function () {
-      if (u.visible(list)) trigger.click();
-      try { trigger.focus(); } catch (err) {}
+    try { trigger.focus(); } catch (err) {}
+    // A second Escape while the first is still settling would queue a second
+    // click, which is its own way of reopening what was just closed.
+    if (list.__u1pClosing) return;
+    list.__u1pClosing = true;
+    whenSettled(list, function (stillOpen) {
+      list.__u1pClosing = false;
+      if (stillOpen) trigger.click();
       P.schedule();
-    }, 90);
+    });
   }, true);
 
   // The site opening or closing the list is not something the attribute
   // observer sees — it happens by class or by inline style, and neither is in
   // the filter. So the click that could have caused it schedules the pass.
   document.addEventListener('click', function (e) {
-    if (u.closest(e.target, TRIGGER) || u.closest(e.target, '[role="listbox"]')) {
-      setTimeout(P.schedule, 0);
-      setTimeout(P.schedule, 250);
-    }
+    var trigger = u.closest(e.target, TRIGGER);
+    if (!trigger && !u.closest(e.target, '[role="listbox"]')) return;
+    setTimeout(P.schedule, 0);
+    // And again once the list has finished moving, because aria-expanded read
+    // off a half-collapsed element is simply wrong.
+    var list = trigger && listFor(trigger);
+    if (list) whenSettled(list, function () { P.schedule(); });
+    else setTimeout(P.schedule, 250);
   }, true);
 
   P.correct(function () {

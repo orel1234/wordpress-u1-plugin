@@ -32,6 +32,15 @@ function boot(html, types) {
   Object.defineProperty(proto, 'offsetWidth', {
     get() { return this.hasAttribute('hidden') || this.style.display === 'none' ? 0 : 40; },
   });
+  // Height is what an animating dropdown changes, so the settle logic needs it
+  // to be readable and to be able to shrink.
+  Object.defineProperty(proto, 'offsetHeight', {
+    get() {
+      if (this.hasAttribute('hidden') || this.style.display === 'none') return 0;
+      if (this.style.height) return parseFloat(this.style.height) || 0;
+      return 40;
+    },
+  });
   dom.window.eval(slice(types));
   return dom;
 }
@@ -287,6 +296,68 @@ console.log('\nlistbox');
     check('widening stops before it pairs another component\'s trigger',
       two.window.__u1Patch.contextRoot.listbox(
         two.window.document.querySelector('.clicker'), props) === false);
+  }
+
+  // ── Escape must not fight an animation ───────────────────────────────────
+  // Reported: Escape returns focus to the trigger, then the list flickers open
+  // and shut about three times before settling. The old code waited a flat
+  // 90ms and clicked the trigger if the list still LOOKED visible — and 90ms
+  // lands in the middle of a jQuery slideUp, where the element reads
+  // height:5.08px, overflow:hidden. The click reopened what was closing.
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  {
+    const anim = boot(`
+      <button class="t" aria-haspopup="listbox" aria-expanded="true">Sign in</button>
+      <ul class="lb" role="listbox" style="height:40px">
+        <li role="option" tabindex="0" id="p1">One</li>
+        <li role="option" tabindex="-1" id="p2">Two</li>
+      </ul>`, ['listbox']);
+    await settle(anim);
+    const ad = anim.window.document;
+    const trig = ad.querySelector('.t'), lb = ad.querySelector('.lb');
+    let clicks = 0;
+    trig.addEventListener('click', () => { clicks++; lb.style.height = '40px'; });
+
+    // The site's own Escape handler: slide it shut over ~200ms.
+    ad.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      setTimeout(() => { lb.style.height = '20px'; }, 60);
+      setTimeout(() => { lb.style.height = '5px'; }, 130);
+      setTimeout(() => { lb.style.display = 'none'; lb.style.height = ''; }, 220);
+    });
+
+    ad.getElementById('p1').focus();
+    ad.getElementById('p1').dispatchEvent(
+      new anim.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+    await wait(60);
+    check('focus returns to the trigger straight away, not after the animation',
+      ad.activeElement === trig);
+    await wait(1000);
+    check('a list that closes on its own is never clicked back open', clicks === 0, `${clicks} clicks`);
+    check('and it ends up closed', !anim.window.__u1Patch.util.visible(lb));
+    await settle(anim);
+    check('aria-expanded settles on "false", not on a mid-slide reading',
+      trig.getAttribute('aria-expanded') === 'false', trig.getAttribute('aria-expanded'));
+  }
+
+  // The other half: a site that does NOT close on Escape still gets closed,
+  // exactly once.
+  {
+    const stuck = boot(`
+      <button class="t" aria-haspopup="listbox" aria-expanded="true">Sign in</button>
+      <ul class="lb" role="listbox"><li role="option" tabindex="0" id="s1">One</li>
+      <li role="option" tabindex="-1">Two</li></ul>`, ['listbox']);
+    await settle(stuck);
+    const sd = stuck.window.document;
+    const trig = sd.querySelector('.t'), lb = sd.querySelector('.lb');
+    let clicks = 0;
+    trig.addEventListener('click', () => { clicks++; lb.style.display = 'none'; });
+    sd.getElementById('s1').focus();
+    sd.getElementById('s1').dispatchEvent(
+      new stuck.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await wait(600);
+    check('a list that ignores Escape is closed by the patch, once', clicks === 1, `${clicks} clicks`);
   }
 
   // aria-activedescendant is a different, valid model — do not impose a second.
