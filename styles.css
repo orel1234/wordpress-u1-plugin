@@ -3160,6 +3160,14 @@ button.u1-readonly-off {
   border-left: 3px solid var(--u1-primary);
   border-radius: 6px;
 }
+/* The way out of the hold. On its own line, because it ends a run that is
+   costing money and should not sit inline where a sentence is being read. */
+.sweep-holds .btn-xs {
+  display: block;
+  margin-top: 7px;
+  text-transform: none;
+  letter-spacing: 0;
+}
 
 /* ▶ — read this one screenful, now.
    Quiet until the row is under the pointer: it spends money, so it should be

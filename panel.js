@@ -6710,6 +6710,9 @@ async function runSweep(tab) {
     // not, because the only save on this path hung off a render that an empty
     // run never reached.
     saveSweep();
+    // If you said "I have moved on to another site" while this held the panel,
+    // this is where it lets go.
+    await followPendingSiteSwitch();
   }
 
   const total = aiSweep.stops.reduce((s, x) => s + x.count, 0);
@@ -7763,8 +7766,12 @@ async function scanPickedScreens(numbers) {
       aiSweep.progress = { at: i + 1, of: stops.length, screen: stop.n };
       // Word for word what the button says, because they are read together
       // and a difference between them reads as a difference in meaning.
+      // The step, not the screenful. A screenful is four steps — scroll, read,
+      // photograph, ask — and one label covering all four is how "the model has
+      // been thinking for ninety seconds" and "this has hung" look identical
+      // from outside. Each step now names itself as it starts.
       showSweepBusy(`Screen ${stop.n} — ${i + 1} of ${stops.length}`,
-        `Looking for components — usually 10–30 seconds.`,
+        `Reading what is on this screenful — a few seconds, no charge.`,
         ((i) / stops.length) * 100);
       markScreenReading(stop.n);
 
@@ -7842,6 +7849,19 @@ async function scanPickedScreens(numbers) {
           continue;
         }
       }
+
+      // The one step that is neither quick nor local, and the only one that
+      // costs. "Usually 10–30 seconds" was written for a sparse screenful and
+      // read as a promise on every screenful: this one is 94 elements with a
+      // picture attached, it took a minute and a half, and the panel said
+      // nothing except a clock ticking past its own estimate. A call is allowed
+      // 150 seconds before it is given up on, and that is what it now says.
+      const busyN = collected.candidates.filter((c) => !handled.has(c.selector)).length;
+      showSweepBusy(`Screen ${stop.n} — ${i + 1} of ${stops.length}`,
+        `Asking Claude about ${busyN} element${busyN === 1 ? '' : 's'} and a picture of this ` +
+        `screenful. A busy screenful takes a minute or two; it gives up at 2:30.`,
+        ((i) / stops.length) * 100);
+      sweepLog(stop.n, `asking about ${busyN} element${busyN === 1 ? '' : 's'}`, 'skip');
 
       const part = await U1AI.discover({
         screenshot: collected.shot,
@@ -7927,6 +7947,9 @@ async function scanPickedScreens(numbers) {
     // not, because the only save on this path hung off a render that an empty
     // run never reached.
     saveSweep();
+    // If you said "I have moved on to another site" while this held the panel,
+    // this is where it lets go.
+    await followPendingSiteSwitch();
   }
 
   // What the run actually did, per screen, in one line. Ticking two screens and
@@ -12130,6 +12153,11 @@ window.addEventListener('pagehide', () => { clearAllCspBypasses(); });
  * are looking at one site and the mappings list names another. One line, in
  * the place a tab change would otherwise have redrawn.
  */
+// Where the panel should go once the run has finished letting go of it. Set
+// only by pressing the button in the hold notice — the panel never decides on
+// its own that you have moved on.
+let sweepLeaveFor = null;
+
 function noteSweepHoldsPanel(tab) {
   const host = document.getElementById('sweepHoldsPanel');
   if (!host) return;
@@ -12137,13 +12165,62 @@ function noteSweepHoldsPanel(tab) {
   // Looking at the scan's own tab is the ordinary case and needs no notice.
   if (!here || here === currentHostname) { host.style.display = 'none'; return; }
   host.style.display = '';
-  host.textContent = `Still scanning ${currentHostname} — this panel stays with the scan ` +
-    `until it finishes. Nothing here is about ${here}.`;
+  if (sweepLeaveFor) {
+    host.textContent = `Finishing this screen, then moving to ${sweepLeaveFor}. ` +
+      `Everything read so far is saved.`;
+    return;
+  }
+  // Holding the panel is right for "I glanced at another tab" and wrong for "I
+  // have moved on to a different site" — and from inside the panel those two
+  // are the same event. It cannot be told apart by watching, so it is asked.
+  //
+  // The hold has no time limit: a twenty-screen run is twenty minutes, and for
+  // twenty minutes the mappings list, the config form and the export tab would
+  // all be about a site you are no longer on, with no way out but waiting or
+  // pressing Stop and knowing that is what Stop was for. This is the way out,
+  // named after where it goes.
+  host.innerHTML =
+    `Still scanning <strong>${escapeHtml(currentHostname)}</strong> — this panel stays with ` +
+    `the scan until it finishes. Nothing here is about ${escapeHtml(here)}.` +
+    `<button class="btn-outline btn-xs" data-leave-scan="${escapeHtml(here)}">` +
+    `Work on ${escapeHtml(here)} instead — ends the scan</button>`;
 }
 
 function clearSweepHoldsPanel() {
   const host = document.getElementById('sweepHoldsPanel');
-  if (host) { host.style.display = 'none'; host.textContent = ''; }
+  if (host) { host.style.display = 'none'; host.innerHTML = ''; }
+}
+
+// "I have actually moved on." The scan finishes the screenful it is on — that
+// call is paid for either way, and abandoning it mid-flight would waste it —
+// and the panel follows once it lets go.
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-leave-scan]');
+  if (!btn) return;
+  sweepLeaveFor = btn.dataset.leaveScan;
+  aiSweep.abort = true;
+  const stop = document.getElementById('sweepStopBtn');
+  if (stop) { stop.disabled = true; stop.textContent = 'Stopping after this screen…'; }
+  noteSweepHoldsPanel(await getTab());
+});
+
+/**
+ * Follow a switch that was asked for while the run held the panel.
+ *
+ * Called from the end of a run's finally, after aiSweep.running is false, so
+ * the hold no longer applies and onTabChanged does its ordinary work.
+ */
+async function followPendingSiteSwitch() {
+  if (!sweepLeaveFor) return;
+  sweepLeaveFor = null;
+  clearSweepHoldsPanel();
+  // The survey on screen belongs to the site being left. sweepIsPinnedAndAlive
+  // would keep it — right for a glance at another tab, wrong here, where the
+  // answer to "am I still working on that site" was an explicit no. It is saved
+  // and comes back on its own when that site is opened again.
+  resetAiWorkspace();
+  const t = await getTab();
+  if (t) await onTabChanged(t);
 }
 
 async function onTabChanged(tab) {

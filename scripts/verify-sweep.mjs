@@ -1665,8 +1665,12 @@ console.log('\na running scan owns the panel');
   // Held is not the same as broken. The mappings list will be naming a site
   // that is not the one on screen, and that has to be stated.
   check('the hold says why the panel is showing another site',
-    /Still scanning \$\{currentHostname\}/.test(panelSrc) &&
-    /this panel stays with the scan/.test(panelSrc));
+    /Still scanning <strong>\$\{escapeHtml\(currentHostname\)\}<\/strong>/.test(panelSrc) &&
+    /this panel stays with/.test(panelSrc));
+  // It renders a host name into HTML now, because it carries a button. A site
+  // name is attacker-controlled text on a page the tool is pointed at.
+  check('…with both host names escaped, since this is HTML now',
+    /escapeHtml\(currentHostname\)/.test(panelSrc) && /escapeHtml\(here\)/.test(panelSrc));
   check('…and says nothing when you are looking at the scan\'s own tab',
     /if \(!here \|\| here === currentHostname\) \{ host\.style\.display = 'none'; return; \}/.test(panelSrc));
   check('…and it is cleared once the panel is free to follow again',
@@ -1709,6 +1713,76 @@ console.log('\na running scan owns the panel');
   // rests on, so its requirement must not drift without this test noticing.
   check('the hold rests on there being a tabId at all',
     /if \(aiSweep\.tabId == null\) return false;/.test(panelSrc));
+}
+
+// ── "How is it supposed to know I have switched site?" ──────────────────────
+//
+// It is not. From inside the panel, "I glanced at another tab" and "I have
+// moved on to a different site" are the same event, and holding is right for
+// one and wrong for the other. The hold has no time limit either: a twenty
+// screen run is twenty minutes with the mappings list, the config form and the
+// export tab all describing a site you are no longer on.
+//
+// So it asks, in the notice, named after where it goes.
+console.log('\nleaving a scan that is holding the panel');
+{
+  check('the hold offers a way out rather than only explaining itself',
+    /data-leave-scan="\$\{escapeHtml\(here\)\}"/.test(panelSrc));
+  check('…named after the site it goes to, and what it costs you',
+    /Work on \$\{escapeHtml\(here\)\} instead — ends the scan/.test(panelSrc));
+  // Nothing else may set it. A panel that decides on its own that you have
+  // moved on is the bug this whole guard exists to prevent, wearing a hat.
+  check('only that button can trigger the switch',
+    (panelSrc.match(/sweepLeaveFor = /g) || []).length === 3,   // declare, set, clear
+    String((panelSrc.match(/sweepLeaveFor = /g) || []).length));
+  // The screenful in flight is already paid for. Abandoning it mid-call would
+  // spend the money and throw the answer away.
+  check('it stops after the current screenful rather than mid-call',
+    /sweepLeaveFor = btn\.dataset\.leaveScan;\s*\n\s*aiSweep\.abort = true;/.test(panelSrc));
+  check('…and says that is what it is doing',
+    /Finishing this screen, then moving to \$\{sweepLeaveFor\}/.test(panelSrc));
+  check('…and that nothing already read is lost',
+    /Everything read so far is saved/.test(panelSrc));
+  // Both endings: a survey and a paid read are separate functions with separate
+  // finallys, and only one of them having this would strand the panel.
+  check('both kinds of run release the panel when they end',
+    (panelSrc.match(/await followPendingSiteSwitch\(\)/g) || []).length === 2,
+    String((panelSrc.match(/await followPendingSiteSwitch\(\)/g) || []).length));
+  check('…after running is false, or the hold would block its own release',
+    panelSrc.indexOf('aiSweep.running = false') < panelSrc.indexOf('await followPendingSiteSwitch()'));
+  // The survey on screen belongs to the site being left. sweepIsPinnedAndAlive
+  // would keep it — right for a glance, wrong when the answer to "are you still
+  // working on that site" was an explicit no.
+  check('the survey comes off screen, since it is about the site being left',
+    /resetAiWorkspace\(\);\s*\n\s*const t = await getTab\(\);/.test(panelSrc));
+}
+
+// ── Saying which step is running ────────────────────────────────────────────
+//
+// Reported as "it has been a minute and a half and found nothing". It had not
+// hung — a call is allowed 150 seconds and this one was still inside that. But
+// a screenful is four steps under one label, so "the model is thinking" and
+// "this has died" looked identical, and the label promised 10–30 seconds while
+// the clock beside it read 1:34.
+console.log('\nwhich step a screenful is on');
+{
+  const scan = panelSrc.slice(panelSrc.indexOf('async function scanPickedScreens('));
+  check('the local half says it is local and free',
+    /Reading what is on this screenful — a few seconds, no charge\./.test(scan));
+  check('the paid half says it is the model, and what it was given',
+    /Asking Claude about \$\{busyN\} element/.test(scan));
+  check('…and quotes the limit it will actually give up at, not a hope',
+    /it gives up at 2:30/.test(scan));
+  // 150000ms in ai-advisor.js. The panel must not print a number the code does
+  // not honour — that is how "usually 10–30 seconds" got there.
+  check('and that limit is the one the call really uses',
+    /CALL_TIMEOUT_MS = 150000/.test(readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8')));
+  check('the old blanket promise is gone',
+    !/Looking for components — usually 10–30 seconds/.test(panelSrc));
+  // The count is what was actually sent, not what was collected: everything
+  // already mapped or seen on an earlier screenful is filtered out first.
+  check('the count is what was sent, not what was on the screenful',
+    /const busyN = collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\)\.length;/.test(scan));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
