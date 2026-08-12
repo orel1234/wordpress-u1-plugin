@@ -286,10 +286,27 @@ const keepDom = new JSDOM(`<!doctype html><body>
 const keepDoc = keepDom.window.document;
 global.window = keepDom.window; global.document = keepDoc;
 keepDom.window.u1 = { fix: { listbox: () => {} } };
-await eval('(' + applyFnSrc + ')')([
+const keepRes = await eval('(' + applyFnSrc + ')')([
   { type: 'listbox', primary: '#lb', firstArg: owTpl.firstArg, config: owTpl.config },
 ]);
 const kept = keepDoc.querySelector('#lb').getAttribute('role') === 'menu';
+
+// And the apply has to NAME it. "These fields changed nothing" is a symptom;
+// the cause is readable right there and was not being read.
+const keepClash = ((keepRes.details || [])[0] || {}).roleClash;
+const clashNamed = !!keepClash && keepClash.role === 'menu' && keepClash.willWrite === 'listbox';
+
+// A role U1 itself wrote is ours, and asking about our own work is noise
+// people learn to click through.
+const oursDom = new JSDOM(`<!doctype html><body>
+  <button id="lbt">Pick</button>
+  <ul id="lb" role="menu" u1st-avoid-change-detection="true"><li class="op">A</li></ul></body>`);
+global.window = oursDom.window; global.document = oursDom.window.document;
+oursDom.window.u1 = { fix: { listbox: () => {} } };
+const oursRes = await eval('(' + applyFnSrc + ')')([
+  { type: 'listbox', primary: '#lb', firstArg: owTpl.firstArg, config: owTpl.config },
+]);
+const notAsked = !((oursRes.details || [])[0] || {}).roleClash;
 
 // And the exported file must make the same choice, or Apply and the client's
 // own run disagree about what the component says it is.
@@ -483,6 +500,10 @@ console.log(`  ${kept ? '✅' : '❌'} …and a mapping without that answer leav
 if (!kept) failed++;
 console.log(`  ${exportsStrip ? '✅' : '❌'} …and the exported file makes the same choice, not just Apply`);
 if (!exportsStrip) failed++;
+console.log(`  ${clashNamed ? '✅' : '❌'} an apply blocked by the site's role reports THE CAUSE, not just "changed nothing"`);
+if (!clashNamed) failed++;
+console.log(`  ${notAsked ? '✅' : '❌'} …and a role U1 itself wrote is not reported as a clash`);
+if (!notAsked) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
 if (!defaultsAgree) failed++;
 console.log(`  ${navSafe ? '✅' : '❌'} a menu with submenus is not born with menubar:true`);
@@ -506,6 +527,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 17;
+const total = results.length + 19;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

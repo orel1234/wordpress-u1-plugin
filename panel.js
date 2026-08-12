@@ -1342,6 +1342,40 @@ async function applyMappingsBatch(items) {
             // changes, and only give up after a real budget.
             let changed = await waitForChange(before, roots, 4000);
 
+            // Is a role the SITE wrote standing in the way?
+            //
+            // U1 will not write over an author's role, so a <ul role="menu">
+            // mapped as a listbox comes back with the trigger fully decorated
+            // and the list untouched — "applied", and inoperable. The cause is
+            // readable right here and was not being read: the report said
+            // "these fields changed nothing" and left the person to guess.
+            //
+            // Kept in step with ROLE_BY_TYPE in selector-intel.js. Both lists
+            // say the same thing; this one runs in the page's own world, where
+            // __u1SelectorIntel does not exist.
+            const ROLE_BY_TYPE = {
+              listbox: 'listbox', combobox: 'combobox', menu: 'menu', tabs: 'tablist',
+              dialog: 'dialog', grid: 'grid', table: 'table', radio: 'radiogroup',
+              tooltip: 'tooltip', button: 'button', checkbox: 'checkbox',
+            };
+            let roleClash;
+            (() => {
+              const want = ROLE_BY_TYPE[it.type];
+              // The CONTAINER, which for a trigger-first type is not the
+              // element U1 was handed. Where they are the same node, container
+              // is null and the target is it.
+              const el = container || target;
+              if (!want || !el) return;
+              const have = el.getAttribute('role');
+              if (!have || have === want) return;
+              // U1's own fingerprints mean the role is ours, and asking about
+              // our own work is noise people learn to click through.
+              if (el.hasAttribute('u1st-avoid-change-detection') ||
+                  el.hasAttribute('data-u1-revert') ||
+                  el.hasAttribute('u1st-trigger-element')) return;
+              roleClash = { sel: it.primary || sel, role: have, willWrite: want };
+            })();
+
             // Which fields actually moved.
             const fieldsNoEffect = [];
             for (const [field, m] of Object.entries(fieldSnaps)) {
@@ -1430,6 +1464,7 @@ async function applyMappingsBatch(items) {
               details.push({ type: it.type, sel, status: 'ok', changed, fieldsNoEffect, receipt,
                              unblocked: siteAuthoredOptOut || undefined,
                              rebuilt: rebuiltAfterU1 || undefined,
+                             roleClash: roleClash || undefined,
                              harm: harm.length ? harm : undefined });
             } else {
               noEffect++;
@@ -1453,6 +1488,7 @@ async function applyMappingsBatch(items) {
               })();
               details.push({
                 type: it.type, sel, status: 'no-effect', changed: 0, rebuilt: rebuiltAfterU1 || undefined,
+                roleClash: roleClash || undefined,
                 reason: !preStamped ? 'silent'
                   : u1Touched ? 'already-processed'   // reload and re-apply
                   : 'source-opt-out',                 // the site's HTML says skip
@@ -8806,6 +8842,16 @@ async function revertApplied(receipt) {
   } catch { return 0; }
 }
 
+// The same, for a role the site wrote: the message says what is in the way, and
+// this is the one action that takes it out.
+function offerRoleOverwrite(status, clash) {
+  if (!status || !clash) return;
+  if (status.querySelector('[data-role-overwrite]')) return;
+  status.insertAdjacentHTML('beforeend',
+    ` <button class="btn-outline btn-xs" data-role-overwrite="${escapeHtml(clash.sel)}"` +
+    ` data-role-was="${escapeHtml(clash.role)}">Replace role="${escapeHtml(clash.role)}" and apply</button>`);
+}
+
 // A one-click way to act on that, since the fix is always the same.
 function offerReload(status) {
   if (!status) return;
@@ -8818,6 +8864,43 @@ document.addEventListener('click', async (e) => {
   if (!e.target.closest('[data-reload-tab]')) return;
   const tab = await getTab();
   if (tab) chrome.tabs.reload(tab.id);
+});
+
+// "Replace the site's role and apply."
+//
+// The decision was previously only reachable at save time, so a mapping already
+// on the list had no way to make it: Apply ran, U1 met the author's role, and
+// nothing happened — with no way forward except deleting the mapping and
+// building it again. The answer is recorded on the mapping so every later apply
+// and the exported file make the same choice.
+//
+// Removing the role is enough on its own. U1 will not look at an element twice
+// in a page load, so re-running the fix here would be theatre — but the patch's
+// own corrector fills in role="listbox" and role="option" the moment the
+// author's role is gone, which is what actually makes the component work.
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-role-overwrite]');
+  if (!btn) return;
+  const sel = btn.getAttribute('data-role-overwrite');
+  const was = btn.getAttribute('data-role-was');
+  const status = btn.closest('.notice') || document.getElementById('applyStatus');
+  btn.disabled = true;
+
+  const key = storageKey('mappings', currentHostname);
+  const stored = await U1Store.get([key]);
+  const list = stored[key] || [];
+  const idx = list.findIndex(m => m && typeof m === 'object' && m.primary === sel);
+  if (idx < 0) { showNotice(status, 'That mapping is no longer on the list.', 'error', 6000); return; }
+  list[idx] = { ...list[idx], overwriteRole: was, code: mappingToCode({ ...list[idx], overwriteRole: was }) };
+  await U1Store.set({ [key]: list });
+
+  const r = await applyOne(list[idx].type, list[idx].firstArg || list[idx].primary,
+                           list[idx].config, list[idx].custom, list[idx]);
+  await loadMappingsList();
+  showNotice(status,
+    r.ok ? `Removed role="${escapeHtml(was)}" from ${escapeHtml(sel)} and re-applied. The exported file now does the same, so the client gets this too.`
+         : `Removed role="${escapeHtml(was)}" from ${escapeHtml(sel)}, but the fix reported: ${escapeHtml(r.err || 'no result')}`,
+    r.ok ? 'success' : 'error', 12000);
 });
 
 // Which saved mappings target the same DOM as `primary`?
@@ -9010,8 +9093,23 @@ async function applyAllMappings({ silent = false } = {}) {
         msg += ' ' + describeApply({ ok: true, applied: 1, details: [d] }, m).msg
           .replace(/^Applied — \d+ elements? changed on the page\. /, `${d.sel}: `);
       }
-      showNotice(status, msg, (failed || noEffect) ? 'error' : (unblocked.length ? 'error' : 'success'),
-        (noEffect || failed || unblocked.length) ? 9000 : 4000);
+      // The blocker, named, with the one action that clears it.
+      //
+      // "These fields changed nothing" is a symptom, and it was the whole
+      // report. When the cause is a role the site wrote, say the cause: U1 does
+      // not write over an author's role, so the fix cannot land however right
+      // the selectors are, and re-applying will never change that.
+      const clashes = details.filter(d => d.roleClash);
+      for (const d of clashes) {
+        msg += ` ${d.roleClash.sel} carries role="${d.roleClash.role}" in the site's own HTML.` +
+          ` U1 will not write role="${d.roleClash.willWrite}" over it, so this fix cannot land while it is there.`;
+      }
+      showNotice(status, msg,
+        (failed || noEffect || clashes.length) ? 'error' : (unblocked.length ? 'error' : 'success'),
+        (noEffect || failed || unblocked.length || clashes.length) ? 20000 : 4000);
+      // showNotice writes textContent, so the action has to be appended as
+      // markup afterwards — the same shape offerReload uses.
+      if (clashes.length) offerRoleOverwrite(status, clashes[0].roleClash);
     }
     // Per-mapping detail. console.debug, not warn: these are expected outcomes
     // of a normal run, and at warn level an error collector files each one as a
