@@ -1,52 +1,86 @@
-/* ── U1 Studio — User1st Brand Theme ────────────────────────────────────────── */
+/* ── U1 Studio — User1st Brand Theme ──────────────────────────────────────────
+ *
+ * Rebuilt to the 2026 redesign handoff. The token NAMES are unchanged on
+ * purpose: forty stylesheets' worth of rules already reference them, and
+ * renaming them would have turned a palette change into a rewrite with no way
+ * to tell a deliberate change from a missed one.
+ *
+ * Two things the handoff asks for that are not here, and why:
+ *
+ *   · Inter and JetBrains Mono are named FIRST in the stacks below but not
+ *     fetched. The panel's CSP is `default-src 'self'` with no font-src, so a
+ *     Google Fonts link does not fall back to a system font — it is blocked,
+ *     and every measurement made against the intended face is wrong. Naming
+ *     them means anyone who has them installed gets them; shipping them means
+ *     adding the woff2 files to the extension, which is a decision about
+ *     package size rather than about CSS.
+ *
+ *   · Warm amber survives, as WARNING only. "No orange" is about the brand —
+ *     the accent line, the logo dot, the gradient wordmark, all of which were
+ *     amber→orange→red and are now purple. The handoff's own token list keeps
+ *     `warning oklch(0.7–0.78 0.1–0.13 70)`, so a warning that stopped being
+ *     amber would be following the sentence and breaking the specification.
+ */
 
 :root {
-  /* Backgrounds */
-  --u1-bg-base:        #0A0A0F;
-  --u1-bg-gradient:    radial-gradient(
-                         ellipse at top left,
-                         rgba(91, 33, 100, 0.25) 0%,
-                         rgba(35, 14, 30, 0.4) 30%,
-                         #0A0A0F 70%
-                       );
-  --u1-surface:        rgba(255, 255, 255, 0.03);
-  --u1-surface-2:      rgba(255, 255, 255, 0.06);
-  --u1-surface-input:  rgba(255, 255, 255, 0.04);
-  --u1-border:         rgba(255, 255, 255, 0.08);
-  --u1-border-strong:  rgba(255, 255, 255, 0.16);
-  --u1-border-dashed:  rgba(255, 255, 255, 0.14);
+  /* Backgrounds. The base is a hair lighter and bluer than the near-black it
+     replaces, which is what makes a 1px hairline read as a division rather
+     than as a scratch. */
+  --u1-bg-base:        oklch(0.14 0.01 260);
+  /* Flat. The old radial wash put a different background behind the top of the
+     panel than the bottom, so a card's surface tint read as two different
+     colours depending on how far you had scrolled. */
+  --u1-bg-gradient:    oklch(0.14 0.01 260);
+  --u1-surface:        oklch(0.17 0.01 260);
+  --u1-surface-2:      oklch(0.20 0.01 260);
+  --u1-surface-input:  oklch(0.18 0.01 260);
+  --u1-surface-code:   oklch(0.10 0.01 260);
+  --u1-border:         oklch(0.24 0.01 260);
+  --u1-border-strong:  oklch(0.30 0.01 260);
+  --u1-border-dashed:  oklch(0.28 0.01 260);
 
   /* Text */
-  --u1-text:           #FFFFFF;
-  --u1-text-muted:     #B8B5C4;
-  --u1-text-dim:       #6E6B7E;
+  --u1-text:           oklch(0.92 0.005 260);
+  --u1-text-muted:     oklch(0.65 0.01 260);
+  --u1-text-dim:       oklch(0.52 0.01 260);
 
   /* Brand */
-  --u1-primary:        #8B5CF6;
-  --u1-primary-hover:  #7C3AED;
-  --u1-primary-dim:    rgba(139, 92, 246, 0.18);
-  --u1-primary-glow:   rgba(139, 92, 246, 0.4);
+  --u1-primary:        oklch(0.60 0.19 293);
+  --u1-primary-hover:  oklch(0.56 0.19 293);
+  --u1-primary-text:   oklch(0.78 0.14 293);   /* on a dark ground, for links */
+  --u1-primary-dim:    oklch(0.60 0.19 293 / 0.16);
+  --u1-primary-glow:   oklch(0.60 0.19 293 / 0.30);
+  --u1-primary-fill:   linear-gradient(135deg, oklch(0.60 0.19 293), oklch(0.56 0.19 293));
 
-  /* Warm gradient */
-  --u1-warm-1:         #FBBF24;
-  --u1-warm-2:         #F97316;
-  --u1-warm-3:         #EF4444;
-  --u1-dot:            var(--u1-warm-3);
+  /* Warning amber. Kept as a SEMANTIC colour and used nowhere decorative — see
+     the note at the top of this file. */
+  --u1-warm-1:         oklch(0.78 0.13 70);
+  --u1-warm-2:         oklch(0.72 0.12 70);
+  --u1-warm-3:         oklch(0.66 0.16 25);
 
-  /* Top accent line */
+  /* Brand marks. Purple, where these used to be the warm ramp. */
+  --u1-dot:            oklch(0.72 0.16 293);
   --u1-accent-line:    linear-gradient(90deg,
-                         var(--u1-warm-1), var(--u1-warm-2),
-                         var(--u1-warm-3), var(--u1-primary));
+                         oklch(0.50 0.19 293), oklch(0.60 0.19 293),
+                         oklch(0.72 0.16 293), oklch(0.60 0.19 293));
 
   /* Semantic */
-  --u1-success:        #22C55E;
-  --u1-danger:         #EF4444;
-  --u1-info:           #38BDF8;
+  --u1-success:        oklch(0.68 0.18 150);
+  --u1-warn:           oklch(0.75 0.12 70);
+  --u1-danger:         oklch(0.65 0.19 25);
+  --u1-info:           oklch(0.72 0.16 220);
+
+  /* Type. Inter and JetBrains Mono first; everything after them is the
+     fallback that actually renders on a machine without them. */
+  --u1-font:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                       system-ui, sans-serif;
+  --u1-font-mono:      'JetBrains Mono', ui-monospace, SFMono-Regular,
+                       'SF Mono', Menlo, Consolas, monospace;
 
   /* Shapes */
-  --u1-radius-pill:    999px;
+  --u1-radius-pill:    100px;
   --u1-radius-md:      10px;
-  --u1-radius-sm:      6px;
+  --u1-radius-sm:      7px;
 }
 
 * {
@@ -66,7 +100,7 @@ body {
   background-image: var(--u1-bg-gradient);
   background-attachment: fixed;
   color: var(--u1-text);
-  font-family: system-ui, -apple-system, "Segoe UI", "Roboto", sans-serif;
+  font-family: var(--u1-font);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -111,7 +145,7 @@ body {
   justify-content: center;
   font-weight: 800;
   font-size: 16px;
-  font-family: system-ui, sans-serif;
+  font-family: var(--u1-font);
   line-height: 1;
   flex-shrink: 0;
 }
@@ -124,8 +158,8 @@ body {
   text-transform: uppercase;
 }
 
-/* Same accent treatment as the per-tab hero headings: warm gradient on the
-   first word + the red trailing dot. `.dot` is scoped per-context elsewhere,
+/* Same accent treatment as the per-tab hero headings: the purple gradient on
+   the first word + the trailing dot. `.dot` is scoped per-context elsewhere,
    so the header needs its own rule. */
 .header h1 .dot {
   color: var(--u1-dot);
@@ -175,8 +209,8 @@ body {
 }
 
 .tab-btn.active {
-  color: var(--u1-primary);
-  border-bottom-color: var(--u1-primary);
+  color: var(--u1-primary-text);
+  border-bottom-color: var(--u1-primary-text);
   background: rgba(139, 92, 246, 0.06);
 }
 
@@ -201,9 +235,11 @@ body {
   color: var(--u1-text);
 }
 
+/* Was amber → orange → red across the first word of every heading, which is
+   where most of the panel's orange actually lived. */
 .u1-gradient-text {
   background: linear-gradient(90deg,
-    var(--u1-warm-1), var(--u1-warm-2), var(--u1-warm-3));
+    oklch(0.75 0.16 293), oklch(0.66 0.19 293), oklch(0.58 0.19 293));
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -272,7 +308,7 @@ select {
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
   background: rgba(139, 92, 246, 0.05);
 }
 
@@ -283,7 +319,7 @@ input::placeholder {
 textarea {
   resize: vertical;
   min-height: 80px;
-  font-family: "Consolas", "Courier New", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
   line-height: 1.55;
 }
@@ -337,7 +373,7 @@ select option {
 }
 
 .color-pair input[type="text"] {
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   text-transform: uppercase;
 }
 
@@ -356,7 +392,7 @@ select option {
 .toggle-row input[type="checkbox"],
 .toggle-row input[type="radio"] {
   width: auto;
-  accent-color: var(--u1-primary);
+  accent-color: var(--u1-primary-text);
   cursor: pointer;
 }
 
@@ -381,7 +417,7 @@ select option {
 
 .radio-group-inline input[type="radio"] {
   width: auto;
-  accent-color: var(--u1-primary);
+  accent-color: var(--u1-primary-text);
 }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
@@ -393,7 +429,11 @@ button {
 }
 
 .btn-primary {
-  background: var(--u1-primary);
+  /* The handoff's 135° fill rather than a flat one: on a flat background the
+     panel now has, a solid block reads as a coloured rectangle and a graded
+     one reads as a raised control. */
+  background: var(--u1-primary-fill);
+  box-shadow: 0 4px 14px var(--u1-primary-glow);
   color: #fff;
   border: none;
   border-radius: var(--u1-radius-pill);
@@ -405,7 +445,7 @@ button {
 }
 
 .btn-primary:hover {
-  background: var(--u1-primary-hover);
+  background: linear-gradient(135deg, oklch(0.64 0.19 293), oklch(0.60 0.19 293));
 }
 
 .btn-primary:active {
@@ -414,13 +454,17 @@ button {
 
 .btn-primary:disabled {
   background: var(--u1-surface-2);
+  box-shadow: none;          /* a disabled control must not look raised */
   color: var(--u1-text-dim);
   cursor: not-allowed;
 }
 
 .btn-outline {
   background: transparent;
-  color: var(--u1-primary);
+  /* The fill purple is a background colour; against a dark ground it is too
+     dark to read as text. The handoff carries a separate, lighter purple for
+     exactly this, and every link and outline label uses it. */
+  color: var(--u1-primary-text);
   border: 1.5px solid var(--u1-primary);
   border-radius: var(--u1-radius-pill);
   padding: 8px 20px;
@@ -524,7 +568,7 @@ button {
 
 .detected-row .value {
   color: var(--u1-info);
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   word-break: break-all;
 }
 
@@ -548,7 +592,7 @@ button {
 }
 
 .detected-list .bullet {
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
 }
 
 .detected-list .arrow {
@@ -557,7 +601,7 @@ button {
 }
 
 .detected-list .target {
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   color: var(--u1-info);
   font-size: 11px;
 }
@@ -568,7 +612,7 @@ button {
   white-space: nowrap;
 }
 .skip-verify-status.ok   { color: var(--u1-success, #22c55e); }
-.skip-verify-status.warn { color: var(--u1-warm-1, #fbbf24); }
+.skip-verify-status.warn { color: var(--u1-warn); }
 .skip-verify-status.err  { color: var(--u1-danger, #ef4444); }
 
 /* ── Field hints (validation feedback under inputs) ────────────────────── */
@@ -580,7 +624,7 @@ button {
 }
 .field-hint:not(:empty) { display: block; }
 .field-hint.error { color: var(--u1-danger, #ef4444); }
-.field-hint.warn  { color: var(--u1-warm-1, #fbbf24); }
+.field-hint.warn  { color: var(--u1-warn); }
 .field-hint.ok    { color: var(--u1-success, #22c55e); }
 
 /* ── Skip-link form rows ────────────────────────────────────────────────── */
@@ -606,7 +650,7 @@ button {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
   text-transform: uppercase;
 }
 
@@ -630,9 +674,9 @@ button {
   border: 1px solid var(--u1-border);
   border-radius: var(--u1-radius-md);
   padding: 8px 12px;
-  font-family: "Consolas", "Courier New", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 12px;
-  color: var(--u1-warm-1);
+  color: var(--u1-warn);
   word-break: break-all;
   min-height: 34px;
   margin-bottom: 10px;
@@ -643,7 +687,7 @@ button {
   border: 1px solid var(--u1-border);
   border-radius: var(--u1-radius-md);
   padding: 10px 12px;
-  font-family: "Consolas", "Courier New", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
   color: var(--u1-info);
   line-height: 1.55;
@@ -658,18 +702,18 @@ button {
 .primary-selector-input {
   width: 100%;
   padding: 8px 10px;
-  font-family: "Consolas", "Courier New", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 12px;
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--u1-border);
   border-radius: var(--u1-radius-md);
-  color: var(--u1-warm-1);
+  color: var(--u1-warn);
   box-sizing: border-box;
 }
 
 .primary-selector-input:focus {
   outline: none;
-  border-color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
 }
 
 /* ── Selector tester ────────────────────────────────────────────────────── */
@@ -698,7 +742,7 @@ button {
 .selector-test-result.warn  { border-color: var(--u1-warn, #e0a500); }
 .selector-test-result.error { border-color: var(--u1-danger); color: var(--u1-danger); }
 .selector-test-result code {
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   color: var(--u1-info);
 }
 .selector-test-result ul {
@@ -722,7 +766,7 @@ button {
 }
 
 .sub-sel-row > .key {
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
   color: var(--u1-text-muted);
   text-align: right;
@@ -731,7 +775,7 @@ button {
 .sub-sel-row input[type="text"] {
   padding: 7px 10px;
   font-size: 11px;
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
 }
 
 .root-toggle {
@@ -744,7 +788,7 @@ button {
 }
 
 .root-toggle input {
-  accent-color: var(--u1-primary);
+  accent-color: var(--u1-primary-text);
 }
 
 .root-text {
@@ -907,6 +951,33 @@ button {
   cursor: pointer;
 }
 
+/* No key saved. Not `disabled` — a disabled button is skipped by the keyboard
+   and explains nothing, and this one has both something to say and somewhere
+   to send you. It reads as unavailable and behaves as a door. */
+.map-mode-btn.is-locked {
+  color: var(--u1-text-dim);
+  cursor: not-allowed;
+}
+.map-mode-btn.is-locked::before {
+  content: "🔒";
+  margin-inline-end: 5px;
+  font-size: 9px;
+  vertical-align: 1px;
+}
+.map-mode-btn.is-locked:hover { color: var(--u1-text-muted); }
+
+/* Where a locked mode sends you. A tab change plus a scroll is a lot of
+   movement with no stated cause, so the destination says, briefly, that it is
+   the destination. */
+@keyframes u1-calling {
+  0%, 100% { border-color: var(--u1-border-dashed); }
+  50%      { border-color: var(--u1-primary-text); }
+}
+#aiKeySection.is-calling { animation: u1-calling 0.75s ease-in-out 2; }
+@media (prefers-reduced-motion: reduce) {
+  #aiKeySection.is-calling { animation: none; border-color: var(--u1-primary-text); }
+}
+
 .map-mode-btn.active {
   background: var(--u1-primary);
   color: #fff;
@@ -942,7 +1013,7 @@ button {
 }
 
 .auto-field {
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 10px;
   font-weight: 400;
   color: var(--u1-text-muted);
@@ -979,7 +1050,7 @@ button {
   padding: 0 4px;
   border-radius: 3px;
   background: var(--u1-surface-2, rgba(127, 127, 127, 0.12));
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 9px;
 }
 .auto-sig.verified { color: #16a34a; }
@@ -1026,7 +1097,7 @@ button {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 9px;
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
 }
 
@@ -1149,7 +1220,7 @@ button {
   padding: 5px 7px;
   border-radius: 4px;
   background: var(--u1-surface-2, rgba(127, 127, 127, 0.10));
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 10px;
   overflow-x: auto;
 }
@@ -1176,7 +1247,7 @@ button {
   list-style: revert;
 }
 
-.auto-advanced > summary:hover { color: var(--u1-primary); }
+.auto-advanced > summary:hover { color: var(--u1-primary-text); }
 
 /* ── Stage 1: the discovered-component rows ──────────────────────────────── */
 .ai-comp {
@@ -1231,7 +1302,7 @@ button {
   border: 1px solid var(--u1-primary);
   border-radius: 5px;
   background: var(--u1-surface-2, rgba(127, 127, 127, 0.10));
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1246,7 +1317,7 @@ button {
   font-size: 11px;
   cursor: pointer;
 }
-.ai-comp-tickrow input { accent-color: var(--u1-primary); }
+.ai-comp-tickrow input { accent-color: var(--u1-primary-text); }
 
 /* The two things a wrong guess needs corrected. The side panel is often only
    ~380px wide, where five columns collapse into unusable slivers — so label
@@ -1272,7 +1343,7 @@ button {
   width: 100%;
   box-sizing: border-box;
   padding: 5px 7px;
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 10px;
 }
 
@@ -1398,13 +1469,13 @@ button {
   opacity: 0.75;
 }
 .crumb.is-at {
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
   font-weight: 700;
 }
 /* The one you are on is filled, so it reads at a glance and not by comparison. */
 .crumb.is-at .crumb-n {
   background: var(--u1-primary);
-  border-color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
   color: var(--u1-bg-base);
   opacity: 1;
 }
@@ -1528,7 +1599,7 @@ button {
 .advisor-note.warn {
   color: var(--u1-text, #e5e7eb);
   background: rgba(251,191,36,0.12);
-  border-left-color: var(--u1-warm-1, #fbbf24);
+  border-left-color: var(--u1-warn);
 }
 .advisor-note.err {
   color: var(--u1-text, #e5e7eb);
@@ -1689,7 +1760,7 @@ button {
 .mapping-item .mapping-head .mh-sel {
   flex: 1 1 0;
   min-width: 0; /* allow shrink so the thumbnail is never pushed off-screen */
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
   color: var(--u1-info);
   overflow: hidden;
@@ -1824,7 +1895,7 @@ button {
 
 .mapping-item pre {
   flex: 1;
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 10px;
   color: var(--u1-info);
   line-height: 1.5;
@@ -1867,7 +1938,7 @@ button {
   cursor: pointer;
 }
 
-.mapping-item .test-btn:hover { color: var(--u1-primary); border-color: var(--u1-primary); }
+.mapping-item .test-btn:hover { color: var(--u1-primary-text); border-color: var(--u1-primary-text); }
 .mapping-item .test-btn[disabled] { opacity: 0.3; cursor: not-allowed; }
 
 /* "What is this element?" — reference material, so it opens on request from the
@@ -1888,7 +1959,7 @@ button {
 }
 .type-info-btn:hover,
 .type-info-btn[aria-expanded="true"] {
-  color: #fff; border-color: var(--u1-primary); background: var(--u1-primary);
+  color: #fff; border-color: var(--u1-primary-text); background: var(--u1-primary);
 }
 .type-info-btn:focus-visible { outline: 2px solid var(--u1-primary); outline-offset: 2px; }
 
@@ -2276,12 +2347,12 @@ button {
   margin-left: auto;
   font-size: 10px;
   font-weight: 700;
-  color: var(--u1-warm-1, #fbbf24);
+  color: var(--u1-warn);
   animation: u1-pulse 1s ease-in-out infinite;
 }
 @keyframes u1-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .test-results .test-head code, .elem-scan .test-head code {
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 10px;
   color: var(--u1-info);
   flex: 1;
@@ -2328,7 +2399,7 @@ button {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .4px;
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
 }
 .test-results .test-section-title .pills, .elem-scan .test-section-title .pills { margin-left: auto; }
 .test-results .test-steps, .elem-scan .test-steps { list-style: none; margin: 0; padding: 2px 8px 6px; }
@@ -2410,8 +2481,8 @@ button {
 }
 
 .mapping-item .edit-btn:hover {
-  color: var(--u1-primary);
-  border-color: var(--u1-primary);
+  color: var(--u1-primary-text);
+  border-color: var(--u1-primary-text);
 }
 
 .mapping-item .shot-btn[disabled],
@@ -2448,12 +2519,12 @@ button {
 .hostname-badge {
   display: inline-block;
   background: rgba(139, 92, 246, 0.12);
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
   border: 1px solid rgba(139, 92, 246, 0.25);
   border-radius: var(--u1-radius-pill);
   padding: 2px 9px;
   font-size: 10px;
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   margin-left: 8px;
   vertical-align: middle;
 }
@@ -2478,14 +2549,14 @@ button {
 }
 .scan-chip.active {
   background: rgba(139, 92, 246, 0.15);
-  border-color: var(--u1-primary);
-  color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
+  color: var(--u1-primary-text);
 }
-.scan-chip.issues { color: var(--u1-warm-1, #fbbf24); border-color: rgba(251,191,36,0.4); }
+.scan-chip.issues { color: var(--u1-warn); border-color: oklch(0.75 0.12 70 / 0.4); }
 .scan-chip.issues.active { background: rgba(251,191,36,0.15); }
 .scan-chip .n {
   opacity: 0.7;
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
 }
 
 /* Two filter rows: severity, then category */
@@ -2537,17 +2608,17 @@ button {
 .scan-issue-title { font-size: 12.5px; font-weight: 600; color: var(--u1-text); flex: 1; min-width: 0; }
 .scan-item .scan-hl { flex-shrink: 0; }
 .scan-context { font-size: 11px; color: var(--u1-text-muted); margin-top: 3px; word-break: break-word; }
-.scan-context .scan-detail { font-family: "Consolas", monospace; color: var(--u1-info); }
+.scan-context .scan-detail { font-family: var(--u1-font-mono); color: var(--u1-info); }
 .scan-why { margin-top: 5px; }
 .scan-why summary { cursor: pointer; font-size: 11px; font-weight: 600; color: var(--u1-accent, #a99cff); list-style: none; }
 .scan-why summary::before { content: "▸ "; }
 .scan-why[open] summary::before { content: "▾ "; }
 .scan-why-body { margin-top: 4px; padding-left: 4px; }
 .scan-why-line { font-size: 11px; color: var(--u1-text-dim); margin-top: 2px; }
-.scan-why-line code { font-family: "Consolas", monospace; color: var(--u1-info); word-break: break-all; }
+.scan-why-line code { font-family: var(--u1-font-mono); color: var(--u1-info); word-break: break-all; }
 
 .scan-sel {
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
   color: var(--u1-info);
   word-break: break-all;
@@ -2578,7 +2649,7 @@ button {
 
 .notice.success { color: var(--u1-success); }
 .notice.error   { color: var(--u1-danger); }
-.notice.warn    { color: var(--u1-warm-1, #fbbf24); }
+.notice.warn    { color: var(--u1-warn); }
 
 /* ── Export contents list ───────────────────────────────────────────────── */
 
@@ -2596,7 +2667,7 @@ button {
 
 .contents-list li::before {
   content: '•';
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
   font-weight: 700;
   margin-right: 8px;
 }
@@ -2649,7 +2720,7 @@ button {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.7px;
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
   background: var(--u1-primary-dim);
   border-radius: 3px;
   padding: 3px 7px;
@@ -2665,7 +2736,7 @@ button {
 }
 
 .scan-result-selector {
-  font-family: 'Consolas', 'Courier New', monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
   color: var(--u1-info);
   overflow: hidden;
@@ -2682,7 +2753,7 @@ button {
 .scan-add-btn {
   flex-shrink: 0;
   background: var(--u1-primary-dim);
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
   border: 1px solid var(--u1-primary);
   border-radius: var(--u1-radius-sm);
   padding: 5px 10px;
@@ -2796,7 +2867,7 @@ button {
 .gate-screen input:focus,
 .gate-screen textarea:focus {
   outline: none;
-  border-color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
 }
 
 .gate-error {
@@ -2904,7 +2975,7 @@ button {
 
 .header .account-signout:hover {
   color: var(--u1-text);
-  border-color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
   background: var(--u1-primary-dim);
 }
 
@@ -2983,7 +3054,7 @@ button.u1-readonly-off {
   cursor: pointer;
   list-style: revert;
 }
-.ai-map-edit > summary:hover { color: var(--u1-primary); }
+.ai-map-edit > summary:hover { color: var(--u1-primary-text); }
 .ai-map-edit[open] > summary { margin-bottom: 6px; }
 
 /* Actions: one clear primary, the rest quiet and out of its way. */
@@ -3007,7 +3078,7 @@ button.u1-readonly-off {
   cursor: pointer;
   padding: 3px 0;
 }
-.ai-approved-code > summary:hover { color: var(--u1-primary); }
+.ai-approved-code > summary:hover { color: var(--u1-primary-text); }
 .ai-approved-code .code-preview {
   margin-top: 4px;
   padding: 8px 10px;
@@ -3086,7 +3157,7 @@ button.u1-readonly-off {
   margin-left: 4px;
 }
 .ai-busy-clock.is-long {
-  color: var(--u1-warn, #F5A524);
+  color: var(--u1-warn, oklch(0.75 0.12 70));
   opacity: 1;
   font-weight: 600;
 }
@@ -3126,17 +3197,17 @@ button.u1-readonly-off {
    second one — but it must not look like unfinished work. */
 .lbl-row.is-used { opacity: 0.5; }
 .lbl-n {
-  font-family: ui-monospace, monospace; font-size: 10px; font-weight: 700;
+  font-family: var(--u1-font-mono); font-size: 10px; font-weight: 700;
   background: #ff2d95; color: #fff; border-radius: 3px; padding: 0 4px; flex: none;
 }
-.lbl-tag { color: var(--u1-text-dim); font-family: ui-monospace, monospace; flex: none; }
+.lbl-tag { color: var(--u1-text-dim); font-family: var(--u1-font-mono); flex: none; }
 .lbl-sel {
-  font-family: ui-monospace, monospace; color: var(--u1-text-muted);
+  font-family: var(--u1-font-mono); color: var(--u1-text-muted);
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .lbl-guess {
   font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--u1-primary); border: 1px solid var(--u1-primary);
+  color: var(--u1-primary-text); border: 1px solid var(--u1-primary);
   border-radius: 4px; padding: 0 4px; flex: none;
 }
 .lbl-flag {
@@ -3232,8 +3303,8 @@ button.u1-readonly-off {
 .sweep-screen:hover .sweep-play,
 .sweep-play:focus-visible { opacity: 1; }
 .sweep-play:hover:not(:disabled) {
-  color: var(--u1-primary);
-  border-color: var(--u1-primary);
+  color: var(--u1-primary-text);
+  border-color: var(--u1-primary-text);
 }
 /* A run is going. Not gone — the row keeps its shape — it just cannot start a
    second scan on top of the first. */
@@ -3257,14 +3328,14 @@ button.u1-readonly-off {
 /* Tried and could not be finished. It keeps its tick and its place in the
    still-to-search list, because it really was not searched — the tag is there
    so a gap in the completed drawer is not the only evidence it happened. */
-.sweep-screen.is-failed { outline: 1px solid var(--u1-warn, #F5A524); outline-offset: -1px; }
+.sweep-screen.is-failed { outline: 1px solid var(--u1-warn, oklch(0.75 0.12 70)); outline-offset: -1px; }
 .sweep-fail-flag {
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--u1-warn, #F5A524);
-  border: 1px solid var(--u1-warn, #F5A524);
+  color: var(--u1-warn, oklch(0.75 0.12 70));
+  border: 1px solid var(--u1-warn, oklch(0.75 0.12 70));
   border-radius: 4px;
   padding: 1px 5px;
   margin-left: 6px;
@@ -3414,7 +3485,7 @@ button.u1-readonly-off {
   color: var(--u1-text-muted);
   cursor: pointer;
 }
-.ai-map-code > summary:hover { color: var(--u1-primary); }
+.ai-map-code > summary:hover { color: var(--u1-primary-text); }
 
 /* "It isn't working — why?" */
 .ai-why {
@@ -3774,7 +3845,7 @@ textarea:focus-visible {
   cursor: not-allowed;
   transform: none;
 }
-.btn-outline:disabled:hover { background: transparent; color: var(--u1-primary); }
+.btn-outline:disabled:hover { background: transparent; color: var(--u1-primary-text); }
 .btn-ghost:disabled:hover { color: var(--u1-text-muted); }
 
 /* Row actions: square targets that line up with each other. */
@@ -3923,7 +3994,7 @@ details > summary:hover { color: var(--u1-text); }
 }
 .ai-find-actions > .btn-ghost:hover {
   color: var(--u1-text);
-  border-color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
   background: var(--u1-primary-dim, rgba(108, 76, 241, 0.14));
 }
 
@@ -3935,7 +4006,7 @@ details > summary:hover { color: var(--u1-text); }
   white-space: nowrap;
   text-decoration: none;
 }
-#aiBackBtn:hover { border-color: var(--u1-primary); color: var(--u1-text); }
+#aiBackBtn:hover { border-color: var(--u1-primary-text); color: var(--u1-text); }
 
 /* Nothing in the panel should render as an underlined pseudo-link. */
 .ai-find-actions button,
@@ -3951,7 +4022,7 @@ details > summary:hover { color: var(--u1-text); }
   font-weight: 700;
   letter-spacing: 0.7px;
   text-transform: uppercase;
-  color: var(--u1-primary);
+  color: var(--u1-primary-text);
   padding: 2px 0 8px;
 }
 
@@ -3972,13 +4043,13 @@ details > summary:hover { color: var(--u1-text); }
   border-radius: var(--u1-radius-sm);
   background: #000;
   color: #fff;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--u1-font-mono);
   font-size: 12px;
   letter-spacing: 0.4px;
 }
 .key-input::placeholder { color: rgba(255, 255, 255, 0.38); letter-spacing: 0; }
 .key-input:focus {
-  border-color: var(--u1-primary);
+  border-color: var(--u1-primary-text);
   background: #000;
   color: #fff;
   outline: 2px solid var(--u1-primary);
@@ -4007,8 +4078,8 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   border-radius: var(--u1-radius-sm);
   color: var(--u1-text-muted);
 }
-.ai-delayed:hover:not(:disabled) { border-color: var(--u1-primary); color: var(--u1-text); }
-.ai-delayed:disabled { border-style: solid; border-color: var(--u1-primary); color: var(--u1-text); opacity: 1; }
+.ai-delayed:hover:not(:disabled) { border-color: var(--u1-primary-text); color: var(--u1-text); }
+.ai-delayed:disabled { border-style: solid; border-color: var(--u1-primary-text); color: var(--u1-text); opacity: 1; }
 
 /* What the scan could not see. */
 .ai-hint-line {
@@ -4059,7 +4130,7 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
 }
 
@@ -4135,7 +4206,7 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
 .elem-scan-saved-row .mh-sel {
   flex: 1 1 0;
   min-width: 0;
-  font-family: "Consolas", monospace;
+  font-family: var(--u1-font-mono);
   font-size: 11px;
   color: var(--u1-info);
   overflow: hidden;

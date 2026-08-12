@@ -303,5 +303,75 @@ console.log('\nThe library scripts run and define their globals:');
   }
 }
 
+// ── The two modes that cost money are locked until there is a key ──────────
+//
+// Both AI modes were freely enterable without one. Pressing either put you in
+// front of the whole flow — the estimate, the tick list, the button — and the
+// key was asked for at the LAST step, by a modal, after the choosing was done.
+console.log('\nAI modes are gated on the key, at the door:');
+{
+  const css = read('styles.css');
+  const locked = /btn\.classList\.toggle\('is-locked', !aiUnlocked\)/.test(panel);
+  const gated = /if \(aiModeAllowed\(\)\) setMapMode\('auto'\)/.test(panel) &&
+                /if \(aiModeAllowed\(\)\) setMapMode\('sweep'\)/.test(panel);
+  const onBoot = /await refreshAiLocks\(\);\n  await loadConfigForm\(\)/.test(panel);
+  const onSave = /showNotice\(\$aiKeyStatus, 'Key saved[^\n]*\n\s*\/\/[^\n]*\n\s*await refreshAiLocks\(\)/.test(panel);
+  if (locked && gated && onBoot && onSave) {
+    pass('the AI modes lock without a key, and unlock the moment one is saved');
+  } else {
+    fail(`AI gating incomplete — marks:${locked} blocks:${gated} onBoot:${onBoot} onSave:${onSave}`);
+  }
+
+  // Refusing is not the job. A locked mode has somewhere to send you, and that
+  // somewhere has to exist — the key moved out of a Picker modal into a Setup
+  // section, and a scrollIntoView on a missing id is a silent no-op.
+  const dest = /id="aiKeySection"/.test(html);
+  const goes = /getElementById\('aiKeySection'\)/.test(panel);
+  const noModal = !/aiBox/.test(panel) && !/aiBox/.test(html);
+  if (dest && goes && noModal) {
+    pass('a locked mode sends you to the Setup section that unlocks it');
+  } else {
+    fail(`the destination is wrong — section:${dest} goes:${goes} modalGone:${noModal}`);
+  }
+
+  // `disabled` would be the easy way and the wrong one: it takes the button out
+  // of the keyboard order and says nothing about why, and this button has both
+  // something to say and somewhere to go.
+  if (/aria-disabled', String\(!aiUnlocked\)/.test(panel) &&
+      !/\$modeAutoBtn\.disabled = /.test(panel)) {
+    pass('a locked mode stays reachable by keyboard and says why');
+  } else {
+    fail('a locked mode is disabled outright — unreachable, and silent about the reason');
+  }
+
+  // The redesign's palette: purple brand, no orange. Amber survives as WARNING
+  // only, which the handoff's own token list specifies — a warning that stopped
+  // being amber would be following the sentence and breaking the spec.
+  const brandOrange = /--u1-accent-line:[^;]*(?:70|25)\s*\)/s.test(css) ||
+                      /--u1-dot:\s*var\(--u1-warm/.test(css) ||
+                      /u1-gradient-text[\s\S]{0,200}--u1-warm/.test(css);
+  if (!brandOrange) pass('the brand marks are purple — no orange in the accent line, dot or wordmark');
+  else fail('orange is still in the brand: accent line, logo dot or gradient wordmark');
+
+  // Fonts are NAMED but not fetched. The CSP is default-src 'self' with no
+  // font-src, so a Google Fonts link is blocked rather than falling back —
+  // every measurement made against the intended face would be wrong.
+  const namesFonts = /--u1-font:\s*'Inter'/.test(css) && /--u1-font-mono:\s*'JetBrains Mono'/.test(css);
+  const fetchesNone = !/@import/.test(css) && !/fonts\.googleapis/.test(css) && !/fonts\.googleapis/.test(html);
+  if (namesFonts && fetchesNone) {
+    pass('Inter and JetBrains Mono are named first, and nothing is fetched past the CSP');
+  } else {
+    fail(`typography wrong — names:${namesFonts} noFetch:${fetchesNone}`);
+  }
+
+  // One family per role. Forty hardcoded stacks meant a palette change could
+  // not reach half of them.
+  const stray = [...css.matchAll(/font-family:\s*([^;]+);/g)]
+    .map((m) => m[1].trim())
+    .filter((v) => !/var\(--u1-font/.test(v) && v !== 'inherit' && !/serif$/.test(v));
+  if (!stray.length) pass('every font-family goes through the two type tokens');
+  else fail(`${stray.length} hardcoded font stacks left: ${[...new Set(stray)].join(' | ')}`);
+}
+
 console.log(failures === 0 ? '\n✅ All extension checks passed.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

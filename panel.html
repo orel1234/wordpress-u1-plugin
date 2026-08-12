@@ -222,6 +222,34 @@
     </div>
   </div>
 
+  <!-- 1.1a ANTHROPIC API KEY ──────────────────────────────────────────
+       Moved out of a dialog in the Picker tab and into Setup, where the rest
+       of "things this tool needs before it can work" already live. It was a
+       modal you met at the END of choosing what to spend — the two AI modes
+       were freely enterable without a key, and the asking happened after the
+       deciding. The modes are locked on it now, so this is what unlocks
+       them, and it belongs somewhere you can go and find. -->
+  <div class="section" id="aiKeySection">
+    <div class="section-title">Anthropic API key<span class="dot">.</span></div>
+    <div class="input-hint" style="display:block;margin-bottom:10px;">
+      Needed for Picker's <strong>Automatic</strong> and <strong>Whole page</strong> modes.
+      Without it those two stay locked.
+    </div>
+    <div class="ai-key-row" id="aiKeyRow">
+      <label class="ai-field-label" for="aiKeyInput">Paste your key</label>
+      <div class="key-line">
+        <input type="password" id="aiKeyInput" class="key-input" placeholder="sk-ant-…"
+               autocomplete="off" spellcheck="false" autocapitalize="off">
+        <button class="btn-ghost btn-sm" id="aiKeyToggle" type="button" title="Show or hide the key">Show</button>
+      </div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button class="btn-primary" id="aiKeySave">Save key</button>
+      </div>
+      <div class="input-hint" style="display:block;">Stored on this machine only, and kept out of exported backups. It is sent straight to api.anthropic.com from this panel.</div>
+    </div>
+    <div class="ai-status" id="aiKeyStatus"></div>
+  </div>
+
   <!-- 1.1b DETECTION ─────────────────────────────────────────────────
        Lives here with the other settings. It spent a while inside the AI
        dialog, where its long explanation had nowhere to go and rendered as a
@@ -388,26 +416,9 @@
     <!-- One job: change the API key. The scan instruction and the event-recorder
          toggle both lived in here and turned a one-field dialog into a cramped
          column of squeezed text. -->
-    <dialog class="ai-box" id="aiBox">
-      <div class="ai-head">
-        <span class="ai-title">🔑 Anthropic API key</span>
-        <span class="ai-head-spacer"></span>
-        <button class="btn-ghost btn-xs" id="aiBoxClose" title="Close">✕</button>
-      </div>
-
-      <div class="ai-key-row" id="aiKeyRow">
-        <label class="ai-field-label" for="aiKeyInput">Paste your key</label>
-        <div class="key-line">
-          <input type="password" id="aiKeyInput" class="key-input" placeholder="sk-ant-…"
-                 autocomplete="off" spellcheck="false" autocapitalize="off">
-          <button class="btn-ghost btn-sm" id="aiKeyToggle" type="button" title="Show or hide the key">Show</button>
-        </div>
-        <div class="btn-row" style="margin-top:10px;">
-          <button class="btn-primary" id="aiKeySave">Save key</button>
-        </div>
-        <div class="input-hint" style="display:block;">Stored on this machine only, and kept out of exported backups. It is sent straight to api.anthropic.com from this panel.</div>
-      </div>
-    </dialog>
+    <!-- The API key dialog that used to live here is now a section in Setup.
+         It was a modal met at the END of choosing what to spend; the modes it
+         pays for are locked on it instead, and Setup is where they unlock. -->
 
     <!-- The action, and beside it the settings it uses. The key and the
          optional prompt are occasional; the scan is the point. -->

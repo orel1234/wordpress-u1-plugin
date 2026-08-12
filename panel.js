@@ -2302,6 +2302,9 @@ async function init() {
   });
 
   await refreshSetupTab(tab);
+  // Before the Picker is reachable: the two AI modes must not look enterable
+  // for the moment between the panel drawing and the key being read.
+  await refreshAiLocks();
   await loadConfigForm();
   await refreshConfigSkipList();
   updateConfigPreview();
@@ -4498,7 +4501,6 @@ function setMapMode(mode) {
   if (sweepRow) sweepRow.style.display = isSweep ? '' : 'none';
   // The assistant is a dialog now — it is opened on demand, not shown by
   // display, and leaving the AI routes must dismiss it rather than strand it.
-  if (!isAi) document.getElementById('aiBox')?.close();
   // Show a results panel only when it holds actual results. #aiResults has a
   // fixed shell (summary, list, buttons), so testing its own innerHTML would
   // always be truthy and leave an empty box with a dead button sitting there.
@@ -4537,22 +4539,60 @@ function resumeStage() {
   return 'none';
 }
 
-document.getElementById('aiSettingsBtn')?.addEventListener('click', () => {
-  const d = document.getElementById('aiBox');
-  if (d?.showModal && !d.open) d.showModal();
-});
-document.getElementById('aiBoxClose')?.addEventListener('click', () => {
-  document.getElementById('aiBox')?.close();
-});
-
-document.getElementById('sweepSettingsBtn')?.addEventListener('click', () => {
-  const d = document.getElementById('aiBox');
-  if (d?.showModal && !d.open) d.showModal();
-});
+// The key settings buttons in both AI modes used to open a modal. There is no
+// modal any more — the key is a section in Setup — so they go there, the same
+// way a locked mode pill does. One destination, however you arrive at it.
+for (const id of ['aiSettingsBtn', 'sweepSettingsBtn']) {
+  document.getElementById(id)?.addEventListener('click', () => {
+    document.querySelector('.tab-btn[data-tab="setup"]')?.click();
+    document.getElementById('aiKeySection')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
+}
 
 $modeManualBtn?.addEventListener('click', () => setMapMode('manual'));
-$modeAutoBtn?.addEventListener('click', () => setMapMode('auto'));
-$modeSweepBtn?.addEventListener('click', () => setMapMode('sweep'));
+// ── The two modes that cost money need a key before they mean anything ──────
+//
+// Both AI modes were freely selectable without one. Pressing either put you in
+// front of the whole flow — the estimate, the tick list, the button — and the
+// key was asked for at the LAST step, by a dialog, after all the choosing was
+// done. "Paste your Anthropic API key first" is a fine sentence in the wrong
+// place: it arrives once you have already decided what to spend.
+//
+// So the gate moves to the door. A locked mode says it is locked, says what
+// unlocks it, and pressing it takes you to the place that unlocks it rather
+// than simply refusing.
+let aiUnlocked = false;
+
+async function refreshAiLocks() {
+  try { aiUnlocked = !!(await U1AI.getKey()); } catch { aiUnlocked = false; }
+  for (const btn of [$modeAutoBtn, $modeSweepBtn]) {
+    if (!btn) continue;
+    btn.classList.toggle('is-locked', !aiUnlocked);
+    // Not `disabled`. A disabled button is skipped by the keyboard and says
+    // nothing about why — and this one has something to say and somewhere to
+    // send you, which is the entire point of it.
+    btn.setAttribute('aria-disabled', String(!aiUnlocked));
+    btn.title = aiUnlocked ? '' : 'Needs an Anthropic API key — press to go and add one';
+  }
+}
+
+/** True when the mode may be entered. Otherwise: go to where it is unlocked. */
+function aiModeAllowed() {
+  if (aiUnlocked) return true;
+  document.querySelector('.tab-btn[data-tab="setup"]')?.click();
+  const box = document.getElementById('aiKeySection');
+  if (box) {
+    box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // A tab change and a scroll is a lot of movement with no stated cause, so
+    // the thing you were sent to says, briefly, that it is the thing.
+    box.classList.add('is-calling');
+    setTimeout(() => box.classList.remove('is-calling'), 2200);
+  }
+  return false;
+}
+
+$modeAutoBtn?.addEventListener('click', () => { if (aiModeAllowed()) setMapMode('auto'); });
+$modeSweepBtn?.addEventListener('click', () => { if (aiModeAllowed()) setMapMode('sweep'); });
 
 
 
@@ -4572,9 +4612,11 @@ $modeSweepBtn?.addEventListener('click', () => setMapMode('sweep'));
 //  every selector still goes through the same U1 validation and strength meter.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const $aiBox = document.getElementById('aiBox');
 const $aiResults = document.getElementById('aiResults');
 const $aiStatus = document.getElementById('aiStatus');
+// The key now lives in Setup, and its notices have to appear THERE — $aiStatus
+// is the Picker's own status line and is on a tab you are not looking at.
+const $aiKeyStatus = document.getElementById('aiKeyStatus');
 const $aiKeyRow = document.getElementById('aiKeyRow');
 const $aiKeyInput = document.getElementById('aiKeyInput');
 
@@ -4695,7 +4737,7 @@ async function markKeyState() {
     if (!hasKey) $aiKeyRow.style.display = '';
     // A first run needs the key, so ask for it up front. After that the dialog
     // is behind ⚙ and the screen belongs to the results.
-    if (!hasKey && $aiBox?.showModal && mapMode === 'auto') { try { $aiBox.showModal(); } catch {} }
+    if (!hasKey && mapMode === 'auto') aiModeAllowed();   // sends you to Setup
   } catch {}
 })();
 
@@ -4716,12 +4758,14 @@ $aiKeyInput?.addEventListener('input', () => {
 
 document.getElementById('aiKeySave')?.addEventListener('click', async () => {
   const val = ($aiKeyInput.value || '').trim();
-  if (!val) { showNotice($aiStatus, 'Paste a key first.', 'error', 3000); return; }
+  if (!val) { showNotice($aiKeyStatus, 'Paste a key first.', 'error', 3000); return; }
   await U1AI.setKey(val);
   $aiKeyInput.value = '';
   $aiKeyInput.placeholder = '•••••••• (saved — type to replace)';
   $aiKeyRow.style.display = 'none';
-  showNotice($aiStatus, 'Key saved on this machine.', 'success', 3000);
+  showNotice($aiKeyStatus, 'Key saved on this machine.', 'success', 3000);
+  // The two locked modes unlock on this press, not on the next panel open.
+  await refreshAiLocks();
 });
 
 // Run selector-intel in the page (injecting it first, idempotently).
@@ -4890,7 +4934,6 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     aiWorkspaceHost = currentHostname;
     renderAiComponents(aiFound);
     $aiStatus.style.display = 'none';
-    if ($aiBox?.open) $aiBox.close();   // the results are the screen now
   } catch (err) {
     showNotice($aiStatus, 'Failed: ' + err.message, 'error', 6000);
   } finally {
@@ -7784,7 +7827,7 @@ async function scanPickedScreens(numbers) {
     return;
   }
   if (!(await U1AI.getKey())) {
-    document.getElementById('aiBox')?.showModal?.();
+    aiModeAllowed();   // no key: Setup is where that is fixed
     showNotice(status, 'Paste your Anthropic API key first.', 'error', 4000);
     return;
   }
