@@ -4678,6 +4678,37 @@ function clearSweepBusy() {
  * of twenty-six that is the difference between "something is happening" and
  * "that one, the one I am looking at".
  */
+/**
+ * A screenful that has just been read, marked in the list as it happens.
+ *
+ * Nothing updated the list during a run: it stayed exactly as it was ticked, so
+ * ten screens in, the ten already paid for still looked like work to do — and
+ * pressing Read again read them a second time. Reported as "if it already read
+ * this, why does it need to again", which is the right question.
+ *
+ * In place rather than a re-render: twenty-six rows carry twenty-six
+ * screenshots, and rebuilding them mid-run would throw away the scroll position
+ * of the list you are watching.
+ */
+function markScreenRead(stop) {
+  const row = document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${stop.n}"]`);
+  if (row) {
+    row.classList.add('is-done');
+    const tick = row.querySelector('.sweep-screen-tick');
+    if (tick) tick.checked = false;
+    const label = row.querySelector('.ai-approved-label');
+    if (label && !label.querySelector('.sweep-read-flag')) {
+      label.insertAdjacentHTML('beforeend', ' <span class="sweep-read-flag">already read</span>');
+    }
+  }
+  // The estimate under the list is what the NEXT press will cost, so it has to
+  // come down as the run goes.
+  syncSweepMakeBtn();
+  // And persist it. A run stopped halfway used to save nothing until the whole
+  // thing ended, so closing the panel mid-run lost which screens were paid for.
+  saveSweep();
+}
+
 function markScreenReading(n) {
   document.querySelectorAll('#sweepPicksList .sweep-screen.is-reading')
     .forEach((r) => r.classList.remove('is-reading'));
@@ -6039,6 +6070,9 @@ async function runSweep(tab) {
     // back where it was — the specialist did not scroll it here.
     try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
     try { await inPage(tab.id, (y) => window.scrollTo(0, y), [startedAt]); } catch {}
+    // Regroup: the rows were marked one by one while the run went, and now the
+    // list can settle into "still to read" and "already read".
+    if (aiSweep.phase === 'screens') renderSweepScreens();
   }
 
   const total = aiSweep.stops.reduce((s, x) => s + x.count, 0);
@@ -6927,6 +6961,7 @@ async function scanPickedScreens(numbers) {
         sweepLog(stop.n, why, 'skip');
         stop.scanned = true;
         stop.outcome = why;
+        markScreenRead(stop);
         continue;
       }
 
@@ -6972,6 +7007,7 @@ async function scanPickedScreens(numbers) {
       }
       stop.scanned = true;
       stop.cost = aiCost - before;
+      markScreenRead(stop);
       const k = stop.found.length;
       stop.outcome = found.length
         ? `${k} component${k === 1 ? '' : 's'}` +
@@ -6992,6 +7028,9 @@ async function scanPickedScreens(numbers) {
     document.getElementById('sweepStopBtn').style.display = 'none';
     try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
     try { await inPage(tab.id, (y) => window.scrollTo(0, y), [startedAt]); } catch {}
+    // Regroup: the rows were marked one by one while the run went, and now the
+    // list can settle into "still to read" and "already read".
+    if (aiSweep.phase === 'screens') renderSweepScreens();
   }
 
   // What the run actually did, per screen, in one line. Ticking two screens and

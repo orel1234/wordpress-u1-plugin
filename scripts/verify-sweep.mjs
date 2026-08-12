@@ -381,6 +381,7 @@ console.log('\nchoosing screens');
     <div id="sweepBusy"></div>
     <div id="aiBulkReview"></div></body>`);
   const w2 = d2.window;
+  let saved = 0;
   const box = {
     window: w2, document: w2.document,
     escapeHtml: sandbox.escapeHtml, safeImg: sandbox.safeImg,
@@ -388,7 +389,7 @@ console.log('\nchoosing screens');
     // The render functions persist what they draw. Storage is not the subject
     // here, so it is a no-op — the point is that rendering still works without
     // a chrome.storage behind it.
-    saveSweep: () => {},
+    saveSweep: () => { saved++; },
     // The sweep panel belongs to the Whole page route, so the render functions
     // ask which route is on screen. These tests are about that route.
     mapMode: 'sweep',
@@ -406,7 +407,7 @@ console.log('\nchoosing screens');
   box.globalThis = box;
   const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
-                lift('markScreenReading')].join('\n') +
+                lift('markScreenReading'), lift('markScreenRead')].join('\n') +
     '\nconst sweepPicked = ' + /const sweepPicked = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepPickedScreens = ' + /const sweepPickedScreens = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepAvgCall = ' + /const sweepAvgCall =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
@@ -414,7 +415,8 @@ console.log('\nchoosing screens');
   new w2.Function('ctx', `with (ctx) { ${src2}
     ctx.renderSweepScreens = renderSweepScreens; ctx.sweepPickedScreens = sweepPickedScreens;
     ctx.syncSweepMakeBtn = syncSweepMakeBtn; ctx.showSweepBusy = showSweepBusy;
-    ctx.clearSweepBusy = clearSweepBusy; ctx.markScreenReading = markScreenReading; }`)(box);
+    ctx.clearSweepBusy = clearSweepBusy; ctx.markScreenReading = markScreenReading;
+    ctx.markScreenRead = markScreenRead; }`)(box);
 
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');
@@ -532,6 +534,29 @@ console.log('\nchoosing screens');
     check('…and says how many are already paid for',
       /1 already read/.test(w2.document.getElementById('sweepPicksSummary').textContent));
     box.aiSweep = was;
+    box.renderSweepScreens();
+  }
+
+  // As it happens, not only at the end. Nothing updated the list during a run:
+  // ten screens in, the ten already paid for still looked like work to do, and
+  // pressing Read again read them a second time.
+  {
+    box.renderSweepScreens();
+    const three = box.aiSweep.stops[2];
+    const before = w2.document.getElementById('sweepMakeBtn').textContent;
+    three.scanned = true;
+    box.markScreenRead(three);
+    const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]');
+    check('a screenful is marked read the moment it is read',
+      row.classList.contains('is-done') && /already read/i.test(row.textContent));
+    check('…and unticks itself, so pressing Read again does not pay for it twice',
+      row.querySelector('.sweep-screen-tick').checked === false);
+    check('…and the estimate comes down as the run goes',
+      w2.document.getElementById('sweepMakeBtn').textContent !== before,
+      `${before} -> ${w2.document.getElementById('sweepMakeBtn').textContent}`);
+    check('…and it is persisted, so stopping halfway keeps what was paid for',
+      saved > 0, `${saved} saves`);
+    three.scanned = false;
     box.renderSweepScreens();
   }
 }
