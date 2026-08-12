@@ -257,17 +257,26 @@ console.log('\nThe library scripts run and define their globals:');
   if (!broken) pass(`all ${Object.keys(GLOBALS).length} library scripts define their global`);
 }
 
-// ── Every model call has a deadline ─────────────────────────────────────────
+// ── Every model call has a deadline, measuring the right thing ──────────────
 // A request with no timeout is indistinguishable from a request that is
-// working. Reported as five minutes on one screenful, under a panel saying
-// "usually 10-30 seconds", with no way to tell a hung call from a slow one.
+// working. So is a request with the WRONG timeout: a total-elapsed deadline of
+// 150s killed a 94-element screenful that was busy answering, marked it "not
+// read", and left the work billed. The response is streamed now, so the
+// deadline is silence rather than duration — a long healthy answer is not a
+// hung one, and only a stream can tell them apart.
 {
   const src = readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8');
   const calls = (src.match(/await fetch\(endpoint\(\)/g) || []).length;
   const aborts = /new AbortController\(\)/.test(src) && /signal: ctl \? ctl\.signal/.test(src);
-  const says = /AbortError/.test(src) && /did not answer within/.test(src);
-  if (calls && aborts && says) pass('the model call has a deadline, and says so when it passes');
-  else fail(`the model call can hang forever — controller:${aborts} message:${says}`);
+  const streams = /stream: true/.test(src) && /await readStream\(res, armIdle\)/.test(src);
+  const idle = /const CALL_IDLE_MS = \d+/.test(src) && /clearTimeout\(idle\);/.test(src);
+  const says = /AbortError/.test(src) && /sent nothing for/.test(src);
+  if (calls && aborts && streams && idle && says) {
+    pass('the model call gives up on silence, not on a long answer');
+  } else {
+    fail(`the model call's deadline is wrong — controller:${aborts} stream:${streams} ` +
+         `idle:${idle} message:${says}`);
+  }
 }
 
 // ── The background camera ───────────────────────────────────────────────────

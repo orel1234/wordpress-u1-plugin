@@ -33,9 +33,23 @@
   // response text together, so the budget below has headroom for both.
   // Pricing: $3 / $15 per MTok — roughly a third of Opus for this workload.
   const MODEL = 'claude-sonnet-5';
-  // Generous: a vision call over a dense screenful is slow, and cutting off
-  // real work would be worse than the wait. It is a deadline, not a target.
-  const CALL_TIMEOUT_MS = 150000;
+  // How long a call may go with NOTHING arriving on the wire — not how long it
+  // may last.
+  //
+  // This was a total-elapsed deadline of 150s, and a 94-element screenful with
+  // a picture, at high effort, ran past it: 150 seconds of waiting, a screen
+  // marked "not read", and in all likelihood a bill from Anthropic for work
+  // that was done and then dropped on the floor.
+  //
+  // Waiting longer is not the fix. To a total-elapsed timeout, a request with
+  // no bytes on the wire and a request busy producing a long answer look
+  // identical, so it must guess, and any guess is wrong for one of them. The
+  // response is streamed now, so the two are distinguishable: a hang is
+  // silence, and a long healthy answer never trips this however long it runs.
+  const CALL_IDLE_MS = 60000;
+  // A ceiling, because a stream that dribbles a token a minute for an hour is
+  // its own kind of broken. Well outside anything real.
+  const CALL_TIMEOUT_MS = 600000;
   const MAX_TOKENS = 16000;
 
   // The component types the builder can actually create. Used as a schema enum
@@ -400,6 +414,76 @@ WHAT "changed nothing" USUALLY MEANS
     'anthropic-dangerous-direct-browser-access': 'true',
   });
 
+  /**
+   * Read a streamed response back into the shape a non-streamed one has.
+   *
+   * Everything downstream — the refusal check, the max_tokens check, the text
+   * join, the usage — was written against the single-object form and stays
+   * written against it. The stream is an argument about the transport, not
+   * about the answer, so it is put back together here and nowhere else has to
+   * know it happened.
+   *
+   * `onByte` is the idle clock being rearmed. It is called for every event,
+   * including the ping events that exist for exactly this purpose, so a model
+   * thinking hard between tokens still counts as alive.
+   */
+  async function readStream(res, onByte) {
+    const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+    if (!reader) return { err: 'This browser cannot read a streamed response.' };
+    const dec = new TextDecoder();
+    // Assembled per index, because thinking and text arrive as separate blocks
+    // and only the text ones are the answer.
+    const blocks = [];
+    let out = { content: [], usage: null, model: null, stop_reason: null, stop_details: null };
+    let buf = '';
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      onByte();
+      buf += dec.decode(value, { stream: true });
+      // SSE frames are separated by a blank line. A frame can be split across
+      // reads, so only whole ones are taken and the remainder is kept.
+      let cut;
+      while ((cut = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        const line = frame.split('\n').find((l) => l.startsWith('data:'));
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+        if (ev.type === 'message_start' && ev.message) {
+          out.model = ev.message.model || null;
+          out.usage = ev.message.usage || null;
+        } else if (ev.type === 'content_block_start') {
+          blocks[ev.index] = { type: ev.content_block ? ev.content_block.type : 'text', text: '' };
+        } else if (ev.type === 'content_block_delta' && ev.delta) {
+          const b = blocks[ev.index] || (blocks[ev.index] = { type: 'text', text: '' });
+          // text_delta carries the answer; input_json_delta carries structured
+          // output on the same field. thinking_delta is neither and is dropped
+          // with the rest of the thinking block below.
+          if (typeof ev.delta.text === 'string') b.text += ev.delta.text;
+          else if (typeof ev.delta.partial_json === 'string') b.text += ev.delta.partial_json;
+        } else if (ev.type === 'message_delta') {
+          if (ev.delta) {
+            out.stop_reason = ev.delta.stop_reason || out.stop_reason;
+            out.stop_details = ev.delta.stop_details || out.stop_details;
+          }
+          // The output token count only exists here — message_start has the
+          // input side and a zero for output, so taking that one would price
+          // every call as though it had answered with nothing.
+          if (ev.usage) out.usage = { ...(out.usage || {}), ...ev.usage };
+        } else if (ev.type === 'error') {
+          return { err: 'Claude reported an error mid-answer: ' +
+            ((ev.error && ev.error.message) || 'no reason given') };
+        }
+      }
+    }
+    out.content = blocks.filter(Boolean).map((b) => ({ type: b.type, text: b.text }));
+    return out;
+  }
+
   // ── Transport ──────────────────────────────────────────────────────────────
   // One request path for every stage: same auth, same structured-output setup,
   // same error handling. `screenshot` is optional (stage 2 sends markup only).
@@ -423,17 +507,26 @@ WHAT "changed nothing" USUALLY MEANS
       system,
       output_config: { effort: 'high', format: { type: 'json_schema', schema } },
       messages: (messages && messages.length) ? messages : [{ role: 'user', content }],
+      // Streamed, and not for a progress bar — see CALL_IDLE_MS. This is what
+      // makes "still working" and "hung" two different observable states
+      // instead of one guess about elapsed time.
+      stream: true,
     };
 
-    // A request with no deadline is indistinguishable from a request that is
-    // working. Reported: five minutes on one screenful, under a panel saying
-    // "usually 10-30 seconds", with no way to tell a hung call from a slow one.
-    // A vision call on a dense page can genuinely take a while, so the deadline
-    // is generous — but it exists, and when it passes this says so instead of
-    // waiting forever.
+    // The idle clock. Rearmed by every byte that arrives, so it measures
+    // silence rather than duration — see CALL_IDLE_MS.
     let res;
+    let idle = null, ceiling = null, quiet = false;
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = ctl ? setTimeout(function () { ctl.abort(); }, CALL_TIMEOUT_MS) : null;
+    const stopClocks = function () { clearTimeout(idle); clearTimeout(ceiling); };
+    const armIdle = function () {
+      if (!ctl) return;
+      clearTimeout(idle);
+      idle = setTimeout(function () { quiet = true; ctl.abort(); }, CALL_IDLE_MS);
+    };
+    if (ctl) ceiling = setTimeout(function () { ctl.abort(); }, CALL_TIMEOUT_MS);
+    armIdle();
+
     try {
       res = await fetch(endpoint(), {
         method: 'POST',
@@ -442,15 +535,17 @@ WHAT "changed nothing" USUALLY MEANS
         signal: ctl ? ctl.signal : undefined,
       });
     } catch (e) {
+      stopClocks();
       if (e && e.name === 'AbortError') {
-        return { err: `Claude did not answer within ${Math.round(CALL_TIMEOUT_MS / 1000)}s. The call was dropped — nothing was charged for an answer that never arrived.` };
+        return { err: quiet
+          ? `Claude sent nothing for ${Math.round(CALL_IDLE_MS / 1000)}s and the call was dropped. Nothing arrived, so there is nothing to show — try that screen again.`
+          : 'The call ran past ten minutes and was dropped.' };
       }
       return { err: 'Could not reach the Claude API: ' + e.message };
-    } finally {
-      if (timer) clearTimeout(timer);
     }
 
     if (!res.ok) {
+      stopClocks();
       let detail = '';
       try { const j = await res.json(); detail = j?.error?.message || ''; } catch {}
       const hint = res.status === 401 ? ' — check the API key.'
@@ -460,7 +555,19 @@ WHAT "changed nothing" USUALLY MEANS
     }
 
     let data;
-    try { data = await res.json(); } catch { return { err: 'Claude returned a response that was not JSON.' }; }
+    try {
+      data = await readStream(res, armIdle);
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        return { err: quiet
+          ? `Claude stopped sending for ${Math.round(CALL_IDLE_MS / 1000)}s mid-answer, so the answer is incomplete and was discarded. Try that screen again.`
+          : 'The call ran past ten minutes and was dropped.' };
+      }
+      return { err: 'Claude returned a response that could not be read: ' + e.message };
+    } finally {
+      stopClocks();
+    }
+    if (data && data.err) return data;
 
     // Safety classifiers can decline a request: that arrives as a normal 200
     // with stop_reason "refusal" and empty/partial content. Check it BEFORE

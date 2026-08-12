@@ -7908,7 +7908,8 @@ async function scanPickedScreens(numbers) {
       const busyN = collected.candidates.filter((c) => !handled.has(c.selector)).length;
       showSweepBusy(`Screen ${stop.n} — ${i + 1} of ${stops.length}`,
         `Asking Claude about ${busyN} element${busyN === 1 ? '' : 's'} and a picture of this ` +
-        `screenful. A busy screenful takes a minute or two; it gives up at 2:30.`,
+        `screenful. A busy one takes a minute or two — it only gives up if Claude ` +
+        `goes quiet for a minute, so a long answer is never mistaken for a stuck one.`,
         ((i) / stops.length) * 100);
       sweepLog(stop.n, `asking about ${busyN} element${busyN === 1 ? '' : 's'}`, 'skip');
 

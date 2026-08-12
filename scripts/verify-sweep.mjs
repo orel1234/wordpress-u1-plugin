@@ -1777,12 +1777,14 @@ console.log('\nwhich step a screenful is on');
     /Reading what is on this screenful — a few seconds, no charge\./.test(scan));
   check('the paid half says it is the model, and what it was given',
     /Asking Claude about \$\{busyN\} element/.test(scan));
-  check('…and quotes the limit it will actually give up at, not a hope',
-    /it gives up at 2:30/.test(scan));
-  // 150000ms in ai-advisor.js. The panel must not print a number the code does
-  // not honour — that is how "usually 10–30 seconds" got there.
-  check('and that limit is the one the call really uses',
-    /CALL_TIMEOUT_MS = 150000/.test(readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8')));
+  check('…and describes the limit it actually has, not a stopwatch',
+    /it only gives up if Claude \$\{''\}?goes quiet for a minute|goes quiet for a minute/.test(scan));
+  // The panel must not print a rule the code does not follow — that is how
+  // "usually 10–30 seconds" got there, and then "gives up at 2:30" after it.
+  check('and that is the rule the call really follows',
+    /const CALL_IDLE_MS = 60000/.test(readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8')));
+  check('the old total-elapsed deadline is not still quoted anywhere',
+    !/gives up at 2:30/.test(panelSrc));
   check('the old blanket promise is gone',
     !/Looking for components — usually 10–30 seconds/.test(panelSrc));
   // The count is what was actually sent, not what was collected: everything
