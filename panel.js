@@ -4716,7 +4716,14 @@ function markScreenRead(stop) {
   saveSweep();
 }
 
+let sweepReadingNow = null;
+
 function markScreenReading(n) {
+  // Remembered, because the list is redrawn during a run — switching route and
+  // back, a restore, the regroup at the end — and a mark that only lives in the
+  // DOM comes back attached to whichever row happened to hold it last. That is
+  // how the bar could say "section 1" while a row far down the list was lit.
+  sweepReadingNow = n;
   document.querySelectorAll('#sweepPicksList .sweep-screen.is-reading')
     .forEach((r) => r.classList.remove('is-reading'));
   if (n == null) return;
@@ -6310,7 +6317,7 @@ function renderSweepScreens() {
   // not answer it at a glance.
   const left = stops.filter(x => !x.scanned);
   const read = stops.filter(x => x.scanned);
-  list.innerHTML = read.length
+  const listHtml = read.length
     ? (left.length
         ? `<div class="sweep-part"><h4>Still to read · ${left.filter(x => x.count).length}</h4>` +
           left.map(sweepScreenRowHtml).join('') + `</div>`
@@ -6318,6 +6325,9 @@ function renderSweepScreens() {
       `<details class="sweep-part sweep-part-done"><summary>Already read · ${read.length}</summary>` +
       read.map(sweepScreenRowHtml).join('') + `</details>`
     : stops.map(sweepScreenRowHtml).join('');
+  list.innerHTML = listHtml;
+  // Re-apply the "reading now" mark the redraw just threw away.
+  if (aiSweep.running && sweepReadingNow != null) markScreenReading(sweepReadingNow);
 
   wrap.style.display = mapMode === 'sweep' ? 'block' : 'none';
   document.getElementById('aiBulkReview').style.display = 'none';
@@ -6591,10 +6601,18 @@ function syncSweepMakeBtn() {
       all.indeterminate = picked.length > 0 && picked.length < ticks.length;
     }
     const elements = aiSweep.stops.filter(s => picked.includes(s.n)).reduce((a, s) => a + s.count, 0);
-    btn.disabled = !picked.length;
-    btn.textContent = picked.length
-      ? `🔎 Read ${picked.length} section${picked.length === 1 ? '' : 's'}`
-      : '🔎 No sections ticked';
+    // The estimate keeps updating during a run — that is the point of marking
+    // each section read as it goes. The BUTTON does not: a run owns it, and it
+    // is saying which section it is on. This function used to overwrite that
+    // with "Read 25 sections" after every section and re-enable it, so the
+    // label flickered between two answers and the button invited a second run
+    // on top of the one already going.
+    if (!aiSweep.running) {
+      btn.disabled = !picked.length;
+      btn.textContent = picked.length
+        ? `🔎 Read ${picked.length} section${picked.length === 1 ? '' : 's'}`
+        : '🔎 No sections ticked';
+    }
     if (est) est.innerHTML = picked.length ? sweepEstimateHtml(picked.length, elements) : '';
     return;
   }

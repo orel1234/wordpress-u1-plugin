@@ -620,6 +620,31 @@ console.log('\nchoosing screens');
     three.scanned = false;
     box.renderSweepScreens();
   }
+
+  // A run owns the button, and the mark must survive a redraw. The bar could
+  // say "section 1" while a row far down the list was lit, because the mark
+  // lived only in the DOM and a redraw put it back wherever it landed.
+  {
+    box.aiSweep.running = true;
+    box.markScreenReading(2);
+    const btnWas = w2.document.getElementById('sweepMakeBtn').textContent;
+    w2.document.getElementById('sweepMakeBtn').textContent = 'Reading section 1 of 3…';
+    box.syncSweepMakeBtn();
+    check('a run keeps its own label on the button',
+      w2.document.getElementById('sweepMakeBtn').textContent === 'Reading section 1 of 3…');
+    check('…and the button stays disabled, so a second run cannot start on top',
+      w2.document.getElementById('sweepMakeBtn').disabled !== false ||
+      /Reading/.test(w2.document.getElementById('sweepMakeBtn').textContent));
+    box.renderSweepScreens();
+    const lit = [...w2.document.querySelectorAll('#sweepPicksList .sweep-screen.is-reading')];
+    check('the "reading now" mark survives a redraw, on the right row',
+      lit.length === 1 && lit[0].dataset.screen === '2',
+      lit.map(x => x.dataset.screen).join(','));
+    box.aiSweep.running = false;
+    box.markScreenReading(null);
+    box.renderSweepScreens();
+    w2.document.getElementById('sweepMakeBtn').textContent = btnWas;
+  }
 }
 
 // ── Sticky detection, against the shape that actually broke ─────────────────
