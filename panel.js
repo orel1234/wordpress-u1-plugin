@@ -5051,6 +5051,21 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   const tab = await getTab();
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
+  // Ask about the site's own role HERE — on the card where the container and
+  // the trigger are chosen — rather than two steps later at Approve & apply.
+  //
+  // This is the moment the decision is actually about something: you are
+  // looking at the element, you have just named it, and the answer changes
+  // whether a mapping is worth building at all. Answering it after the mapping
+  // card has been generated means generating one that cannot work. The answer
+  // rides on the row, so Approve & apply does not ask again.
+  const roleAsk = { type: row.type, primary: row.sel };
+  if (!(await confirmRoleOverwrite(roleAsk))) {
+    showNotice(status, 'Left as it is — no mapping was built.', 'info', 5000);
+    return;
+  }
+  if (roleAsk.overwriteRole) row.overwriteRole = roleAsk.overwriteRole;
+
   const host = document.getElementById('aiMappings');
   const track = document.getElementById('aiSlideTrack');
   host.style.display = 'block';
@@ -7198,7 +7213,15 @@ function aiCardTemplate(idx) {
   form.querySelectorAll('[data-root]').forEach(inp => {
     rootValues[inp.dataset.root] = inp.type === 'checkbox' ? inp.checked : inp.value.trim();
   });
-  return buildTemplate(entry.row.type, primary, fieldValues, rootValues);
+  const tpl = buildTemplate(entry.row.type, primary, fieldValues, rootValues);
+  // The role question was answered on the component card, two steps back. Carry
+  // it, or saveMappingEntry asks again — and the export would not strip the
+  // role even though the answer was given.
+  if (tpl && entry.row.overwriteRole) {
+    tpl.overwriteRole = entry.row.overwriteRole;
+    tpl.code = mappingToCode(tpl);
+  }
+  return tpl;
 }
 
 async function refreshAiCard(idx) {
@@ -7898,6 +7921,10 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
 async function confirmRoleOverwrite(tpl) {
   const dlg = document.getElementById('roleClashDialog');
   if (!dlg || !tpl || !tpl.type || !tpl.primary) return true;
+  // Already answered — on the component card, before the mapping was built.
+  // Re-reading the DOM would find the same role and ask the same question a
+  // second time, which teaches people to click through it without reading.
+  if (tpl.overwriteRole) return true;
 
   const tab = await getTab();
   if (!isInjectable(tab)) return true;

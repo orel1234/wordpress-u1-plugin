@@ -341,7 +341,14 @@ const asksOnScreen = /function askRoleClash[\s\S]{0,2000}?showModal\(\)/.test(pa
 // one did. The guarantee is structural: the question lives inside
 // saveMappingEntry, which all three go through, and nowhere else.
 const askInSave = /async function saveMappingEntry[\s\S]{0,1200}?confirmRoleOverwrite\(template\)/.test(panelSrc);
-const askedOnce = (panelSrc.match(/await confirmRoleOverwrite\(/g) || []).length === 1;
+// It is asked EARLIER too — on the AI component card, where the container and
+// trigger are chosen and the answer still changes whether a mapping is worth
+// building. Asked twice is worse than asked late: people learn to click through
+// a dialog that repeats. So the answer is recorded, and the question refuses to
+// ask again once it is.
+const asksOnCard = /confirmRoleOverwrite\(roleAsk\)/.test(panelSrc);
+const answerSticks = /async function confirmRoleOverwrite[\s\S]{0,900}?if \(tpl\.overwriteRole\) return true;/.test(panelSrc);
+const askedOnce = askInSave && asksOnCard && answerSticks;
 
 // The two ROLE_BY_TYPE tables — one in selector-intel for the save-time
 // question, one inside the in-page apply, which cannot reach it — must agree.
@@ -550,8 +557,8 @@ console.log(`  ${cleanQuiet ? '✅' : '❌'} …while a clean apply says nothing
 if (!cleanQuiet) failed++;
 console.log(`  ${asksOnScreen ? '✅' : '❌'} …and the question is a dialog on screen, not a link under the fold`);
 if (!asksOnScreen) failed++;
-console.log(`  ${askInSave && askedOnce ? '✅' : '❌'} every route that saves a mapping asks — the check is inside saveMappingEntry, once`);
-if (!(askInSave && askedOnce)) failed++;
+console.log(`  ${askedOnce ? '✅' : '❌'} the role question is asked at the card AND backstopped in saveMappingEntry — never twice`);
+if (!askedOnce) failed++;
 console.log(`  ${tablesAgree ? '✅' : '❌'} …and the save-time and apply-time role tables say the same thing`);
 if (!tablesAgree) failed++;
 console.log(`  ${defaultsAgree ? '✅' : '❌'} every root option defaults to what its own docs say${defaultsAgree ? '' : ' — ' + defaultMismatches.join(', ')}`);
