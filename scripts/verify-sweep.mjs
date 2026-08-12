@@ -1533,5 +1533,99 @@ console.log('\nthe background camera — attached, not merely written');
     (mf.permissions || []).includes('debugger'), (mf.permissions || []).join());
 }
 
+// ── The way this camera hangs ───────────────────────────────────────────────
+//
+// Reported as "this is already far too much time" on a screen that never
+// finished. It was not slow; it was never going to finish.
+//
+// Page.captureScreenshot defaults to fromSurface:true and photographs the
+// BROWSER'S composited surface. A backgrounded tab produces no frames, so on a
+// hidden tab the call does not fail, does not return an empty picture, and does
+// not throw — it never settles, and `await` on it waits for the rest of the
+// session. Which is precisely the tab this camera was attached to photograph:
+// turning it on made "switch tabs and carry on" hang the run it was meant to
+// keep going.
+//
+// Every other await in a screenful is already bounded — the model call has had
+// its own AbortController all along. This was the one unbounded wait.
+console.log('\nthe camera that can never answer');
+{
+  const cam = panelSrc.slice(panelSrc.indexOf('const sweepCam ='),
+                             panelSrc.indexOf('async function awaitTabVisible'));
+  check('no debugger command is awaited without a clock on it',
+    !/await chrome\.debugger\.sendCommand/.test(panelSrc),
+    'a bare sendCommand can hang forever');
+  check('there is a helper that rejects rather than hanging',
+    /function cdp\(tabId, method, params, ms = CDP_TIMEOUT_MS\)/.test(cam));
+  check('…and the timeout is far outside a normal capture',
+    /CDP_TIMEOUT_MS = (\d+)/.test(cam) && Number(RegExp.$1) >= 5000 && Number(RegExp.$1) <= 20000,
+    RegExp.$1);
+  // A timeout is not a shrug. fromSurface:false is the renderer-side path,
+  // which needs no frames — it is the answer to this exact failure, so it is
+  // tried before giving up on the camera.
+  check('a timeout is retried on the path that needs no frames',
+    /for \(const surface of \[true, false\]\)/.test(cam) &&
+    /fromSurface: surface/.test(cam));
+  // Sixteen seconds of silence per screenful, twenty-one screenfuls: one slow
+  // screen becomes a run nobody can sit through.
+  check('and if neither answers the camera is demoted for the rest of the run',
+    /sweepCam\.attached = false;\s*\n\s*sweepLog\(0, `background camera stopped working/.test(cam));
+  check('…out loud, because it changes whether you can leave the tab',
+    /from here this run needs its own tab in front/.test(cam));
+  // Attaching is on the same protocol and can hang the same way — before the
+  // first screenful, where it would look like a scan that never started.
+  check('attaching is bounded too', /await cdp\(tab\.id, 'Page\.enable', \{\}, \d+\)/.test(cam));
+  // The half that was already right, and must stay right.
+  check('the model call keeps its own timeout',
+    /CALL_TIMEOUT_MS/.test(readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8')));
+}
+
+// And the same thing again against the real function, because a source check
+// proves the code is written and not that it works. This is the exact shape of
+// the failure: a command that never settles.
+console.log('\n…and it really does give up, run for real');
+{
+  const box = { chrome: { debugger: { sendCommand: null } }, setTimeout, clearTimeout, CDP_TIMEOUT_MS: 40 };
+  box.globalThis = box;
+  new Function('ctx', `with (ctx) { ${lift('cdp')}\n ctx.cdp = cdp; }`)(box);
+
+  // Every await here has a clock of the test's OWN, because the thing under
+  // test is a missing clock: take the timeout out of cdp and this file would
+  // hang rather than fail, and a hung suite is a worse signal than a FAIL.
+  // (Confirmed by taking it out — the run had to be killed.)
+  const within = (ms, p) => Promise.race([p,
+    new Promise((r) => setTimeout(() => r('NEVER SETTLED — cdp has no timeout'), ms))]);
+
+  // Never resolves, never rejects — a hidden tab asked for a surface capture.
+  box.chrome.debugger.sendCommand = () => new Promise(() => {});
+  const began = Date.now();
+  const hung = await within(2000, box.cdp(1, 'Page.captureScreenshot', {}, 40)
+    .then(() => 'resolved', (e) => e.message));
+  check('a command that never settles rejects instead of waiting forever',
+    /did not answer/.test(hung), hung);
+  check('…and it says how long it waited, in the message',
+    /within 0s|within \d+s/.test(hung), hung);
+  check('…promptly', Date.now() - began < 2000, `${Date.now() - began}ms`);
+
+  // A camera that works must not be killed by its own clock.
+  box.chrome.debugger.sendCommand = () => Promise.resolve({ data: 'abc' });
+  const ok = await within(2000, box.cdp(1, 'Page.captureScreenshot', {}, 40).then(r => r.data, e => 'threw: ' + e.message));
+  check('a command that answers is passed straight through', ok === 'abc', ok);
+
+  // A real protocol error must stay a real protocol error, not become a timeout.
+  box.chrome.debugger.sendCommand = () => Promise.reject(new Error('Detached while handling command'));
+  const bad = await within(2000, box.cdp(1, 'Page.captureScreenshot', {}, 40).then(() => 'resolved', e => e.message));
+  check('a genuine failure keeps its own reason', /Detached/.test(bad), bad);
+
+  // A slow command that lands after the clock has already fired must not
+  // resolve a promise that was rejected — settling twice is silent and wrong.
+  box.chrome.debugger.sendCommand = () => new Promise(r => setTimeout(() => r({ data: 'late' }), 80));
+  let settled = 0;
+  const late = box.cdp(1, 'Page.captureScreenshot', {}, 20);
+  late.then(() => settled++, () => settled++);
+  await new Promise(r => setTimeout(r, 160));
+  check('a late answer after a timeout does not settle it a second time', settled === 1, String(settled));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

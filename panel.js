@@ -7421,7 +7421,42 @@ async function sweepIsPinnedAndAlive() {
 // that tab, and Chrome allows one debugger at a time. That is not an error to
 // hide — it changes what the run can do — so it is reported and the run falls
 // back to the focus-bound camera.
+//
+// And one way it fails that is not ordinary at all, which is the whole reason
+// the timeout below exists:
+//
+//   Page.captureScreenshot defaults to fromSurface:true — it photographs the
+//   BROWSER'S composited surface. A backgrounded tab does not produce frames,
+//   so on a hidden tab that call does not fail, does not return an empty
+//   picture, and does not throw. It never settles. `await` on it waits for the
+//   rest of the session.
+//
+// Which is exactly the case the camera was attached for. Every debugger call
+// therefore races a clock, and a timeout is not a shrug: it retries once with
+// fromSurface:false — the renderer-side path, which does not need frames —
+// and if that will not answer either the camera is demoted for the rest of the
+// run and the focus-bound one takes over, saying so.
 const sweepCam = { tabId: null, attached: false, why: '' };
+
+// A screenshot of a big page is not instant, and killing a slow-but-working
+// camera would be its own bug. Eight seconds is far outside a normal capture
+// and far inside "why has this screen taken two minutes".
+const CDP_TIMEOUT_MS = 8000;
+
+/** One debugger command, with a clock on it. Rejects rather than hanging. */
+function cdp(tabId, method, params, ms = CDP_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      reject(new Error(`${method} did not answer within ${Math.round(ms / 1000)}s`));
+    }, ms);
+    chrome.debugger.sendCommand({ tabId }, method, params || {}).then(
+      (res) => { if (!done) { done = true; clearTimeout(timer); resolve(res); } },
+      (err) => { if (!done) { done = true; clearTimeout(timer); reject(err); } });
+  });
+}
 
 async function beginBackgroundCapture(tab) {
   sweepCam.tabId = tab.id;
@@ -7433,7 +7468,7 @@ async function beginBackgroundCapture(tab) {
     // Page.captureScreenshot happens to work on some builds without its domain
     // enabled and returns an empty result on others, which reads as "the camera
     // is attached and produces nothing" — the worst of the three outcomes.
-    try { await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.enable'); } catch {}
+    try { await cdp(tab.id, 'Page.enable', {}, 3000); } catch {}
     sweepCam.attached = true;
     return true;
   } catch (e) {
@@ -7475,21 +7510,31 @@ async function endBackgroundCapture() {
  */
 async function captureScreen(tab, quality, onWait) {
   if (sweepCam.attached && sweepCam.tabId === tab.id) {
-    try {
-      const res = await chrome.debugger.sendCommand(
-        { tabId: tab.id }, 'Page.captureScreenshot', { format: 'jpeg', quality });
-      if (res && res.data) return 'data:image/jpeg;base64,' + res.data;
-      // Attached, no error, no picture. Left as it was, every screenful would
-      // pay the round trip and then fall through anyway — demote once and use
-      // the camera that works.
-      sweepCam.attached = false;
-      sweepCam.why = 'the background camera returned an empty picture';
-    } catch (e) {
-      // A detach mid-run (the tab navigated, DevTools opened) drops us onto the
-      // focus-bound camera rather than ending the run.
-      sweepCam.attached = false;
-      sweepCam.why = String((e && e.message) || e);
+    // fromSurface:true is the default and photographs the browser's composited
+    // surface, which a hidden tab does not produce — so on the very tab this
+    // camera exists to photograph, the call can simply never settle. It gets a
+    // clock, and a timeout is retried on the renderer-side path, which needs no
+    // frames.
+    for (const surface of [true, false]) {
+      try {
+        const res = await cdp(tab.id, 'Page.captureScreenshot',
+          { format: 'jpeg', quality, fromSurface: surface });
+        if (res && res.data) return 'data:image/jpeg;base64,' + res.data;
+        // Attached, no error, no picture. Left as it was, every screenful would
+        // pay the round trip and then fall through anyway.
+        sweepCam.why = 'it returned an empty picture';
+      } catch (e) {
+        // A detach mid-run (the tab navigated, DevTools opened) or a call that
+        // would not answer. Either way this is the last word on that path.
+        sweepCam.why = String((e && e.message) || e);
+      }
     }
+    // Both paths tried. Demoted for the rest of the run — retrying a camera
+    // that has already cost sixteen seconds of silence on every remaining
+    // screenful is how one slow screen becomes a run nobody can sit through.
+    sweepCam.attached = false;
+    sweepLog(0, `background camera stopped working (${sweepCam.why}) — ` +
+      `from here this run needs its own tab in front`, 'err');
   }
   if (!(await awaitTabVisible(tab, onWait))) return null;
   try {
