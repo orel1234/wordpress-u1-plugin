@@ -184,6 +184,70 @@ console.log('\na class a person wrote beats a description of the element');
     sel('<div data-t id="tt" class="finder__tabs" aria-label="x"></div>') === '#tt');
 }
 
+console.log('\nthe hover highlight follows the page it is drawn on');
+{
+  const boot = () => {
+    const d = new JSDOM('<body><div class="x">a</div><div class="x">b</div><div class="x">c</div></body>',
+      { runScripts: 'outside-only', pretendToBeVisual: true });
+    // A SMOOTH scroll, which is what the code asks for: it keeps moving for
+    // frames after it is started. An instant scroll would hide the bug, because
+    // the first measurement would already be the final position.
+    let top = 100, target = 100;
+    d.window.HTMLElement.prototype.getBoundingClientRect = function () {
+      return { width: 50, height: 20, top, left: 30, bottom: top + 20, right: 80 };
+    };
+    d.window.HTMLElement.prototype.scrollIntoView = function () { target = 40; };
+    let frame = null;
+    d.window.requestAnimationFrame = (f) => { frame = f; return 1; };
+    d.window.cancelAnimationFrame = () => { frame = null; };
+    d.window.eval(INTEL);
+    // Each frame the scroll advances part of the way, exactly as a real one does.
+    const tick = () => {
+      if (top > target) top = Math.max(target, top - 20);
+      const f = frame; frame = null; if (f) f();
+    };
+    return { d, tick, scrolled: () => top };
+  };
+
+  const { d, tick } = boot();
+  const I = d.window.__u1SelectorIntel;
+  const n = I.highlightSelector('.x');
+  const layer = () => d.window.document.getElementById('__u1_mark_layer__');
+  check('it returns how many the selector really matches', n === 3, String(n));
+
+  // The bug this replaces: boxes were positioned once, and scrollIntoView keeps
+  // moving the page for hundreds of milliseconds afterwards — so the outline
+  // came to rest beside the element rather than round it.
+  const firstTop = layer().children[0].style.top;
+  tick(); tick(); tick(); tick();
+  const settled = layer().children[0].style.top;
+  check('the boxes follow the smooth scroll instead of being left behind',
+    firstTop === '100px' && settled === '40px', `${firstTop} → ${settled}`);
+  check('…and the count tag follows with them',
+    layer().lastElementChild.style.top === '19px', layer().lastElementChild.style.top);
+
+  const tag = layer().lastElementChild;
+  check('a count is shown on the element, not left to be counted by eye',
+    /1 of 3 matches/.test(tag.textContent), tag.textContent);
+  check('the first match is solid and the rest are dashed — a widened selector shows itself',
+    /solid/.test(layer().children[0].style.outline) &&
+    /dashed/.test(layer().children[1].style.outline));
+  check('and it carries a dark halo, so it is visible on a purple header too',
+    /rgba\(0, ?0, ?0/.test(layer().children[0].style.boxShadow), layer().children[0].style.boxShadow);
+
+  I.clearMarks();
+  check('clearing takes the overlay and its listeners away', !layer());
+
+  const one = boot();
+  one.d.window.__u1SelectorIntel.highlightSelector('.x:first-child');
+  check('one match says so rather than "1 of 1"',
+    /the only match/.test(one.d.window.document.getElementById('__u1_mark_layer__').lastElementChild.textContent));
+
+  const bad = boot();
+  check('an invalid selector is -1, not a crash', bad.d.window.__u1SelectorIntel.highlightSelector('>>>') === -1);
+  check('no match is 0', bad.d.window.__u1SelectorIntel.highlightSelector('.nope') === 0);
+}
+
 console.log('\ntabs always get a tabPanel, because tabs without one control nothing');
 {
   const panels = (body, list, tab) => {
@@ -210,6 +274,31 @@ console.log('\ntabs always get a tabPanel, because tabs without one control noth
            '<button class="b">c</button></div><div class="pane"></div>' +
            '<div class="pane" hidden></div><div class="pane" hidden></div></div>',
            '.t', '.b') === '.pane');
+  // ── One region, re-rendered per tab ──────────────────────────────────────
+  // Every strategy above needs TWO panels. Plenty of strips have one: six
+  // buttons over a single region the site re-renders. Measured on the live
+  // shoe-store page — six tabs whose data-controls names an id that does not
+  // exist, and one .deal-grid — where all four returned null and the strip
+  // could not be mapped at all. The link that DOES exist runs the other way:
+  // the panel names the tab whose content it is showing.
+  const dealTabs = (panelAttrs) =>
+    '<section id="deals"><div class="tab-bar" id="dealTabs" aria-label="Deal categories">' +
+    ['week', 'running', 'sneakers'].map((t, i) =>
+      `<button class="tab-bar__btn" id="dealTab-${t}" data-controls="dealPanel" ` +
+      `data-selected="${i === 0}">${t}</button>`).join('') +
+    `</div><div class="deal-grid" id="dealGrid" ${panelAttrs}></div></section>`;
+
+  check('a ONE-panel strip is found through the panel naming its tab',
+    panels(dealTabs('data-labelledby="dealTab-week"'), '#dealTabs', '.tab-bar__btn') === '.deal-grid',
+    panels(dealTabs('data-labelledby="dealTab-week"'), '#dealTabs', '.tab-bar__btn'));
+  check('…with the ARIA spelling too',
+    panels(dealTabs('aria-labelledby="dealTab-week"'), '#dealTabs', '.tab-bar__btn') === '.deal-grid');
+  check('…and data-controls naming an id that does not exist is not mistaken for one',
+    panels(dealTabs(''), '#dealTabs', '.tab-bar__btn') === null,
+    String(panels(dealTabs(''), '#dealTabs', '.tab-bar__btn')));
+  check('a labelledby pointing at something that is NOT a tab is ignored',
+    panels(dealTabs('data-labelledby="somethingElse"'), '#dealTabs', '.tab-bar__btn') === null);
+
   check('nothing panel-shaped returns null rather than inventing one',
     panels('<div class="t"><button class="b">a</button><button class="b">b</button></div>',
            '.t', '.b') === null);

@@ -1260,7 +1260,26 @@
     return layer.childElementCount / 2;
   }
 
-  const clearOverlay = () => { const l = document.getElementById(MARK_LAYER); if (l) l.remove(); };
+  // The overlay follows the page. Boxes are drawn at fixed coordinates measured
+  // at one instant — and the very next thing highlightSelector does is a SMOOTH
+  // scroll, which keeps moving for several hundred milliseconds after the boxes
+  // are placed. So the outline ended up beside the element it was pointing at,
+  // every single time the panel had to scroll to reach it.
+  let followRaf = 0;
+  let followFn = null;
+  const stopFollowing = () => {
+    if (followFn) {
+      window.removeEventListener('scroll', followFn, true);
+      window.removeEventListener('resize', followFn);
+      followFn = null;
+    }
+    if (followRaf) { cancelAnimationFrame(followRaf); followRaf = 0; }
+  };
+  const clearOverlay = () => {
+    stopFollowing();
+    const l = document.getElementById(MARK_LAYER);
+    if (l) l.remove();
+  };
 
   function clearMarks() {
     clearOverlay();
@@ -1315,24 +1334,69 @@
     Object.assign(layer.style, {
       position: 'fixed', inset: '0', zIndex: '2147483646', pointerEvents: 'none',
     });
-    els.forEach((el, i) => {
-      const r = el.getBoundingClientRect();
-      if (!r.width && !r.height) return;   // hidden — nothing to draw round
+
+    // A dark halo under the purple. The accent alone disappears on a purple
+    // header and on a photograph, and an outline you cannot see is the same as
+    // no outline — which reads as "hovering does nothing".
+    const RING = '#6c4cf1';
+    const boxes = els.map((el, i) => {
       const box = document.createElement('div');
       Object.assign(box.style, {
-        position: 'fixed', left: r.left + 'px', top: r.top + 'px',
-        width: r.width + 'px', height: r.height + 'px',
-        boxSizing: 'border-box', pointerEvents: 'none',
-        // The first match is the one the panel scrolled to; the rest are
-        // evidence that the selector is wider than it looks.
-        outline: i === 0 ? '3px solid #6c4cf1' : '2px dashed #6c4cf1',
+        position: 'fixed', boxSizing: 'border-box', pointerEvents: 'none',
+        borderRadius: '3px',
+        outline: i === 0 ? '2px solid ' + RING : '2px dashed ' + RING,
         outlineOffset: '1px',
-        background: i === 0 ? 'rgba(108,76,241,0.16)' : 'rgba(108,76,241,0.07)',
-        borderRadius: '2px',
+        boxShadow: i === 0
+          ? '0 0 0 1px rgba(0,0,0,.55), 0 0 0 5px rgba(108,76,241,.25)'
+          : '0 0 0 1px rgba(0,0,0,.4)',
+        background: i === 0 ? 'rgba(108,76,241,0.14)' : 'rgba(108,76,241,0.05)',
+        transition: 'none',
       });
       layer.appendChild(box);
+      return { el, box, first: i === 0 };
     });
+
+    // How many it really matches, on the element itself. A selector that has
+    // quietly widened to fourteen elements is the single most useful thing to
+    // know while hovering, and counting boxes by eye is not a way to learn it.
+    const tag = document.createElement('div');
+    Object.assign(tag.style, {
+      position: 'fixed', zIndex: '1', pointerEvents: 'none',
+      font: '600 11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace',
+      letterSpacing: '.02em', color: '#fff', background: RING,
+      padding: '2px 7px', borderRadius: '4px', whiteSpace: 'nowrap',
+      boxShadow: '0 1px 6px rgba(0,0,0,.45)',
+    });
+    tag.textContent = els.length === 1 ? 'the only match' : '1 of ' + els.length + ' matches';
+    layer.appendChild(tag);
+
+    const place = () => {
+      for (const b of boxes) {
+        const r = b.el.getBoundingClientRect();
+        if (!r.width && !r.height) { b.box.style.display = 'none'; continue; }
+        b.box.style.display = '';
+        b.box.style.left = r.left + 'px';
+        b.box.style.top = r.top + 'px';
+        b.box.style.width = r.width + 'px';
+        b.box.style.height = r.height + 'px';
+      }
+      const f = boxes[0] && boxes[0].el.getBoundingClientRect();
+      if (f) {
+        // Above the element, or below it when it is against the top edge.
+        const above = f.top > 22;
+        tag.style.left = Math.max(4, f.left) + 'px';
+        tag.style.top = (above ? f.top - 21 : f.bottom + 5) + 'px';
+      }
+      followRaf = requestAnimationFrame(place);
+    };
+
     document.body.appendChild(layer);
+    place();
+    // Scroll and resize both move things the animation frame would catch
+    // anyway; listening as well means the first frame after a jump is right.
+    followFn = () => { if (!followRaf) place(); };
+    window.addEventListener('scroll', followFn, true);
+    window.addEventListener('resize', followFn);
     return els.length;
   }
 
@@ -1517,6 +1581,52 @@
       var sel = pick(commonSelectorFor(scope, byId, null)) ||
                 pick(commonSelectorFor(document.body, byId, null));
       if (sel) return sel;
+    }
+
+    // ── One region, re-rendered per tab ──────────────────────────────────────
+    // Every strategy above needs TWO panels, and a great many tab strips have
+    // one: six buttons over a single region the site re-renders. Measured on a
+    // live page — six tabs, `data-controls="dealPanel"` naming an id that does
+    // not exist, and one `.deal-grid` — where all four strategies returned null
+    // and the strip could not be mapped at all.
+    //
+    // What does answer it is the link running the OTHER way. The panel names
+    // the tab whose content it is showing, which is what the APG requires of a
+    // one-panel strip and is the same signal u1-patch:tabs already reads at
+    // runtime to decide which tab is selected. Reading it here too costs
+    // nothing and is the only evidence such a strip offers.
+    var tabIds = [];
+    for (var ti = 0; ti < tabs.length; ti++) if (tabs[ti].id) tabIds.push(tabs[ti].id);
+    if (tabIds.length) {
+      var named = [];
+      var hunt = scope;
+      for (var up = 0; up < 3 && hunt; up++) {
+        var all;
+        try { all = hunt.querySelectorAll('*'); } catch (e) { all = []; }
+        for (var n = 0; n < all.length; n++) {
+          var cand = all[n];
+          if (cand === listEl || listEl.contains(cand) || cand.contains(listEl)) continue;
+          var ats = cand.attributes, hit = false;
+          for (var b = 0; b < ats.length && !hit; b++) {
+            // aria-labelledby, data-labelledby, data-labelled-by — the same
+            // statement with the ARIA filed off, which is what this whole
+            // family of sites does.
+            if (!/labell?edby|labelled-by/i.test(ats[b].name)) continue;
+            var toks = String(ats[b].value).split(/\s+/);
+            for (var q = 0; q < toks.length; q++) {
+              if (tabIds.indexOf(toks[q]) !== -1) { hit = true; break; }
+            }
+          }
+          if (hit && named.indexOf(cand) === -1) named.push(cand);
+        }
+        if (named.length) break;
+        hunt = hunt.parentElement;
+      }
+      if (named.length) {
+        var nsel = pick(commonSelectorFor(named[0].parentElement || document.body, named, null)) ||
+                   pick(commonSelectorFor(document.body, named, null));
+        if (nsel) return nsel;
+      }
     }
 
     var roled = [];
