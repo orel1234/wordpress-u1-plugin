@@ -3905,10 +3905,16 @@ async function showBuildStamp() {
     const mf = chrome.runtime.getManifest();
     const stamp = (mf.version_name || mf.version || '').trim();
     el.textContent = 'v' + stamp;
-    el.title = `Extension ${stamp}. If a fix looks missing, check this first: ` +
-      `chrome://extensions → Remove → Load unpacked. The Errors panel there keeps ` +
-      `old entries until you press Clear all, so an error listed is not proof of ` +
-      `an error happening.`;
+    // A trailing + means the package was built from a tree with uncommitted
+    // changes, so the commit named is the last one COMMITTED and not
+    // necessarily what is running. Worth spelling out: the stamp exists to
+    // answer "which build is this", and a reader who cannot decode it is back
+    // where they started.
+    el.title = `Extension ${stamp}.` +
+      (/\+\)?$/.test(stamp) ? ' The + means it was built from a tree with uncommitted changes, so the commit shown is the last one committed rather than exactly what is running.' : '') +
+      ` If a fix looks missing, check this first: chrome://extensions → Remove → Load unpacked. ` +
+      `The Errors panel there keeps old entries until you press Clear all, so an error listed ` +
+      `is not proof of an error happening.`;
   } catch {}
 }
 showBuildStamp();
