@@ -6527,6 +6527,13 @@ async function runSweep(tab) {
   // sticky header is discovered again at every scroll position.
   const handled = await alreadyHandled();
 
+  // The camera that does not need the tab in front. It was written, documented
+  // at length, and never once called — so every screenful still went through
+  // captureVisibleTab, and captureVisibleTab photographs whatever is IN FRONT.
+  // The entire apparatus for carrying on in the background existed and was
+  // unreachable: switch tabs and the survey stood still until you came back.
+  await announceCamera(tab);
+
   let n = 0;
   try {
     await inPage(tab.id, () => window.scrollTo(0, 0));
@@ -6669,6 +6676,10 @@ async function runSweep(tab) {
   } catch (err) {
     sweepLog(0, 'Failed: ' + err.message, 'err');
   } finally {
+    // Detach before anything else: Chrome's "is debugging this browser" banner
+    // stays up for exactly as long as we are attached, and leaving it there
+    // after the survey has ended is its own small lie about what is happening.
+    await endBackgroundCapture();
     clearSweepBusy();
     aiSweep.running = false;
     btn.disabled = false;
@@ -6950,6 +6961,22 @@ function sweepScreenRowHtml(stop) {
       <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}${done ? ' is-done' : ''}${failed ? ' is-failed' : ''}" data-screen="${stop.n}">
         <input type="checkbox" class="sweep-screen-tick" ${empty ? 'disabled' : (done ? '' : 'checked')}
                aria-label="Search screen ${stop.n}${done ? ' again' : ''}">
+        ${// One screen, on its own, now.
+          //
+          // Ticking and pressing the button at the bottom is the right shape
+          // for "read these nine" and the wrong shape for "just this one" —
+          // which is what a page actually gets worked through as: read one,
+          // build its fixes, apply them, look at the page, read the next. That
+          // took three actions (untick all, tick one, scroll to the button)
+          // where it should take one, and every one of them is a chance to pay
+          // for a screen you did not mean.
+          //
+          // Same run, same guard, same cost dialog — it is the ticking that is
+          // skipped, not the confirmation.
+          empty ? '' :
+          `<button class="btn-icon sweep-play" data-play-screen="${stop.n}"${aiSweep.running ? ' disabled' : ''}
+                   title="Search only this screen — one call"
+                   aria-label="Search only screen ${stop.n} — one call">▶</button>`}
         ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
                    <img class="mh-img" src="${img}" alt="Screen ${stop.n}">
                  </span>` : ''}
@@ -7208,6 +7235,12 @@ function renderSweepPicks() {
   saveSweep();
 }
 
+/** Arm or disarm every per-row ▶ at once. */
+function setPlayButtons(on) {
+  document.querySelectorAll('#sweepPicksList .sweep-play')
+    .forEach((b) => { b.disabled = !on; });
+}
+
 const sweepPicked = () => [...document.querySelectorAll('#sweepPicksList .ai-bulk-row[data-pick]')]
   .filter(r => r.querySelector('.ai-bulk-tick')?.checked)
   .map(r => r.dataset.pick);
@@ -7397,6 +7430,10 @@ async function beginBackgroundCapture(tab) {
   if (!chrome.debugger) { sweepCam.why = 'this browser has no debugger API'; return false; }
   try {
     await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+    // Page.captureScreenshot happens to work on some builds without its domain
+    // enabled and returns an empty result on others, which reads as "the camera
+    // is attached and produces nothing" — the worst of the three outcomes.
+    try { await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.enable'); } catch {}
     sweepCam.attached = true;
     return true;
   } catch (e) {
@@ -7406,6 +7443,22 @@ async function beginBackgroundCapture(tab) {
       : msg;
     return false;
   }
+}
+
+/**
+ * Attach the background camera, and say in the log which camera this run has.
+ *
+ * Whether you can switch tabs and carry on working is the single most visible
+ * difference between the two, so it is not something to discover by trying it.
+ * It is one line at the top of the scan log, before the first screenful.
+ */
+async function announceCamera(tab) {
+  const ok = await beginBackgroundCapture(tab);
+  sweepLog(0, ok
+    ? 'background camera on — switch tabs and work as usual, this keeps going'
+    : `no background camera (${sweepCam.why}) — this run needs its own tab in front, and pauses when you leave it`,
+    ok ? '' : 'skip');
+  return ok;
 }
 
 async function endBackgroundCapture() {
@@ -7426,6 +7479,11 @@ async function captureScreen(tab, quality, onWait) {
       const res = await chrome.debugger.sendCommand(
         { tabId: tab.id }, 'Page.captureScreenshot', { format: 'jpeg', quality });
       if (res && res.data) return 'data:image/jpeg;base64,' + res.data;
+      // Attached, no error, no picture. Left as it was, every screenful would
+      // pay the round trip and then fall through anyway — demote once and use
+      // the camera that works.
+      sweepCam.attached = false;
+      sweepCam.why = 'the background camera returned an empty picture';
     } catch (e) {
       // A detach mid-run (the tab navigated, DevTools opened) drops us onto the
       // focus-bound camera rather than ending the run.
@@ -7589,10 +7647,15 @@ async function scanPickedScreens(numbers) {
     showNotice(status, 'Paste your Anthropic API key first.', 'error', 4000);
     return;
   }
-  // This one is paid for, and the picture IS the request. A survey may keep
-  // running while you look at another tab — a picture of that other tab is not
-  // something to spend a call on, so bring the sweep's own page to the front.
-  if (!(await pinnedTabIsVisible(tab))) {
+  // This one is paid for, and the picture IS the request — so it has to be a
+  // picture of THIS page. The background camera guarantees that without moving
+  // anything, and is tried first.
+  //
+  // Only if it will not attach do we fall back to yanking the tab in front,
+  // which is the rude version: it takes the window away from whatever you were
+  // doing. That yank used to happen on every run, camera or no camera.
+  const cam = await announceCamera(tab);
+  if (!cam && !(await pinnedTabIsVisible(tab))) {
     try {
       await chrome.tabs.update(tab.id, { active: true });
       await chrome.windows.update(tab.windowId, { focused: true });
@@ -7610,6 +7673,10 @@ async function scanPickedScreens(numbers) {
   document.getElementById('sweepStopBtn').style.display = '';
   document.getElementById('sweepStopBtn').disabled = false;
   document.getElementById('sweepStopBtn').textContent = '■ Stop after this screen';
+  // The rows are not redrawn during a run, so the ▶s that were live a moment
+  // ago have to be disarmed where they stand. The finally redraws the list and
+  // brings them back.
+  setPlayButtons(false);
 
   try {
     for (let i = 0; i < stops.length; i++) {
@@ -7827,6 +7894,33 @@ async function scanPickedScreens(numbers) {
     dismissedRun ? 'warn' : 'info', 20000);
   if (dismissedRun) offerResetDismissed(status);
 }
+
+// ▶ on a single row: read that one screenful and stop.
+//
+// It goes through scanPickedScreens like everything else — the function has
+// always taken a list of screen numbers, so "one" needs no separate path and
+// gets the same stop button, the same log, the same labelling pause and the
+// same saved progress. The only thing that differs is the list it is handed.
+document.getElementById('sweepPicksList')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-play-screen]');
+  if (!btn) return;
+  // The row it sits in is a ticking surface and a hover preview; neither should
+  // fire because you pressed the button on top of it.
+  e.preventDefault();
+  e.stopPropagation();
+  if (aiSweep.running) {
+    showNotice(document.getElementById('sweepPicksStatus'),
+      'A scan is already going. Stop it first, or wait for it to finish.', 'warn', 4000);
+    return;
+  }
+  const n = Number(btn.dataset.playScreen);
+  const stop = aiSweep.stops.find(s => s.n === n);
+  if (!stop || !stop.count) return;
+  // Re-reading a screen that is already paid for is a real thing to want and a
+  // waste to do by accident, so it says which of the two this is.
+  if (!(await confirmSweepCost(1, stop.scanned ? n : 0))) return;
+  await scanPickedScreens([n]);
+});
 
 document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
   if (aiSweep.running) return;
@@ -10062,7 +10156,7 @@ function confirmSweepClear() {
  * until AFTER a run comes back empty, which is the one moment the information
  * is worth nothing. It belongs on the dialog that spends the money.
  */
-async function confirmSweepCost(sections) {
+async function confirmSweepCost(sections, rereading) {
   const dlg = document.getElementById('sweepCostDialog');
   const each = sweepAvgCall();
   if (!dlg) return true;
@@ -10074,6 +10168,14 @@ async function confirmSweepCost(sections) {
     escapeHtml(`Searching ${sections} screen${sections === 1 ? '' : 's'} for components — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
       `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
       `and roughly ${mins(sections * SWEEP_EST.scanSecs)}.`) +
+    // A ▶ next to a completed screen is one press away from paying twice for
+    // the same screenful. The button is still there — deliberately re-reading
+    // one is a real thing to want — but it is not something to do without
+    // being told which of the two this is.
+    (rereading
+      ? `<br><br><strong>Screen ${rereading} has already been searched and paid for.</strong> ` +
+        `Reading it again is a second call, and replaces what it found.`
+      : '') +
     (skipped
       ? `<br><br><strong>${skipped} element${skipped === 1 ? '' : 's'} on this site ${skipped === 1 ? 'is' : 'are'} on the dismissed list</strong> ` +
         `and will be left out of every screen. Dismissals belong to the project and are shared, so they may not be yours. ` +

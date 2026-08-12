@@ -720,6 +720,7 @@ console.log('\nchoosing screens');
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
                 lift('markScreenReading'), lift('markScreenRead'),
                 lift('sweepRunningHtml'), lift('markScreenFailed'),
+                lift('setPlayButtons'),
                 // The real stage owner, so these tests exercise the thing that
                 // ships rather than a stand-in that cannot drift with it.
                 lift('setStage'), lift('renderStageTrail'), lift('resumeStage'),
@@ -738,7 +739,8 @@ console.log('\nchoosing screens');
     ctx.clearSweepBusy = clearSweepBusy; ctx.markScreenReading = markScreenReading;
     ctx.markScreenRead = markScreenRead; ctx.markScreenFailed = markScreenFailed;
     ctx.sweepRunningHtml = sweepRunningHtml; ctx.setStage = setStage;
-    ctx.resumeStage = resumeStage; }`)(box);
+    ctx.resumeStage = resumeStage; ctx.setPlayButtons = setPlayButtons;
+    ctx.sweepScreenRowHtml = sweepScreenRowHtml; }`)(box);
 
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');
@@ -768,6 +770,53 @@ console.log('\nchoosing screens');
     !/only the first/.test(rows[0].textContent) && /14 elements/.test(rows[0].textContent));
   check('the summary says nothing has been spent',
     /nothing spent yet/.test(w2.document.getElementById('sweepPicksSummary').textContent));
+
+  // ── ▶ on one row: read this screenful, now ───────────────────────────────
+  //
+  // A page is worked through one screenful at a time — read one, build its
+  // fixes, apply them, look at the page, read the next. Expressing that with a
+  // list of ticks and one button at the bottom takes three actions per screen,
+  // and two of them are chances to pay for a screen you did not mean.
+  {
+    const play = [...l2.querySelectorAll('.sweep-play')];
+    check('every screenful that can be read has a ▶ of its own',
+      play.length === 2, String(play.length));
+    check('…carrying the screen number it will read, not a position in the list',
+      play.map(b => b.dataset.playScreen).join() === '1,3',
+      play.map(b => b.dataset.playScreen).join());
+    check('the empty screenful has none — there is nothing to spend a call on',
+      !rows[1].querySelector('.sweep-play'));
+    // It spends money. A bare ▶ glyph is not a label.
+    check('it says out loud that it is one screen and one call',
+      /only this screen/i.test(play[0].title) && /one call/i.test(play[0].title),
+      play[0].title);
+    check('…and says the same to a screen reader, with the number in it',
+      /screen 1/i.test(play[0].getAttribute('aria-label')) &&
+      /one call/i.test(play[0].getAttribute('aria-label')),
+      play[0].getAttribute('aria-label'));
+    // A completed screen keeps its ▶ — deliberately re-reading one is a real
+    // thing to want — and the warning about paying twice lives on the dialog.
+    check('a completed screenful keeps its ▶ rather than losing the option',
+      /data-play-screen/.test(box.sweepScreenRowHtml({ ...box.aiSweep.stops[0], scanned: true })));
+    check('the re-read warning is on the dialog that spends the money',
+      /confirmSweepCost\(1, stop\.scanned \? n : 0\)/.test(panelSrc));
+    check('…and confirmSweepCost has somewhere to put it',
+      /function confirmSweepCost\(sections, rereading\)/.test(panelSrc) &&
+      /has already been searched and paid for/.test(panelSrc));
+    // One press, one screen, through the same function every other run uses —
+    // so it gets the same stop button, log, labelling pause and saved progress.
+    check('it runs through scanPickedScreens with just that number',
+      /scanPickedScreens\(\[n\]\)/.test(panelSrc));
+    check('it refuses to start a second scan on top of a running one',
+      /data-play-screen[\s\S]{0,900}?if \(aiSweep\.running\)/.test(panelSrc));
+    // The rows are not redrawn during a run, so the ▶s that were live a moment
+    // ago have to be disarmed where they stand.
+    box.setPlayButtons(false);
+    check('a run disarms every ▶ in place', play.every(b => b.disabled));
+    box.setPlayButtons(true);
+    check('…and they come back when it ends', play.every(b => !b.disabled));
+    check('a run disarms them at its start', /setPlayButtons\(false\)/.test(panelSrc));
+  }
 
   const btn2 = w2.document.getElementById('sweepMakeBtn');
   const est = w2.document.getElementById('sweepEstimate');
@@ -1430,6 +1479,58 @@ console.log('\nwhat was observed beats what was guessed');
     merge('a? · b? · c? · d?', obs('menu','tabs','form','dialog','accordion','carousel'))
       .split(' · ').length === 5);
   check('a screenful with nothing either way says nothing', merge('', []) === '');
+}
+
+// ── The camera that lets you carry on working ──────────────────────────────
+//
+// captureVisibleTab photographs whatever tab is IN FRONT, whatever id it is
+// handed, and throws when the window is minimised. With that as the only camera
+// a scan cannot run while you work — it can only wait, and waiting is what it
+// did.
+//
+// beginBackgroundCapture existed, with a paragraph of comment explaining
+// exactly this, and NOTHING CALLED IT. Both entry points went through the
+// focus-bound camera, and scanPickedScreens additionally yanked the tab in
+// front of whatever you were doing. These checks are on the wiring, because the
+// wiring is what was missing.
+console.log('\nthe background camera — attached, not merely written');
+{
+  const calls = (panelSrc.match(/await announceCamera\(/g) || []).length;
+  check('something actually turns it on', calls >= 2, `${calls} call sites`);
+  // Both ends. Chrome's "is debugging this browser" banner stays up for exactly
+  // as long as we are attached, so a run that ends without detaching leaves a
+  // standing claim about the page that is no longer true.
+  const detach = (panelSrc.match(/await endBackgroundCapture\(\)/g) || []).length;
+  check('and both runs detach when they end', detach >= 2, `${detach} call sites`);
+  // The survey and the paid read are two separate entry points and only one of
+  // them had a finally that detached.
+  const survey = panelSrc.slice(panelSrc.indexOf('async function runSweep('),
+                                panelSrc.indexOf('function renderSweepScreens('));
+  check('the survey turns it on', /await announceCamera\(tab\)/.test(survey));
+  check('…and turns it off in its finally',
+    /finally \{\s*\n[^}]*await endBackgroundCapture\(\)/.test(survey));
+  const scan = panelSrc.slice(panelSrc.indexOf('async function scanPickedScreens('));
+  check('the paid read turns it on', /const cam = await announceCamera\(tab\)/.test(scan));
+  // The yank is the rude fallback, not the default. It used to run every time.
+  check('it only steals the window when there is no background camera',
+    /if \(!cam && !\(await pinnedTabIsVisible\(tab\)\)\)/.test(scan));
+  // Which camera a run has decides whether you can switch tabs at all, so it is
+  // not something to discover by trying it and watching the run stall.
+  check('the run says in its log which camera it got',
+    /background camera on — switch tabs/.test(panelSrc) &&
+    /no background camera \(\$\{sweepCam\.why\}\)/.test(panelSrc));
+  // Attached, no error, no picture is the worst of the three outcomes: it looks
+  // like a working camera and produces nothing.
+  check('an empty picture demotes the camera instead of being retried forever',
+    /returned an empty picture/.test(panelSrc));
+  check('Page is enabled before anything asks it for a screenshot',
+    panelSrc.indexOf("'Page.enable'") > 0 &&
+    panelSrc.indexOf("'Page.enable'") < panelSrc.indexOf("'Page.captureScreenshot'"));
+  // The permission this whole path needs. Without it attach throws at runtime
+  // and every run silently falls back to waiting.
+  const mf = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
+  check('the manifest asks for the debugger permission',
+    (mf.permissions || []).includes('debugger'), (mf.permissions || []).join());
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

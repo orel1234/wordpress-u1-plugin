@@ -3146,6 +3146,36 @@ button.u1-readonly-off {
   border-radius: 6px;
 }
 
+/* ▶ — read this one screenful, now.
+   Quiet until the row is under the pointer: it spends money, so it should be
+   found deliberately rather than sit there inviting a stray click. It keeps a
+   full-size hit area at every state, because a target that only exists on
+   hover is a target you miss. */
+.sweep-play {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--u1-text-muted);
+  background: transparent;
+  border: 1px solid var(--u1-border);
+  border-radius: 50%;
+  opacity: 0.55;
+  transition: opacity .12s, color .12s, border-color .12s;
+}
+.sweep-screen:hover .sweep-play,
+.sweep-play:focus-visible { opacity: 1; }
+.sweep-play:hover:not(:disabled) {
+  color: var(--u1-primary);
+  border-color: var(--u1-primary);
+}
+/* A run is going. Not gone — the row keeps its shape — it just cannot start a
+   second scan on top of the first. */
+.sweep-play:disabled { opacity: 0.25; cursor: not-allowed; }
+
 /* Already paid for. Not hidden — re-reading one is a real thing to want — but
    it must not look like part of what the next press will charge for. */
 .sweep-screen.is-done { opacity: 0.72; }
