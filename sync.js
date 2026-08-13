@@ -110,7 +110,15 @@ const U1Sync = (() => {
    * order of magnitude in length, so "twenty at a time" is either wasteful or
    * still too big depending on the site.
    */
-  const PUSH_BYTES = 400 * 1024;   // comfortably inside a 1MB body limit
+  // Measured against the server, not guessed: PUT /api/studio/sites/*/mappings
+  // takes 99KB and refuses 100KB with `{"message":"request entity too large"}`.
+  // That is Express's default `json` body limit of 100kb, and 400KB — which is
+  // what this used to be — meant every single push was rejected.
+  //
+  // 60KB leaves room for the JSON envelope, the baseUpdatedAt stamps and any
+  // multi-byte characters in a selector or label, all of which are counted by
+  // the server and not by JSON.stringify().length here.
+  const PUSH_BYTES = 60 * 1024;
 
   async function pushMappings(hostname, rows) {
     if (!rows.length) return { saved: 0, conflicts: [] };
@@ -122,11 +130,18 @@ const U1Sync = (() => {
     }));
 
     const batches = [];
+    const oversized = [];
     let cur = [], size = 0;
     for (const m of all) {
-      const n = JSON.stringify(m).length + 1;
-      // A single mapping bigger than the budget still goes, alone — refusing it
-      // here would lose it silently, and the server is entitled to say no.
+      // Bytes, not characters. A Hebrew label or a selector with an accent is
+      // more than one byte per character on the wire, and the server counts
+      // what arrives.
+      const n = new TextEncoder().encode(JSON.stringify(m)).length + 1;
+      // One mapping that cannot fit in any request at all. Sending it alone
+      // would 413 and take a whole batch's worth of good mappings with it, so
+      // it is set aside and named — the caller can say which one is the
+      // problem instead of the whole save failing for no stated reason.
+      if (n > PUSH_BYTES) { oversized.push(m.key); continue; }
       if (cur.length && size + n > PUSH_BYTES) { batches.push(cur); cur = []; size = 0; }
       cur.push(m); size += n;
     }
@@ -148,6 +163,11 @@ const U1Sync = (() => {
     if (merged.keys.length) {
       const stamp = new Date().toISOString();
       for (const k of merged.keys) baseVersions.set(k, stamp);
+    }
+    if (oversized.length) {
+      throw new Error(
+        `${oversized.length} mapping${oversized.length === 1 ? ' is' : 's are'} too large for the ` +
+        `server to accept even on their own (${oversized.join(', ')}). Everything else was shared.`);
     }
     return merged;
   }

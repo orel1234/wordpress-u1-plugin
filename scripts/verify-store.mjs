@@ -142,5 +142,53 @@ console.log('\nSite listing:');
     JSON.stringify(sites) === JSON.stringify(['example.com', 'shop.co.il']), JSON.stringify(sites));
 }
 
+// ── The mapping push has to fit inside the server's body limit ─────────────
+//
+// Measured, not assumed: PUT /api/studio/sites/*/mappings takes 99KB and
+// answers 100KB with `{"message":"request entity too large"}` — Express's
+// default `json` limit of 100kb. The batch budget was 400KB, so every push of
+// a site with more than a handful of mappings was rejected outright, and the
+// panel reported it as "Saved on this computer, but not shared with the team".
+//
+// The whole list goes on every save (a row that stops being mentioned is how a
+// deletion is expressed), so this only gets worse as pages are added.
+console.log('\n  Mapping push batches:');
+{
+  const SERVER_LIMIT = 100 * 1024;
+  const src = readFileSync(join(ROOT, 'sync.js'), 'utf8');
+  const budget = Number(/const PUSH_BYTES = (\d+) \* 1024;/.exec(src)[1]) * 1024;
+  check('the batch budget is inside the server limit', budget < SERVER_LIMIT,
+        `${budget / 1024}KB budget vs ${SERVER_LIMIT / 1024}KB limit`);
+  check('…and leaves room for the JSON envelope', budget <= SERVER_LIMIT * 0.7,
+        `${budget / 1024}KB`);
+  check('…and is measured in BYTES, not characters',
+        /new TextEncoder\(\)\.encode\(JSON\.stringify\(m\)\)\.length/.test(src));
+  check('a mapping too big for any request is named, not silently dropped',
+        /oversized\.push\(m\.key\)/.test(src) && /too large for the/.test(src));
+
+  // The real shape, at the sizes a multi-page site reaches.
+  const one = (i) => ({
+    key: `m-${i}`, deleted: false, baseUpdatedAt: '2026-08-13T00:00:00.000Z',
+    payload: { type: 'tabs', primary: '#dealTabs',
+               config: { selectors: { tab: '#dealTabs>.tab-bar__btn', tabList: '#dealTabs' } },
+               code: 'window.u1?.fix.tabs(…)'.padEnd(1200, ' ') } });
+  let worstAll = 0;
+  for (const n of [24, 100, 600]) {
+    let cur = [], size = 0; const batches = [];
+    for (let i = 0; i < n; i++) {
+      const m = one(i);
+      const b = new TextEncoder().encode(JSON.stringify(m)).length + 1;
+      if (cur.length && size + b > budget) { batches.push(cur); cur = []; size = 0; }
+      cur.push(m); size += b;
+    }
+    if (cur.length) batches.push(cur);
+    const worst = Math.max(...batches.map((b) =>
+      new TextEncoder().encode(JSON.stringify({ mappings: b })).length));
+    worstAll = Math.max(worstAll, worst);
+  }
+  check('…so no request is over the limit at 24, 100 or 600 mappings',
+        worstAll < SERVER_LIMIT, `largest ${(worstAll / 1024).toFixed(1)}KB`);
+}
+
 console.log(failures === 0 ? '\n✅ The store keeps every stored key intact.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);
