@@ -744,6 +744,37 @@ console.log('\nreading the whole section');
     w.document.querySelectorAll('[data-u1-mark]').length === 0);
 }
 
+// ── "Do not stop" has to mean the whole job, not half of it ─────────────────
+// The mode says "read the rest of the page and make everything accessible on
+// its own". It used to find components, log them, and leave every one to be
+// built by hand from a drawer — and the approval card prepareOne renders was
+// left standing, which holds the cards stage open and sat over the panel in
+// the one mode whose entire promise is that nothing will ask.
+console.log('\nnot stopping means finishing');
+{
+  const src = panelSrc;
+  const loop = /for \(let i = 0; i < stops\.length; i\+\+\) \{[\s\S]*?\n    \}\n  \} catch/.exec(src)[0];
+
+  check('the silent mode builds what it finds, in the run',
+    /if \(!sweepPause\.on && !sweepLabel\.on\) \{/.test(loop) &&
+    /await confirmedToMapping\(\s*\n?\s*\{ mark: null, type: todo\[b\]\.type, sel: todo\[b\]\.sel \}, stop, tab\)/.test(loop));
+  check('…one at a time, so each lands in the drawer as it finishes',
+    /for \(let b = 0; b < todo\.length && !aiSweep\.abort; b\+\+\)/.test(loop));
+  check('…and Stop still gets out of it',
+    /&& !aiSweep\.abort;/.test(loop));
+  check('…and the section says what it actually built',
+    /made accessible — saved to Mappings/.test(loop));
+
+  const conf = /async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0];
+  check('the approval card is taken down once it has been saved',
+    /\.ai-map-card\[data-card="\$\{prepared\.idx\}"\]`\)\?\.remove\(\)/.test(conf));
+  check('…and the card stage closes with it, rather than staying open on nothing',
+    /if \(!document\.querySelectorAll\('#aiSlideTrack \.ai-map-card:not\(\[data-done\]\)'\)\.length\)/.test(conf));
+  // aiCardTemplate reads the card's own form, so the order matters.
+  check('…and only after the template has been read out of it',
+    conf.indexOf('aiCardTemplate(prepared.idx)') < conf.indexOf('.remove()'));
+}
+
 // ── Holding after each section so its fixes can be built ────────────────────
 // Ticking all twenty-three sections used to be thirty-five minutes and $14
 // before the components view was reached even once: the loop only reached

@@ -4711,6 +4711,23 @@ async function confirmedToMapping(pick, stop, tab) {
       config: tpl.config, overwriteRole: tpl.overwriteRole,
     }]);
   } catch (e) { /* saved is the durable half; the panel re-applies on open */ }
+
+  // Take the approval card down.
+  //
+  // prepareOne renders one, because on the manual route the card IS the
+  // approval step. Here the approval already happened — you ticked the row and
+  // pressed build — so leaving it up asks the same question twice. Worse, a
+  // card without data-done is what holds the whole "cards" stage open
+  // (stageHasContent), so one left behind sat over the panel until it was
+  // dismissed by hand, in a mode whose entire promise is that nothing will ask.
+  //
+  // Removed only after aiCardTemplate has read it: the template lives in the
+  // card's own form.
+  document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${prepared.idx}"]`)?.remove();
+  if (!document.querySelectorAll('#aiSlideTrack .ai-map-card:not([data-done])').length) {
+    setStage(mapMode === 'sweep' ? (aiSweep.phase === 'components' ? 'components' : 'screens') : 'none');
+  }
+
   await loadMappingsList();
   refreshExportInfo();
   return {
@@ -8898,6 +8915,38 @@ async function scanPickedScreens(numbers) {
         ? `nothing new to map — all ${held} thing${held === 1 ? '' : 's'} here are already mapped, dismissed, or were found in an earlier section`
         : 'read, and nothing on it needs mapping';
       sweepLog(stop.n, stop.outcome, k ? '' : 'skip', stop.cost);
+
+      // ── "Do not stop": build them here, one at a time ─────────────────────
+      // Finding is not the promise. "Read the rest of the page and make
+      // everything accessible on its own" means the mappings arrive in the
+      // drawer while it runs — and until now this mode found components,
+      // logged them, and left every one of them to be built by hand from a
+      // drawer, which is the opposite of what it says.
+      if (!sweepPause.on && !sweepLabel.on) {
+        const todo = (stop.found || []).filter((f) => !f.done && f.sel);
+        for (let b = 0; b < todo.length && !aiSweep.abort; b++) {
+          showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
+            `Making ${todo[b].label || todo[b].sel} accessible — ${b + 1} of ${todo.length} on this section. ` +
+            `Each one is saved to Mappings as it finishes.`,
+            ((i) / stops.length) * 100);
+          try {
+            const made = await confirmedToMapping(
+              { mark: null, type: todo[b].type, sel: todo[b].sel }, stop, tab);
+            if (made.err) { todo[b].failed = made.err; sweepLog(stop.n, `${todo[b].type}: ${made.err}`, 'err'); }
+            else { todo[b].done = true; todo[b].failed = null; }
+          } catch (err) {
+            todo[b].failed = err.message;
+            sweepLog(stop.n, `${todo[b].type}: ${err.message}`, 'err');
+          }
+        }
+        const built = (stop.found || []).filter((f) => f.done).length;
+        if (todo.length) {
+          stop.outcome = `${built} of ${todo.length} made accessible — saved to Mappings`;
+          sweepLog(stop.n, stop.outcome, built ? '' : 'err');
+          await markScreenRead(stop);
+          saveSweep();
+        }
+      }
 
       // ── Build the fixes for this section, then carry on ───────────────────
       // Only when there is something to build and something still to read.
