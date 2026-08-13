@@ -794,6 +794,27 @@ let rulesEveryType = [], rulesUnknownFields = [], rulesShipped = false, rulesUse
               /system: MAP_PROMPT \+ \(rules \? /.test(adv);
 }
 
+// ── A required selector may not be missing ──────────────────────────────────
+//
+// This shipped to a client:
+//   fix.tabs("#dealTab-week", { selectors: { tab: ".tab-bar__btn",
+//                                            tabList: "#dealTab-week" } })
+// tabPanel is required and absent, tabList is a single BUTTON. u1 decorates
+// nothing and reports nothing, while the drawer says the strip is mapped.
+//
+// validateMapping existed and was reachable from one place — the manual form.
+// Every other route went past it.
+let reqEnforced = false, reqAtTheFunnel = false, reqNamesThem = false, reqSkipsCustom = false;
+{
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const save = /async function saveMappingEntry\([\s\S]*?\n  const narrowed = await narrowContained\(template\);/.exec(panelSrc);
+  reqAtTheFunnel = !!save;
+  reqEnforced = !!save && /\(sc\.req \|\| \[\]\)\.filter/.test(save[0]) && /throw new Error\(/.test(save[0]);
+  reqNamesThem = !!save && /missing\.join\(' and '\)/.test(save[0]);
+  // A staticFix has no schema and no required selectors; it must still save.
+  reqSkipsCustom = !!save && /template\.type && !template\.custom/.test(save[0]);
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -856,6 +877,14 @@ console.log(`  ${rulesShipped ? '✅' : '❌'} …the file ships in the package`
 if (!rulesShipped) failed++;
 console.log(`  ${rulesUsed ? '✅' : '❌'} …and the model is actually given it when building a mapping`);
 if (!rulesUsed) failed++;
+console.log(`  ${reqAtTheFunnel ? '✅' : '❌'} required selectors are checked in saveMappingEntry — the one path all routes take`);
+if (!reqAtTheFunnel) failed++;
+console.log(`  ${reqEnforced ? '✅' : '❌'} …and a mapping missing one is refused, not stored`);
+if (!reqEnforced) failed++;
+console.log(`  ${reqNamesThem ? '✅' : '❌'} …and told which ones`);
+if (!reqNamesThem) failed++;
+console.log(`  ${reqSkipsCustom ? '✅' : '❌'} …while a static fix, which has no schema, still saves`);
+if (!reqSkipsCustom) failed++;
 console.log(`  ${kept ? '✅' : '❌'} …and a mapping without that answer leaves the site's role alone`);
 if (!kept) failed++;
 console.log(`  ${exportsStrip ? '✅' : '❌'} …and the exported file makes the same choice, not just Apply`);
@@ -911,6 +940,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 53;
+const total = results.length + 57;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

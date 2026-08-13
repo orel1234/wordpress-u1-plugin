@@ -9027,6 +9027,14 @@ document.getElementById('sweepPicksSummary')?.addEventListener('change', (e) => 
   syncSweepMakeBtn();
 });
 
+// Stop a build between components. Everything already saved stays saved.
+document.getElementById('buildStopBtn')?.addEventListener('click', (e) => {
+  aiBulk.abort = true;
+  const b = e.currentTarget;
+  b.disabled = true;
+  b.textContent = 'Finishing this one…';
+});
+
 document.getElementById('sweepPicksClearBtn')?.addEventListener('click', async () => {
   // Clear is the ONLY thing that forgets a stored survey. Switching site or
   // closing the panel must not, or the durability is theatre.
@@ -9543,10 +9551,21 @@ async function buildPickedComponents() {
   aiBulk = { running: true, abort: false, failed: [], armed: false };
   btn.disabled = true;
   const original = btn.textContent;
+  const stopBtn = document.getElementById('buildStopBtn');
+  if (stopBtn) { stopBtn.style.display = ''; stopBtn.disabled = false; stopBtn.textContent = '■ Stop building'; }
   setStage('cards');
 
   try {
     for (let i = 0; i < jobs.length; i++) {
+      // A build is a model call per component, so twenty components is minutes.
+      // Stopping keeps everything already saved — they are in Mappings and on
+      // the page — and just does not start the next one.
+      if (aiBulk.abort) {
+        showNotice(status,
+          `Stopped. ${i} of ${jobs.length} built and saved; the rest are still ticked.`,
+          'warn', 8000);
+        break;
+      }
       const { stop, f } = jobs[i];
       btn.textContent = `Preparing ${i + 1} of ${jobs.length}…`;
       showMapBusy(f.label, i + 1, jobs.length);
@@ -9592,6 +9611,7 @@ async function buildPickedComponents() {
     aiBulk.running = false;
     btn.disabled = false;
     btn.textContent = original;
+    if (stopBtn) stopBtn.style.display = 'none';
   }
 
   renderBulkReview();
@@ -12309,6 +12329,42 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   // straight past the question and was only discovered later, after an apply
   // that reported success-shaped text. One save path, one place to ask.
   if (!(await confirmRoleOverwrite(template))) return { cancelled: true };
+
+  // ── A required selector may not be missing ────────────────────────────────
+  //
+  // validateMapping existed and was called from exactly one place: the manual
+  // builder's form. Every other route — the AI card, the bulk save, the sweep's
+  // own confirm — went straight past it, so a mapping could be stored and
+  // exported with a required field empty and nothing ever said so.
+  //
+  // That is how this shipped to a client:
+  //
+  //   fix.tabs("#dealTab-week", { selectors: { tab: ".tab-bar__btn",
+  //                                            tabList: "#dealTab-week" } })
+  //
+  // tabPanel is required and absent, and tabList is a single BUTTON. u1 has
+  // nothing to work with, decorates nothing, and reports nothing — the strip
+  // stays exactly as it was while the drawer says it is mapped.
+  //
+  // Here, for the same reason the role question is here: one save path, one
+  // place to refuse.
+  if (template && template.type && !template.custom) {
+    const sc = COMPONENT_SCHEMAS[template.type];
+    if (sc) {
+      const pKey = primaryKeyOf(sc);
+      const missing = (sc.req || []).filter((r) => {
+        const v = (r === pKey) ? template.primary
+          : ((template.config && template.config.selectors) || {})[r];
+        return !v || !String(v).trim();
+      });
+      if (missing.length) {
+        throw new Error(
+          `A ${template.type} needs ${missing.join(' and ')} and ${missing.length === 1 ? 'it is' : 'they are'} ` +
+          `empty. Saved like this it would decorate nothing and say nothing — fill ` +
+          `${missing.length === 1 ? 'it' : 'them'} in, or map this as something else.`);
+      }
+    }
+  }
 
   // A selector wider than the container it belongs to is repaired here, before
   // anything is stored — so the mapping, its code, and the exported client file

@@ -819,6 +819,22 @@ console.log('\napplying is part of the run');
     /applyAllMappings\(\{ silent: true \}\)/.test(src));
 }
 
+// ── A build can be stopped ──────────────────────────────────────────────────
+// One model call per component, so twenty components is minutes with no way out.
+console.log('\nstopping a build');
+{
+  const src = panelSrc;
+  const html = readFileSync(join(ROOT, 'panel.html'), 'utf8');
+  check('there is a stop button, shown only while building',
+    /id="buildStopBtn"/.test(html) &&
+    /stopBtn\.style\.display = ''; stopBtn\.disabled = false;/.test(src) &&
+    /if \(stopBtn\) stopBtn\.style\.display = 'none';/.test(src));
+  check('…the build loop checks it between components',
+    /if \(aiBulk\.abort\) \{[\s\S]{0,200}break;/.test(src));
+  check('…and what was built already is kept, and counted',
+    /built and saved; the rest are still ticked/.test(src));
+}
+
 // ── The filter pattern has a way to be used ─────────────────────────────────
 //
 // Detection and a corrector with nothing calling them is a capability nobody

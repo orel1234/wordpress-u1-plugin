@@ -552,6 +552,9 @@
       <div id="sweepPicksList"></div>
       <div class="ai-found-actions">
         <button class="btn-primary" id="sweepMakeBtn">✨ Make the ticked ones accessible</button>
+        <!-- A build is a model call per component, so twenty of them is
+             minutes. Stopping keeps everything already saved. -->
+        <button class="btn-outline" id="buildStopBtn" style="display:none;">■ Stop building</button>
         <button class="btn-ghost btn-sm" id="exportLabelsBtn"
                 title="Everything you named by hand, in the format the detection score reads. Drop it in fixtures/ and it is measured from then on.">Export what I named</button>
         <button class="btn-ghost btn-sm" id="sweepPicksClearBtn">Clear</button>
