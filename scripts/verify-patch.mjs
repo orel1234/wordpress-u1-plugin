@@ -399,5 +399,51 @@ console.log('\nper-match wrapper for u1.fix.*');
     calls.every(s => s.startsWith('[data-u1p-instance=')), calls.join(' | '));
 }
 
+// ── u1.fix.landmarks: each role keeps the shape its schema demands ──────────
+//
+// LandmarksPropsSchema in u1_vanilla-js-a11y.js is not uniform:
+//
+//   banner, contentinfo, main                     a single OBJECT
+//   complementary, form, navigation, search,      an ARRAY
+//   application
+//
+// The wrapper splits one call into several, and it used to hand every role
+// back as a bare object. Five of the eight roles then failed safeParse and the
+// library threw `Invalid Landmarks props provided.` — killing the whole call,
+// including the roles that were shaped correctly.
+console.log('\nlandmarks keep their schema shape');
+{
+  const ARRAY_ROLES = ['complementary', 'form', 'navigation', 'search', 'application'];
+  const dom = new JSDOM(`<!doctype html><body>
+    <nav id="n1">a</nav><nav id="n2">b</nav>
+    <main id="m">m</main>
+    <aside id="c1">c</aside><aside id="c2">c</aside></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true });
+  const w = dom.window;
+  const seen = [];
+  w.u1 = { fix: { landmarks(props) { seen.push(JSON.parse(JSON.stringify(props))); } } };
+  w.eval(readFileSync(join(ROOT, 'u1-patch.js'), 'utf8'));
+
+  w.u1.fix.landmarks({
+    navigation: [{ selectors: { landmark: 'nav' } }],       // 2 matches — split
+    main: { selectors: { landmark: '#m' } },                // 1 match
+    complementary: [{ selectors: { landmark: 'aside' } }],  // 2 matches — split
+  });
+
+  check('the call is expanded per matching element', seen.length === 5, String(seen.length));
+  const wrong = [];
+  for (const props of seen) {
+    for (const [role, val] of Object.entries(props)) {
+      if (ARRAY_ROLES.includes(role) !== Array.isArray(val)) wrong.push(role);
+    }
+  }
+  check('…and every role goes back in the shape its schema demands',
+    wrong.length === 0, wrong.join(', '));
+  check('…including the ones that were split across several elements',
+    seen.filter(p => Array.isArray(p.navigation)).length === 2);
+  check('…and a single-object role is not turned into an array',
+    seen.some(p => p.main && !Array.isArray(p.main)));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

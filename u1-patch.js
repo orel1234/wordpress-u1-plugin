@@ -26,7 +26,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13a' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13b' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -344,12 +344,27 @@
         if (!props || typeof props !== 'object') return origLandmarks.apply(this, arguments);
         var self = this, result;
         Object.keys(props).forEach(function (role) {
+          // The library's schema is not uniform, and this is the whole bug that
+          // was here: banner, contentinfo and main take a single OBJECT, while
+          // complementary, form, navigation, search and application take an
+          // ARRAY. Splitting a call and handing every role back as a bare
+          // object failed LandmarksPropsSchema on five of the eight, and the
+          // library's answer to that is to throw:
+          //
+          //     Error: [ … ]
+          //     Uncaught Error: Invalid Landmarks props provided.
+          //
+          // …which killed the whole u1.fix.landmarks call, including the roles
+          // that were shaped correctly. So the shape it arrived in is the shape
+          // it goes back in.
+          var wasArray = Array.isArray(props[role]);
+          var rewrap = function (entry) { return wasArray ? [entry] : entry; };
           var entries = [].concat(props[role] || []);
           entries.forEach(function (entry) {
             var sel = entry && entry.selectors && entry.selectors.landmark;
             var els = sel ? qsa(sel) : [];
             if (els.length < 2) {
-              var one = {}; one[role] = entry;
+              var one = {}; one[role] = rewrap(entry);
               result = origLandmarks.call(self, one, context);
               return;
             }
@@ -358,7 +373,7 @@
               els[i].setAttribute(MARK, token);
               var scoped = JSON.parse(JSON.stringify(entry));
               scoped.selectors.landmark = '[' + MARK + '="' + token + '"]';
-              var single = {}; single[role] = scoped;
+              var single = {}; single[role] = rewrap(scoped);
               result = origLandmarks.call(self, single, context);
             }
           });
