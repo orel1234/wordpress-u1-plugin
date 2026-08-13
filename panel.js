@@ -4134,6 +4134,16 @@ showBuildStamp();
 const sweepLabel = { on: true, resolve: null, marks: new Set(), busy: false, skip: false };
 
 /**
+ * The candidates a section's naming pause is working with, by section number.
+ *
+ * Deliberately NOT on the stop. A stop is persisted to chrome.storage and
+ * pushed to the server, and hanging a list of up to 250 candidates off it made
+ * a twenty-one section survey 771KB against a 99KB limit — the scan finished
+ * and then failed to upload. This is scratch for a pause that is open now.
+ */
+const sweepCands = new Map();
+
+/**
  * A signal that the element is ALREADY a real control.
  *
  * clickSignals reports everything it can see, and the list mixes two very
@@ -4369,9 +4379,18 @@ function labelScreen(stop, collected, tab) {
   sweepLabel.marks = new Set();
   const made = [];
   const cands = collected.candidates || [];
-  // Held on the stop so the builder can find a row's selector by its mark
-  // without the whole candidate list being threaded through three functions.
-  stop.__cands = cands;
+  // Held in memory, keyed by section — NOT on the stop.
+  //
+  // Putting it on the stop threaded it straight into everything the stop is
+  // part of: chrome.storage, and the survey body pushed to the server. A
+  // candidate is ~376 bytes and a section can hold 250 of them, so a
+  // twenty-one section run turned a 52KB body into three quarters of a
+  // megabyte and the upload came back 413 — "saved on this machine but did not
+  // reach the server", on a scan that had just worked perfectly.
+  //
+  // It is scratch for the pause that is open right now. It has no business
+  // outliving the session, let alone travelling.
+  sweepCands.set(stop.n, cands);
   // Worth asking about: anything the collector has a guess for, or that showed
   // a click signal. The rest are links, buttons and text — real elements, but
   // not a question. They stay one fold away, because sometimes the noise IS the
@@ -4805,7 +4824,7 @@ function labelScreen(stop, collected, tab) {
  * "Build" row has always been quoting for — a call per component.
  */
 async function confirmedToMapping(pick, stop, tab) {
-  const cand = (stop && stop.__cands || []).find((c) => c.mark === pick.mark);
+  const cand = (sweepCands.get(stop && stop.n) || []).find((c) => c.mark === pick.mark);
   const sel = pick.sel || (cand && cand.selector) || '';
   if (!sel) return { err: 'That row has no selector to build on.' };
 

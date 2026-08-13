@@ -209,20 +209,41 @@ const U1Sync = (() => {
    * stays small and well clear of Mongo's 16MB ceiling.
    */
   async function pushSweep(hostname, sweep, onProgress) {
+    // The picture goes separately, below. And nothing private travels: a `__`
+    // key is scratch this machine hung on the stop, and the one that did — the
+    // pause's candidate list — turned a 52KB survey into 771KB against a 99KB
+    // limit. Stripped here as well as at the source, because the next person to
+    // stash something convenient on a stop should not be able to break the
+    // upload by doing it.
     const stops = (sweep.stops || []).map((s) => {
-      const copy = { ...s };
-      delete copy.thumb;
+      const copy = {};
+      for (const k of Object.keys(s || {})) {
+        if (k === 'thumb' || k.startsWith('__')) continue;
+        copy[k] = s[k];
+      }
       return copy;
     });
-    await U1Auth.request(path(hostname, '/sweep'), {
-      method: 'PUT',
-      body: JSON.stringify({
-        url: sweep.url || '',
-        phase: sweep.phase || 'screens',
-        cost: sweep.cost || 0,
-        stops,
-      }),
+    const body = JSON.stringify({
+      url: sweep.url || '',
+      phase: sweep.phase || 'screens',
+      cost: sweep.cost || 0,
+      stops,
     });
+    // Say the size when it is refused. "http_413" on a scan that just took
+    // twenty minutes says nothing about what to do next; a number says whether
+    // this is one section too many or something that should not be in here.
+    const bytes = new TextEncoder().encode(body).length;
+    try {
+      await U1Auth.request(path(hostname, '/sweep'), { method: 'PUT', body });
+    } catch (err) {
+      if (/413/.test(String(err && err.message))) {
+        throw new Error(
+          `the survey is ${(bytes / 1024).toFixed(0)}KB and the server accepts about 99KB ` +
+          `(${stops.length} sections). The pictures are sent separately, so this is the ` +
+          `survey text itself.`);
+      }
+      throw err;
+    }
 
     const withShots = (sweep.stops || []).filter((s) => s.thumb);
     let done = 0;

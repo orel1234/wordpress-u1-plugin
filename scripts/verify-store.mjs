@@ -268,5 +268,33 @@ console.log('\n  A pull against unpushed local work:');
         /await rememberPushedKeys\(currentHostname, out\.keys \|\| \[\]\);/.test(panelSrc));
 }
 
+// ── The survey upload: nothing scratch may ride along ───────────────────────
+//
+// A candidate is ~376 bytes and a section can hold 250. Hanging the naming
+// pause's candidate list off the stop put it into chrome.storage AND into the
+// survey pushed to the server: 21 sections became 771KB against a 99KB limit,
+// and a scan that had just worked came back "saved on this machine but did not
+// reach the server: http_413".
+console.log('\n  The survey upload:');
+{
+  const syncSrc = readFileSync(join(ROOT, 'sync.js'), 'utf8');
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+
+  check('the candidate list is not hung on the stop at all',
+        /sweepCands\.set\(stop\.n, cands\);/.test(panelSrc) &&
+        !/stop\.__cands = /.test(panelSrc));
+  check('…and the push strips private keys as well, not just the picture',
+        /if \(k === 'thumb' \|\| k\.startsWith\('__'\)\) continue;/.test(syncSrc));
+  check('…and a refusal says the size rather than only "413"',
+        /the survey is \$\{\(bytes \/ 1024\)/.test(syncSrc));
+
+  // What it is worth, at the size that failed.
+  const LIMIT = 100 * 1024;          // measured against the server
+  const withCands = 376 * 100 * 21;  // ~376 bytes a candidate, 100 a section
+  check('…which is the difference between refused and accepted',
+        withCands > LIMIT * 7,
+        `${(withCands / 1024).toFixed(0)}KB of candidates alone, limit ${LIMIT / 1024}KB`);
+}
+
 console.log(failures === 0 ? '\n✅ The store keeps every stored key intact.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);
