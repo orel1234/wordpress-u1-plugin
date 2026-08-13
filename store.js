@@ -121,9 +121,16 @@
         return res;
       } catch (e) {
         const msg = String((e && e.message) || e);
+        // What actually happens, not a promise of a retry there isn't one of.
+        // Nothing here queues, backs off or tries again on a timer: the only
+        // thing that pushes is the next write. That write sends the WHOLE list
+        // — a row that stops being mentioned is how a deletion is expressed —
+        // so the next mapping you save carries this one up with it. Saying "it
+        // will sync" implied a background retry and there is none.
         const err = new Error(
           `Saved on this computer, but not shared with the team: ${msg}. ` +
-          `It works here and it exports; it will sync when the server accepts it.`);
+          `It works here and it exports. Nothing retries on its own — the next ` +
+          `mapping you save sends the whole list again and takes this one with it.`);
         // So a caller can tell "this did not happen" from "this happened and
         // has not travelled yet", and not count the second as a failure.
         err.localOnly = true;
