@@ -790,6 +790,36 @@ console.log('\nnot stopping means finishing');
     conf.indexOf('aiCardTemplate(prepared.idx)') < conf.indexOf('.remove()'));
 }
 
+// ── The Scan tab shows one scan at a time ───────────────────────────────────
+//
+// It holds two, answering unrelated questions: what is wrong with this page,
+// and whether the mappings still work. They were shown together, so a page
+// scan left the previous mapping run sitting under it — "36 links have no
+// accessible text" directly above "45 tested · 5 failing" reads as one finding
+// about one thing.
+console.log('\none scan on screen at a time');
+{
+  const src = panelSrc;
+  const html = readFileSync(join(ROOT, 'panel.html'), 'utf8');
+
+  check('there is one place that decides which is visible',
+    /function showOnlyScan\(which\)/.test(src));
+  check('…and running the page scan hides the mapping results',
+    /showOnlyScan\('static'\)/.test(src));
+  check('…and running the mapping test hides the page scan',
+    /showOnlyScan\('mappings'\)/.test(src));
+  check('…and neither section sets its own display any more',
+    !/getElementById\('elemScanSection'\)\.style\.display = 'block'/.test(src));
+  check('the results are hidden, not thrown away',
+    /if \(m\) m\.style\.display = which === 'mappings' \? 'block' : 'none';/.test(src) &&
+    !/elemScanResults'\)\.innerHTML = ''[\s\S]{0,80}showOnlyScan/.test(src));
+  check('…and the card that produced them says so',
+    /c\.classList\.toggle\('is-showing'/.test(src) &&
+    /\.scan-choice-card\.is-showing/.test(readFileSync(join(ROOT, 'styles.css'), 'utf8')));
+  check('both scans still have their own button',
+    /id="scanBtn"/.test(html) && /id="elemScanBtn"/.test(html));
+}
+
 // ── Holding after each section so its fixes can be built ────────────────────
 // Ticking all twenty-three sections used to be thirty-five minutes and $14
 // before the components view was reached even once: the loop only reached

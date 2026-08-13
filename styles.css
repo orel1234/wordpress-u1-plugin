@@ -4850,3 +4850,15 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   color: var(--u1-primary-text);
 }
 .scan-exclude .sub-sel-row { margin-top: 8px; }
+
+/* Which of the two scans produced what is below. They answer different
+   questions and only one set of results is on screen at a time. */
+.scan-choice-card.is-showing {
+  border-color: var(--u1-primary);
+  box-shadow: 0 0 0 3px var(--u1-primary-dim);
+}
+.scan-choice-card.is-showing .scan-choice-title::after {
+  content: " — showing";
+  font-weight: 400;
+  color: var(--u1-primary-text);
+}

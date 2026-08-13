@@ -11068,6 +11068,30 @@ const STATIC_WHY_NOT = {
   'aria-hidden-focusable': 'use "must not be reachable" on it, or un-hide it',
 };
 
+/**
+ * Show the results of the scan that was just run, and only those.
+ *
+ * The Scan tab holds two: the page's own faults, and whether the mappings
+ * still work. They are different questions with different answers, and having
+ * both on screen made the second look like part of the first — a report saying
+ * "36 links have no accessible text" directly above "45 tested · 5 failing"
+ * reads as one finding about one thing.
+ *
+ * Hidden, not cleared: the other run's results are still there and come back
+ * when it is run again.
+ */
+function showOnlyScan(which) {
+  const s = document.getElementById('scanResultsSection');
+  const m = document.getElementById('elemScanSection');
+  if (s) s.style.display = which === 'static' && scanResults.length ? 'block' : 'none';
+  if (m) m.style.display = which === 'mappings' ? 'block' : 'none';
+  // And say which of the two the results below belong to. With only one on
+  // screen there is nothing else to tell you which question was asked.
+  const cards = document.querySelectorAll('#tab-scan .scan-choice-card');
+  cards.forEach((c, i) => c.classList.toggle('is-showing',
+    (which === 'static' && i === 0) || (which === 'mappings' && i === 1)));
+}
+
 function renderScanResults() {
   const wrap = document.getElementById('scanResults');
   if (!wrap) return;
@@ -11286,8 +11310,15 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
   }).sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
   scanActiveCat = '*'; scanActiveSev = '*';
   status.style.display = 'none';
-  document.getElementById('scanResultsSection').style.display = scanResults.length ? 'block' : 'none';
   document.getElementById('scanClearBtn').style.display = scanResults.length ? '' : 'none';
+  // One scan on screen at a time.
+  //
+  // These answer two unrelated questions — "what is wrong with this page" and
+  // "do the mappings I built still work" — and they were shown together, so a
+  // page scan left the previous run's mapping results sitting under it as if
+  // they were part of the same answer. The results are not thrown away; the
+  // section reappears the moment its own scan is run again.
+  showOnlyScan('static');
   const crit = scanResults.filter(r => r.severity === 'Critical').length;
   const high = scanResults.filter(r => r.severity === 'High').length;
   document.getElementById('scanCount').textContent =
@@ -11524,7 +11555,7 @@ async function runElementScan(onlyKey) {
   elemScanAbort = false;
   btn.disabled = true;
   stopBtn.style.display = '';
-  document.getElementById('elemScanSection').style.display = 'block';
+  showOnlyScan('mappings');
   document.getElementById('elemScanReportRow').style.display = 'none';
   progress.style.display = toTest.length ? 'block' : 'none';
 
