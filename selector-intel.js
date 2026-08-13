@@ -2420,8 +2420,18 @@
       } catch (e) { return null; }
       if (input && list) break;
       wrap = wrap.parentElement;
+      // A combobox's wrapper is the smallest element holding the input and its
+      // list. Once the climb reaches the page itself it has stopped finding a
+      // component and started pairing whatever it can see: on a shop page it
+      // matched the header's search field with an unrelated list of util-bar
+      // links and reported `combobox: body`, which is a mapping that would
+      // decorate the whole document.
+      if (!wrap || wrap === document.body || wrap === document.documentElement) return null;
     }
     if (!input || !list || !wrap) return null;
+    // The two halves have to be near each other. A suggestions list is beside
+    // its input, not four sections away with half the page in between.
+    if (wrap.querySelectorAll(TEXTY).length > 3) return null;
 
     var opts = Array.prototype.slice.call(list.children).filter(function (c) {
       return c.nodeType === 1;

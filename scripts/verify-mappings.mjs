@@ -695,6 +695,20 @@ let chainOk = false, cbShapeOk = false, cbNoFalse = false, cbWired = false, dlOk
   // somewhere else on the page.
   cbNoFalse = ['#faraway', '#plain', '#name'].every((from) => S.comboboxShape(from) === null);
 
+  // Found on the real shop page: a header search field with no list of its own
+  // paired with an unrelated util-bar list four sections away, reported as
+  // `combobox: body`. A wrapper that large is not a component, it is the page.
+  const wide = new JSDOM(`<!doctype html><body>
+    <div class="util-bar"><ul class="util-bar__list--start"><li><a href="/a">Track</a></li>
+      <li><a href="/b">Returns</a></li></ul></div>
+    <header><input id="searchInput" type="search"></header></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  wide.window.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  wide.window.eval(intelSrc);
+  cbNoFalse = cbNoFalse &&
+    wide.window.__u1SelectorIntel.comboboxShape('#searchInput') === null;
+
   cbWired = /row\.type === 'combobox'/.test(panelSrc) &&
             /if \(cbShape\) row\.sel = cbShape\.combobox;/.test(panelSrc) &&
             /out\.primary = cbShape\.combobox;/.test(panelSrc);
