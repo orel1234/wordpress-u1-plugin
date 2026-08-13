@@ -1,0 +1,9 @@
+{
+  "name": "step-plain",
+  "version": "1.0.0",
+  "private": true,
+  "description": "step-shoe-store an exact mirror of the live site with NO accessibility work on it — the copy to work on",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
