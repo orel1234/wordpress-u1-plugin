@@ -1774,6 +1774,15 @@ function mappingToCode(m) {
     return `/* Accessible tab strip — uses the engine included above. */\n` +
            `window.__u1InstallTabsFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
+  if (m.custom === 'staticFix') {
+    // The rule name and its options only. The correctors themselves ship in the
+    // patch's `statics` region — repeating the code per mapping would put the
+    // same forty lines in the bundle once per rule.
+    const opts = Object.assign({}, m.config || {});
+    delete opts.selectors;
+    return `window.__u1Statics = window.__u1Statics || {};\n` +
+           `window.__u1Statics[${JSON.stringify(m.primary)}] = ${formatJsObject(opts)};`;
+  }
   if (m.custom === 'ariaLabel') {
     return buildAriaLabelCode(m.primary, sel.middleText || (m.config && m.config.middleText) || '', sel.headingSelector || (m.config && m.config.headingSelector) || '');
   }
@@ -1813,6 +1822,36 @@ function genMappingId() {
   return 'm-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+/**
+ * What survives a pull: the server's rows, plus the local ones it has never
+ * seen.
+ *
+ * The server is the truth about a row it has SEEN. It knows nothing at all
+ * about a row whose push failed, and replacing the local copy wholesale treats
+ * those two states as one thing. That is what deleted sixteen mappings: every
+ * push had been rejected with 413, so the server held eight of twenty four, and
+ * the next pull made eight the answer.
+ *
+ * `everPushed` is the discriminator. A row a colleague deleted was acknowledged
+ * once, so it is in that set, so it is NOT kept — the tombstone still wins,
+ * which is the behaviour the wholesale replace existed to protect.
+ *
+ * Pure on purpose: this is the one decision in the sync that can destroy work,
+ * and it should be answerable without a server, a browser or a login.
+ */
+function reconcilePulled(serverRows, localRows, everPushed) {
+  const server = Array.isArray(serverRows) ? serverRows : [];
+  const local = Array.isArray(localRows) ? localRows : [];
+  const seen = new Set(everPushed || []);
+  const onServer = new Set(server.map((m) => mappingKey(m)));
+  const stranded = local.filter((m) => {
+    if (!m || typeof m !== 'object') return false;
+    const k = mappingKey(m);
+    return !onServer.has(k) && !seen.has(k);
+  });
+  return { merged: stranded.length ? server.concat(stranded) : server, stranded };
+}
+
 function mappingKey(m) {
   if (typeof m === 'string') return m;
   if (m && m.type && m.primary) {
@@ -1840,6 +1879,41 @@ function mappingKey(m) {
 /** Mappings the SERVER has, as last read, so a delete can be told from a never-saved. */
 let serverMappingKeys = new Set();
 
+/**
+ * Which mapping keys the server has ever acknowledged, for this site.
+ *
+ * This is the difference between "a colleague deleted it" and "it never got
+ * there", and without it the two are indistinguishable — which is how twenty
+ * four mappings became eight.
+ *
+ * pullSiteFromServer REPLACES the local copy with the server's, deliberately:
+ * merging would resurrect on this machine whatever somebody else deleted on
+ * theirs. That is right for a row the server has seen. It is destruction for a
+ * row whose push failed — and every push was failing, with 413, because the
+ * batch budget was four times the server's body limit. So the local twenty four
+ * were replaced by the eight that happened to fit.
+ *
+ * Private (`__`): it is a fact about this machine's sync state, not about the
+ * client's site, and it must never travel in an export.
+ */
+const pushedKeysStoreKey = (host) =>
+  (U1Store.PRIVATE_PREFIX || '__') + 'pushed_' + (host || currentHostname);
+
+async function loadPushedKeys(host) {
+  const k = pushedKeysStoreKey(host);
+  try { return new Set((await U1Store.get([k]))[k] || []); } catch { return new Set(); }
+}
+
+async function rememberPushedKeys(host, keys) {
+  if (!keys || !keys.length) return;
+  const k = pushedKeysStoreKey(host);
+  const have = await loadPushedKeys(host);
+  for (const key of keys) have.add(key);
+  // setLocalOnly: this is bookkeeping about the sync, and pushing it would be
+  // both meaningless to the server and an infinite regress.
+  try { await U1Store.setLocalOnly({ [k]: [...have] }); } catch {}
+}
+
 U1Store.onSiteWrite = async (keys, items) => {
   // Not signed in, or on a site nobody is assigned to: the panel still works
   // locally and this is simply not its business.
@@ -1864,6 +1938,10 @@ U1Store.onSiteWrite = async (keys, items) => {
       }
       const out = await U1Sync.pushMappings(currentHostname, rows);
       serverMappingKeys = live;
+      // Only what the server actually confirmed. A batch that 413'd contributes
+      // nothing here, which is exactly what makes those rows survive the next
+      // pull instead of being replaced by a server copy that never got them.
+      await rememberPushedKeys(currentHostname, out.keys || []);
       if (out.conflicts && out.conflicts.length) reportConflicts(out.conflicts);
       continue;
     }
@@ -1937,6 +2015,7 @@ async function pullSiteFromServer() {
         await U1Sync.pushMappings(currentHostname,
           mine.map((m) => ({ key: mappingKey(m), payload: m })));
         serverMappingKeys = new Set(mine.map((m) => mappingKey(m)));
+        await rememberPushedKeys(currentHostname, [...serverMappingKeys]);
         // The sweep and the settings this machine holds go with them, or the
         // next open would find the server "not virgin" and pull them away.
         await pushLocalSettings();
@@ -1957,10 +2036,26 @@ async function pullSiteFromServer() {
 
   serverMappingKeys = new Set(data.mappings.map((m) => mappingKey(m)));
 
+  // ── Keep what never reached the server ───────────────────────────────────
+  //
+  // The server is the truth about rows it has SEEN. It knows nothing about a
+  // row whose push failed, and replacing the local copy wholesale treats those
+  // two states as one — which is how twenty four mappings became eight after
+  // every push had been rejected with 413.
+  //
+  // A row is kept only when the server has never acknowledged it. One a
+  // colleague deleted WAS acknowledged once, so it is absent from the pushed
+  // set's complement and still disappears — the tombstone semantics `virgin`
+  // was protecting are untouched.
+  const localNow = (await U1Store.get([storageKey('mappings', currentHostname)]))
+    [storageKey('mappings', currentHostname)] || [];
+  const everPushed = await loadPushedKeys(currentHostname);
+  const { merged, stranded } = reconcilePulled(data.mappings, localNow, everPushed);
+
   // setLocalOnly, not set: going through set() would fire onSiteWrite and push
   // what we just pulled straight back at the server, stamping this machine's
   // name on a colleague's work and racing anything they saved in between.
-  const writes = { [storageKey('mappings', currentHostname)]: data.mappings };
+  const writes = { [storageKey('mappings', currentHostname)]: merged };
   if (data.settings) {
     if (data.settings.config)    writes[storageKey('config', currentHostname)] = data.settings.config;
     if (data.settings.skipLinks) writes[storageKey('skipLinks', currentHostname)] = data.settings.skipLinks;
@@ -1970,7 +2065,27 @@ async function pullSiteFromServer() {
   await U1Store.setLocalOnly(writes);
 
   if (data.sweep) await adoptServerSweep(data.sweep);
-  return { ok: true, mappings: data.mappings.length, sweep: !!data.sweep };
+
+  // And try again for the stranded ones, now, rather than leaving them to the
+  // next time something happens to save. They are the whole reason this branch
+  // exists; a copy kept and never sent is only half a rescue.
+  if (stranded.length) {
+    try {
+      const out = await U1Sync.pushMappings(currentHostname,
+        merged.map((m) => ({ key: mappingKey(m), payload: m })));
+      await rememberPushedKeys(currentHostname, out.keys || []);
+      serverMappingKeys = new Set(merged.map((m) => mappingKey(m)));
+    } catch (err) {
+      // Still only here. Said out loud, because "kept locally" reads as fine
+      // and it is not: this machine is the only copy.
+      showNotice(document.getElementById('mappingsStatus'),
+        `${stranded.length} mapping${stranded.length === 1 ? '' : 's'} on this computer ` +
+        `never reached the server and still have not (${err.message}). They are safe here ` +
+        `and they export, but nobody else can see them.`, 'warn', 16000);
+    }
+  }
+
+  return { ok: true, mappings: merged.length, sweep: !!data.sweep, stranded: stranded.length };
 }
 
 /**
@@ -5360,6 +5475,12 @@ function checkAiSelector(value, context) {
   const known = new Set((context.candidates || []).map(c => c.selector).filter(Boolean));
   const TOKEN = /#[\w-]+|\.[\w-]+|\[[^\]]+\]|[a-z][\w-]*/gi;
   const knownTokens = new Set();
+  // The names the page actually carries, straight off the elements. Without
+  // these the set is only what robustSelector chose to EMIT — and it prefers
+  // #id, so for <div class="tab-bar" id="faqTabs"> the class `.tab-bar` was in
+  // no produced selector and was reported as invented while sitting on the
+  // page. That is the tool refusing to map something it can see.
+  for (const t of (context.tokens || [])) knownTokens.add(t);
   for (const s of known) for (const t of (s.match(TOKEN) || [])) knownTokens.add(t);
 
   const invented = [];
@@ -5368,10 +5489,55 @@ function checkAiSelector(value, context) {
     for (const t of (branch.match(TOKEN) || [])) if (!knownTokens.has(t)) invented.push(t);
   }
   if (invented.length) {
-    const list = [...new Set(invented)].join(', ');
-    return { ok: false, why: `invented — ${list} is on no element we found on the page` };
+    const list = [...new Set(invented)];
+    // The set that proves it wrong is the set that can put it right, and
+    // "handle this one by hand" is the tool declining to use what it holds.
+    const near = list.map((t) => nearestToken(t, knownTokens)).filter(Boolean);
+    return {
+      ok: false,
+      why: `invented — ${list.join(', ')} is on no element we found on the page` +
+           (near.length ? ` — did you mean ${[...new Set(near)].join(', ')}?` : ''),
+      suggest: [...new Set(near)],
+    };
   }
   return { ok: true, value: norm };
+}
+
+/**
+ * The known token closest to one that is not known, or '' when nothing is near.
+ *
+ * Ordinary edit distance, capped: `.tab-bar` against a page holding
+ * `.tab-bar__btn` should offer it, while `.completely-different` should offer
+ * nothing rather than the least-bad of a hundred unrelated names.
+ */
+function nearestToken(bad, knownTokens) {
+  const a = String(bad || '');
+  if (!a) return '';
+  let best = '', bestD = Infinity;
+  for (const t of knownTokens) {
+    // Only compare like with like — a class is never the answer for an id.
+    if (t[0] !== a[0]) continue;
+    const d = editDistance(a, t);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  // Half the length, so short names need a close match and long ones may differ
+  // by a suffix — which is what BEM does.
+  return bestD <= Math.max(2, Math.floor(a.length / 2)) ? best : '';
+}
+
+function editDistance(a, b) {
+  if (a === b) return 0;
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let last = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, last + (a[i - 1] === b[j - 1] ? 0 : 1));
+      last = tmp;
+    }
+  }
+  return prev[b.length];
 }
 
 // The dialog is only ever about the key, so the row is always there and this
@@ -5542,7 +5708,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     if (!part || part.err) { showNotice($aiStatus, part?.err || 'No answer from the model.', 'error', 8000); return; }
 
     aiCost += U1AI.estimateCost(part.usage) || 0;
-    const mergedContext = { candidates: collected.candidates };
+    const mergedContext = { candidates: collected.candidates, tokens: collected.tokens || [] };
     let found = part.components || [];
 
     // You pointed at ONE element. Handle that element.
@@ -5718,6 +5884,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     return {
       shot: null, thumb, candidates, skipped, dismissed: dismissedOut, truncated: !!context.truncated,
       headings: context.headings || [], title: context.title || '', url: context.url || '',
+      tokens: context.tokens || [],
     };
   }
 
@@ -5763,6 +5930,11 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     // into a crop rectangle on `shot`, which is a scaled capture. Without the
     // width it was taken at, the two coordinate systems cannot be related.
     viewport: context.viewport || null,
+    // Every id, class and tag actually on the page. checkAiSelector needs them
+    // to tell a real name from an invented one, and the selector fields need
+    // them to offer anything at all — dropping them here is why `.tab-bar` was
+    // refused while sitting on the page.
+    tokens: context.tokens || [],
   };
 }
 
@@ -6551,6 +6723,34 @@ async function prepareOne(row, tab) {
     }
     if (lbShape) { row.sel = lbShape.listbox; row.trigger = lbShape.trigger; }
   }
+
+  // An accordion is rooted on its HEADER BUTTON — headerSelector is the PRIMARY
+  // — and contentSelector is required. Detection points at the container,
+  // because that is the element carrying the `accordion` class, so the mapping
+  // came out as fix.accordion('#faqPanel', { headerSelector: '#faqPanel' }):
+  // the container in the button's place, and the required content missing.
+  // That is why mapping one did nothing at all.
+  //
+  // Measured, not asked. The heading level and the collapse behaviour are facts
+  // about the markup — the wrapping <h3>, and whether one panel is open or
+  // several — and a model that guesses them is guessing at something readable.
+  let accShape = null;
+  if (row.type === 'accordion') {
+    accShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.accordionShape(s), [row.sel]);
+    if (accShape) row.sel = accShape.headerSelector;
+  }
+
+  // An autocomplete, measured the same way. Nothing detects one — no class
+  // pattern matches it, no role path finds it on a site that never wrote the
+  // roles, and the probe can only ever answer tabs/menu/accordion/dialog — so
+  // all four of its selectors had to be typed by hand. It has a SHAPE though:
+  // a text input with a list of options beside it under a common parent, and
+  // that is true whether or not the page says so.
+  let cbShape = null;
+  if (row.type === 'combobox') {
+    cbShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.comboboxShape(s), [row.sel]);
+    if (cbShape) row.sel = cbShape.combobox;
+  }
   const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
   if (!markup || markup.error || markup.notFound) {
     // Almost always the same cause: the scan was taken on one section and the
@@ -6617,6 +6817,38 @@ async function prepareOne(row, tab) {
       { key: 'options', value: lbShape.options,
         why: 'The list\'s own items.' });
     out.primary = lbShape.listbox;
+  }
+
+  // Same rule for the accordion, and for the same reason: which element is the
+  // header, which region it opens, and what level the heading is, are all
+  // readable off the page. The model's answer here was a container in the
+  // header's place and no content at all.
+  if (accShape) {
+    out.fields = (out.fields || []).filter(
+      (f) => f.key !== 'contentSelector' && f.key !== 'headingLevel' && f.key !== 'collapsesOthers');
+    out.fields.unshift(
+      { key: 'contentSelector', value: accShape.contentSelector,
+        why: 'The region each header opens — read from what the header controls.' },
+      { key: 'headingLevel', value: accShape.headingLevel,
+        why: 'From the heading wrapping the header button, not guessed.' },
+      { key: 'collapsesOthers', value: accShape.collapsesOthers,
+        why: accShape.collapsesOthers
+          ? 'Only one panel is open on the page, so opening one closes the rest.'
+          : 'Several panels can be open at once.' });
+    out.primary = accShape.headerSelector;
+  }
+
+  if (cbShape) {
+    out.fields = (out.fields || []).filter(
+      (f) => !['textbox', 'listbox', 'options', 'label'].includes(f.key));
+    out.fields.unshift(
+      { key: 'textbox', value: cbShape.textbox, why: 'The field you type into.' },
+      { key: 'listbox', value: cbShape.listbox, why: 'The list the suggestions appear in.' },
+      { key: 'options', value: cbShape.options, why: 'The suggestions themselves — what a person picks.' });
+    if (cbShape.label) {
+      out.fields.push({ key: 'label', value: cbShape.label, why: 'The field\'s own label.' });
+    }
+    out.primary = cbShape.combobox;
   }
 
   const idx = aiMapped.length;
@@ -9431,6 +9663,11 @@ function fillAiMapCard(idx, row, out) {
        <button class="btn-ghost btn-xs sel-test" title="Test selector on page">🔍</button>
      </div>`;
   renderSubSelectorInputs(row.type, form, { append: true });
+  // Every selector field on this card gets the page's own names to choose from.
+  // Typing a selector blind is where "invented — .tab-bar is on no element" came
+  // from, and it is the whole of the work for a combobox, whose four
+  // sub-selectors had no source but the keyboard.
+  attachSelectorSuggestions(form, (aiFound && aiFound.context) || null);
 
   const byKey = {};
   for (const f of (out.fields || [])) byKey[f.key] = f;
@@ -9458,6 +9695,46 @@ function fillAiMapCard(idx, row, out) {
   }
 
   refreshAiCard(idx);
+}
+
+/**
+ * Offer the page's real element names on every selector input in a form.
+ *
+ * A <datalist> rather than a <select>: a selector is not always one element's
+ * name — `.a,.b` and `#x>li` are ordinary answers — so the field has to stay
+ * free text with the real names offered beside it, not replaced by them.
+ *
+ * The names come from the collector, which already reports every id, class and
+ * tag it saw (`tokens`), plus the full selector it built for each candidate.
+ * Nothing new is fetched.
+ */
+function attachSelectorSuggestions(form, ctx) {
+  if (!form) return;
+  const names = new Set();
+  for (const t of (ctx && ctx.tokens) || []) names.add(t);
+  for (const c of (ctx && ctx.candidates) || []) if (c && c.selector) names.add(c.selector);
+  if (!names.size) return;
+
+  // One list per form, shared by its fields — a datalist per input would be the
+  // same few thousand options repeated for every row on the card.
+  const id = 'seldl-' + (form.id || Math.random().toString(36).slice(2, 8));
+  let dl = document.getElementById(id);
+  if (!dl) {
+    dl = document.createElement('datalist');
+    dl.id = id;
+    form.appendChild(dl);
+  }
+  // Shortest first: `.suggestion` before `#box>ul.list>li.suggestion`, because
+  // the short one is nearly always the one meant.
+  dl.innerHTML = [...names]
+    .sort((a, b) => a.length - b.length || a.localeCompare(b))
+    .slice(0, 1000)
+    .map((n) => `<option value="${escapeHtml(n)}"></option>`).join('');
+
+  form.querySelectorAll('input[type="text"][data-field]').forEach((inp) => {
+    inp.setAttribute('list', id);
+    inp.setAttribute('autocomplete', 'off');   // the browser's history is not the page
+  });
 }
 
 // Build the template from one card's inputs (the card-scoped twin of
@@ -10432,6 +10709,10 @@ async function scanPageStatic() {
         // opacity:0, not inside a display:none subtree (offsetParent null unless fixed).
         const visible = (el) => {
           if (!el || !el.getBoundingClientRect) return false;
+          // Deliberately taken out of reach — by us, or by the site. Reporting
+          // it would be the tool flagging its own fix, and `inert` is a
+          // statement that this subtree is not part of the page's interface.
+          try { if (el.closest('[inert]')) return false; } catch (e) {}
           const r = el.getBoundingClientRect();
           if (r.width < 1 || r.height < 1) return false;
           const s = getComputedStyle(el);
@@ -10640,12 +10921,65 @@ function renderScanFilters() {
     `<div class="scan-filter-row">${catChip('*', 'All categories', scanResults.length)}${cats.map(c => catChip(c, c, catCounts[c])).join('')}</div>`;
 }
 
+/**
+ * The scan rules a static fix can actually resolve, and what to call it.
+ *
+ * Deliberately short. A rule belongs here only when the answer is the same for
+ * every element it flags and needs nothing written by a person — otherwise
+ * "fix all forty" is forty wrong decisions taken at once, which is worse than
+ * forty right ones taken slowly.
+ *
+ * Everything absent stays read-only, and says why: `img-alt-missing` and
+ * `button-noname` need words nobody but you can write; `clickable-div` and the
+ * `*-nostate` rules are components, and mapping them as a component is the fix.
+ */
+const STATIC_FIXABLE = {
+  'tabindex-positive':   { does: 'Put every positive tabindex back to 0, so focus follows the page again.' },
+  'aria-ref-broken':     { does: 'Drop the aria-labelledby/describedby ids that point at nothing, so the element gets its own name back.' },
+  'input-placeholder':   { does: 'Promote each placeholder to a real label. The text is already written — nothing to author.' },
+  'table-noheaders':     { does: 'Turn the first row of each data table into <th scope="col">.' },
+  'zoom-disabled':       { does: 'Let the page be enlarged: remove user-scalable=no and raise maximum-scale.' },
+  'autoplay-audio':      { does: 'Remove the autostart and make sure there is a control. The media stays.' },
+  'lang-missing':        { does: 'Set the page language, so a screen reader reads it in the right voice.', needsLang: true },
+};
+
+/** Why a rule offers no bulk fix — shown instead of a button, never as silence. */
+const STATIC_WHY_NOT = {
+  'img-alt-missing': 'needs alt text only you can write',
+  'link-empty': 'needs the link\'s text', 'link-generic': 'needs better link text',
+  'button-noname': 'needs the button\'s name', 'input-nolabel': 'needs the field\'s label',
+  'iframe-notitle': 'needs a title for the frame', 'title-missing': 'needs a page title',
+  'group-nolabel': 'needs a name for the group',
+  'clickable-div': 'map it as a component instead — that is the fix',
+  'misleading-role': 'map it as a component instead — that is the fix',
+  'switch-nostate': 'map it as a switch', 'checkbox-nostate': 'map it as a checkbox',
+  'slider-novalue': 'map it as a slider', 'meter-novalue': 'map it as a meter',
+  'combobox-noexpanded': 'map it as an autocomplete', 'video-nocaptions': 'needs caption files',
+  'target-size-small': 'a CSS change — the exported bundle carries no stylesheet',
+  'dup-ids': 'renaming an id breaks whatever queries it',
+  'heading-skip': 'map the heading and give it the right level',
+  'h1-missing': 'decide which element is the page heading', 'h1-multiple': 'decide which one is the page heading',
+  'heading-empty': 'decide whether it is a heading at all',
+  'landmarks-missing': 'map the landmarks — Config does this',
+  'skip-link-missing': 'Config adds skip links',
+  'aria-hidden-focusable': 'use "must not be reachable" on it, or un-hide it',
+};
+
 function renderScanResults() {
   const wrap = document.getElementById('scanResults');
   if (!wrap) return;
   const list = scanFiltered();
   if (!list.length) { wrap.innerHTML = '<div class="empty-state">No issues match this filter. 🎉</div>'; return; }
-  wrap.innerHTML = list.map(r => {
+
+  // Grouped by RULE. Forty positive tabindex values are one decision taken
+  // forty times, and the report used to present them as forty — each with its
+  // own "why & how to fix" fold saying the same sentence.
+  const groups = new Map();
+  for (const r of list) {
+    if (!groups.has(r.ruleId)) groups.set(r.ruleId, []);
+    groups.get(r.ruleId).push(r);
+  }
+  const item = (r) => {
     const gi = scanResults.indexOf(r);
     return `
     <div class="scan-item sev-${(r.severity || '').toLowerCase()}" data-scan-idx="${gi}">
@@ -10665,8 +10999,170 @@ function renderScanResults() {
         </div>
       </details>
     </div>`;
+  };
+
+  wrap.innerHTML = [...groups.entries()].map(([ruleId, rows]) => {
+    const r0 = rows[0];
+    const fixable = STATIC_FIXABLE[ruleId];
+    const why = STATIC_WHY_NOT[ruleId];
+    const action = fixable
+      ? `<div class="scan-group-fix">
+           ${fixable.needsLang ? `<select class="scan-lang" aria-label="Page language">
+              ${['he', 'en', 'ar', 'ru', 'fr', 'es'].map((c) =>
+                `<option value="${c}"${c === (document.documentElement.lang || 'he') ? ' selected' : ''}>${c}</option>`).join('')}
+             </select>` : ''}
+           <button class="btn-primary btn-xs scan-fix-all" data-fix-rule="${escapeHtml(ruleId)}">
+             Fix all ${rows.length}
+           </button>
+           <span class="scan-group-does">${escapeHtml(fixable.does)}</span>
+         </div>`
+      : why
+        ? `<div class="scan-group-fix is-manual"><span class="scan-group-does">No bulk fix — ${escapeHtml(why)}.</span></div>`
+        : '';
+    return `
+      <details class="scan-group" data-rule="${escapeHtml(ruleId)}" open>
+        <summary>
+          <span class="scan-sev-badge sev-${(r0.severity || '').toLowerCase()}">${escapeHtml(r0.severity || '')}</span>
+          <span class="scan-issue-title">${escapeHtml(r0.issue || ruleId)}</span>
+          <span class="scan-group-n">${rows.length}</span>
+          ${r0.wcag ? `<span class="wcag-chip">WCAG ${escapeHtml(r0.wcag)}</span>` : ''}
+        </summary>
+        ${action}
+        <div class="scan-why-body">
+          <div class="scan-why-line"><strong>Why:</strong> ${escapeHtml(r0.why || '')}</div>
+          <div class="scan-why-line"><strong>Fix:</strong> ${escapeHtml(r0.fix || '')}</div>
+        </div>
+        ${rows.map(item).join('')}
+      </details>`;
   }).join('');
 }
+
+/**
+ * One press, one rule, every element it flags.
+ *
+ * The fix is stored as an ordinary mapping (`custom: 'staticFix'`), so it gets
+ * storage, sync, export, the drawer, the monitoring hook and the report for
+ * nothing — the same route ariaLabel and keyboardClickable already take. What
+ * it emits is a DECLARATION; the corrector that reads it lives in the patch's
+ * `statics` region and covers every match, including elements the page adds
+ * later. That is the difference between fixing forty and fixing forty-and-
+ * whatever-comes-next.
+ */
+document.getElementById('scanResults')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.scan-fix-all');
+  if (!btn) return;
+  e.preventDefault();
+  const rule = btn.dataset.fixRule;
+  const spec = STATIC_FIXABLE[rule];
+  const status = document.getElementById('scanStatus');
+  if (!spec) return;
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — existing work still applies and exports, but new fixes are paused.', 'error', 6000);
+    return;
+  }
+
+  const config = {};
+  if (spec.needsLang) {
+    const sel = btn.closest('.scan-group-fix')?.querySelector('.scan-lang');
+    config.lang = (sel && sel.value) || 'en';
+  }
+
+  const label = btn.textContent.trim();
+  btn.disabled = true;
+  btn.textContent = 'Applying…';
+  try {
+    // primary IS the rule name: one mapping per rule, so pressing twice
+    // corrects the same entry rather than stacking duplicates.
+    const tpl = { type: null, custom: 'staticFix', primary: rule, config, needsWork: true };
+    const saved = await saveMappingEntry(tpl, { refreshUi: false });
+    if (saved && saved.cancelled) { showNotice(status, 'Not saved.', 'warn', 4000); return; }
+    await applyStaticFixesToPage();
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(status,
+      `${rule} — fixed for every element on the page, and for any the page adds later. ` +
+      `It is in Mappings and it exports.`, 'success', 8000);
+    // Re-scan so the count moves. A fix you cannot see land is a fix you will
+    // press again.
+    document.getElementById('scanBtn')?.click();
+  } catch (err) {
+    showNotice(status, 'Could not apply it: ' + err.message, 'error', 8000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
+
+/**
+ * Run the saved static fixes against the page in front, now.
+ *
+ * The exported bundle gets them through the patch; the panel has to apply them
+ * itself so that pressing "Fix all" changes the page you are looking at rather
+ * than only a file you have not pasted yet.
+ */
+async function applyStaticFixesToPage() {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return;
+  const key = storageKey('mappings', currentHostname);
+  const list = (await U1Store.get([key]))[key] || [];
+  const on = {};
+  for (const m of list) {
+    if (m && m.custom === 'staticFix' && m.primary) on[m.primary] = m.config || {};
+  }
+  if (!Object.keys(on).length) return;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['u1-patch.js'] });
+  } catch {}
+  await inPage(tab.id, (decl) => {
+    window.__u1Statics = decl;
+    // The correctors are registered; this is what makes them run now rather
+    // than at the next mutation.
+    if (window.__u1Patch && window.__u1Patch.schedule) window.__u1Patch.schedule();
+  }, [on]);
+}
+
+// "This must not be reachable." Both halves, always — see the statics region.
+document.getElementById('excludeAdd')?.addEventListener('click', async () => {
+  const input = document.getElementById('excludeSel');
+  const status = document.getElementById('excludeStatus');
+  const sel = (input?.value || '').trim();
+  if (!sel) { showNotice(status, 'Type a selector first.', 'warn', 4000); return; }
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — new work is paused.', 'error', 6000);
+    return;
+  }
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot reach this page.', 'error', 4000); return; }
+  // Refuse a selector that matches nothing, here, rather than saving a rule
+  // that can only ever do nothing.
+  const n = await inPage(tab.id, (x) => {
+    try { return document.querySelectorAll(x).length; } catch (e) { return -1; }
+  }, [sel]);
+  if (n === -1) { showNotice(status, 'That is not valid CSS.', 'error', 6000); return; }
+  if (!n) { showNotice(status, 'Nothing on this page matches that selector.', 'error', 6000); return; }
+
+  try {
+    await saveMappingEntry(
+      { type: null, custom: 'staticFix', primary: 'exclude', config: { selector: sel }, needsWork: true },
+      { refreshUi: false });
+    await applyStaticFixesToPage();
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(status,
+      `${n} element${n === 1 ? '' : 's'} taken out of the tab order and out of the screen reader. ` +
+      `The scan will stop reporting anything inside it.`, 'success', 8000);
+  } catch (err) {
+    showNotice(status, 'Could not save it: ' + err.message, 'error', 8000);
+  }
+});
+
+document.getElementById('excludeTest')?.addEventListener('click', async () => {
+  const sel = (document.getElementById('excludeSel')?.value || '').trim();
+  if (!sel) return;
+  const tab = await getTab();
+  if (!isInjectable(tab)) return;
+  await inPage(tab.id, (x) => window.__u1SelectorIntel.highlightSelector(x), [sel]).catch(() => {});
+});
 
 document.getElementById('scanBtn')?.addEventListener('click', async () => {
   const status = document.getElementById('scanStatus');
@@ -12215,6 +12711,9 @@ async function buildDeployableCode(list, hostname) {
     // Must sit in an engine-carrying bucket, not with the plain customs: its
     // call is meaningless without the engine source shipped alongside it.
     else if (m.custom === 'keyboardTabs') tabStrips.push(m);
+    // Declarations, not calls: a static fix switches on a corrector that lives
+    // in the patch, so it has to be emitted BEFORE the patch runs.
+    else if (m.custom === 'staticFix') { const c = mappingToCode(m); if (c) statics.push(header(m) + '\n' + c); }
     else if (m.custom) { const c = mappingToCode(m); if (c) customs.push(header(m) + '\n' + c); } // regenerated, never stored m.code
     else { const c = mappingToCode(m); if (c) fixes.push(header(m) + '\n' + c); }
   }
@@ -12226,11 +12725,20 @@ async function buildDeployableCode(list, hostname) {
     ` * Paste AFTER the U1 library <script> tag.\n` +
     ` * ============================================================ */`);
 
+  // Which static rules were switched on, ahead of everything. The correctors
+  // that read this ship inside the patch, and they run the moment it loads —
+  // so a declaration after it would arrive one pass too late.
+  if (statics.length) {
+    parts.push(`/* ---- 0. Static corrections — which ones are on ---- */\n` + statics.join('\n\n'));
+  }
+
   // The patch must be in place BEFORE the u1.fix.* calls below it: part of what
   // it does is wrap those functions so they apply to every match instead of the
   // first, and a wrapper installed afterwards would be too late.
-  if (fixes.length) {
+  if (fixes.length || statics.length) {
     const mappedTypes = [...new Set(sorted.filter((m) => m && m.type && !m.custom).map((m) => m.type))];
+    // The statics region carries every corrector the table above can switch on.
+    if (statics.length) mappedTypes.push('statics');
     const patch = await getPatchSource(mappedTypes);
     if (patch) {
       parts.push(
@@ -12245,8 +12753,10 @@ async function buildDeployableCode(list, hostname) {
     // Wrapped in a named function and called, rather than run inline, so the
     // resize hook further down can run exactly the same calls again. See there
     // for why that is needed at all.
-    parts.push(`/* ---- 2. Component mappings ---- */\n` +
-      `function __u1ApplyMappings() {\n` + fixes.join('\n\n') + `\n}\n__u1ApplyMappings();`);
+    if (fixes.length) {
+      parts.push(`/* ---- 2. Component mappings ---- */\n` +
+        `function __u1ApplyMappings() {\n` + fixes.join('\n\n') + `\n}\n__u1ApplyMappings();`);
+    }
   }
   if (customs.length) {
     parts.push(`/* ---- 3. Accessible names ---- */\n` +

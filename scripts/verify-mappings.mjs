@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import vm from 'node:vm';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
@@ -312,9 +313,12 @@ const notAsked = !((oursRes.details || [])[0] || {}).roleClash;
 
 // And the exported file must make the same choice, or Apply and the client's
 // own run disagree about what the component says it is.
-const codeSrc = panelSrc.slice(panelSrc.indexOf('function mappingToCode(m)'));
-const exportsStrip = /overwriteRole/.test(codeSrc.slice(0, 2000)) &&
-                     /removeAttribute\('role'\)/.test(codeSrc.slice(0, 2000));
+// The FUNCTION, not its first two thousand characters. A new branch added at
+// the top of mappingToCode pushed `overwriteRole` past the old window and
+// failed a check about behaviour that had not changed at all.
+const codeSrc = /function mappingToCode\(m\)[\s\S]*?\n\}/.exec(panelSrc)[0];
+const exportsStrip = /overwriteRole/.test(codeSrc) &&
+                     /removeAttribute\('role'\)/.test(codeSrc);
 
 // Every apply path shows its result through describeApply, so the clash has to
 // be reported there — once — rather than in whichever caller remembered to.
@@ -572,6 +576,133 @@ const leanOk =
 const bulk = Array.from({ length: 60 }, (_, i) => ({ ...sample, mark: i + 1 }));
 const shrank = JSON.stringify(compactList(bulk)).length < JSON.stringify(bulk, null, 1).length * 0.5;
 
+// ── A real class on the page must not be called invented ────────────────────
+//
+// checkAiSelector built its "known" set from the selectors robustSelector had
+// EMITTED, and that prefers #id — so for <div class="tab-bar" id="faqTabs"> the
+// class `.tab-bar` appeared in no produced selector and was refused as
+// invented, with "handle this one by hand", while sitting on the page.
+let selReal = false, selNear = false, selNoGuess = false, selTokens = false;
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="tab-bar" id="faqTabs"><button class="tab-bar__btn">a</button></div></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  const w = dom.window;
+  w.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  w.eval(INTEL);
+  const ctxPage = w.__u1SelectorIntel.collectCandidates(60, null);
+  selTokens = (ctxPage.tokens || []).includes('.tab-bar');
+
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const lift = (n) => new RegExp(`\\nfunction ${n}\\([\\s\\S]*?\\n\\}`).exec(panelSrc)[0];
+  const c = {}; c.globalThis = c; c.__u1SelectorIntel = w.__u1SelectorIntel;
+  vm.createContext(c);
+  vm.runInContext(lift('checkAiSelector') + lift('nearestToken') + lift('editDistance'), c);
+  const check = vm.runInContext('checkAiSelector', c);
+
+  selReal = check('.tab-bar', ctxPage).ok;
+  const typo = check('.tab-barr', ctxPage);
+  selNear = !typo.ok && (typo.suggest || []).includes('.tab-bar');
+  selNoGuess = !check('.totally-made-up', ctxPage).ok &&
+               !(check('.totally-made-up', ctxPage).suggest || []).length;
+}
+
+// ── The accordion: detection has to hand the mapping the right inputs ───────
+//
+// The CASES entry above proves the mapping machinery has always handled an
+// accordion correctly WHEN GIVEN the header as primary and a contentSelector.
+// It never got them. Detection points at the container — the element carrying
+// the `accordion` class — and contentSelector is required, so what was built
+// was fix.accordion('#faqPanel', { headerSelector: '#faqPanel' }) with no
+// content. Nothing about that could work.
+let accHeader = false, accContent = false, accLevel = false, accFromTrigger = false, accWired = false;
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="accordion" id="faqPanel">
+      <div class="accordion__item">
+        <h3><button class="accordion__trigger" data-controls="faqBody-0">Return window?</button></h3>
+        <div class="accordion__panel" id="faqBody-0">30 days.</div>
+      </div>
+      <div class="accordion__item">
+        <h3><button class="accordion__trigger" data-controls="faqBody-1">Cost?</button></h3>
+        <div class="accordion__panel" id="faqBody-1" hidden>No.</div>
+      </div>
+    </div></body>`, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  const w = dom.window;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    return this.hasAttribute('hidden')
+      ? { width: 0, height: 0, top: 0, left: 0, bottom: 0, right: 0 }
+      : { width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 };
+  };
+  Object.defineProperty(w.HTMLElement.prototype, 'offsetHeight',
+    { get() { return this.hasAttribute('hidden') ? 0 : 40; }, configurable: true });
+  w.eval(INTEL);
+
+  const shape = w.__u1SelectorIntel.accordionShape('#faqPanel');
+  // The header, not the container. This is the whole bug.
+  accHeader = !!shape && shape.headerSelector === '.accordion__trigger';
+  // Required by the schema, supplied by nobody until now.
+  accContent = !!shape && shape.contentSelector === '.accordion__panel';
+  // From the wrapping <h3>, not a default.
+  accLevel = !!shape && shape.headingLevel === '3';
+  // A person or a model may point at either end of it.
+  const fromTrigger = w.__u1SelectorIntel.accordionShape('.accordion__trigger');
+  accFromTrigger = !!fromTrigger && fromTrigger.headerSelector === shape.headerSelector;
+
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  accWired = /row\.type === 'accordion'/.test(panelSrc) &&
+             /if \(accShape\) row\.sel = accShape\.headerSelector;/.test(panelSrc) &&
+             /out\.primary = accShape\.headerSelector;/.test(panelSrc);
+}
+
+// ── The page's names have to survive the whole chain ────────────────────────
+//
+// collectCandidates reports them, collectRegion has to pass them on, and the
+// merged context has to keep them — a break anywhere and checkAiSelector is
+// back to judging by the selectors it emitted, which is what refused `.tab-bar`.
+let chainOk = false, cbShapeOk = false, cbNoFalse = false, cbWired = false, dlOk = false;
+{
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const intelSrc = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  chainOk =
+    /tokens: \[\.\.\.pageTokens\]/.test(intelSrc) &&
+    (panelSrc.match(/tokens: context\.tokens \|\| \[\]/g) || []).length >= 2 &&
+    /const mergedContext = \{ candidates: collected\.candidates, tokens: collected\.tokens \|\| \[\] \};/.test(panelSrc) &&
+    /for \(const t of \(context\.tokens \|\| \[\]\)\) knownTokens\.add\(t\);/.test(panelSrc);
+
+  // An autocomplete has no class pattern, no role path and no probe verdict —
+  // it is found by SHAPE: a text input with a list of options beside it.
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="search-box" id="siteSearch">
+      <input id="q" type="text">
+      <ul class="search-suggestions"><li class="suggestion">A</li><li class="suggestion">B</li></ul>
+    </div>
+    <footer><a id="faraway" href="/x">Unrelated</a></footer>
+    <form id="plain"><input id="name" type="text"><button>Go</button></form></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  const w = dom.window;
+  w.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  w.eval(intelSrc);
+  const S = w.__u1SelectorIntel;
+  const want = { combobox: '#siteSearch', textbox: '#q', listbox: '.search-suggestions', options: '.suggestion' };
+  const same = (r) => !!r && Object.keys(want).every((k) => r[k] === want[k]);
+  cbShapeOk = ['#siteSearch', '#q', '.search-suggestions'].every((from) => same(S.comboboxShape(from)));
+  // Climbing six levels from anything must not report an autocomplete that is
+  // somewhere else on the page.
+  cbNoFalse = ['#faraway', '#plain', '#name'].every((from) => S.comboboxShape(from) === null);
+
+  cbWired = /row\.type === 'combobox'/.test(panelSrc) &&
+            /if \(cbShape\) row\.sel = cbShape\.combobox;/.test(panelSrc) &&
+            /out\.primary = cbShape\.combobox;/.test(panelSrc);
+  dlOk = /function attachSelectorSuggestions\(form, ctx\)/.test(panelSrc) &&
+         /inp\.setAttribute\('list', id\);/.test(panelSrc) &&
+         /attachSelectorSuggestions\(form, \(aiFound && aiFound\.context\) \|\| null\);/.test(panelSrc);
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -588,6 +719,34 @@ console.log(`  ${harmKept ? '✅' : '❌'} …and is NOT silently reverted — t
 if (!harmKept) failed++;
 console.log(`  ${overwritten ? '✅' : '❌'} "overwrite the site's role" actually removes it before u1.fix runs`);
 if (!overwritten) failed++;
+console.log(`  ${selTokens ? '✅' : '❌'} the collector reports the names on the page, not only the ones it emitted`);
+if (!selTokens) failed++;
+console.log(`  ${selReal ? '✅' : '❌'} a class that IS on the page is accepted (.tab-bar under an id'd element)`);
+if (!selReal) failed++;
+console.log(`  ${selNear ? '✅' : '❌'} …a typo is refused AND told the real one (.tab-barr → .tab-bar)`);
+if (!selNear) failed++;
+console.log(`  ${selNoGuess ? '✅' : '❌'} …and a name near nothing is refused without a made-up suggestion`);
+if (!selNoGuess) failed++;
+console.log(`  ${accHeader ? '✅' : '❌'} an accordion is rooted on its HEADER, not the container it was found by`);
+if (!accHeader) failed++;
+console.log(`  ${accContent ? '✅' : '❌'} …and the required contentSelector is read from what the header controls`);
+if (!accContent) failed++;
+console.log(`  ${accLevel ? '✅' : '❌'} …and headingLevel comes from the wrapping heading, not a default`);
+if (!accLevel) failed++;
+console.log(`  ${accFromTrigger ? '✅' : '❌'} …whether you point at the container or at a trigger`);
+if (!accFromTrigger) failed++;
+console.log(`  ${accWired ? '✅' : '❌'} …and the mapping path actually uses that shape`);
+if (!accWired) failed++;
+console.log(`  ${chainOk ? '✅' : '❌'} the page's own names survive collector → region → context`);
+if (!chainOk) failed++;
+console.log(`  ${cbShapeOk ? '✅' : '❌'} an autocomplete with no ARIA is found by shape, from any of its parts`);
+if (!cbShapeOk) failed++;
+console.log(`  ${cbNoFalse ? '✅' : '❌'} …and an unrelated element does not report the one elsewhere on the page`);
+if (!cbNoFalse) failed++;
+console.log(`  ${cbWired ? '✅' : '❌'} …and the mapping path uses it instead of asking for four typed selectors`);
+if (!cbWired) failed++;
+console.log(`  ${dlOk ? '✅' : '❌'} every selector field offers the page's real names to choose from`);
+if (!dlOk) failed++;
 console.log(`  ${kept ? '✅' : '❌'} …and a mapping without that answer leaves the site's role alone`);
 if (!kept) failed++;
 console.log(`  ${exportsStrip ? '✅' : '❌'} …and the exported file makes the same choice, not just Apply`);
@@ -643,6 +802,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 31;
+const total = results.length + 45;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

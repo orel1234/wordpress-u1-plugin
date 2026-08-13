@@ -445,5 +445,97 @@ console.log('\nlandmarks keep their schema shape');
     seen.some(p => p.main && !Array.isArray(p.main)));
 }
 
+// ── Static corrections: do they fix it, and only when asked? ────────────────
+console.log('\nstatic corrections');
+{
+  const run = (html, statics) => {
+    const dom = new JSDOM(`<!doctype html><head><meta name="viewport" content="width=device-width, user-scalable=no, maximum-scale=1"></head><body>${html}</body>`,
+      { runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth',
+      { get() { return this.hasAttribute('hidden') ? 0 : 40; }, configurable: true });
+    Object.defineProperty(w.HTMLElement.prototype, 'offsetHeight',
+      { get() { return this.hasAttribute('hidden') ? 0 : 40; }, configurable: true });
+    w.__u1Statics = statics;
+    w.eval(slice(['statics']));
+    // Correctors run on a schedule; force a pass rather than waiting on rAF.
+    if (w.__u1Patch) w.__u1Patch.correctors.forEach((f) => { try { f(); } catch (e) {} });
+    return w;
+  };
+
+  // tabindex-positive
+  let w = run(`<div id="a" tabindex="5">x</div><div id="b" tabindex="0">y</div><div id="c" tabindex="-1">z</div>`,
+    { 'tabindex-positive': {} });
+  check('a positive tabindex is put back to 0',
+    w.document.getElementById('a').getAttribute('tabindex') === '0');
+  check('…and 0 and -1 are left exactly as they were',
+    w.document.getElementById('b').getAttribute('tabindex') === '0' &&
+    w.document.getElementById('c').getAttribute('tabindex') === '-1');
+
+  // …and nothing happens when the rule was not switched on.
+  w = run(`<div id="a" tabindex="5">x</div>`, {});
+  check('nothing runs unless the fix was asked for',
+    w.document.getElementById('a').getAttribute('tabindex') === '5');
+
+  // aria-ref-broken
+  w = run(`<span id="real">Name</span><div id="d" aria-labelledby="real gone"></div>
+           <div id="e" aria-describedby="gone"></div>`, { 'aria-ref-broken': {} });
+  check('a dangling id is dropped and the live one kept',
+    w.document.getElementById('d').getAttribute('aria-labelledby') === 'real');
+  check('…and an attribute left pointing at nothing is removed outright',
+    !w.document.getElementById('e').hasAttribute('aria-describedby'));
+
+  // input-placeholder
+  w = run(`<input id="p" placeholder="Search shoes">
+           <label for="q">Q</label><input id="q" placeholder="ignored">`,
+    { 'input-placeholder': {} });
+  check('a placeholder becomes a real name when there is no other',
+    w.document.getElementById('p').getAttribute('aria-label') === 'Search shoes');
+  check('…and a field that already has a label is left alone',
+    !w.document.getElementById('q').hasAttribute('aria-label'));
+
+  // table-noheaders
+  w = run(`<table id="t"><tr><td>Size</td><td>EU</td></tr><tr><td>8</td><td>42</td></tr></table>
+           <table id="lay"><tr><td>only</td></tr></table>`, { 'table-noheaders': {} });
+  const ths = w.document.querySelectorAll('#t th');
+  check('a data table gets its first row as column headers',
+    ths.length === 2 && ths[0].getAttribute('scope') === 'col');
+  check('…and a one-cell layout table is not given headers it should not have',
+    w.document.querySelectorAll('#lay th').length === 0);
+
+  // zoom-disabled
+  w = run(`<p>x</p>`, { 'zoom-disabled': {} });
+  const vp = w.document.querySelector('meta[name="viewport"]').getAttribute('content');
+  check('zoom is re-enabled in the viewport meta',
+    /user-scalable=yes/.test(vp) && !/user-scalable=no/.test(vp) && !/maximum-scale=1\b/.test(vp));
+
+  // autoplay-audio
+  w = run(`<audio id="au" autoplay></audio>`, { 'autoplay-audio': {} });
+  check('autoplay is removed and a control is guaranteed',
+    !w.document.getElementById('au').hasAttribute('autoplay') &&
+    w.document.getElementById('au').hasAttribute('controls'));
+
+  // lang-missing
+  w = run(`<p>x</p>`, { 'lang-missing': { lang: 'he' } });
+  check('the page language is set from the one that was chosen',
+    w.document.documentElement.getAttribute('lang') === 'he');
+
+  // exclude — the one that must never do half the job
+  w = run(`<div id="x"><a href="/a">link</a><button>b</button></div>`,
+    { exclude: { selector: '#x' } });
+  const x = w.document.getElementById('x');
+  const inert = x.hasAttribute('inert');
+  check('an excluded subtree is taken out of reach',
+    inert || x.getAttribute('aria-hidden') === 'true');
+  check('…and never hidden while still focusable — the fault it would create',
+    inert || [...x.querySelectorAll('a,button')].every((f) => f.getAttribute('tabindex') === '-1'));
+
+  // Idempotent: correctors run on every mutation, so twice must equal once.
+  w = run(`<div id="a" tabindex="7">x</div><span id="real">N</span>`, { 'tabindex-positive': {} });
+  w.__u1Patch.correctors.forEach((f) => { try { f(); } catch (e) {} });
+  check('running twice is the same as running once',
+    w.document.getElementById('a').getAttribute('tabindex') === '0');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

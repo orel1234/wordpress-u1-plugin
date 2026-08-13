@@ -190,5 +190,65 @@ console.log('\n  Mapping push batches:');
         worstAll < SERVER_LIMIT, `largest ${(worstAll / 1024).toFixed(1)}KB`);
 }
 
+// ── A pull must not delete what never reached the server ────────────────────
+//
+// This is the one that cost real work: every push was being rejected with 413,
+// so the server held 8 of 24 mappings, and pullSiteFromServer replaced the
+// local copy with the server's. Sixteen gone, silently, on a panel reopen.
+//
+// The rule is pure so it can be answered without a server, a browser or a
+// login — see reconcilePulled in panel.js.
+console.log('\n  A pull against unpushed local work:');
+{
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const lift = (name) => {
+    const re = new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n\\}`);
+    const m = re.exec(panelSrc);
+    if (!m) throw new Error(`cannot lift ${name} from panel.js`);
+    return m[0];
+  };
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(`${lift('mappingKey')}\n${lift('reconcilePulled')}`, ctx);
+  const reconcile = (a, b, c) => vm.runInContext('reconcilePulled', ctx)(a, b, c);
+
+  const m = (type, primary) => ({ type, primary, config: {} });
+  const key = (x) => vm.runInContext('mappingKey', ctx)(x);
+
+  // 24 built locally, 8 of them made it up.
+  const local = Array.from({ length: 24 }, (_, i) => m('tabs', '#t' + i));
+  const server = local.slice(0, 8);
+  const pushed = new Set(server.map(key));
+
+  const r1 = reconcile(server, local, pushed);
+  check('nothing local is lost when the server only got some of it',
+        r1.merged.length === 24, `${r1.merged.length} of 24`);
+  check('…and the ones that never arrived are named as such',
+        r1.stranded.length === 16, String(r1.stranded.length));
+
+  // The behaviour the wholesale replace existed to protect: a colleague's
+  // deletion must still win. That row WAS acknowledged once.
+  const deletedByColleague = local[0];
+  const r2 = reconcile(server.slice(1), local, pushed);
+  check('a mapping a colleague deleted still disappears',
+        !r2.merged.some((x) => key(x) === key(deletedByColleague)));
+
+  // And the ordinary case: everything synced, nothing to rescue.
+  const r3 = reconcile(local, local, new Set(local.map(key)));
+  check('a fully synced site keeps exactly the server copy',
+        r3.merged.length === 24 && r3.stranded.length === 0);
+
+  // An empty server with nothing ever pushed is the first-contact case; the
+  // rows are kept and re-pushed rather than wiped.
+  const r4 = reconcile([], local, new Set());
+  check('an empty server does not empty this machine', r4.merged.length === 24);
+
+  check('the pull actually uses the rule, rather than replacing wholesale',
+        /const \{ merged, stranded \} = reconcilePulled\(data\.mappings, localNow, everPushed\);/.test(panelSrc) &&
+        /\[storageKey\('mappings', currentHostname\)\]: merged/.test(panelSrc));
+  check('…and only server-confirmed keys are remembered as pushed',
+        /await rememberPushedKeys\(currentHostname, out\.keys \|\| \[\]\);/.test(panelSrc));
+}
+
 console.log(failures === 0 ? '\n✅ The store keeps every stored key intact.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

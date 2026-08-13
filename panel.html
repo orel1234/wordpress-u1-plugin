@@ -777,6 +777,27 @@
       <button class="btn-primary" id="scanReportBtn">📄 Export issues report (with screenshots)</button>
     </div>
     <div class="notice" id="scanReportStatus"></div>
+    <!-- Nothing on the scan finds this for you: it is a judgement about the
+         page — a decorative widget, a duplicated nav, a third-party badge —
+         that a person makes and the tool then enforces everywhere. -->
+    <details class="scan-exclude">
+      <summary>Something here should not be reachable at all</summary>
+      <p class="map-mode-hint">
+        Takes it out of the tab order AND out of the screen reader, together.
+        <code>inert</code> where the browser has it, <code>aria-hidden</code> plus
+        <code>tabindex="-1"</code> on every focusable thing inside it where it does not —
+        never one without the other, because hiding something still focusable is a
+        fault of its own.
+      </p>
+      <div class="sub-sel-row">
+        <div class="key">selector</div>
+        <input type="text" id="excludeSel" placeholder=".decorative-widget" spellcheck="false"
+               autocapitalize="off" autocomplete="off">
+        <button class="btn-ghost btn-xs" id="excludeTest" title="Highlight on page">🔍</button>
+      </div>
+      <button class="btn-outline btn-sm" id="excludeAdd">Make it unreachable</button>
+      <div class="map-mode-hint" id="excludeStatus"></div>
+    </details>
     <div id="scanResults"></div>
   </div>
 

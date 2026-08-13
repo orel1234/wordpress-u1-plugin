@@ -1391,6 +1391,8 @@
     // model's whole list on them.
     const HIDDEN_CAP = 12;
     let hiddenUsed = 0;
+    // Names seen on the page, for telling a real selector from an invented one.
+    const pageTokens = new Set();
     for (const el of candidateElements(scope)) {
       if (out.length >= max) break;
       if (seen.has(el)) continue;
@@ -1420,6 +1422,20 @@
       // it produces two marks pointing at visually identical boxes.
       if (el.childElementCount === 1 && seen.has(el.firstElementChild)) continue;
       seen.add(el);
+
+      // Every name this element actually carries, whether or not the selector
+      // we generate ends up using it.
+      //
+      // robustSelector prefers #id, so for <div class="tab-bar" id="faqTabs">
+      // it emits `#faqTabs` and `.tab-bar` appears in no produced selector at
+      // all. checkAiSelector built its "known" set from produced selectors, so
+      // a class plainly on the page was reported as invented — which is a
+      // refusal to map something that is right there.
+      try {
+        if (el.id) pageTokens.add('#' + el.id);
+        if (el.classList) for (const c of el.classList) if (c) pageTokens.add('.' + c);
+        pageTokens.add(el.tagName.toLowerCase());
+      } catch (e) {}
 
       const mark = out.length + 1;
       el.setAttribute(MARK_ATTR, String(mark));
@@ -1514,6 +1530,10 @@
       headings,
       scopedTo: within || null,
       viewport: { w: vw(), h: vh() },
+      // Capped: this travels to the panel, and a page can hold thousands of
+      // class names. The cap is generous enough that anything a model is
+      // plausibly looking at is in it.
+      tokens: [...pageTokens].slice(0, 4000),
       title: document.title,
       url: (document.location && document.location.href) || '',
     };
@@ -2217,6 +2237,196 @@
   //    3. The shape says so — a set of same-class siblings the size of the tab
   //       count, of which exactly one is showing.
   // ───────────────────────────────────────────────────────────────────────────
+  /**
+   * An accordion, measured from whatever element was pointed at.
+   *
+   * u1.fix.accordion is rooted on the HEADER BUTTON — `headerSelector` is its
+   * PRIMARY — and `contentSelector` is required. Detection points at the
+   * container, because that is what carries the `accordion` class, so the
+   * mapping came out as
+   *
+   *     fix.accordion('#faqPanel', { selectors: { headerSelector: '#faqPanel' } })
+   *
+   * a container in the button's place and the required content missing. That is
+   * why implementing it did nothing.
+   *
+   * Accepts the container OR one of the triggers, since both are things a
+   * person or a model plausibly points at. Returns null when it cannot see an
+   * accordion, and then the caller keeps what it had.
+   */
+  function accordionShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+
+    // Pointed at a trigger? Climb to whatever holds its siblings.
+    var TRIGGERISH = 'button,[role="button"],summary,[aria-expanded],[data-expanded]';
+    var isTrigger = false;
+    try { isTrigger = root.matches(TRIGGERISH); } catch (e) {}
+    if (isTrigger) {
+      var up = root;
+      for (var g = 0; g < 4 && up.parentElement; g++) {
+        up = up.parentElement;
+        if (up.querySelectorAll(TRIGGERISH).length >= 2) { root = up; break; }
+      }
+    }
+
+    var triggers = [];
+    try { triggers = Array.prototype.slice.call(root.querySelectorAll(TRIGGERISH)); } catch (e) { return null; }
+    // One header is a disclosure, not an accordion, and u1 wants at least the
+    // pattern. Two is the smallest thing that behaves like one.
+    if (triggers.length < 2) return null;
+
+    // The panel each trigger operates. Same three sources tabPanelsFor uses —
+    // aria-controls, data-controls, then any data-* naming a real element —
+    // then the structural fallback, which is what an unlabelled accordion is.
+    var panels = [];
+    for (var i = 0; i < triggers.length; i++) {
+      var t = triggers[i], id = t.getAttribute('aria-controls') || t.getAttribute('data-controls'), panel = null;
+      if (!id) {
+        var at = t.attributes;
+        for (var a = 0; a < at.length; a++) {
+          if (at[a].name.indexOf('data-') !== 0) continue;
+          var v = at[a].value;
+          if (v && /^[A-Za-z][\w-]*$/.test(v) && document.getElementById(v)) { id = v; break; }
+        }
+      }
+      if (id) panel = document.getElementById(id);
+      if (!panel) {
+        // The region after the header, inside the same item. A trigger wrapped
+        // in an <h3> has its panel as the heading's sibling, not its own.
+        var from = t;
+        if (from.parentElement && /^H[1-6]$/.test(from.parentElement.tagName)) from = from.parentElement;
+        panel = from.nextElementSibling;
+      }
+      if (panel && panels.indexOf(panel) === -1) panels.push(panel);
+    }
+    if (!panels.length) return null;
+
+    var header = commonSelectorFor(root, triggers, robustSelector(root));
+    var content = commonSelectorFor(root, panels, robustSelector(root)) ||
+                  commonSelectorFor(document.body, panels, null);
+    var hSel = header && header.selector, cSel = content && content.selector;
+    if (!hSel || !cSel || !isU1Valid(hSel) || !isU1Valid(cSel)) return null;
+
+    // The level u1 should announce. The wrapping heading is the site's own
+    // statement about it; 3 is only a guess when it does not make one.
+    var level = 0;
+    var wrap = triggers[0].closest ? triggers[0].closest('h1,h2,h3,h4,h5,h6') : null;
+    if (wrap) level = Number((wrap.tagName.match(/^H(\d)$/) || [])[1]) || 0;
+    if (!level) {
+      var ar = triggers[0].getAttribute('aria-level');
+      level = Number(ar) || 0;
+    }
+
+    // Does opening one shut the others? Read it off the page rather than
+    // guessing: if only one panel is open right now and the rest are not, that
+    // is the single-open behaviour.
+    var open = 0;
+    for (var k = 0; k < panels.length; k++) {
+      var p = panels[k];
+      if (!p.hasAttribute('hidden') && p.getAttribute('aria-hidden') !== 'true' &&
+          (p.offsetHeight || p.getClientRects().length)) open++;
+    }
+
+    return {
+      root: robustSelector(root),
+      headerSelector: hSel,
+      contentSelector: cSel,
+      headingLevel: String(level || 3),
+      collapsesOthers: open === 1 && panels.length > 1,
+      headers: triggers.length,
+      panels: panels.length,
+    };
+  }
+
+  /**
+   * An autocomplete, measured from whatever was pointed at.
+   *
+   * u1.fix.combobox wants four things — the wrapper, the input, the list and
+   * the options — and until now every one of them had to be typed by hand,
+   * because nothing detects an autocomplete at all: no class pattern matches
+   * one, no role path finds one on a site that never wrote the roles, and the
+   * probe's classifier can only ever answer tabs, menu, accordion or dialog.
+   *
+   * So it is measured by SHAPE instead, which is what an autocomplete is: a
+   * single-line text input with a list of options beside it, under a common
+   * parent. That holds whether or not the page says so.
+   *
+   * Accepts the wrapper, the input, or the list. Returns null when it does not
+   * see one, and the caller keeps whatever it had.
+   */
+  function comboboxShape(rootSel) {
+    var el;
+    try { el = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!el) return null;
+
+    var TEXTY = 'input:not([type]),input[type="text"],input[type="search"],' +
+                'input[type="email"],input[type="tel"],input[type="url"],[contenteditable="true"]';
+    var LISTY = 'ul,ol,[role="listbox"],[role="menu"],[role="grid"],[data-options],[class*="option" i],' +
+                '[class*="suggest" i],[class*="result" i],[class*="dropdown" i],[class*="autocomplete" i]';
+
+    // Climb until one element holds both halves. An autocomplete is exactly
+    // "these two things belong together", and its wrapper is the smallest thing
+    // that contains both.
+    var wrap = el, input = null, list = null;
+    for (var up = 0; up < 6 && wrap; up++) {
+      try {
+        input = wrap.querySelector(TEXTY);
+        var lists = Array.prototype.slice.call(wrap.querySelectorAll(LISTY));
+        list = null;
+        for (var i = 0; i < lists.length; i++) {
+          // A list is only the popup if it is not the input's own ancestor and
+          // it holds more than one child — a single <li> is a result, not a
+          // list of suggestions.
+          if (input && lists[i].contains(input)) continue;
+          if (lists[i].children.length < 1) continue;
+          list = lists[i]; break;
+        }
+      } catch (e) { return null; }
+      if (input && list) break;
+      wrap = wrap.parentElement;
+    }
+    if (!input || !list || !wrap) return null;
+
+    var opts = Array.prototype.slice.call(list.children).filter(function (c) {
+      return c.nodeType === 1;
+    });
+    if (!opts.length) return null;
+
+    // The thing pointed at has to BELONG to what was found. Climbing six levels
+    // from an unrelated element would otherwise walk up to <body> and report
+    // whatever autocomplete happens to be elsewhere on the page — a confident
+    // answer about something you were not looking at.
+    if (el !== wrap && !input.contains(el) && el !== input &&
+        !list.contains(el) && el !== list && !el.contains(input)) {
+      return null;
+    }
+
+    var optSel = commonSelectorFor(list, opts, robustSelector(list));
+    var sels = {
+      combobox: robustSelector(wrap),
+      textbox: robustSelector(input),
+      listbox: robustSelector(list),
+      options: (optSel && optSel.selector) || '',
+    };
+    // A label, if the page has one. Optional in the schema, so its absence is
+    // not a reason to refuse the whole shape.
+    var lab = null;
+    try {
+      lab = (input.id && document.querySelector('label[for="' + input.id + '"]')) ||
+            (input.closest ? input.closest('label') : null) ||
+            wrap.querySelector('label');
+    } catch (e) {}
+    if (lab) sels.label = robustSelector(lab);
+
+    for (var k in sels) {
+      if (k === 'label') continue;
+      if (!sels[k] || !isU1Valid(sels[k])) return null;
+    }
+    return sels;
+  }
+
   function tabPanelsFor(tabListSel, tabSel) {
     var listEl, tabs = [];
     try {
@@ -2645,7 +2855,7 @@
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
-    menuItemsRoot, tabPanelsFor, openedBy, listboxRoot, listboxShape,
+    menuItemsRoot, tabPanelsFor, accordionShape, comboboxShape, openedBy, listboxRoot, listboxShape,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,

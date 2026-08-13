@@ -4775,3 +4775,78 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   margin-bottom: 4px;
 }
 .sweep-mode .sweep-all { margin: 4px 0; }
+
+/* ── The scan report, grouped by rule ────────────────────────────────────────
+   Forty positive tabindex values are one decision taken forty times. The rule
+   is the unit; the individual findings fold under it. */
+.scan-group {
+  margin: 0 0 8px;
+  border: 1px solid var(--u1-border);
+  border-radius: 8px;
+  background: var(--u1-surface);
+  overflow: hidden;
+}
+.scan-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  cursor: pointer;
+  list-style: none;
+}
+.scan-group > summary::-webkit-details-marker { display: none; }
+.scan-group > summary::before { content: "▸"; color: var(--u1-text-dim); }
+.scan-group[open] > summary::before { content: "▾"; }
+.scan-group-n {
+  margin-left: auto;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--u1-primary-text);
+  background: var(--u1-primary-dim);
+  border-radius: 10px;
+}
+.scan-group .scan-item { border-top: 1px solid var(--u1-border); border-radius: 0; }
+.scan-group > .scan-why-body { padding: 0 11px 8px; }
+
+/* The action. Present only where a bulk fix is genuinely the right answer;
+   everywhere else this row says why it is not, rather than saying nothing. */
+.scan-group-fix {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  background: var(--u1-primary-dim);
+  border-top: 1px solid var(--u1-border);
+}
+.scan-group-fix.is-manual { background: transparent; }
+.scan-group-does {
+  flex: 1 1 100%;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--u1-text-muted);
+}
+.scan-lang {
+  font-size: 11px;
+  padding: 2px 5px;
+  color: var(--u1-text);
+  background: var(--u1-surface-input);
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 4px;
+}
+
+/* "This must not be reachable" — a judgement the scan cannot make for you. */
+.scan-exclude {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 1px dashed var(--u1-border-dashed);
+  border-radius: 8px;
+}
+.scan-exclude > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--u1-primary-text);
+}
+.scan-exclude .sub-sel-row { margin-top: 8px; }

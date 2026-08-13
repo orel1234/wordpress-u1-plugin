@@ -1264,3 +1264,169 @@
   P.numpadEnter('[role="button"], [role="tab"], [role="menuitem"], [role="option"]');
 })();
 //#endregion
+
+//#region u1-patch:statics
+// Static corrections chosen from the scan report.
+//
+// These are not U1 components — nothing here calls u1.fix.*. They are the
+// faults the report finds by the dozen, where the answer is the same for every
+// one of them and the only reason it took forty decisions was that there was no
+// way to say "all of these".
+//
+// Written as correctors so they inherit what correctors already give: they run
+// on the MutationObserver schedule, so a page that builds itself after load is
+// still covered; they check before they write, so running twice is running
+// once; and they go quiet on their own the day the site is fixed properly.
+//
+// Each is switched on by an entry in window.__u1Statics, which the generated
+// bundle sets before this runs. Nothing here fires unless it was asked for.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+  var on = function (rule) {
+    var s = window.__u1Statics;
+    return !!(s && s[rule]);
+  };
+
+  // ── Not reachable: not by Tab, not by a screen reader ────────────────────
+  //
+  // Both halves are required, so `inert` is the answer where it exists — one
+  // attribute that takes the subtree out of the tab order, out of the
+  // accessibility tree and out of pointer events, with no way for the three to
+  // disagree.
+  //
+  // The fallback has to do all three by hand, and must not stop half way:
+  // aria-hidden on something still focusable is a WCAG failure of its own — the
+  // scan's own `aria-hidden-focusable` — so the tabindex sweep is not optional.
+  var INERT_OK = 'inert' in document.createElement('div');
+  P.correct(function () {
+    if (!on('exclude')) return;
+    var sel = (window.__u1Statics.exclude || {}).selector;
+    if (!sel) return;
+    u.qsa(sel).forEach(function (el) {
+      if (INERT_OK) {
+        if (!el.hasAttribute('inert')) el.setAttribute('inert', '');
+        return;
+      }
+      u.set(el, 'aria-hidden', 'true');
+      // Everything focusable inside it, and the element itself.
+      var all = u.qsa(u.FOCUSABLE, el);
+      if (el.matches && el.matches(u.FOCUSABLE)) all.push(el);
+      all.forEach(function (f) {
+        if (f.tabIndex !== -1) u.setTabIndex(f, -1);
+      });
+    });
+  });
+
+  // ── tabindex-positive ────────────────────────────────────────────────────
+  // A positive tabindex takes an element out of document order and puts it in
+  // front of everything, for everyone, for the rest of the page. 0 keeps it
+  // focusable and puts it back where it visually is.
+  P.correct(function () {
+    if (!on('tabindex-positive')) return;
+    u.qsa('[tabindex]').forEach(function (el) {
+      var v = parseInt(u.get(el, 'tabindex'), 10);
+      if (v > 0) u.setTabIndex(el, 0);
+    });
+  });
+
+  // ── aria-ref-broken ──────────────────────────────────────────────────────
+  // An aria-labelledby pointing at an id that is not on the page does not fall
+  // back to the element's own text — it names it nothing. Dropping the dangling
+  // reference is what restores the name it would otherwise have had.
+  P.correct(function () {
+    if (!on('aria-ref-broken')) return;
+    ['aria-labelledby', 'aria-describedby'].forEach(function (attr) {
+      u.qsa('[' + attr + ']').forEach(function (el) {
+        var ids = (u.get(el, attr) || '').split(/\s+/).filter(Boolean);
+        var live = ids.filter(function (id) { return !!document.getElementById(id); });
+        if (live.length === ids.length) return;              // nothing to do
+        if (live.length) u.set(el, attr, live.join(' '));
+        else el.removeAttribute(attr);
+      });
+    });
+  });
+
+  // ── input-placeholder ────────────────────────────────────────────────────
+  // A placeholder is not a label: it disappears the moment there is a value,
+  // and several screen readers never announce it. But the text is already
+  // written, so this needs nobody to author anything — it promotes what is
+  // there. Only when the field has no name by any other route.
+  P.correct(function () {
+    if (!on('input-placeholder')) return;
+    u.qsa('input[placeholder], textarea[placeholder]').forEach(function (f) {
+      if (f.type === 'hidden' || f.disabled) return;
+      if (u.get(f, 'aria-label') || u.get(f, 'aria-labelledby')) return;
+      if (f.labels && f.labels.length) return;
+      if (u.closest(f, 'label')) return;
+      var ph = (f.getAttribute('placeholder') || '').trim();
+      if (ph) u.set(f, 'aria-label', ph);
+    });
+  });
+
+  // ── table-noheaders ──────────────────────────────────────────────────────
+  // A data table whose first row is cells has no headers, so every cell is
+  // announced without the column it belongs to. Only for a table that looks
+  // like data — one with a single row or column is a layout table, and giving
+  // it headers is a different kind of wrong.
+  P.correct(function () {
+    if (!on('table-noheaders')) return;
+    u.qsa('table').forEach(function (t) {
+      if (t.querySelector('th')) return;
+      var rows = u.qsa('tr', t);
+      if (rows.length < 2) return;
+      var first = u.qsa('td', rows[0]);
+      if (first.length < 2) return;
+      first.forEach(function (td) {
+        var th = document.createElement('th');
+        th.setAttribute('scope', 'col');
+        while (td.firstChild) th.appendChild(td.firstChild);
+        for (var i = 0; i < td.attributes.length; i++) {
+          th.setAttribute(td.attributes[i].name, td.attributes[i].value);
+        }
+        td.parentNode.replaceChild(th, td);
+      });
+    });
+  });
+
+  // ── zoom-disabled ────────────────────────────────────────────────────────
+  // user-scalable=no and a maximum-scale below 2 stop a person enlarging the
+  // page. Not a corrector: the viewport meta is read once by the browser, so
+  // re-running it every mutation is work with no effect.
+  if (on('zoom-disabled')) {
+    var vp = document.querySelector('meta[name="viewport"]');
+    if (vp) {
+      var content = (vp.getAttribute('content') || '')
+        .split(',').map(function (x) { return x.trim(); })
+        .filter(function (x) { return x && !/^(user-scalable|maximum-scale)\s*=/.test(x); });
+      content.push('user-scalable=yes', 'maximum-scale=5');
+      vp.setAttribute('content', content.join(', '));
+    }
+  }
+
+  // ── autoplay-audio ───────────────────────────────────────────────────────
+  // Sound that starts on its own has to be stoppable, and the surest way is for
+  // it not to start. The control stays — this removes the autostart, not the
+  // media.
+  P.correct(function () {
+    if (!on('autoplay-audio')) return;
+    u.qsa('audio[autoplay], video[autoplay]').forEach(function (m) {
+      m.removeAttribute('autoplay');
+      m.autoplay = false;
+      if (!m.paused && !m.__u1pPaused) { m.__u1pPaused = true; try { m.pause(); } catch (e) {} }
+      if (!m.hasAttribute('controls')) m.setAttribute('controls', '');
+    });
+  });
+
+  // ── lang-missing ─────────────────────────────────────────────────────────
+  // Without it a screen reader reads the page in whatever voice it was last
+  // set to — Hebrew content in an English voice is unintelligible rather than
+  // merely wrong. One value, chosen once, so it is read from config.
+  if (on('lang-missing')) {
+    var code = (window.__u1Statics['lang-missing'] || {}).lang;
+    if (code && !document.documentElement.getAttribute('lang')) {
+      document.documentElement.setAttribute('lang', code);
+    }
+  }
+})();
+//#endregion
