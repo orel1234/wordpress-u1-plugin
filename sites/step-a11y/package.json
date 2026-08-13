@@ -1,0 +1,9 @@
+{
+  "name": "step-a11y",
+  "version": "1.0.0",
+  "private": true,
+  "description": "step-shoe-store with the User1st implementation added — the accessible twin of the plain site",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
