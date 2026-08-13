@@ -4740,7 +4740,16 @@ function labelScreen(stop, collected, tab) {
             // the same as no failure report at all.
             return;
           }
-          showNotice(status, `${ok} saved to Mappings and applied to the page.`, 'success', 5000);
+          // Everything the site has, not only the ones just built. u1 decorates
+          // an element once per page load, so a mapping made two sections ago
+          // may never have met what this section re-rendered — and the whole
+          // point of confirming a section is to look at the page afterwards.
+          let put = null;
+          try { put = await applyAllMappings({ silent: true }); } catch (e) {}
+          showNotice(status,
+            `${ok} saved to Mappings` +
+            (put ? ` · ${put.applied} of ${put.applied + put.failed} now applied on the page` : '') + '.',
+            'success', 6000);
         }
         // "and everything after this one, without asking" — the same switch the
         // hold offers, set from the place the decision is actually made.
@@ -7789,6 +7798,29 @@ async function runSweep(tab) {
     // not, because the only save on this path hung off a render that an empty
     // run never reached.
     saveSweep();
+    // ── And put it on the page ────────────────────────────────────────────
+    //
+    // Applying was a button in the drawer that you had to remember. It is part
+    // of the job, not a step after it: a mapping that is saved and not applied
+    // is a page nobody has made accessible yet, and the run has just spent
+    // twenty minutes deciding what to do to it.
+    //
+    // Everything the site has, not only what this run built — u1 decorates an
+    // element once per page load, so a mapping made early in a run may never
+    // have met the elements a later section re-rendered.
+    //
+    // Silent: the run reports its own outcome below, and two verdicts about
+    // one press is how neither gets read.
+    try {
+      const put = await applyAllMappings({ silent: true });
+      if (put && (put.applied || put.failed)) {
+        sweepLog(0, `applied to the page — ${put.applied} of ${put.applied + put.failed}` +
+          (put.failed ? `, ${put.failed} could not be` : ''), put.failed ? 'err' : '');
+      }
+    } catch (err) {
+      sweepLog(0, 'saved, but could not be applied to the page: ' + err.message, 'err');
+    }
+
     // If you said "I have moved on to another site" while this held the panel,
     // this is where it lets go.
     await followPendingSiteSwitch();

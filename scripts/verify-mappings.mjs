@@ -731,6 +731,47 @@ let fastSimple = false, fastComplex = false, fastWired = false, fastLevel = fals
               /el\.tagName\.match\(\/\^H\(\\d\)\$\/\)/.test(panelSrc);
 }
 
+// ── The per-component rules must stay in step with the schema ───────────────
+//
+// component-rules.md is fed to the model when it works out a mapping's
+// selectors. Rules that name a field the builder does not accept, or a
+// component the file has never heard of, are worse than no rules: they produce
+// confident answers the builder then drops.
+let rulesEveryType = [], rulesUnknownFields = [], rulesShipped = false, rulesUsed = false;
+{
+  const md = readFileSync(join(ROOT, 'component-rules.md'), 'utf8');
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const ctx = {}; vm.createContext(ctx);
+  vm.runInContext(/const COMPONENT_SCHEMAS = \{[\s\S]*?\n\};/.exec(panelSrc)[0], ctx);
+  const schemas = vm.runInContext('COMPONENT_SCHEMAS', ctx);
+
+  const sections = {};
+  for (const m of md.matchAll(/^## (.+)$/gm)) {
+    const body = md.slice(m.index).split(/\n## /)[0];
+    for (const name of m[1].split(/,| and /).map((x) => x.trim())) sections[name] = body;
+  }
+
+  // Every mappable type a person can pick has to be covered.
+  const SKIP = new Set(['aria-label', 'keyboard-grid', 'keyboard-clickable', 'keyboard-tabs', 'loading']);
+  rulesEveryType = Object.keys(schemas).filter((t) => !SKIP.has(t) && !sections[t]);
+
+  // And every field name the file mentions in backticks has to be real.
+  for (const [name, body] of Object.entries(sections)) {
+    const sc = schemas[name];
+    if (!sc) continue;
+    const known = new Set([...Object.keys(sc.selectors || {}), ...(sc.fields || []),
+                           ...Object.keys(sc.rootFields || {})]);
+    for (const t of body.matchAll(/^- `([a-zA-Z]+)`/gm)) {
+      if (!known.has(t[1])) rulesUnknownFields.push(`${name}.${t[1]}`);
+    }
+  }
+
+  rulesShipped = /'component-rules\.md'/.test(readFileSync(join(ROOT, 'scripts/build.mjs'), 'utf8'));
+  const adv = readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8');
+  rulesUsed = /mapRulesText = await readRules\('component-rules\.md'\)/.test(adv) &&
+              /system: MAP_PROMPT \+ \(rules \? /.test(adv);
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -783,6 +824,16 @@ console.log(`  ${fastWired ? '✅' : '❌'} …and the mapping path takes that s
 if (!fastWired) failed++;
 console.log(`  ${fastLevel ? '✅' : '❌'} …with a heading's level read off its tag`);
 if (!fastLevel) failed++;
+console.log(`  ${rulesEveryType.length === 0 ? '✅' : '❌'} every mappable component has rules written for it${
+  rulesEveryType.length ? ` — missing: ${rulesEveryType.join(', ')}` : ''}`);
+if (rulesEveryType.length) failed++;
+console.log(`  ${rulesUnknownFields.length === 0 ? '✅' : '❌'} …and every field they name is one the builder accepts${
+  rulesUnknownFields.length ? ` — unknown: ${rulesUnknownFields.join(', ')}` : ''}`);
+if (rulesUnknownFields.length) failed++;
+console.log(`  ${rulesShipped ? '✅' : '❌'} …the file ships in the package`);
+if (!rulesShipped) failed++;
+console.log(`  ${rulesUsed ? '✅' : '❌'} …and the model is actually given it when building a mapping`);
+if (!rulesUsed) failed++;
 console.log(`  ${kept ? '✅' : '❌'} …and a mapping without that answer leaves the site's role alone`);
 if (!kept) failed++;
 console.log(`  ${exportsStrip ? '✅' : '❌'} …and the exported file makes the same choice, not just Apply`);
@@ -838,6 +889,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 49;
+const total = results.length + 53;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

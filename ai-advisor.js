@@ -122,13 +122,31 @@ RULES
   let rulesText = null;
   async function scanRules() {
     if (rulesText !== null) return rulesText;
+    rulesText = await readRules('a11y-rules.md');
+    return rulesText;
+  }
+
+  // The BUILD's rules, per component. a11y-rules.md governs the scan — what is
+  // wrong — and this governs what to do about it, which is where the quality
+  // was going: a tab strip whose three sub-selectors all came back as the strip
+  // is not a mapping, and nothing had ever told the model otherwise.
+  let mapRulesText = null;
+  async function mapRules() {
+    if (mapRulesText !== null) return mapRulesText;
+    mapRulesText = await readRules('component-rules.md');
+    return mapRulesText;
+  }
+
+  // Either file, fetched once. A missing one leaves the built-in prompt in
+  // place rather than failing the call — rules are an improvement to the
+  // answer, not a precondition for getting one.
+  async function readRules(name) {
     try {
       const url = (root.chrome && chrome.runtime && chrome.runtime.getURL)
-        ? chrome.runtime.getURL('a11y-rules.md') : 'a11y-rules.md';
+        ? chrome.runtime.getURL(name) : name;
       const res = await fetch(url);
-      rulesText = res.ok ? (await res.text()).trim() : '';
-    } catch { rulesText = ''; }
-    return rulesText;
+      return res.ok ? (await res.text()).trim() : '';
+    } catch { return ''; }
   }
 
   async function discover({ screenshot, context, scope }) {
@@ -218,8 +236,13 @@ COMPONENT RULES
   // markup and the config produced last time, so the model is editing a real
   // answer rather than starting over.
   async function mapComponent({ u1Type, containerSel, markup, fields, fieldDocs, options, instruction, current }) {
+    const rules = await mapRules();
     return callClaude({
-      system: MAP_PROMPT,
+      // The whole file, not the one section for this type: the general rules at
+      // the top hold for every component, and a model that has only been shown
+      // "## tabs" has not been told that sub-selectors must be different
+      // elements or that a generated class is not a selector.
+      system: MAP_PROMPT + (rules ? '\n\n---\n\n' + rules : ''),
       schema: MAP_SCHEMA,
       text:
         (instruction

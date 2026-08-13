@@ -790,6 +790,35 @@ console.log('\nnot stopping means finishing');
     conf.indexOf('aiCardTemplate(prepared.idx)') < conf.indexOf('.remove()'));
 }
 
+// ── Applying is part of the job, not a button afterwards ────────────────────
+//
+// A mapping that is saved and not applied is a page nobody has made accessible
+// yet, and applying was a button in the drawer you had to remember to press
+// after a twenty-minute run.
+console.log('\napplying is part of the run');
+{
+  const src = panelSrc;
+  // The run's own tail — the finally that ends scanPickedScreens.
+  const tail = /\/\/ ── And put it on the page[\s\S]*?await followPendingSiteSwitch\(\);/.exec(src);
+  check('the run applies everything to the page when it ends',
+    !!tail && /await applyAllMappings\(\{ silent: true \}\)/.test(tail[0]));
+  check('…and says how many landed, or why they did not',
+    !!tail && /applied to the page —/.test(tail[0]) &&
+    /could not be applied to the page: /.test(src));
+  // Not just what this run built: u1 decorates once per page load, so a mapping
+  // made early may never have met what a later section re-rendered.
+  check('…all of the site\'s mappings, not only the ones just made',
+    /applyAllMappings\(\{ silent: true \}\)/.test(src) &&
+    !/applyAllMappings\(\{ silent: true, only:/.test(src));
+  check('confirming a section applies as you go, not only at the end',
+    /let put = null;\s*\n\s*try \{ put = await applyAllMappings\(\{ silent: true \}\); \} catch \(e\) \{\}/.test(src) &&
+    /now applied on the page/.test(src));
+  // Silent, because the run reports its own outcome — two verdicts about one
+  // press is how neither gets read.
+  check('…quietly, so the run keeps one voice',
+    /applyAllMappings\(\{ silent: true \}\)/.test(src));
+}
+
 // ── The Scan tab shows one scan at a time ───────────────────────────────────
 //
 // It holds two, answering unrelated questions: what is wrong with this page,
