@@ -1852,6 +1852,39 @@ function reconcilePulled(serverRows, localRows, everPushed) {
   return { merged: stranded.length ? server.concat(stranded) : server, stranded };
 }
 
+/**
+ * Does this component type need the model at all?
+ *
+ * Only when something beyond the primary selector has to be worked out: a
+ * second required selector, or a sub-selector the schema does not fill from
+ * PRIMARY. A link, a heading and a loading bar have neither — their whole
+ * mapping is the selector you already pointed at.
+ *
+ * A button's single field is `focusTo`, and it is optional; asking a model for
+ * an optional scroll-to target is a call, a wait and a charge for something
+ * nobody requested.
+ */
+function needsModelToMap(type) {
+  const sc = COMPONENT_SCHEMAS[type];
+  if (!sc) return true;
+  if ((sc.req || []).length > 1) return true;
+  const fields = sc.fields || [];
+  if (!fields.length) return false;                 // nothing beyond the primary
+
+  // Everything else asks, including the types whose fields the schema happens
+  // to mark "(Optional)". A dialog's closeBtn and a tooltip's trigger are
+  // optional to U1 and not optional to the person using it — a dialog you
+  // cannot close and a tooltip nothing opens are half-mappings, and skipping
+  // the call to save fifteen seconds would be buying speed with quality.
+  //
+  // ONE exception, named rather than derived: a button's single field is
+  // focusTo, "good for scroll-to behavior", which is a nicety nobody has asked
+  // for. Buttons are also the commonest thing on a page — four of the
+  // twenty-four here — so this is the difference between a scan that flows and
+  // one that stops on every ordinary control.
+  return type !== 'button';
+}
+
 function mappingKey(m) {
   if (typeof m === 'string') return m;
   if (m && m.type && m.primary) {
@@ -6762,6 +6795,53 @@ async function prepareOne(row, tab) {
   }
 
   const schema = COMPONENT_SCHEMAS[row.type];
+
+  // ── Nothing to ask ────────────────────────────────────────────────────────
+  //
+  // A link is `selectors: { element: PRIMARY }`. There is no second selector to
+  // work out, no state to name, no shape to read — the mapping is entirely
+  // determined by the selector already in hand. Same for a heading, whose only
+  // extra is a level, and that is the tag. Same for a loading bar.
+  //
+  // Every one of these was still going to the model with a page of markup and
+  // waiting on the answer. On the shop page that is sixteen of the twenty-four
+  // mappings — nine links, four buttons, three headings — sixteen calls whose
+  // reply the code could have written itself, each one a wait and a charge.
+  //
+  // A button's only field is `focusTo`, and it is optional: a scroll-to target
+  // nobody has asked for. Not worth a call either; it stays editable on the
+  // card like every other field.
+  if (!needsModelToMap(row.type)) {
+    const primaryKey = primaryKeyOf(schema);
+    const fields = [];
+    // The one measurable extra. u1.fix.heading needs a level, and the element
+    // says what it is.
+    if (row.type === 'heading') {
+      const lvl = await inPage(tab.id, (sel) => {
+        try {
+          const el = document.querySelector(sel);
+          if (!el) return 0;
+          return Number((el.tagName.match(/^H(\d)$/) || [])[1]) ||
+                 Number(el.getAttribute('aria-level')) || 0;
+        } catch (e) { return 0; }
+      }, [row.sel]);
+      if (lvl) fields.push({ key: 'level', value: String(lvl), why: 'From the element\'s own tag.' });
+    }
+    const local = {
+      primary: row.sel,
+      fields,
+      options: [],
+      confidence: 'high',
+      notes: [`${row.type} needs only the element itself — worked out here, with no model call.`],
+      usage: null,
+    };
+    const idx0 = aiMapped.length;
+    aiMapped.push({ row, result: local, markup });
+    track.insertAdjacentHTML('beforeend', renderAiMapCard(idx0, row, local, markup.recorderActive));
+    fillAiMapCard(idx0, row, local);
+    return { idx: idx0 };
+  }
+
   const out = await U1AI.mapComponent({
     u1Type: row.type,
     containerSel: row.sel,

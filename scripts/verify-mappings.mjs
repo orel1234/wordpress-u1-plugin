@@ -703,6 +703,34 @@ let chainOk = false, cbShapeOk = false, cbNoFalse = false, cbWired = false, dlOk
          /attachSelectorSuggestions\(form, \(aiFound && aiFound\.context\) \|\| null\);/.test(panelSrc);
 }
 
+// ── Simple components must not wait on a model that has nothing to say ──────
+//
+// A link is `selectors: { element: PRIMARY }`. There is no second selector to
+// work out and no state to name — the mapping is entirely determined by the
+// selector already in hand, and it was still sending a page of markup and
+// waiting on the reply. On the shop page that is 16 of 24.
+let fastSimple = false, fastComplex = false, fastWired = false, fastLevel = false;
+{
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const ctx = {}; vm.createContext(ctx);
+  vm.runInContext(
+    /const COMPONENT_SCHEMAS = \{[\s\S]*?\n\};/.exec(panelSrc)[0] +
+    /function needsModelToMap\(type\)[\s\S]*?\n\}/.exec(panelSrc)[0], ctx);
+  const need = vm.runInContext('needsModelToMap', ctx);
+
+  fastSimple = ['link', 'heading', 'button', 'loading'].every((t) => !need(t));
+  // The line that must not move: a component with real parts to find still
+  // asks. A dialog's closeBtn and a tooltip's trigger are "(Optional)" to U1
+  // and not optional to the person using it.
+  fastComplex = ['menu', 'tabs', 'accordion', 'carousel', 'combobox', 'form',
+                 'dialog', 'tooltip', 'listbox', 'datepicker'].every((t) => need(t));
+  fastWired = /if \(!needsModelToMap\(row\.type\)\) \{/.test(panelSrc) &&
+              /no model call\.`\]/.test(panelSrc);
+  // The one measurable extra a heading needs.
+  fastLevel = /row\.type === 'heading'/.test(panelSrc) &&
+              /el\.tagName\.match\(\/\^H\(\\d\)\$\/\)/.test(panelSrc);
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 const pad = (s, n) => String(s).padEnd(n);
 console.log('\n  Component mappings — does each one produce accessible markup?\n');
@@ -747,6 +775,14 @@ console.log(`  ${cbWired ? '✅' : '❌'} …and the mapping path uses it instea
 if (!cbWired) failed++;
 console.log(`  ${dlOk ? '✅' : '❌'} every selector field offers the page's real names to choose from`);
 if (!dlOk) failed++;
+console.log(`  ${fastSimple ? '✅' : '❌'} a link, heading, button or loading bar is mapped with no model call`);
+if (!fastSimple) failed++;
+console.log(`  ${fastComplex ? '✅' : '❌'} …while anything with real parts to find still asks`);
+if (!fastComplex) failed++;
+console.log(`  ${fastWired ? '✅' : '❌'} …and the mapping path takes that shortcut`);
+if (!fastWired) failed++;
+console.log(`  ${fastLevel ? '✅' : '❌'} …with a heading's level read off its tag`);
+if (!fastLevel) failed++;
 console.log(`  ${kept ? '✅' : '❌'} …and a mapping without that answer leaves the site's role alone`);
 if (!kept) failed++;
 console.log(`  ${exportsStrip ? '✅' : '❌'} …and the exported file makes the same choice, not just Apply`);
@@ -802,6 +838,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 45;
+const total = results.length + 49;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);
