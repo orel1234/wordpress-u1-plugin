@@ -819,6 +819,33 @@ console.log('\napplying is part of the run');
     /applyAllMappings\(\{ silent: true \}\)/.test(src));
 }
 
+// ── The filter pattern has a way to be used ─────────────────────────────────
+//
+// Detection and a corrector with nothing calling them is a capability nobody
+// can reach. Every piece has to be connected: find it, name the noun, apply it.
+console.log('\nthe filter-and-results control');
+{
+  const src = panelSrc;
+  const html = readFileSync(join(ROOT, 'panel.html'), 'utf8');
+  const patch = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
+  const intel = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+
+  check('the shape is measured in the page', /function filterListShape\(rootSel\)/.test(intel));
+  check('…the corrector exists and is switched on by name', /if \(!on\('filter-results'\)\) return;/.test(patch));
+  check('…there is a control that looks for one', /id="filterFind"/.test(html) &&
+    /getElementById\('filterFind'\)\?\.addEventListener/.test(src));
+  check('…and one that applies it', /id="filterAdd"/.test(html) &&
+    /primary: 'filter-results'/.test(src));
+  // The noun is the one thing only the person knows, and it is what is heard.
+  check('…and you say what a result IS before it is applied',
+    /id="filterNoun"/.test(src) && /noun \}/.test(src));
+  check('…and it is applied to the page, not only saved',
+    /await applyStaticFixesToPage\(\);[\s\S]{0,400}how many \$\{noun\}s are showing/.test(src));
+  // The mistake this whole pattern exists to avoid.
+  check('the rules say plainly that it is not a combobox',
+    /NOT a combobox/.test(readFileSync(join(ROOT, 'component-rules.md'), 'utf8')));
+}
+
 // ── The Scan tab shows one scan at a time ───────────────────────────────────
 //
 // It holds two, answering unrelated questions: what is wrong with this page,

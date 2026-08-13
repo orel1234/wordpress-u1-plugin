@@ -11363,6 +11363,62 @@ async function applyStaticFixesToPage() {
   }, [on]);
 }
 
+// The filter-and-results pattern: find it, then make it announce itself.
+let filterShape = null;
+
+document.getElementById('filterFind')?.addEventListener('click', async () => {
+  const found = document.getElementById('filterFound');
+  const add = document.getElementById('filterAdd');
+  const status = document.getElementById('filterStatus');
+  showNotice(status, '', 'info', 1);
+  filterShape = await offerFilterResults();
+  if (!filterShape) {
+    add.style.display = 'none';
+    found.innerHTML = 'Nothing on this page looks like one — no text field with a list of ' +
+      'three or more alike results beside it. If you know where it is, the fields below take a selector.';
+    return;
+  }
+  // Shown before it is applied, because the noun is the one thing only you know
+  // and it is what a person actually hears.
+  found.innerHTML =
+    `<div><strong>${escapeHtml(String(filterShape.count))} results</strong> ` +
+    `filtered by <code>${escapeHtml(filterShape.field)}</code></div>` +
+    `<div>list <code>${escapeHtml(filterShape.results)}</code> · ` +
+    `each one <code>${escapeHtml(filterShape.item)}</code></div>` +
+    (filterShape.labelled ? '' : '<div>⚠ the field has no label of its own — give it one too</div>') +
+    `<div class="sub-sel-row" style="margin-top:8px">
+       <div class="key">a result is a…</div>
+       <input type="text" id="filterNoun" value="result" spellcheck="false">
+     </div>
+     <div class="map-mode-hint">Used in the announcement: “2 branches”, “No branches match”.</div>`;
+  add.style.display = '';
+});
+
+document.getElementById('filterAdd')?.addEventListener('click', async () => {
+  const status = document.getElementById('filterStatus');
+  if (!filterShape) return;
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — new work is paused.', 'error', 6000);
+    return;
+  }
+  const noun = (document.getElementById('filterNoun')?.value || 'result').trim() || 'result';
+  try {
+    await saveMappingEntry({
+      type: null, custom: 'staticFix', primary: 'filter-results',
+      config: { field: filterShape.field, results: filterShape.results, item: filterShape.item, noun },
+      needsWork: true,
+    }, { refreshUi: false });
+    await applyStaticFixesToPage();
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(status,
+      `Done. Typing in that field now announces how many ${noun}s are showing, and the ` +
+      `field is tied to the list it controls.`, 'success', 9000);
+  } catch (err) {
+    showNotice(status, 'Could not save it: ' + err.message, 'error', 9000);
+  }
+});
+
 // "This must not be reachable." Both halves, always — see the statics region.
 document.getElementById('excludeAdd')?.addEventListener('click', async () => {
   const input = document.getElementById('excludeSel');

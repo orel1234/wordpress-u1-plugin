@@ -811,6 +811,27 @@
       <button class="btn-outline btn-sm" id="excludeAdd">Make it unreachable</button>
       <div class="map-mode-hint" id="excludeStatus"></div>
     </details>
+
+    <!-- A field that narrows a list already on the page — a branch locator, a
+         "filter by city" box. No scan rule finds it: it is not a fault in the
+         markup, it is a pattern with a missing status message, and the only way
+         to see it is by shape. -->
+    <details class="scan-exclude">
+      <summary>A field that filters a list of results</summary>
+      <p class="map-mode-hint">
+        Type a letter, fourteen results become two, and nothing says so — the
+        change is only visible. This is <strong>not</strong> a combobox: its list
+        is there before you type, so <code>role="combobox"</code> would describe a
+        popup that does not exist. What it needs is a status message
+        (WCAG&nbsp;4.1.3).
+      </p>
+      <div class="btn-row">
+        <button class="btn-outline btn-sm" id="filterFind">Find one on this page</button>
+        <button class="btn-primary btn-sm" id="filterAdd" style="display:none;">Make it announce its results</button>
+      </div>
+      <div class="map-mode-hint" id="filterFound"></div>
+      <div class="map-mode-hint" id="filterStatus"></div>
+    </details>
     <div id="scanResults"></div>
   </div>
 
