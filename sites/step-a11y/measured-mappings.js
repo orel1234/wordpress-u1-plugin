@@ -1,6 +1,6 @@
 /* ============================================================
- * U1 accessibility mappings — step-shoe-store-production.up.railway.app
- * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:21:26.325Z
+ * U1 accessibility mappings — step-shoe-store-clean-production.up.railway.app
+ * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:29:55.757Z
  * 9 components mapped, 12 left out (see the report).
  *
  * Every mapping here was read off the markup, not guessed: required fields
@@ -658,6 +658,20 @@
 })();
 
 /* ---- 2. Component mappings ---- */
+//
+// Every call below is written `window.u1?.fix.…` — which means that with no
+// U1 library on the page every one of them does nothing, silently, and the
+// paste looks like it worked. That is the exact failure this file exists to
+// avoid, so it says so instead.
+if (!window.u1 || !window.u1.fix) {
+  console.error(
+    '[u1] The U1 library is not on this page, so none of the 9 mappings below ran.\n' +
+    '     Load it first:\n' +
+    '       <link rel="stylesheet" href="https://dev.oreltest.user1st.com/u1.css">\n' +
+    '       <script src="https://dev.oreltest.user1st.com/u1_vanilla-js-a11y.js"></' + 'script>\n' +
+    '     Then paste this again.');
+}
+
 function __u1ApplyMappings() {
 /* ---- carousel  .ticker ---- */
 window.u1?.fix.carousel(".ticker", {
@@ -753,6 +767,20 @@ window.u1?.fix.accordion(".accordion__trigger", {
 });
 }
 __u1ApplyMappings();
+
+// What actually landed, rather than "undefined" in the console.
+(function () {
+  if (!window.u1 || !window.u1.fix) return;
+  setTimeout(function () {
+    var n = function (s) { try { return document.querySelectorAll(s).length; } catch (e) { return 0; } };
+    console.log('[u1] applied — ' +
+      n('[role="tablist"]') + ' tablists, ' + n('[role="tab"]') + ' tabs, ' +
+      n('[aria-roledescription="carousel"]') + ' carousels, ' +
+      n('[role="table"],[role="grid"]') + ' tables, ' +
+      n('[aria-expanded]') + ' expandable. ' +
+      'If those are zeros, the selectors did not match this page.');
+  }, 600);
+})();
 
 /* ---- 3. Responsive re-apply ---- */
 (function () {
