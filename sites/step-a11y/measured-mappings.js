@@ -1,7 +1,7 @@
 /* ============================================================
  * U1 accessibility mappings — step-shoe-store-production.up.railway.app
- * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:15:27.686Z
- * 10 components mapped, 11 left out (see the report).
+ * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:21:26.325Z
+ * 9 components mapped, 12 left out (see the report).
  *
  * Every mapping here was read off the markup, not guessed: required fields
  * present, sub-selectors resolving to different elements, nothing matching
@@ -673,10 +673,10 @@ window.u1?.fix.carousel(".ticker", {
 window.u1?.fix.carousel(".hero-carousel", {
   "selectors": {
     "carouselContainer": ".hero-carousel",
-    "slide": ".hero-slide--active",
+    "slide": ".hero-slide",
     "prevButton": "#heroPrev",
     "nextButton": "#heroNext",
-    "slidePickerButtons": ".hero-carousel__dots,.hero-carousel__dot"
+    "slidePickerButtons": ".hero-carousel__dot"
   }
 });
 
@@ -704,8 +704,8 @@ window.u1?.fix.tabs("#dealTabs", {
 window.u1?.fix.table("#club>div>div>div.table-wrap>table.data-table", {
   "selectors": {
     "table": "#club>div>div>div.table-wrap>table.data-table",
-    "row": "tr",
-    "cell": "td",
+    "row": "#club>div>div>div.table-wrap>table.data-table>thead>tr,#club>div>div>div.table-wrap>table.data-table>tbody>tr",
+    "cell": "#club>div>div>div.table-wrap>table.data-table>tbody>tr>td",
     "columnheader": "#club>div:nth-child(1)>div:nth-child(3)>div:nth-child(2)>table:nth-child(1)>thead:nth-child(2)>tr:nth-child(1)>th:nth-child(1)",
     "rowheader": "#club>div:nth-child(1)>div:nth-child(3)>div:nth-child(2)>table:nth-child(1)>tbody:nth-child(3)>tr:nth-child(1)>th:nth-child(1)"
   }
@@ -715,19 +715,8 @@ window.u1?.fix.table("#club>div>div>div.table-wrap>table.data-table", {
 window.u1?.fix.table("#sizes>div.table-wrap>table.data-table", {
   "selectors": {
     "table": "#sizes>div.table-wrap>table.data-table",
-    "row": "tr",
-    "cell": "td",
-    "columnheader": "#sizes>div.table-wrap>table.data-table>thead>tr>th",
-    "rowheader": "#sizeTableBody>tr>th"
-  }
-});
-
-/* ---- table  #sizes>div.table-wrap>table.data-table ---- */
-window.u1?.fix.table("#sizes>div.table-wrap>table.data-table", {
-  "selectors": {
-    "table": "#sizes>div.table-wrap>table.data-table",
-    "row": "tr",
-    "cell": "td",
+    "row": "#sizes>div.table-wrap>table.data-table>thead>tr,#sizes>div.table-wrap>table.data-table>tbody>tr",
+    "cell": "#sizes>div.table-wrap>table.data-table>tbody>tr>td",
     "columnheader": "#sizes>div.table-wrap>table.data-table>thead>tr>th",
     "rowheader": "#sizeTableBody>tr>th"
   }
@@ -737,9 +726,9 @@ window.u1?.fix.table("#sizes>div.table-wrap>table.data-table", {
 window.u1?.fix.table("#locatorDetail>div.table-wrap>table.data-table", {
   "selectors": {
     "table": "#locatorDetail>div.table-wrap>table.data-table",
-    "row": "tr",
-    "cell": "td",
-    "rowheader": "th"
+    "row": "#locatorDetail>div.table-wrap>table.data-table>tbody>tr",
+    "cell": "#locatorDetail>div.table-wrap>table.data-table>tbody>tr>td",
+    "rowheader": "#locatorDetail>div.table-wrap>table.data-table>tbody>tr>th"
   }
 });
 

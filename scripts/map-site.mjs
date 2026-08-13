@@ -99,9 +99,59 @@ const primaryKeyOf = (sc) => Object.keys(sc.selectors || {}).find((k) => sc.sele
 // One function per type, each reading the page rather than guessing. A type
 // with no measurer is not emitted: a half-filled mapping is worse than none.
 const count = (sel) => { try { return w.document.querySelectorAll(sel).length; } catch { return -1; } };
+/**
+ * A selector for these items, scoped to the component they belong to.
+ *
+ * commonSelectorFor happily answers `tr` for a table's rows — correct about the
+ * elements it was given and wrong as a mapping: `tr` is 46 rows across four
+ * tables on this page, and `td` is 165 cells. u1 would decorate another table's
+ * rows as this one's.
+ *
+ * So the answer is checked against the page: if it reaches more elements
+ * outside the component than inside it, anchor it to the root.
+ */
 const sub = (root, items) => {
-  const r = S.commonSelectorFor(root, items, S.robustSelector(root));
-  return (r && r.selector) || '';
+  const rootSel = S.robustSelector(root);
+  const r = S.commonSelectorFor(root, items, rootSel);
+  let sel = (r && r.selector) || '';
+  if (!sel) return '';
+  // Counted from the DOCUMENT and then filtered by containment, never by
+  // scoping the query to the root. commonSelectorFor often returns a selector
+  // that is ALREADY anchored — `#dealTabs>.tab-bar__btn` — and
+  // root.querySelectorAll() of that is zero, because `#dealTabs` is the root
+  // itself rather than a descendant of it. Read as "nothing inside", it threw
+  // away a perfectly good selector and left the strip unmapped.
+  const hit = (x) => { try { return [...w.document.querySelectorAll(x)]; } catch { return []; } };
+  const matched = hit(sel);
+  const inside = matched.filter((x) => root.contains(x)).length;
+  const all = matched.length;
+  if (all > inside) {
+    // U1 rejects descendant spaces, so the anchor has to be a chain of direct
+    // children — and it has to be the REAL one. A table's rows live inside
+    // <tbody>, so `table>tr` matches nothing at all while `table>tbody>tr`
+    // matches all fourteen. Walking one level was the difference between four
+    // mappings and ten.
+    const chain = (item) => {
+      const steps = [];
+      for (let n = item; n && n !== root; n = n.parentElement) steps.unshift(n.tagName.toLowerCase());
+      return steps.length ? rootSel + '>' + steps.join('>') : '';
+    };
+    const tries = [...new Set(items.map(chain).filter(Boolean))];
+    for (const t of tries) {
+      const h = hit(t);
+      if (h.length === inside && h.every((x) => root.contains(x))) return t;
+    }
+    // A group of chains covering the same set is still one selector.
+    if (tries.length > 1) {
+      const joined = tries.join(',');
+      const h = hit(joined);
+      if (h.length === inside && h.every((x) => root.contains(x))) return joined;
+    }
+    // Cannot be expressed without a descendant space — better to say so than to
+    // emit a selector that reaches into other components.
+    return '';
+  }
+  return sel;
 };
 const kids = (el, sel) => [...el.querySelectorAll(sel)];
 
@@ -182,7 +232,21 @@ const MEASURE = {
   },
 
   carousel(el) {
-    const slides = kids(el, '[class*="slide" i],[class*="item" i]').filter((s) => s.parentElement.closest(S.robustSelector(el)));
+    // The slides are a TRACK's children, not everything whose class contains
+    // "slide": inside .hero-carousel that phrase matches 45 elements, titles
+    // and inner wrappers included. Find the container whose own children are
+    // several alike things — that is what a row of slides is.
+    let slides = [];
+    for (const box of [el, ...kids(el, 'div,ul,ol')]) {
+      const ch = [...box.children].filter((x) => x.nodeType === 1);
+      if (ch.length < 2) continue;
+      const sig = (x) => x.tagName + '|' + [...x.classList].filter((c) => !/--/.test(c)).sort().join('.');
+      const first = sig(ch[0]);
+      const alike = ch.filter((x) => sig(x) === first);
+      // A slide is a slide whether or not it is the one showing, so a state
+      // class (--active) is ignored when deciding what is alike.
+      if (alike.length >= 2 && alike.length > slides.length) slides = alike;
+    }
     const prev = el.querySelector('[class*="prev" i],[aria-label*="previous" i]');
     const next = el.querySelector('[class*="next" i],[aria-label*="next" i]');
     if (slides.length < 2 || !prev || !next) return null;
@@ -192,7 +256,9 @@ const MEASURE = {
       prevButton: S.robustSelector(prev),
       nextButton: S.robustSelector(next),
     };
-    const dots = kids(el, '[class*="dot" i],[class*="picker" i]');
+    // The dots themselves, not the strip that holds them.
+    const dots = kids(el, '[class*="dot" i],[class*="picker" i]')
+      .filter((x) => !x.querySelector('[class*="dot" i]'));
     if (dots.length >= 2) f.slidePickerButtons = sub(el, dots);
     return { primary: S.robustSelector(el), fields: f, roots: {} };
   },
@@ -257,10 +323,19 @@ for (const c of comps) {
   const same = Object.entries(m.fields).filter(([k, v]) => k !== pKey && v === m.primary).map(([k]) => k);
   if (same.length) { skipped.push({ type, sel: c.selector, why: same.join(', ') + ' is the root again' }); continue; }
 
+  // A field we could not express is an ABSENT field. Emitting "" tells u1 the
+  // component has a columnheader selector that matches nothing, which is worse
+  // than not mentioning it.
+  for (const k of Object.keys(m.fields)) if (!m.fields[k]) delete m.fields[k];
+
   // And every one has to resolve.
   const dead = Object.entries(m.fields).filter(([, v]) => v && count(v) <= 0).map(([k]) => k);
   if (dead.length) { skipped.push({ type, sel: c.selector, why: dead.join(', ') + ' matches nothing' }); continue; }
 
+  if (made.some((x) => x.type === type && x.primary === m.primary)) {
+    skipped.push({ type, sel: c.selector, why: 'already mapped — two candidates, one element' });
+    continue;
+  }
   made.push({ type, ...m });
 }
 
