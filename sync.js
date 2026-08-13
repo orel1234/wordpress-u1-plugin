@@ -96,28 +96,60 @@ const U1Sync = (() => {
    *
    * @param {Array<{key: string, payload: object, deleted?: boolean}>} rows
    */
+  /**
+   * Every mapping the site has, in batches the server will accept.
+   *
+   * This sends the WHOLE list on every save — it has to, because a row that
+   * merely stops being mentioned is how a deletion is expressed. On a site with
+   * a few dozen mappings, each carrying its generated code, the body outgrew
+   * the server's limit and came back 413. One save failing that way took the
+   * whole build down with "Could not save it: http_413" on a mapping that had
+   * in fact been written locally a moment before.
+   *
+   * Batched by measured JSON size rather than by count: mappings differ by an
+   * order of magnitude in length, so "twenty at a time" is either wasteful or
+   * still too big depending on the site.
+   */
+  const PUSH_BYTES = 400 * 1024;   // comfortably inside a 1MB body limit
+
   async function pushMappings(hostname, rows) {
     if (!rows.length) return { saved: 0, conflicts: [] };
-    const body = {
-      mappings: rows.map((r) => ({
-        key: r.key,
-        payload: r.payload,
-        deleted: !!r.deleted,
-        baseUpdatedAt: baseVersions.get(r.key) || null,
-      })),
-    };
-    const out = await U1Auth.request(path(hostname, '/mappings'), {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    });
+    const all = rows.map((r) => ({
+      key: r.key,
+      payload: r.payload,
+      deleted: !!r.deleted,
+      baseUpdatedAt: baseVersions.get(r.key) || null,
+    }));
+
+    const batches = [];
+    let cur = [], size = 0;
+    for (const m of all) {
+      const n = JSON.stringify(m).length + 1;
+      // A single mapping bigger than the budget still goes, alone — refusing it
+      // here would lose it silently, and the server is entitled to say no.
+      if (cur.length && size + n > PUSH_BYTES) { batches.push(cur); cur = []; size = 0; }
+      cur.push(m); size += n;
+    }
+    if (cur.length) batches.push(cur);
+
+    const merged = { saved: 0, conflicts: [], keys: [] };
+    for (const batch of batches) {
+      const out = await U1Auth.request(path(hostname, '/mappings'), {
+        method: 'PUT',
+        body: JSON.stringify({ mappings: batch }),
+      });
+      merged.saved += out.saved || 0;
+      if (out.conflicts) merged.conflicts.push(...out.conflicts);
+      if (out.keys) merged.keys.push(...out.keys);
+    }
     // Anything that landed is now based on what we just wrote. Leaving the old
     // version in place would make the NEXT save of the same mapping look stale
     // and conflict with this panel's own work.
-    if (out.keys) {
+    if (merged.keys.length) {
       const stamp = new Date().toISOString();
-      for (const k of out.keys) baseVersions.set(k, stamp);
+      for (const k of merged.keys) baseVersions.set(k, stamp);
     }
-    return out;
+    return merged;
   }
 
   /** Config / skip links / library URLs. Only the fields passed are touched. */

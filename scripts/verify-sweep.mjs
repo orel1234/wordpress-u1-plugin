@@ -601,13 +601,34 @@ console.log('\nsaying what things are');
   const pause = /if \(sweepLabel\.on\) \{[\s\S]*?\n      \}/.exec(src)[0];
   check('Stop during the pause breaks the run', /answer\.stopped\) break;/.test(pause));
   check('…and a section is only marked read on a path that finishes it',
-    /answer\.done\)[\s\S]{0,500}markScreenRead\(stop\)/.test(pause));
+    /answer\.done\)[\s\S]{0,900}markScreenRead\(stop\)/.test(pause));
 
-  // The whole point: a section you name completely is not sent anywhere.
-  check('a fully-named section costs nothing and says so',
-    /stop\.cost = 0;/.test(pause) && /no model call, nothing charged/.test(pause));
+  // A confirmed section is not sent to discover(). It is no longer FREE —
+  // confirming now goes through the container-markup engine, a call per
+  // component — because the free local measurement produced mappings whose
+  // every sub-selector was the root selector again. The line must not claim a
+  // charge did not happen.
+  check('a confirmed section skips the section-wide model call',
+    /stop\.cost = 0;/.test(pause));
+  check('…and no longer claims nothing was charged for the components',
+    /you confirmed — saved to Mappings and applied/.test(pause) &&
+    !/component[\s\S]{0,40}no model call, nothing charged/.test(pause));
+
+  // The one this whole round was about: prepareOne PREPARES. Six components
+  // were built, reported done, and Mappings stayed empty.
+  const conf = /async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0];
+  check('a confirmed component is actually saved, not just prepared',
+    /const tpl = aiCardTemplate\(prepared\.idx\);/.test(conf) &&
+    /await saveMappingEntry\(tpl, \{ refreshUi: false \}\)/.test(conf));
+  check('…and applied to the page',
+    /await applyMappingsBatch\(\[\{/.test(conf));
+  check('…and lands in the drawer as each one finishes, not all at the end',
+    /await loadMappingsList\(\);/.test(conf));
+  check('…and a declined role question is not counted as saved',
+    /saved\.cancelled\) return \{ err:/.test(conf));
   check('…and what is left over is what the model is shown, not everything',
-    /candidates: collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\)/.test(src));
+    /const asking = collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\);/.test(src) &&
+    /candidates: batches\[b\],/.test(src));
 
   // The model's answer used to replace stop.found wholesale, which is right
   // when it is the only source and wrong the moment it is not.
@@ -618,23 +639,229 @@ console.log('\nsaying what things are');
   // uses, so it carries the narrowing, the role question and the export.
   const toMap = /async function labelToMapping[\s\S]*?\n}/.exec(src)[0];
   check('a label goes through buildTemplate → saveMappingEntry → applyMappingsBatch',
-    /buildTemplate\(type, desc\.root/.test(toMap) &&
+    /buildTemplate\(type, root, desc\.fields/.test(toMap) &&
     /saveMappingEntry\(tpl/.test(toMap) &&
     /applyMappingsBatch\(/.test(toMap));
   check('…and asks the page to measure the fields rather than a model',
-    /describeComponent\(t, m\)/.test(toMap) && !/U1AI\./.test(toMap));
+    /describeComponent\(t, m, f\)/.test(toMap) && !/U1AI\./.test(toMap));
+  // Marks are wiped by anything that re-reads the page; the row's selector is
+  // not. A component still plainly on the page must never fail to build.
+  check('…and a lost mark is rescued by the row\'s own selector',
+    /\[type, marks, rootOverride \|\| ''\]/.test(toMap) &&
+    /if \(!els\.length && fallbackSel\)/.test(readFileSync(join(ROOT, 'selector-intel.js'), 'utf8')));
+  check('…and the naming pause is not what wipes them',
+    /sweepLabel\.resolve \|\| \(aiSweep\.running && !held\)/.test(src));
+
+// ── The whole section gets read, and the numbers stay on it ─────────────────
+// Two failures with one cause between them: a 97-element section surveyed as
+// "6 menus · form · dialog? · carousel?" came back as sixty rows of header and
+// mega menu, and the numbers that bind a row to an element vanished the moment
+// the mouse crossed the list. Both are about the section you are looking at
+// being only partly there.
+console.log('\nreading the whole section');
+{
+  const src = panelSrc;
+
+  // Collecting is free; only the asking costs. Conflating the two is what cut
+  // a section off at sixty in DOM order.
+  check('collection is not capped at the model batch size',
+    /const limit = SWEEP_COLLECT_MAX;/.test(src) &&
+    !/surveyOnly\) \? 250 : 60/.test(src));
+  check('…and the survey and the paid read collect the same amount',
+    !/opts\.surveyOnly.*\?.*:.*\d\d/.test(/const limit = [^\n]*/.exec(src)[0]));
+  check('the budget is spent in batches instead, so nothing is dropped',
+    /for \(let b = 0; b < asking\.length; b \+= SWEEP_ASK_BATCH\)/.test(src) &&
+    /batches\.push\(asking\.slice\(b, b \+ SWEEP_ASK_BATCH\)\)/.test(src));
+  check('…every batch is asked about, not just the first',
+    /for \(let b = 0; b < batches\.length; b\+\+\)/.test(src));
+  check('…and their answers are merged into one section result',
+    /components: parts\.flatMap\(\(p\) => p\.components \|\| \[\]\)/.test(src));
+  check('a batch that fails does not throw away the ones that answered',
+    /if \(died && !parts\.length\)/.test(src) && /part of this section failed/.test(src));
+
+  // The number under the button is what was agreed to. A section that takes
+  // two calls has to say two.
+  check('the estimate counts calls, not sections',
+    /function sweepCallsFor\(numbers\)/.test(src) &&
+    /Math\.ceil\(\(s\.count \|\| 0\) \/ SWEEP_ASK_BATCH\)/.test(src));
+  check('…and both the box and the dialog are given that count',
+    /sweepEstimateHtml\(picked\.length, elements, sweepCallsFor\(picked\)\)/.test(src) &&
+    /confirmSweepCost\(sections\.length, 0, ticked, sweepCallsFor\(sections\)\)/.test(src));
+
+  // One mega menu is one question, not seventeen. `nested` is the collector's
+  // own word for it and the labelling list was ignoring it.
+  check('parts of a component already listed do not each get their own row',
+    /const components = cands\.filter\(\(c\) => !c\.nested && c\.component\);/.test(src));
+  check('…and a native link or button is not offered as work',
+    /const isNative = \(c\) => \(c\.signals \|\| \[\]\)\.some\(\(s\) => NATIVE_SIGNAL\.test\(s\)\);/.test(src) &&
+    /const bare = rest\.filter\(\(c\) => \(c\.signals \|\| \[\]\)\.length && !isNative\(c\) && c\.selector\);/.test(src));
+  check('…while one that takes a click without being either can be given a role',
+    /id="lblRoleBtn"/.test(src) && /id="lblRoleLink"/.test(src) &&
+    /roleBtn\.id === 'lblRoleLink' \? 'link' : 'button'/.test(src));
+}
+
+// The marks, for real rather than by regex: this is the one the user sees.
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const d = new JSDOM(`<!doctype html><body>
+    <button id="a">one</button><button id="b">two</button><a id="c" href="/x">three</a>
+    </body>`, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.test/' });
+  const w = d.window;
+  w.HTMLElement.prototype.getBoundingClientRect = () => ({ width: 80, height: 20, left: 10, top: 30, bottom: 50, right: 90 });
+  // jsdom implements neither; both are called for their effect on the page,
+  // not for a value, so a no-op is the honest stand-in.
+  w.HTMLElement.prototype.scrollIntoView = function () {};
+  w.requestAnimationFrame = () => 0;
+  w.cancelAnimationFrame = () => {};
+  w.eval(INTEL);
+  const S = w.__u1SelectorIntel;
+  S.collectCandidates(60, null);
+  const marked = w.document.querySelectorAll('[data-u1-mark]').length;
+  check('the collector marks the elements it found', marked >= 3, String(marked));
+
+  const drawn = S.drawMarks();
+  const layer = () => w.document.getElementById('__u1_mark_layer__');
+  check('drawing puts a numbered layer on the page', drawn >= 3 && !!layer(), String(drawn));
+
+  // THE regression. showMark used to call clearOverlay(), and the labelling
+  // pause calls showMark on every row hover — so one mouse movement took all
+  // sixty numbers off the page and nothing put them back.
+  S.showMark(1);
+  check('hovering one row does not take the numbers off the page', !!layer());
+  check('…and the highlight is a layer of its own', !!w.document.getElementById('__u1_mark_hilite__'));
+  S.showMark(2);
+  check('…still there after hovering a second row', !!layer());
+
+  // Fixed coordinates written once are right until the page moves, and the
+  // pause exists to be scrolled through.
+  check('the numbers follow the page instead of being written once',
+    /markFollowFn = \(\) => \{ if \(!markFollowRaf\) place\(\); \};/.test(INTEL) &&
+    /window\.addEventListener\('scroll', markFollowFn, true\)/.test(INTEL));
+
+  S.clearMarks();
+  check('clearing still takes both layers down',
+    !layer() && !w.document.getElementById('__u1_mark_hilite__') &&
+    w.document.querySelectorAll('[data-u1-mark]').length === 0);
+}
+
+// ── Holding after each section so its fixes can be built ────────────────────
+// Ticking all twenty-three sections used to be thirty-five minutes and $14
+// before the components view was reached even once: the loop only reached
+// phase='components' after the LAST section. What matters structurally is that
+// the hold is inside the loop, that the run genuinely resumes from it, that
+// Stop can end a wait nothing else will end, and that the make-accessible
+// button is let through the guard that a run normally holds it behind.
+console.log('\nholding after each section');
+{
+  const src = panelSrc;
+  const loop = /for \(let i = 0; i < stops\.length; i\+\+\) \{[\s\S]*?\n    \}\n  \} catch/.exec(src)[0];
+
+  check('the hold is inside the loop, not after it',
+    /await pauseForFixes\(stop, rest\)/.test(loop));
+  check('…and it only holds when there is something to build',
+    /const buildable = stop\.found\.filter\(\(f\) => !f\.done\)\.length;/.test(loop) &&
+    /sweepPause\.on && buildable/.test(loop));
+  check('…and never after the last section, where there is nothing to continue to',
+    /rest = stops\.length - \(i \+ 1\)/.test(loop) && /rest > 0/.test(loop));
+  check('Stop during the hold breaks the run',
+    /if \(out\.stopped\) break;/.test(loop));
+  check('…and continuing puts it back to being a run',
+    /aiSweep\.phase = 'screens';[\s\S]{0,120}setPlayButtons\(false\)/.test(loop));
+
+  const fn = /function pauseForFixes[\s\S]*?\n}/.exec(src)[0];
+  check('the hold shows the real components view, not a copy of it',
+    /renderSweepPicks\(\)/.test(fn) && /aiSweep\.phase = 'components'/.test(fn));
+  check('…and stops the busy overlay, because nothing is working',
+    /clearSweepBusy\(\)/.test(fn));
+  check('the wait is reachable from outside, so Stop can end it',
+    /sweepPause\.resolve = finish;/.test(fn) &&
+    /if \(sweepPause\.resolve\) sweepPause\.resolve\(\{ stopped: true \}\)/.test(src));
+  check('opting out of every further hold is offered where it is felt',
+    /sweepPause\.on = !e\.target\.checked/.test(fn));
+
+  // The guard exists so a run cannot be started on top of itself. The hold is
+  // the one moment the run is there specifically so this button can be pressed.
+  check('the make-accessible button is let through while the run holds',
+    /if \(aiSweep\.running && !sweepPause\.resolve\) return;/.test(src));
+  check('the hold is offered before the run starts, not only during it',
+    /id="sweepPauseTick"/.test(src) &&
+    /e\.target\.id === 'sweepPauseTick'/.test(src));
+  check('…and is on by default', /const sweepPause = \{ on: true/.test(src));
+
+  // A throw inside the loop skips the hold's own finish().
+  check('a run that dies while holding takes the banner down with it',
+    /sweepPause\.resolve = null;[\s\S]{0,200}getElementById\('sweepResume'\)/.test(src));
+}
   check('…and a declined role question does not leave a half-made mapping',
     /saved\.cancelled\) return \{ err/.test(toMap));
 
   // Hovering a row lights the element. showMark has been exported since the
   // set-of-mark work and never had a caller.
   check('hovering a row lights that element on the page',
-    /showMark\(n\)/.test(src));
+    /showMark\(m\), \[n\]\)/.test(src));
+  // …and now shows it as a picture in the panel too, cut from the screenshot
+  // this section already produced. Hovering a row should not scroll the site.
+  check('…and shows the element itself, cropped from the section screenshot',
+    /function elementCrop\(shot, viewport, box, img\)/.test(src) &&
+    /crops\.set\(n, c \? elementCrop\(collected\.shot, collected\.viewport, c\.box, shotImg\) : ''\)/.test(src));
+  // Drawn into the rows up front, not only on hover — the number was never the
+  // thing you wanted to see, and a wall of numbers is what the list used to be.
+  check('…and the crop is in the row itself, where the number used to be',
+    /shotImg\.onload = \(\) => \{/.test(src) &&
+    /holder\.querySelector\('\.lbl-img'\)\.src = src;/.test(src) &&
+    /class="lbl-thumb" data-mark=/.test(src));
+  // Hovering marks the element on the REAL page instead of enlarging a copy of
+  // a picture already in the row.
+  check('…and hovering it marks that element on the page, not a bigger picture',
+    /inPage\(tab\.id, \(m\) => window\.__u1SelectorIntel\.showMark\(m\), \[n\]\)/.test(src) &&
+    !/lbl-preview/.test(src));
+  check('…and leaving the list takes the highlight down',
+    /window\.__u1SelectorIntel\.clearHilite\(\)/.test(src) &&
+    /clearHilite,/.test(readFileSync(join(ROOT, 'selector-intel.js'), 'utf8')));
+  check('…which costs no capture, because the shot is already in hand',
+    !/captureScreen/.test(/function elementCrop[\s\S]*?\n}/.exec(src)[0]));
   // And the group case, which is the reason this exists at all.
   check('several ticked rows can be declared ONE component',
-    /These are one component/.test(src) && /const marks = \[\.\.\.sweepLabel\.marks\]/.test(src));
+    /Add the ticked ones as this/.test(src) && /const marks = \[\.\.\.sweepLabel\.marks\]/.test(src));
+  // The row says what it is and can be corrected there. One dropdown at the
+  // bottom governing every ticked row at once is unusable the moment two rows
+  // differ, and it was not clear what it applied to even when they did not.
+  check('each component row carries its own type, correctable in place',
+    /class="lbl-row-type"/.test(src) &&
+    /r\.querySelector\('\.lbl-row-type'\)\.value/.test(src));
+  check('confirming builds each row as the type its own control says',
+    /const res = await confirmedToMapping\(ticked\[k\], stop, tab\);/.test(src) &&
+    /type: pick\.type, found: sel, container/.test(src));
+  // The engine that reads the container's HTML, not the one that measures it
+  // from outside. describeComponent collapsed every sub-selector onto the root:
+  //   fix.tabs('.finder__tabs', { selectors: { tabList: '.finder__tabs' } })
+  check('…through rowFromParts and prepareOne, so the parts are real selectors',
+    /async function confirmedToMapping\(pick, stop, tab\)/.test(src) &&
+    /const built = rowFromParts\(\{/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]) &&
+    /await prepareOne\(built\.row, tab\)/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]));
+  check('…and a trigger-rooted type still gets its panel supplied',
+    /triggerRequired\(pick\.type\) \|\| triggerFirstType\(pick\.type\)/.test(src));
+  // A redraw of the list would take the pause's own host with it.
+  check('an open pause is not destroyed by a redraw of the list it lives in',
+    /if \(sweepLabel\.resolve\) return;/.test(src));
+  // The collector's selector is a guess, not a decision.
+  check('…and the selector it proposes can be corrected in the row',
+    /class="lbl-sel-edit"/.test(src) &&
+    /async function labelToMapping\(type, marks, stop, tab, rootOverride\)/.test(src) &&
+    /root = rootOverride;/.test(src));
+  check('…and a corrected selector is checked against the page before it is used',
+    /That selector is not valid CSS/.test(src) && /That selector matches nothing on this page/.test(src));
+  check('…and there is one press to stop being asked at all',
+    /id="sweepSilentTick"/.test(src) && /if \(answer\.auto\)/.test(src) &&
+    /sweepLabel\.on = false;/.test(src) && /sweepPause\.on = false;/.test(src));
+  // It governs the whole run, so it belongs with the switches that do — not at
+  // the bottom of a pause you only reach after committing to the run.
+  check('…and it sits with the other two run switches, not inside the pause',
+    /id="sweepPauseTick"/.test(src) && /id="sweepSilentTick"/.test(src) &&
+    !/id="lblAutoRest"/.test(src));
   check('…including from the folded-away plain elements',
-    /lbl-plain/.test(src) && /six buttons that are a tab strip/.test(src));
+    /lbl-plain/.test(src) && /six buttons that are a tab strip/i.test(src) &&
+    /Missed something\?/.test(src));
 
   // What you name is also ground truth. fixtures/step.labels.json is what
   // verify-detect scores against, and its own header insists it be written by
@@ -718,8 +945,16 @@ console.log('\nchoosing screens');
     currentStage: 'none',
     // showSweepBusy owns a module-level interval handle in panel.js.
     sweepBusyTimer: null,
+    // Whether the run holds after each section for its fixes to be built. The
+    // sections summary draws its tick from this, so the render needs it here.
+    sweepPause: { on: true, resolve: null },
+    // The third run switch is drawn from this, so the render needs it too.
+    sweepLabel: { on: true, resolve: null, marks: new Set(), busy: false },
     setInterval: (...a) => w2.setInterval(...a),
     clearInterval: (...a) => w2.clearInterval(...a),
+    // A busy section is asked about in more than one call, and the estimate
+    // says so — so the batch size has to be here for it to work it out.
+    SWEEP_ASK_BATCH: 60,
     SWEEP_EST: { scanBase: 10, scanPerElement: 0.85, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 },
     aiSweep: { phase: 'screens', stops: [
       { n: 1, thumb: PIXEL, count: 14, inventory: '6 links, 3 buttons', sticky: 27, truncated: false, found: [] },
@@ -731,8 +966,8 @@ console.log('\nchoosing screens');
   const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
                 lift('markScreenReading'), lift('markScreenRead'),
-                lift('sweepRunningHtml'), lift('markScreenFailed'),
-                lift('setPlayButtons'), lift('sweepSecsFor'),
+                lift('sweepRunningHtml'), lift('markScreenFailed'), lift('sweepSettledHtml'),
+                lift('setPlayButtons'), lift('sweepSecsFor'), lift('sweepCallsFor'),
                 // The real stage owner, so these tests exercise the thing that
                 // ships rather than a stand-in that cannot drift with it.
                 lift('setStage'), lift('renderStageTrail'), lift('resumeStage'),
@@ -812,14 +1047,14 @@ console.log('\nchoosing screens');
     check('a completed section keeps its ▶ rather than losing the option',
       /data-play-screen/.test(box.sweepScreenRowHtml({ ...box.aiSweep.stops[0], scanned: true })));
     check('the re-read warning is on the dialog that spends the money',
-      /confirmSweepCost\(1, stop\.scanned \? n : 0, stop\.count\)/.test(panelSrc));
+      /confirmSweepCost\(1, stop\.scanned \? n : 0, stop\.count, sweepCallsFor\(\[n\]\)\)/.test(panelSrc));
     check('…and confirmSweepCost has somewhere to put it',
-      /function confirmSweepCost\(sections, rereading, elements\)/.test(panelSrc) &&
+      /function confirmSweepCost\(sections, rereading, elements, calls\)/.test(panelSrc) &&
       /has already been searched and paid for/.test(panelSrc));
     // A ▶ quotes the time for THAT section, not for an average one — which is
     // the whole point of the estimate now scaling with what is on the screen.
     check('…and the ▶ hands it that section\'s own element count',
-      /confirmSweepCost\(1, [^)]*, stop\.count\)/.test(panelSrc));
+      /confirmSweepCost\(1, [^,]*, stop\.count,/.test(panelSrc));
     // One press, one section, through the same function every other run uses —
     // so it gets the same stop button, log, labelling pause and saved progress.
     check('it runs through scanPickedScreens with just that number',
@@ -850,7 +1085,7 @@ console.log('\nchoosing screens');
   // One press starts the run; there is no invisible arming step that relabels
   // the button and writes the cost below the fold.
   check('reading is one press behind a visible dialog, not two presses',
-    /confirmSweepCost\(sections\.length, 0, ticked\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
+    /confirmSweepCost\(sections\.length, 0, ticked, sweepCallsFor\(sections\)\)/.test(panelSrc) && !/aiSweep\.armed/.test(panelSrc));
   // Progress has to be visible from wherever the eye is. Reported as "it
   // started and did not show me that it started" — true, from the bottom of a
   // twenty-six item list, with the progress bar in a block far above.
@@ -923,11 +1158,20 @@ console.log('\nchoosing screens');
       parts[1].tagName === 'DETAILS' && /Completed · 1/.test(parts[1].textContent));
     check('the unread rows are in the first area and the read ones are not',
       parts[0].contains(row(3)) && parts[1].contains(row(1)));
-    check('"select all" counts the unread ones, not everything',
-      /Select all 1 unsearched section/.test(w2.document.getElementById('sweepPicksSummary').textContent),
+    check('"read all" counts the unread ones, not everything',
+      /Read all 1 section that have not been read yet/.test(w2.document.getElementById('sweepPicksSummary').textContent),
       w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));
-    check('…and says how many are already paid for',
-      /1 completed/.test(w2.document.getElementById('sweepPicksSummary').textContent));
+    // The half-ticked state is the commonest one on this screen and used to be
+    // an unexplained dash.
+    check('…and says how many are already paid for, and that they are free',
+      /1 already read/.test(w2.document.getElementById('sweepPicksSummary').textContent) &&
+      /cost nothing/.test(w2.document.getElementById('sweepPicksSummary').textContent));
+    // Stopping and not stopping are two answers to one question. Both ticked is
+    // a state the run cannot honour; both empty is no answer.
+    check('the two run modes cannot both be chosen',
+      [...w2.document.querySelectorAll('#sweepPicksSummary input[name="sweepMode"]')].length === 2 &&
+      [...w2.document.querySelectorAll('#sweepPicksSummary input[name="sweepMode"]')]
+        .every((r) => r.type === 'radio'));
     box.aiSweep = was;
     box.renderSweepScreens();
   }
@@ -1788,7 +2032,7 @@ console.log('\nwhich step a section is on');
   check('the local half says it is local and free',
     /Reading what is on this section — a few seconds, no charge\./.test(scan));
   check('the paid half says it is the model, and what it was given',
-    /Asking Claude about \$\{busyN\} element/.test(scan));
+    /asking\$\{''\}? Claude about \$\{batches\[b\]\.length\} element|Claude about \$\{batches\[b\]\.length\} element/.test(scan));
   check('…and describes the limit it actually has, not a stopwatch',
     /it only gives up if Claude \$\{''\}?goes quiet for a minute|goes quiet for a minute/.test(scan));
   // The panel must not print a rule the code does not follow — that is how
@@ -1802,7 +2046,8 @@ console.log('\nwhich step a section is on');
   // The count is what was actually sent, not what was collected: everything
   // already mapped or seen on an earlier section is filtered out first.
   check('the count is what was sent, not what was on the section',
-    /const busyN = collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\)\.length;/.test(scan));
+    /const asking = collected\.candidates\.filter\(\(c\) => !handled\.has\(c\.selector\)\);/.test(scan) &&
+    /const busyN = asking\.length;/.test(scan));
 }
 
 // ── The estimate that quoted 15 seconds for a 94-second screen ─────────────

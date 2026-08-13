@@ -860,6 +860,8 @@
 
   const MARK_ATTR = 'data-u1-mark';
   const MARK_LAYER = '__u1_mark_layer__';
+  // Separate from the numbered layer on purpose — see showMark.
+  const HILITE_LAYER = '__u1_mark_hilite__';
 
   // Viewport size read off the document rather than the bare globals, so the
   // module works anywhere `document` does.
@@ -966,7 +968,12 @@
   // wrote `class="site-nav"` rather than `<nav>` — common enough that leaving it
   // out made the survey look broken rather than conservative.
   const COMPONENT_BY_CLASS = [
-    [/carousel|slideshow|gallery|\bslider\b/i, 'carousel'],
+    // `ticker`, `marquee` and an announcement rail are the same component under
+    // another name: a strip of items, one shown at a time, with previous and
+    // next. STEP's `.ticker` carries an aria-live region and two arrow buttons
+    // and was invisible here, so its parts arrived as six separate links and
+    // two unexplained buttons.
+    [/carousel|slideshow|gallery|\bslider\b|\bticker\b|marquee/i, 'carousel'],
     [/accordion|collapsible|\bfaq\b/i, 'accordion'],
     [/datepicker|calendar/i, 'datepicker'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
@@ -1064,7 +1071,10 @@
 
     const cls = (el.className && typeof el.className === 'string') ? el.className : '';
     if (cls) {
-      for (const [re, name] of COMPONENT_BY_CLASS) if (re.test(cls)) return { name, sure: false };
+      const flat = classWords(cls);
+      for (const [re, name] of COMPONENT_BY_CLASS) {
+        if (re.test(cls) || re.test(flat)) return { name, sure: false };
+      }
     }
 
     // Three or more fields gathered under one element is a form, whatever the
@@ -1132,10 +1142,36 @@
   // `componentHint` knew "navbar" and this list did not — a real menu written as
   // `class="site-navbar"` was never collected, so nothing was drawn on its
   // screenful and the survey looked broken rather than conservative.
+  /**
+   * A class string with its word boundaries made real.
+   *
+   * The patterns below are written with \b — and \b treats `_` as a word
+   * character, so `\btabs\b` does not match `finder__tabs`. BEM is not a
+   * fringe convention: `block__element` is most of the class names on most of
+   * the sites this runs on, and camelCase (`dealTabs`) fails the same way.
+   *
+   * STEP's own tab strip is `<div class="finder__tabs">`, and with its
+   * role="tablist" stripped — which is what a real client's markup looks like —
+   * it was invisible to every pattern here. Reported three times as "it did not
+   * find the tabs".
+   *
+   *   finder__tabs -> finder tabs        dealTabs -> deal Tabs
+   *
+   * Tested ALONGSIDE the raw string, never instead of it, so a pattern that
+   * deliberately matches a joined name (`react-datepicker__input`) still does.
+   */
+  const classWords = (cls) => cls
+    .replace(/_+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+
   const CLASS_HINTS = [
     'modal', 'lightbox', 'drawer', 'offcanvas', 'off-canvas',
     'dropdown', 'megamenu', 'mega-nav', 'nav', 'menu',
-    'tab', 'carousel', 'slider', 'slideshow', 'gallery',
+    // `ticker` and `marquee` name a carousel; COMPONENT_BY_CLASS reads them and
+    // could never see one, because this list decides what is LOOKED at and that
+    // one only decides what a thing is CALLED. A word in one and not the other
+    // is a rule that can never fire — see the check in verify-detect.
+    'tab', 'carousel', 'slider', 'slideshow', 'gallery', 'ticker', 'marquee',
     'accordion', 'collapsible', 'faq',
     'datepicker', 'calendar', 'pagination', 'pager',
     'tooltip', 'popover', 'breadcrumb',
@@ -1358,7 +1394,8 @@
     for (const el of candidateElements(scope)) {
       if (out.length >= max) break;
       if (seen.has(el)) continue;
-      if (el.closest('#' + MARK_LAYER)) continue;   // never mark our own overlay
+      // Never mark our own overlay — either of them.
+      if (el.closest('#' + MARK_LAYER) || el.closest('#' + HILITE_LAYER)) continue;
       // A CLOSED panel inside the container you pointed at is the interesting
       // element, not one to skip.
       //
@@ -1491,28 +1528,55 @@
     Object.assign(layer.style, {
       position: 'fixed', inset: '0', zIndex: '2147483646', pointerEvents: 'none',
     });
+    // Held so the numbers can be re-placed. They used to be written once at
+    // fixed viewport coordinates, which is correct for exactly as long as the
+    // page does not move — and the labelling pause exists to be scrolled
+    // through. One flick of the wheel and every number was somewhere else.
+    const boxes = [];
     document.querySelectorAll('[' + MARK_ATTR + ']').forEach(el => {
-      const r = el.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) return;
       const box = document.createElement('div');
       Object.assign(box.style, {
-        position: 'fixed', left: r.left + 'px', top: r.top + 'px',
-        width: r.width + 'px', height: r.height + 'px',
-        outline: '2px solid #ff2d95', outlineOffset: '-1px', boxSizing: 'border-box',
+        position: 'fixed', outline: '2px solid #ff2d95', outlineOffset: '-1px',
+        boxSizing: 'border-box',
       });
       const tag = document.createElement('div');
       tag.textContent = el.getAttribute(MARK_ATTR);
       Object.assign(tag.style, {
-        position: 'fixed', left: Math.max(0, r.left) + 'px',
-        top: Math.max(0, r.top - 14) + 'px',
-        background: '#ff2d95', color: '#fff', font: 'bold 11px/1.2 monospace',
-        padding: '1px 4px', borderRadius: '3px', whiteSpace: 'nowrap',
+        position: 'fixed', background: '#ff2d95', color: '#fff',
+        font: 'bold 11px/1.2 monospace', padding: '1px 4px', borderRadius: '3px',
+        whiteSpace: 'nowrap',
       });
       layer.appendChild(box);
       layer.appendChild(tag);
+      boxes.push({ el, box, tag });
     });
+
+    const place = () => {
+      for (const b of boxes) {
+        const r = b.el.getBoundingClientRect();
+        // Off screen or collapsed: hidden rather than drawn at 0,0, which is
+        // what put a stack of numbers in the top-left corner of the picture.
+        if (r.width < 1 || r.height < 1) {
+          b.box.style.display = 'none'; b.tag.style.display = 'none';
+          continue;
+        }
+        b.box.style.display = ''; b.tag.style.display = '';
+        b.box.style.left = r.left + 'px';
+        b.box.style.top = r.top + 'px';
+        b.box.style.width = r.width + 'px';
+        b.box.style.height = r.height + 'px';
+        b.tag.style.left = Math.max(0, r.left) + 'px';
+        b.tag.style.top = Math.max(0, r.top - 14) + 'px';
+      }
+      markFollowRaf = requestAnimationFrame(place);
+    };
+
     document.body.appendChild(layer);
-    return document.querySelectorAll('[' + MARK_ATTR + ']').length;
+    place();
+    markFollowFn = () => { if (!markFollowRaf) place(); };
+    window.addEventListener('scroll', markFollowFn, true);
+    window.addEventListener('resize', markFollowFn);
+    return boxes.length;
   }
 
   /**
@@ -1596,6 +1660,11 @@
   // every single time the panel had to scroll to reach it.
   let followRaf = 0;
   let followFn = null;
+  // The numbered layer keeps its own follow loop. It has to outlive the
+  // single-element highlight — hovering a row in the panel must not be what
+  // takes every number off the page — so the two cannot share one slot.
+  let markFollowRaf = 0;
+  let markFollowFn = null;
   const stopFollowing = () => {
     if (followFn) {
       window.removeEventListener('scroll', followFn, true);
@@ -1604,10 +1673,25 @@
     }
     if (followRaf) { cancelAnimationFrame(followRaf); followRaf = 0; }
   };
+  const stopMarkFollowing = () => {
+    if (markFollowFn) {
+      window.removeEventListener('scroll', markFollowFn, true);
+      window.removeEventListener('resize', markFollowFn);
+      markFollowFn = null;
+    }
+    if (markFollowRaf) { cancelAnimationFrame(markFollowRaf); markFollowRaf = 0; }
+  };
   const clearOverlay = () => {
     stopFollowing();
+    stopMarkFollowing();
     const l = document.getElementById(MARK_LAYER);
     if (l) l.remove();
+    clearHilite();
+  };
+  /** The single-element highlight, which is NOT the numbered layer. */
+  const clearHilite = () => {
+    const h = document.getElementById(HILITE_LAYER);
+    if (h) h.remove();
   };
 
   function clearMarks() {
@@ -1616,22 +1700,45 @@
     return true;
   }
 
-  // Re-highlight a single mark on demand (clicking a finding in the panel).
+  /**
+   * Pick one mark out of the numbered layer, without taking the layer down.
+   *
+   * This used to call clearOverlay(), which removes the numbers. Its caller is
+   * the labelling pause's row hover — so the first time the mouse crossed the
+   * list, all sixty numbers came off the page and nothing ever put them back.
+   * The numbers ARE the binding between a row and an element; losing them makes
+   * the whole pause unusable, and it looked like the marking had stopped
+   * working.
+   *
+   * So the highlight gets a layer of its own, drawn over the numbers rather
+   * than instead of them.
+   */
   function showMark(mark) {
-    clearOverlay();
+    clearHilite();
     const el = document.querySelector(`[${MARK_ATTR}="${mark}"]`);
     if (!el) return false;
     el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    const r = el.getBoundingClientRect();
     const layer = document.createElement('div');
-    layer.id = MARK_LAYER;
+    layer.id = HILITE_LAYER;
     Object.assign(layer.style, {
-      position: 'fixed', left: r.left + 'px', top: r.top + 'px',
-      width: r.width + 'px', height: r.height + 'px',
-      outline: '3px solid #ff2d95', background: 'rgba(255,45,149,0.18)',
-      zIndex: '2147483646', pointerEvents: 'none', boxSizing: 'border-box',
+      position: 'fixed', outline: '3px solid #ff2d95',
+      background: 'rgba(255,45,149,0.18)',
+      zIndex: '2147483647', pointerEvents: 'none', boxSizing: 'border-box',
     });
+    // scrollIntoView is smooth and asynchronous, so a rect read now is the rect
+    // before the scroll. It follows for as long as it is up, which also covers
+    // the user scrolling themselves.
+    const place = () => {
+      if (!layer.isConnected) return;
+      const r = el.getBoundingClientRect();
+      layer.style.left = r.left + 'px';
+      layer.style.top = r.top + 'px';
+      layer.style.width = r.width + 'px';
+      layer.style.height = r.height + 'px';
+      requestAnimationFrame(place);
+    };
     document.body.appendChild(layer);
+    place();
     return true;
   }
 
@@ -1838,9 +1945,28 @@
    * a field that would be rejected at runtime is worse than an absent one,
    * because it fails silently.
    */
-  function describeComponent(type, marks) {
-    const els = elementsForMarks(marks);
-    if (!els.length) return { err: 'None of those marks are on the page any more.' };
+  function describeComponent(type, marks, fallbackSel) {
+    let els = elementsForMarks(marks);
+    // Marks are an attribute written onto the page, and the first line of
+    // collectCandidates is clearMarks() — so anything that re-reads the page
+    // between the list being drawn and a component being built takes them all
+    // away. The element is still there; only the label for it is gone.
+    //
+    // A selector is not destroyed by any of that, and the row that proposes a
+    // component carries one. Falling back to it turns "None of those marks are
+    // on the page any more" — which reads as "your component has vanished" and
+    // is untrue — into a build that simply works.
+    if (!els.length && fallbackSel) {
+      try {
+        const found = document.querySelector(fallbackSel);
+        if (found) els = [found];
+      } catch (e) { /* an invalid selector is reported below, as before */ }
+    }
+    if (!els.length) {
+      return { err: fallbackSel
+        ? 'Nothing on this page matches ' + fallbackSel + ' any more.'
+        : 'None of those marks are on the page any more.' };
+    }
 
     const single = els.length === 1;
     // One element ticked: it IS the component's root. Several: the component is
@@ -2524,7 +2650,7 @@
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
     // set-of-mark (AI review)
-    collectCandidates, drawMarks, drawComponentMarks, clearMarks, showMark, extractComponent,
+    collectCandidates, drawMarks, drawComponentMarks, clearMarks, showMark, clearHilite, extractComponent,
     highlightSelector,
     // a human's answer, without a model
     describeComponent, elementForMark, elementsForMarks, commonAncestor, ITEM_FIELD,

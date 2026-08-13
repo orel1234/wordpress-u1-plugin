@@ -2326,15 +2326,27 @@ button {
 
 /* Select all / none. Twenty-one screenfuls is twenty-one clicks to clear, and
    "only the ones with a carousel" wants to start from none. */
+/* These are <label>s, and the global `label` rule makes every label in the
+   panel uppercase, 600-weight and letter-spaced — sizing for a form field
+   caption, which is what most labels here are. A run switch is a SENTENCE, so
+   it opts out of all three and sits at the panel's ordinary text size.
+   Laid out as one flowing paragraph rather than two flex columns: as columns
+   the text and its italic tail each wrapped separately, which is what turned
+   one line into three. */
 .sweep-all {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  display: block;
   margin: 6px 0 8px;
-  font-size: 11.5px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--u1-text);
   cursor: pointer;
   user-select: none;
 }
+.sweep-all input[type="checkbox"] { vertical-align: -2px; margin-right: 7px; }
+.sweep-all em { font-style: italic; color: var(--u1-text-muted); }
 
 /* What the ticked screens will cost, in time and money. Two rows, because they
    are two different promises: one is what the next press costs, the other is a
@@ -4360,3 +4372,406 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   color: var(--u1-text);
   opacity: .85;
 }
+
+/* ── The run, holding for you to build a section's fixes ─────────────────────
+   Louder than .sweep-holds, which reports a fact you can ignore. This one is
+   the run itself stopped and waiting: nothing else moves until it is answered,
+   so it reads as the active thing on the screen rather than as a note above
+   the list. */
+.sweep-resume {
+  margin: 0 0 10px;
+  padding: 11px 13px;
+  background: var(--u1-surface-2);
+  border: 1px solid var(--u1-primary);
+  border-left: 3px solid var(--u1-primary);
+  border-radius: 8px;
+  box-shadow: 0 0 0 3px var(--u1-primary-dim);
+}
+.sweep-resume-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--u1-text);
+}
+.sweep-resume-sub {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--u1-text-muted);
+}
+.sweep-resume-btns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+}
+/* Full width on its own row: it is the way out of the hold, and on a 400px
+   panel it otherwise wraps to a stub beside "Stop the run here". */
+.sweep-resume-btns #sweepResumeGo { flex: 1 1 100%; }
+/* Opting out of every remaining hold is a decision about the next half hour,
+   so it is not a button you can hit while reaching for Continue. */
+.sweep-resume-auto {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--u1-text-dim);
+}
+
+/* ── The labelling list, grouped by what there is to do ──────────────────────
+   Three groups, not one list: the components (the answer), the things that
+   take a click without being a control (the work), and the native ones
+   (nothing to do). They used to be one flat list of everything with a click
+   signal — 121 rows out of 224 on a shop page, nearly all ordinary links. */
+.lbl-bare {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  background: var(--u1-surface-2);
+  border: 1px solid var(--u1-warm-2);
+  border-left: 3px solid var(--u1-warm-1);
+  border-radius: 8px;
+}
+.lbl-bare-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--u1-warm-1);
+}
+.lbl-bare .lbl-act { margin-top: 8px; }
+
+/* The element, as a picture, the way a section is shown as a picture. Cropped
+   from the screenshot already taken for this section — hovering a row should
+   not mean looking away from the panel at the real page. */
+.lbl-box { position: relative; }
+.lbl-preview {
+  position: absolute;
+  right: 8px;
+  width: 300px;
+  max-height: 210px;
+  object-fit: contain;
+  z-index: 60;
+  background: #000;
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .6);
+  padding: 4px;
+  pointer-events: none;
+}
+.lbl-row.is-used { opacity: .5; }
+
+/* ── A labelling row: the element, not its number ────────────────────────────
+   The thumbnail sits where the pink number badge used to, and hovering it
+   enlarges — the same gesture the sections list uses one level up. The number
+   stays, small, in the corner: it is still what binds this row to the mark on
+   the real page. */
+.lbl-thumb {
+  flex: 0 0 auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 40px;
+  border-radius: 4px;
+  overflow: visible;
+  background: var(--u1-surface-code);
+  border: 1px solid var(--u1-border);
+}
+/* `contain`, not `cover`. Half the components on a page are full-width and
+   30px tall — a breadcrumb, a nav bar, a ticker — and `cover` crops those to a
+   band of background with nothing in it. Letterboxed and small beats filled and
+   meaningless; the hover zoom is where it is actually read. */
+.lbl-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 3px;
+  display: none;
+}
+.lbl-thumb.has-shot .lbl-img { display: block; }
+.lbl-thumb .lbl-n {
+  position: absolute;
+  left: -3px;
+  top: -6px;
+  background: #ff2d95;
+  color: #fff;
+  font: bold 9px/1.2 monospace;
+  padding: 1px 3px;
+  border-radius: 3px;
+  z-index: 2;
+}
+.lbl-zoom {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 46px;
+  width: 340px;
+  max-height: 210px;
+  object-fit: contain;
+  z-index: 60;
+  background: #000;
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .6);
+  padding: 4px;
+  pointer-events: none;
+}
+/* No hover zoom. The row already carries the picture, and hovering now marks
+   the element on the real page — a second, larger copy of a picture you are
+   already looking at answered a question that was not being asked. */
+.lbl-zoom { display: none; }
+
+/* A component row states what it is, in a control you can correct. */
+.lbl-row.is-comp { align-items: center; gap: 8px; }
+.lbl-row-type {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 2px 4px;
+  background: var(--u1-surface-input);
+  color: var(--u1-text);
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 4px;
+}
+.lbl-auto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--u1-text-dim);
+}
+
+/* What happened to this row when you pressed build. */
+.lbl-why {
+  flex: 1 0 100%;
+  margin: 3px 0 0 84px;
+  font-size: 11px;
+  color: var(--u1-text-muted);
+}
+.lbl-row.is-failed { border-left: 3px solid var(--u1-danger, #f87171); }
+.lbl-row.is-failed .lbl-why { color: var(--u1-danger, #f87171); }
+.lbl-row.is-used .lbl-why { color: var(--u1-success, #39d353); }
+
+/* ── Two questions, two boxes ────────────────────────────────────────────────
+   "Which sections do I read" and "what does that cost" were one unbroken
+   region: same ground, no gap, no headings. The eye read the price as part of
+   the choosing, and the two checkboxes as part of the price. They are separate
+   decisions and they now look like it. */
+.block-title {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--u1-text-dim);
+  margin-bottom: 5px;
+}
+/* Air between them, and a ground of its own for the price — which is the one
+   that is read last and decided on. */
+#sweepEstimate .sweep-est {
+  margin-top: 14px;
+  background: var(--u1-surface);
+  border-color: var(--u1-border-strong);
+}
+#sweepPicksSummary { padding-bottom: 11px; }
+
+/* The two standing paragraphs above the run, folded. Read once, then in the
+   way forever. */
+.input-note {
+  margin: 5px 0;
+  border-left: 2px solid var(--u1-border-strong);
+  padding-left: 9px;
+}
+.input-note > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--u1-text-muted);
+  user-select: none;
+}
+.input-note > summary:hover { color: var(--u1-text); }
+.input-note .input-hint { display: block; margin-top: 5px; }
+
+/* A component row IS a section row, one scale down — same tick, same picture,
+   same bold name over a quieter line. Two layouts for the same kind of decision
+   is what made the labelling list read as a different tool from the picker. */
+.lbl-row.is-comp { align-items: center; gap: 10px; }
+.lbl-row.is-comp .lbl-thumb { width: 60px; height: 40px; }
+.lbl-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.lbl-title { display: flex; align-items: center; gap: 6px; }
+.lbl-meta {
+  font-size: 11px;
+  color: var(--u1-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lbl-meta-2 { color: var(--u1-text-dim); }
+.lbl-row.is-comp .lbl-row-type {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 6px;
+}
+
+/* ── Checkboxes, in the tool's own purple ────────────────────────────────────
+   `accent-color` was set in five specific places and nowhere else, so most of
+   the ticks in the panel rendered in the browser's default blue — against a
+   violet UI, on a dark ground. One rule, everywhere, and the exceptions above
+   still win on specificity where they mean something. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--u1-primary);
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid var(--u1-primary-text);
+  outline-offset: 2px;
+}
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
+
+/* All three run switches read as one control, at one size. They were a mix of
+   11px and 13px in two different boxes, so the third looked like a footnote to
+   the first two rather than a peer of them. */
+
+/* The selector, correctable in the row that proposes it. */
+.lbl-sel-edit {
+  width: 100%;
+  min-width: 0;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 3px 6px;
+  color: var(--u1-text);
+  background: var(--u1-surface-input);
+  border: 1px solid var(--u1-border);
+  border-radius: 4px;
+}
+.lbl-sel-edit:focus {
+  outline: none;
+  border-color: var(--u1-primary);
+  box-shadow: 0 0 0 2px var(--u1-primary-dim);
+}
+
+.lbl-skipped {
+  display: block;
+  margin-top: 5px;
+  padding-left: 8px;
+  border-left: 2px solid var(--u1-border-strong);
+  color: var(--u1-text-dim);
+}
+
+/* Same opt-out for the labelling rows. A component row is prose — a selector,
+   a tag, a reason — and the global label rule was rendering all of it as
+   uppercase 10px with letter-spacing, which is why `.MEGA-NAV` and
+   `NAV · STATED BY THE MARKUP` shouted. */
+.lbl-row {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: 0;
+}
+.lbl-meta, .lbl-meta-2, .lbl-why {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.lbl-bare-head { text-transform: none; letter-spacing: normal; }
+
+/* ── The components, dropped out of their own section row ────────────────────
+   Not a panel at the top of the tab. A section and the components on it are
+   one thing at two levels, and separating them meant reading about "Section 1"
+   in a box with no visual connection to the Section 1 row still sitting in the
+   list below it, thumbnail and all. */
+.lbl-drop {
+  margin: -2px 0 10px;
+  padding: 10px 12px 12px;
+  background: var(--u1-surface);
+  border: 1px solid var(--u1-primary);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 0 0 3px var(--u1-primary-dim);
+}
+/* The row it belongs to reads as the head of that box, not as a row above it. */
+.sweep-screen.is-open {
+  border-color: var(--u1-primary);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  box-shadow: 0 0 0 3px var(--u1-primary-dim);
+}
+.lbl-drop .lbl-box { position: relative; }
+
+/* ── One section open, the rest folded ───────────────────────────────────────
+   A pause is a few hundred pixels of decision with several thousand pixels of
+   queued sections scrolling underneath it. While one is open the others fold
+   into a single line that says how many and opens on a click. */
+.lbl-focus .sweep-screen:not(.is-open),
+.lbl-focus .sweep-part > h4,
+.lbl-focus .sweep-part > summary,
+.lbl-focus .sweep-part-done,
+.lbl-focus .sweep-part-empty { display: none; }
+
+.sweep-others {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--u1-primary-text);
+}
+/* Loud enough to be found. It is the only route back to the other twenty-two
+   sections while one is open, and at 11px dim-grey above the list it read as a
+   caption for the section rather than as the way out. */
+.sweep-others > summary {
+  cursor: pointer;
+  padding: 9px 11px;
+  font-weight: 600;
+  color: var(--u1-primary-text);
+  background: var(--u1-primary-dim);
+  border: 1px solid var(--u1-primary);
+  border-radius: 8px;
+  list-style: none;
+}
+.sweep-others > summary::-webkit-details-marker { display: none; }
+.sweep-others > summary::before { content: "▸ "; }
+.sweep-others[open] > summary::before { content: "▾ "; }
+.sweep-others > summary:hover { background: var(--u1-primary-glow); }
+
+/* What each finished section settled, while the run is still going. A silent
+   run otherwise reports a number and a clock, and what it DECIDED lives only in
+   a scan log that starts collapsed. */
+.sweep-settled {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--u1-border);
+  font-size: 11px;
+}
+.sweep-settled > summary {
+  cursor: pointer;
+  color: var(--u1-primary-text);
+  font-weight: 600;
+}
+.sweep-settled-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  color: var(--u1-text-muted);
+}
+.sweep-settled-n { flex: 0 0 auto; color: var(--u1-text); font-weight: 600; }
+.sweep-settled-what { flex: 1 1 auto; min-width: 0; }
+.sweep-settled-k { flex: 0 0 auto; color: var(--u1-primary-text); }
+
+/* The two run modes, as one either/or rather than two loose ticks. */
+.sweep-mode {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--u1-border);
+}
+.sweep-mode-head {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--u1-text-dim);
+  margin-bottom: 4px;
+}
+.sweep-mode .sweep-all { margin: 4px 0; }

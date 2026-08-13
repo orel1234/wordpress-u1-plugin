@@ -286,6 +286,38 @@ console.log(REAL ? `
   Run it again with --hostile for the same page with every hint stripped.
   The gap between the two is what detection actually has left to close.\n`);
 
+// ── The two class lists have to agree ───────────────────────────────────────
+//
+// CLASS_HINTS decides which elements are LOOKED at; COMPONENT_BY_CLASS decides
+// what a thing found there is CALLED. A word in the naming list that is not in
+// the collecting list is a rule that can never fire — which is exactly what
+// happened to `ticker`: it was taught to mean "carousel" and no element
+// carrying it was ever collected, so the announcement rail on the shop page
+// stayed invisible and arrived as six loose links and two unexplained buttons.
+{
+  const words = (re) => (re.match(/[a-z][a-z-]{2,}/g) || []);
+  const hints = new Set(
+    (/const CLASS_HINTS = \[([\s\S]*?)\];/.exec(INTEL)[1].match(/'([^']+)'/g) || [])
+      .map((q) => q.slice(1, -1).toLowerCase()));
+  const lib = (/const LIB_HINTS = \[([\s\S]*?)\];/.exec(INTEL) || [, ''])[1];
+  const libWords = new Set((lib.match(/'([^']+)'/g) || []).map((q) => q.slice(1, -1).toLowerCase()));
+  const byClass = /const COMPONENT_BY_CLASS = \[([\s\S]*?)\n  \];/.exec(INTEL)[1];
+  const orphans = [];
+  for (const m of byClass.matchAll(/\[\/([^/]+)\/i?,\s*'([^']+)'\]/g)) {
+    for (const word of words(m[1])) {
+      const seen = [...hints, ...libWords].some((h) => h.includes(word) || word.includes(h));
+      if (!seen) orphans.push(`${word} (would name it "${m[2]}")`);
+    }
+  }
+  if (orphans.length) {
+    console.error(`\n  COMPONENT_BY_CLASS names things CLASS_HINTS never collects — these rules can never fire:`);
+    for (const o of orphans) console.error(`    ${o}`);
+    console.error('');
+    process.exit(1);
+  }
+  console.log(`  Class lists agree — every naming rule has something that collects for it.\n`);
+}
+
 // A floor, not a target. It fails the build only if detection collapses, so the
 // number can be watched as it climbs rather than blocking every commit.
 const FLOOR = HOSTILE ? 0 : 60;

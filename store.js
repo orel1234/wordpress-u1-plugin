@@ -93,16 +93,9 @@
     },
 
     async set(items) {
+      let res;
       try {
-        const res = await chrome.storage.local.set(items);
-        if (this.onSiteWrite) {
-          const siteKeys = Object.keys(items).filter((k) => parseKey(k));
-          // Awaited, not fired and forgotten. The server is the truth here, so
-          // a save that did not reach it is a save that did not happen — and
-          // the caller's own error handling is what tells the user so.
-          if (siteKeys.length) await this.onSiteWrite(siteKeys, items);
-        }
-        return res;
+        res = await chrome.storage.local.set(items);
       } catch (e) {
         const msg = String((e && e.message) || e);
         if (/quota|QUOTA_BYTES/i.test(msg)) {
@@ -112,6 +105,29 @@
             `Delete mappings you no longer need, or export a backup and clear old sites.`);
         }
         throw new Error('Could not save to local storage: ' + msg);
+      }
+
+      // The local write has happened. Anything that fails from here is the
+      // SERVER refusing, which is a different fact and used to be reported as
+      // the same one: "Could not save it: Could not save to local storage:
+      // http_413" on a mapping that was sitting safely in chrome.storage.
+      try {
+        if (this.onSiteWrite) {
+          const siteKeys = Object.keys(items).filter((k) => parseKey(k));
+          // Awaited, not fired and forgotten. The server is the truth for
+          // SHARED work, so the caller is told when it did not get there.
+          if (siteKeys.length) await this.onSiteWrite(siteKeys, items);
+        }
+        return res;
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        const err = new Error(
+          `Saved on this computer, but not shared with the team: ${msg}. ` +
+          `It works here and it exports; it will sync when the server accepts it.`);
+        // So a caller can tell "this did not happen" from "this happened and
+        // has not travelled yet", and not count the second as a failure.
+        err.localOnly = true;
+        throw err;
       }
     },
 

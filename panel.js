@@ -3983,7 +3983,86 @@ showBuildStamp();
 // money, and a section named in full is never charged for — there was no
 // version of "off" worth offering, and the checkbox was one more thing to have
 // forgotten to tick before paying for a scan.
-const sweepLabel = { on: true, resolve: null, marks: new Set(), busy: false };
+const sweepLabel = { on: true, resolve: null, marks: new Set(), busy: false, skip: false };
+
+/**
+ * A signal that the element is ALREADY a real control.
+ *
+ * clickSignals reports everything it can see, and the list mixes two very
+ * different findings: `<button>` and `role=link` mean the browser already gives
+ * this thing focus and a name, while `onclick`, `cursor:pointer` and
+ * `tabindex=-1` mean somebody hung behaviour on a <div>. Only the second group
+ * is work. Telling them apart is what turns 121 rows of mostly ordinary links
+ * into the handful that actually fail a keyboard.
+ */
+const NATIVE_SIGNAL =
+  /^<(button|a href|input|select|textarea|summary)>$|^role=(button|link|menuitem|menuitemcheckbox|menuitemradio|tab|checkbox|switch|option)$/;
+
+/**
+ * Hold the run after each section, so its components can be built before the
+ * next one is read.
+ *
+ * Ticking all twenty-three sections used to mean thirty-five minutes and $14
+ * before the components view was reached even once — the loop only set
+ * phase='components' after it had finished every section. The components from
+ * section 1 were sitting in aiSweep.stops four minutes in and there was no way
+ * to get at them short of stopping the run.
+ *
+ * `resolve` non-null IS the paused state: it is what the continue button calls,
+ * what the stop button has to call so the run does not sit waiting for a
+ * decision nobody is going to make, and what lets the make-accessible button
+ * through its `aiSweep.running` guard.
+ */
+const sweepPause = { on: true, resolve: null };
+
+/**
+ * Stop after a section, show what it found, and wait to be told to carry on.
+ *
+ * Resolves { stopped:boolean }. The components view is the existing one —
+ * nothing here duplicates it, because the whole point is that the fixes are
+ * built by the same button, with the same ticks and the same review, as they
+ * are when the run has ended.
+ */
+function pauseForFixes(stop, left) {
+  const host = document.getElementById('sweepResume');
+  if (!host) return Promise.resolve({ stopped: false });
+
+  clearSweepBusy();          // the run is not working, it is waiting for you
+  aiSweep.phase = 'components';
+  renderSweepPicks();        // draws the ticks; this banner sits above them
+
+  const k = stop.found.filter((f) => !f.done).length;
+  host.style.display = '';
+  host.innerHTML = `
+    <div class="sweep-resume-head">Section ${stop.n} found ${k} component${k === 1 ? '' : 's'}.</div>
+    <div class="sweep-resume-sub">Build the fixes for them now, then continue —
+      ${left} section${left === 1 ? '' : 's'} still to read. Nothing is charged while this waits.</div>
+    <div class="sweep-resume-btns">
+      <button class="btn-primary btn-sm" id="sweepResumeGo">Continue to the next section →</button>
+      <button class="btn-ghost btn-sm" id="sweepResumeStop">Stop the run here</button>
+      <label class="sweep-resume-auto"><input type="checkbox" id="sweepResumeAuto">
+        Do not stop again — read the rest straight through</label>
+    </div>`;
+
+  return new Promise((resolve) => {
+    const finish = (out) => {
+      sweepPause.resolve = null;
+      host.onclick = null;
+      host.style.display = 'none';
+      host.innerHTML = '';
+      resolve(out);
+    };
+    // Held here so the stop button can end the wait too. Without it, pressing
+    // Stop set aiSweep.abort and then span for sixty seconds waiting on a
+    // aiSweep.running that only this promise could clear.
+    sweepPause.resolve = finish;
+    host.onclick = (e) => {
+      if (e.target.closest('#sweepResumeAuto')) { sweepPause.on = !e.target.checked; return; }
+      if (e.target.closest('#sweepResumeStop')) { aiSweep.abort = true; finish({ stopped: true }); return; }
+      if (e.target.closest('#sweepResumeGo')) finish({ stopped: false });
+    };
+  });
+}
 
 /**
  * Every component a person named, in the corpus's own shape.
@@ -4044,27 +4123,191 @@ document.getElementById('exportLabelsBtn')?.addEventListener('click', async () =
 const LABEL_TYPES = () => Object.keys(COMPONENT_SCHEMAS);
 
 /**
+ * A picture of ONE element, cut out of the section screenshot already in hand.
+ *
+ * The sections list answers "which part of the page is this" with a photograph,
+ * and that is the only thing in the tool that makes a row and a place on the
+ * page the same object in your head. A row in the labelling list had no such
+ * thing — hovering it drew an outline on the real page, which means looking
+ * away from the panel, and scrolled that page to do it.
+ *
+ * Nothing is captured here. `shot` was taken for the model a moment ago, `box`
+ * came back with the candidate, and the only work is a crop — so a preview
+ * costs nothing and cannot fail on a page that has since moved.
+ */
+function elementCrop(shot, viewport, box, img) {
+  if (!shot || !viewport || !box || !box.w || !box.h || !img || !img.naturalWidth) return '';
+  // `box` is in CSS pixels; the shot was captured at the device ratio and then
+  // scaled to a fixed width. One factor relates them.
+  const k = img.naturalWidth / viewport.w;
+  // A crop tight to the element is unreadable out of context — a bare button on
+  // a bare background. A margin of its own size, clamped, puts it back on the
+  // page it lives on.
+  const pad = Math.max(24, Math.min(90, Math.round(box.h * 0.8)));
+  const x = Math.max(0, Math.round((box.x - pad) * k));
+  const y = Math.max(0, Math.round((box.y - pad) * k));
+  const w = Math.min(img.naturalWidth - x, Math.round((box.w + pad * 2) * k));
+  const h = Math.min(img.naturalHeight - y, Math.round((box.h + pad * 2) * k));
+  if (w <= 0 || h <= 0) return '';
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const cx = cv.getContext('2d');
+  cx.drawImage(img, x, y, w, h, 0, 0, w, h);
+  // The element itself, ringed in the same pink the on-page marks use — the
+  // crop alone does not say WHICH of the six things in it you are pointing at.
+  cx.strokeStyle = '#ff2d95';
+  cx.lineWidth = Math.max(2, Math.round(2 * k));
+  cx.strokeRect(
+    Math.round((box.x * k) - x), Math.round((box.y * k) - y),
+    Math.round(box.w * k), Math.round(box.h * k));
+  try { return cv.toDataURL('image/jpeg', 0.8); } catch { return ''; }
+}
+
+/**
  * Stop, show what is on this section, and wait.
  * Resolves { labelled:[], done:boolean, stopped:boolean }.
  */
 function labelScreen(stop, collected, tab) {
-  const host = document.getElementById('sweepLabel');
+  // The list drops out of the section's own row, not out of a panel above it.
+  //
+  // A section and the components on it are one thing at two levels, and putting
+  // the second in a separate box at the top of the tab broke that: you were
+  // reading about "Section 1" in a panel that had no visual connection to the
+  // Section 1 row a few inches below, still sitting in the list with its own
+  // thumbnail. Now the row opens and the components are inside it.
+  //
+  // The standalone host stays as the fallback for the case where the row is not
+  // on screen — a restored survey, or a phase that is not showing the list.
+  const fallback = document.getElementById('sweepLabel');
+  const screenRow = document.querySelector(`#sweepPicksList .sweep-screen[data-screen="${stop.n}"]`);
+  let host = fallback;
+  let drop = null;
+  if (screenRow) {
+    drop = document.createElement('div');
+    drop.className = 'lbl-drop';
+    screenRow.insertAdjacentElement('afterend', drop);
+    screenRow.classList.add('is-open');
+    host = drop;
+    host.style.display = '';
+    // The row can be anywhere in a list of twenty-three, and the run just
+    // scrolled the PAGE to it — the panel has no idea. Bring it into view.
+    try { screenRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch {}
+
+    // Everything else folds away while this one is open.
+    //
+    // The section being worked on is a few hundred pixels of list, and the
+    // twenty-two sections queued behind it are several thousand more — so the
+    // components you are deciding about, and the button that builds them, sat
+    // in a thin band with the rest of the run scrolling past underneath. They
+    // are not gone: the fold says how many and opens on a click.
+    const list = document.getElementById('sweepPicksList');
+    const others = list
+      ? [...list.querySelectorAll('.sweep-screen')].filter((x) => x !== screenRow).length
+      : 0;
+    if (list && others) {
+      list.classList.add('lbl-focus');
+      const bar = document.createElement('details');
+      bar.className = 'sweep-others';
+      bar.innerHTML = `<summary>${others} other section${others === 1 ? '' : 's'} — ` +
+        `hidden while this one is open</summary>`;
+      bar.addEventListener('toggle', () => list.classList.toggle('lbl-focus', !bar.open));
+      // At the BOTTOM. Above the list it sat between you and the section you
+      // are working on, and read as a header for it.
+      list.appendChild(bar);
+    }
+  }
   if (!host) return Promise.resolve({ labelled: [], done: false });
 
   sweepLabel.marks = new Set();
   const made = [];
   const cands = collected.candidates || [];
+  // Held on the stop so the builder can find a row's selector by its mark
+  // without the whole candidate list being threaded through three functions.
+  stop.__cands = cands;
   // Worth asking about: anything the collector has a guess for, or that showed
   // a click signal. The rest are links, buttons and text — real elements, but
   // not a question. They stay one fold away, because sometimes the noise IS the
   // component: six plain buttons that are a tab strip.
-  const interesting = cands.filter((c) => c.component || (c.signals && c.signals.length));
-  const plain = cands.filter((c) => interesting.indexOf(c) === -1);
+  //
+  // `nested` is the collector's own word for "this is a PART of a component of
+  // the same kind that is already listed above it" — seven <li>s and seven
+  // triggers inside one mega menu. Seventeen rows all reading "menu?" for one
+  // menu is not seventeen questions; it is one question asked seventeen times,
+  // and it pushed the rest of the section off the end of the list. They fold
+  // away with the plain elements, where they are still reachable, because
+  // occasionally the part IS the thing you mean to name.
+  // Grouped by what there is to DO with each, which is the only distinction
+  // that matters when you are working through a section:
+  //
+  //   components — a menu, a carousel, a tab strip. These are the answer.
+  //   bare       — it takes a click and it is not a button or a link. This is
+  //                the one that fails a keyboard user, and it is one press to
+  //                fix: give it the role it should have had.
+  //   native     — a real <a href> or <button>. Nothing to do, and a list that
+  //                shows them is a list you have to read past to find the two
+  //                groups above.
+  //
+  // It used to be one flat list of everything with a click signal — 121 rows
+  // out of 224 on this page, nearly all of them ordinary links.
+  const isNative = (c) => (c.signals || []).some((s) => NATIVE_SIGNAL.test(s));
+  const components = cands.filter((c) => !c.nested && c.component);
+  const rest = cands.filter((c) => components.indexOf(c) === -1);
+  const bare = rest.filter((c) => (c.signals || []).length && !isNative(c) && c.selector);
+  const plain = rest.filter((c) => bare.indexOf(c) === -1);
+  const interesting = components;   // what the head count is about
+
+  // The picture goes where the pink number was. A number is a lookup you have to
+  // perform against the page; a thumbnail of the element IS the answer, and it
+  // is the same thing the sections list does one level up. Hovering enlarges it,
+  // exactly as a section thumbnail does.
+  const thumb = (c) => `
+    <span class="lbl-thumb" data-mark="${c.mark}">
+      <img class="lbl-img" alt="">
+      <img class="lbl-zoom" alt="">
+      <span class="lbl-n">${c.mark}</span>
+    </span>`;
+
+  // A component row states what it IS, in a control you can correct, and starts
+  // ticked. The question being asked is "is this right?", and a row that starts
+  // empty asks "what is this?" instead — which is the question the tool is
+  // supposed to have answered already.
+  const typeSel = (c) => `
+    <select class="lbl-row-type" aria-label="What ${escapeHtml(c.selector || 'it')} is">
+      ${LABEL_TYPES().map((t) =>
+        `<option value="${t}"${t === c.component ? ' selected' : ''}>${t}</option>`).join('')}
+    </select>`;
+
+  // Deliberately the same shape as a section row in the picker: tick, picture,
+  // a bold name, a quieter line of detail under it. A component and a section
+  // are the same kind of object at two scales — one is a piece of the page you
+  // are deciding about — and giving them two different layouts made the second
+  // list read as a different tool.
+  const compRow = (c) => `
+    <label class="ai-approved-row ai-bulk-row lbl-row is-comp" data-mark="${c.mark}">
+      <input type="checkbox" class="lbl-tick" value="${c.mark}" checked
+             aria-label="Build ${escapeHtml(c.component)} on ${escapeHtml(c.selector || 'this')}">
+      ${thumb(c)}
+      <span class="lbl-body">
+        <span class="lbl-title">${typeSel(c)}</span>
+        <!-- The selector is editable. What the collector works out is a good
+             guess and not a decision — it may be too wide (fourteen matches
+             where one is meant), too narrow, or rooted one level off. Correcting
+             it here is the difference between a mapping you can use and one you
+             have to rebuild by hand in Mappings afterwards. -->
+        <input class="lbl-sel-edit" type="text" spellcheck="false"
+               value="${escapeHtml(c.selector || '')}"
+               placeholder="CSS selector for this component"
+               aria-label="Selector to build the ${escapeHtml(c.component)} on">
+        <span class="lbl-meta lbl-meta-2">${escapeHtml(c.tag)}${
+          c.maybe ? ' · guessed from its class name' : ' · stated by the markup'}${
+          c.matches > 1 ? ` · selector hits ${c.matches} elements` : ''}</span>
+      </span>
+    </label>`;
 
   const row = (c) => `
     <label class="lbl-row" data-mark="${c.mark}">
       <input type="checkbox" class="lbl-tick" value="${c.mark}">
-      <span class="lbl-n">${c.mark}</span>
+      ${thumb(c)}
       <span class="lbl-tag">${escapeHtml(c.tag)}</span>
       <span class="lbl-sel">${escapeHtml(c.selector || '(no selector)')}</span>
       ${c.component ? `<span class="lbl-guess">${escapeHtml(c.component)}${c.maybe ? '?' : ''}</span>` : ''}
@@ -4077,59 +4320,293 @@ function labelScreen(stop, collected, tab) {
     <div class="lbl-box">
       <div class="lbl-head">
         <strong>Section ${stop.n}</strong>
-        <span class="lbl-sub">${cands.length} candidate${cands.length === 1 ? '' : 's'} numbered on the page.
-          Tick what belongs together, say what it is. Nothing you name costs anything.</span>
+        <span class="lbl-sub">${components.length
+          ? `These are the ${components.length} component${components.length === 1 ? '' : 's'} found here. ` +
+            `Check them, correct anything wrong, then carry on — naming them costs nothing.`
+          : `Nothing here reads as a component. Everything on this section is ordinary links and text, ` +
+            `or the model has not been asked yet.`}</span>
+        <!-- The one honest answer to "it is right there in the picture and not
+             in the list". Everything already mapped or dismissed is filtered
+             out before this screen — correct, and completely invisible, so a
+             component you built an hour ago reads as one the tool has stopped
+             finding. -->
+        ${collected.skipped ? `<span class="lbl-sub lbl-skipped">${collected.skipped} element${
+          collected.skipped === 1 ? ' on this section is' : 's on this section are'} not listed:
+          already mapped${collected.dismissed ? `, or dismissed (${collected.dismissed})` : ''},
+          or found on an earlier section. They are in the picture; they are not work any more.</span>` : ''}
       </div>
-      <div class="lbl-list">${interesting.map(row).join('') || '<p class="lbl-sub">Nothing here carries a hint.</p>'}</div>
-      ${plain.length ? `<details class="lbl-plain"><summary>${plain.length} plain element${plain.length === 1 ? '' : 's'} — links, buttons, text</summary>
-        <p class="lbl-sub">Tick several of these when they are one component: six buttons that are a tab strip do not
-        appear as a tab strip here, they appear as six buttons.</p>
-        <div class="lbl-list">${plain.map(row).join('')}</div></details>` : ''}
+
+      <div class="lbl-list">${components.map(compRow).join('')}</div>
+
+      ${bare.length ? `<div class="lbl-bare">
+        <div class="lbl-bare-head">${bare.length} thing${bare.length === 1 ? '' : 's'} here take${bare.length === 1 ? 's' : ''} a click without being a button or a link</div>
+        <p class="lbl-sub">A keyboard cannot reach ${bare.length === 1 ? 'it' : 'them'} and a screen reader says nothing.
+        Ticked below, ${bare.length === 1 ? 'it gets' : 'they get'} the role ${bare.length === 1 ? 'it' : 'they'} should have had.</p>
+        <div class="lbl-list">${bare.map(row).join('')}</div>
+        <div class="lbl-act">
+          <button class="btn-outline btn-sm" id="lblRoleBtn" disabled>Make the ticked ones buttons</button>
+          <button class="btn-outline btn-sm" id="lblRoleLink" disabled>…or links</button>
+        </div>
+      </div>` : ''}
+
+      <!-- Everything else, and the way to correct a miss. Shut, because on a
+           good section there is nothing to do here — but it is the only answer
+           to "it did not find my tab strip", so it says so on the tin rather
+           than being a bare count of rows. -->
+      <details class="lbl-plain">
+        <summary>Missed something? ${plain.length} more element${plain.length === 1 ? '' : 's'} to choose from</summary>
+        <p class="lbl-sub">Real links and buttons, text, and the parts of the components above — nothing
+        here needs doing on its own. But if a component was missed, this is where it is:
+        tick the elements that form it, say what it is, and add it. Six buttons that are a tab strip
+        appear here as six buttons.</p>
+        <div class="lbl-list">${plain.map(row).join('')}</div>
+        <div class="lbl-act">
+          <select id="lblType" aria-label="What the ticked elements are">
+            ${LABEL_TYPES().map((t) => `<option value="${t}">${t}</option>`).join('')}
+          </select>
+          <button class="btn-outline btn-sm" id="lblAdd" disabled>Add the ticked ones as this</button>
+        </div>
+      </details>
+
       <div class="lbl-made" id="lblMade"></div>
-      <div class="lbl-act">
-        <select id="lblType" aria-label="What is it?">
-          ${LABEL_TYPES().map((t) => `<option value="${t}">${t}</option>`).join('')}
-        </select>
-        <button class="btn-outline btn-sm" id="lblAdd" disabled>These are one component</button>
-      </div>
+
+      <!-- One button. "Ask Claude about this section as well" and a second Stop
+           both went: the run already has "Stop after this section" above it, and
+           the model is what the sections you have not confirmed are for. Two
+           more ways out of one screen is what made this area unreadable.
+           "Do not ask me again" moved up to the box that decides what gets
+           read, beside the other two switches that govern the run. -->
       <div class="lbl-go">
-        <button class="btn-primary btn-sm" id="lblFree">Nothing else here — next section, free</button>
-        <button class="btn-outline btn-sm" id="lblAsk">Ask Claude about the rest (1 call)</button>
-        <button class="btn-ghost btn-sm" id="lblStop">Stop the run</button>
+        <button class="btn-ghost btn-sm" id="lblSkip" hidden>Skip the rest — keep what is done</button>
+        <button class="btn-primary btn-sm" id="lblFree">${components.length
+          ? 'These are right — build them and go on'
+          : 'Nothing here — next section'}</button>
       </div>
       <div class="map-mode-hint" id="lblStatus"></div>
     </div>`;
 
   const status = document.getElementById('lblStatus');
   const addBtn = document.getElementById('lblAdd');
+  const roleBtns = ['lblRoleBtn', 'lblRoleLink'].map((id) => document.getElementById(id));
   const sync = () => {
     sweepLabel.marks = new Set([...host.querySelectorAll('.lbl-tick:checked')].map((t) => Number(t.value)));
     addBtn.disabled = sweepLabel.marks.size === 0 || sweepLabel.busy;
+    // These act on the bare group only, so they are armed by what is ticked
+    // INSIDE it — ticking a menu up in the components list must not offer to
+    // turn it into a button.
+    const bareTicked = [...host.querySelectorAll('.lbl-bare .lbl-tick:checked')].length;
+    for (const b of roleBtns) if (b) b.disabled = !bareTicked || sweepLabel.busy;
   };
 
   return new Promise((resolve) => {
     const finish = (out) => {
+      sweepLabel.resolve = null;
       host.onchange = host.onclick = host.onmouseover = host.onmouseout = null;
-      host.style.display = 'none';
       host.innerHTML = '';
+      // A drop belongs to one pause and is built fresh for the next; the
+      // standalone fallback is a fixture and is only hidden.
+      if (drop) {
+        drop.remove();
+        if (screenRow) screenRow.classList.remove('is-open');
+        // Rebuilt from state rather than unpicked by hand — the fold, the
+        // hidden rows and the marks this pause set are all undone by one
+        // redraw, and the redraw was blocked only while the pause was open.
+        if (aiSweep.phase === 'screens') renderSweepScreens();
+      } else host.style.display = 'none';
       resolve(out);
     };
+    // Declared on sweepLabel since this pause was written and never assigned,
+    // so "is the run holding to be told what things are" had no answer outside
+    // this function. sweepPreviewScreen needs it: a held run is not moving the
+    // page, so hovering a section may still preview it.
+    sweepLabel.resolve = finish;
 
     host.onchange = sync;
 
-    // Hover a row, light the element on the page. showMark has been written and
-    // exported since the set-of-mark work and never had a caller.
+    // Hover a row and see the element — as a picture, in the panel, the way the
+    // sections list shows a section. Cut from the screenshot already taken for
+    // this section, so it costs nothing and does not touch the page.
+    //
+    // The outline on the real page is still drawn, because "where is it on the
+    // actual site" is a different question from "which one is it" and both get
+    // asked. What it no longer does is scroll the page out from under you.
+    const shotImg = new Image();
+    const crops = new Map();
+    const byMark = new Map(cands.map((c) => [c.mark, c]));
+    const cropFor = (n) => {
+      if (!crops.has(n)) {
+        const c = byMark.get(n);
+        crops.set(n, c ? elementCrop(collected.shot, collected.viewport, c.box, shotImg) : '');
+      }
+      return crops.get(n);
+    };
+    // Drawn into the rows as soon as the shot decodes. Doing it on hover meant
+    // the list was a wall of numbers until you touched it — and the number was
+    // never the thing you wanted to see.
+    shotImg.onload = () => {
+      for (const holder of host.querySelectorAll('.lbl-thumb')) {
+        const n = Number(holder.dataset.mark);
+        const src = cropFor(n);
+        if (!src) { holder.classList.add('is-blank'); continue; }
+        holder.querySelector('.lbl-img').src = src;
+        holder.querySelector('.lbl-zoom').src = src;
+        holder.classList.add('has-shot');
+      }
+    };
+    if (collected.shot) shotImg.src = collected.shot;
+
     host.onmouseover = (e) => {
       const r = e.target.closest('.lbl-row');
-      if (!r || !tab) return;
-      inPage(tab.id, (n) => window.__u1SelectorIntel.showMark(n), [Number(r.dataset.mark)]).catch(() => {});
+      if (!r) return;
+      const n = Number(r.dataset.mark);
+      const c = byMark.get(n);
+      if (!tab) return;
+      // Hovering marks it ON THE PAGE — by SELECTOR, not by mark number.
+      //
+      // showMark looks up [data-u1-mark="n"], and the first line of
+      // collectCandidates is clearMarks(). Anything that re-reads the page —
+      // hovering a row in the sections list, a preview, a re-collect — wipes
+      // every mark, and from then on the highlight silently found nothing.
+      // That is why this "did not work": not the drawing, the lookup.
+      //
+      // A selector is not destroyed by anything, and the row already carries
+      // one. noScroll because the page is parked on this section deliberately;
+      // yanking it elsewhere on a mouse-over is what the preview is for.
+      const sel = c && c.selector;
+      if (sel) {
+        inPage(tab.id, (x) => window.__u1SelectorIntel.highlightSelector(x, { noScroll: true }), [sel])
+          .catch(() => {});
+      } else {
+        inPage(tab.id, (m) => window.__u1SelectorIntel.showMark(m), [n]).catch(() => {});
+      }
+    };
+    host.onmouseout = (e) => {
+      // Leaving the list takes the highlight down; moving between rows does not,
+      // or every gap between two rows would flash the page.
+      if (!host.contains(e.relatedTarget) && tab) {
+        inPage(tab.id, () => window.__u1SelectorIntel.clearHilite()).catch(() => {});
+      }
     };
 
     host.onclick = async (e) => {
+      // The one control that must work WHILE a build is running.
+      if (e.target.closest('#lblSkip')) {
+        sweepLabel.skip = true;
+        e.target.closest('#lblSkip').textContent = 'Stopping after this one…';
+        return;
+      }
       if (sweepLabel.busy) return;
-      if (e.target.closest('#lblStop')) { aiSweep.abort = true; finish({ stopped: true }); return; }
-      if (e.target.closest('#lblAsk')) { finish({ labelled: made, done: false }); return; }
-      if (e.target.closest('#lblFree')) { finish({ labelled: made, done: true }); return; }
+
+      // The one press this screen exists for: yes, these are what they say
+      // they are — build them and carry on. Each row is built as the type ITS
+      // OWN control says, so correcting one is changing that row's dropdown and
+      // nothing else. It used to be one dropdown at the bottom governing every
+      // ticked row at once, which is unusable the moment two rows differ and
+      // unreadable even when they do not.
+      if (e.target.closest('#lblFree')) {
+        const ticked = [...host.querySelectorAll('.lbl-list .lbl-row.is-comp')]
+          .filter((r) => r.querySelector('.lbl-tick')?.checked)
+          .map((r) => ({
+            mark: Number(r.dataset.mark),
+            type: r.querySelector('.lbl-row-type').value,
+            // Empty, or unchanged, means "use what was measured".
+            sel: (r.querySelector('.lbl-sel-edit')?.value || '').trim(),
+          }));
+        if (ticked.length) {
+          sweepLabel.busy = true;
+          sync();
+          const btn = document.getElementById('lblFree');
+          const label = btn.textContent;
+          let ok = 0;
+          const failed = [];
+          // One component can sit for a minute or two on a model call, and a
+          // build of six is six of those. A way out that does not throw away
+          // the ones already saved — they are in Mappings and applied — is the
+          // difference between waiting and being stuck.
+          sweepLabel.skip = false;
+          const skipBtn = document.getElementById('lblSkip');
+          if (skipBtn) skipBtn.hidden = false;
+          try {
+            for (let k = 0; k < ticked.length; k++) {
+              if (sweepLabel.skip) {
+                failed.push(`${ticked.length - k} skipped at your request`);
+                break;
+              }
+              btn.textContent = `Building ${k + 1} of ${ticked.length}…`;
+              const rowEl = host.querySelector(`.lbl-row.is-comp[data-mark="${ticked[k].mark}"]`);
+              const res = await confirmedToMapping(ticked[k], stop, tab);
+              // The outcome goes ON THE ROW. Pressing build and getting silence
+              // — no mapping in the drawer, no error anywhere you would look —
+              // is indistinguishable from the button doing nothing, and that is
+              // what a one-line hint at the bottom of a long panel amounts to.
+              if (res.err) {
+                failed.push(`${ticked[k].type}: ${res.err}`);
+                if (rowEl) {
+                  rowEl.classList.add('is-failed');
+                  rowEl.insertAdjacentHTML('beforeend',
+                    `<span class="lbl-why">✗ ${escapeHtml(res.err)}</span>`);
+                }
+                continue;
+              }
+              ok++;
+              made.push(res.found);
+              if (res.warn) showNotice(status, res.warn, 'warn', 12000);
+              if (rowEl) {
+                rowEl.classList.add('is-used');
+                rowEl.insertAdjacentHTML('beforeend',
+                  `<span class="lbl-why">✓ saved to Mappings</span>`);
+              }
+            }
+          } finally {
+            sweepLabel.busy = false;
+            btn.textContent = label;
+            sweepLabel.skip = false;
+            if (skipBtn) skipBtn.hidden = true;
+          }
+          // And a sentence about the whole press, because "6 ticked, 5 saved"
+          // must never again be something you notice by counting rows.
+          if (failed.length) {
+            showNotice(status,
+              `${ok} of ${ticked.length} saved to Mappings. ${failed.length} could not be built: ` +
+              failed.join(' · '), 'warn', 16000);
+            // Stay on the section. A failure you cannot see and cannot retry is
+            // the same as no failure report at all.
+            return;
+          }
+          showNotice(status, `${ok} saved to Mappings and applied to the page.`, 'success', 5000);
+        }
+        // "and everything after this one, without asking" — the same switch the
+        // hold offers, set from the place the decision is actually made.
+        finish({ labelled: made, done: true, auto: !sweepLabel.on || !sweepPause.on });
+        return;
+      }
+
+      // The safety net. Not a component and not a judgement: this element takes
+      // a click, it is not a button or a link, and u1.fix.button/link is
+      // exactly the correction for that. One press per group rather than one
+      // trip through the type dropdown per element.
+      const roleBtn = e.target.closest('#lblRoleBtn') || e.target.closest('#lblRoleLink');
+      if (roleBtn) {
+        const marks = [...host.querySelectorAll('.lbl-bare .lbl-tick:checked')].map((t) => Number(t.value));
+        if (!marks.length) return;
+        const asType = roleBtn.id === 'lblRoleLink' ? 'link' : 'button';
+        sweepLabel.busy = true;
+        sync();
+        try {
+          // One at a time: these are separate controls that happen to share a
+          // problem, not one component with several parts.
+          for (const m of marks) {
+            const res = await labelToMapping(asType, [m], stop, tab);
+            if (res.err) { showNotice(status, res.err, 'error', 9000); continue; }
+            made.push(res.found);
+            document.getElementById('lblMade').insertAdjacentHTML('beforeend',
+              `<div class="lbl-done">✓ ${escapeHtml(asType)} on <code>${escapeHtml(res.found.sel)}</code></div>`);
+            const tick = host.querySelector(`.lbl-bare .lbl-tick[value="${m}"]`);
+            if (tick) { tick.checked = false; tick.closest('.lbl-row').classList.add('is-used'); }
+          }
+        } finally { sweepLabel.busy = false; sync(); }
+        return;
+      }
 
       if (!e.target.closest('#lblAdd')) return;
       const marks = [...sweepLabel.marks];
@@ -4160,6 +4637,89 @@ function labelScreen(stop, collected, tab) {
 }
 
 /**
+ * A confirmed row becomes a mapping — through the engine that reads the
+ * container's markup, not the one that measures it from the outside.
+ *
+ * These produced mappings whose every sub-selector was the ROOT selector again:
+ *
+ *   fix.tabs('.finder__tabs', { selectors: { tabList: '.finder__tabs' } })
+ *   fix.menu('.mega-nav', { selectors: { horizontalMenu: '.mega-nav',
+ *                                        menu: '.mega-nav' } })
+ *
+ * which is not a mapping — u1.fix.tabs needs tabList, tab and tabPanel to be
+ * three DIFFERENT things. describeComponent measures a component from a set of
+ * ticked marks, and when the tick is the container itself there is nothing to
+ * measure the parts from, so every field collapses onto the root.
+ *
+ * rowFromParts → prepareOne is the path the per-component route has always
+ * used: it extracts the container's actual HTML and asks the model to name the
+ * parts inside it. That is the one that works, and it is the one the estimate's
+ * "Build" row has always been quoting for — a call per component.
+ */
+async function confirmedToMapping(pick, stop, tab) {
+  const cand = (stop && stop.__cands || []).find((c) => c.mark === pick.mark);
+  const sel = pick.sel || (cand && cand.selector) || '';
+  if (!sel) return { err: 'That row has no selector to build on.' };
+
+  // A dialog, listbox, datepicker or tooltip is rooted on the thing that
+  // APPEARS, and the row holds the control that summons it. Same two sources of
+  // the other half, best evidence first, as the bulk path uses.
+  let container = '';
+  if (triggerRequired(pick.type) || triggerFirstType(pick.type)) {
+    const seen = (stop.probed || []).find((p) =>
+      p.parts && (p.parts.trigger === sel || p.root === sel) && p.parts.panel);
+    container = (seen && seen.parts.panel) ||
+      (await inPage(tab.id, (x) => window.__u1SelectorIntel.openedBy(x), [sel])) || '';
+  }
+  const built = rowFromParts({
+    type: pick.type, found: sel, container, label: sel, compIndex: undefined,
+  });
+  if (built.err) return { err: built.err };
+  built.row.needsWork = true;
+  const prepared = await prepareOne(built.row, tab);
+  if (prepared.err) return { err: prepared.err };
+
+  // ── And SAVE it. ─────────────────────────────────────────────────────────
+  // prepareOne only prepares: it works out the selectors and puts a card on
+  // the approval track. The bulk route saves by pressing the approve button
+  // afterwards, and this route had no such press — so six components were
+  // built, reported as done, and Mappings stayed empty.
+  //
+  // Saved one at a time on purpose. saveMappingEntry reads the stored list,
+  // mutates it and writes it back with no locking, so concurrent saves clobber
+  // each other. It also means each component appears in the drawer the moment
+  // it is finished, rather than all six arriving at the end — which is what
+  // makes a six-minute build watchable.
+  const tpl = aiCardTemplate(prepared.idx);
+  if (!tpl) return { err: 'The prepared mapping could not be read back.' };
+  let saved;
+  let warn = '';
+  try { saved = await saveMappingEntry(tpl, { refreshUi: false }); }
+  catch (e) {
+    // The store distinguishes "not written" from "written here, not shared".
+    // A server that refuses the push — 413 on a site with a lot of mappings —
+    // used to be reported as a failed build on a mapping that was already
+    // safely in chrome.storage, so the count read "0 of 1 saved" when it was
+    // in fact 1 of 1.
+    if (!e.localOnly) return { err: 'Could not save it: ' + e.message };
+    warn = e.message;
+  }
+  if (saved && saved.cancelled) return { err: 'Not saved — the role question was declined.' };
+  try {
+    await applyMappingsBatch([{
+      type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg,
+      config: tpl.config, overwriteRole: tpl.overwriteRole,
+    }]);
+  } catch (e) { /* saved is the durable half; the panel re-applies on open */ }
+  await loadMappingsList();
+  refreshExportInfo();
+  return {
+    warn,
+    found: { id: `s${stop.n}m${pick.mark}`, label: sel, type: pick.type, sel, done: true },
+  };
+}
+
+/**
  * A type and some marks become a saved, applied mapping — with no model call.
  *
  * describeComponent measures the sub-fields; buildTemplate, saveMappingEntry and
@@ -4167,16 +4727,31 @@ function labelScreen(stop, collected, tab) {
  * this mapping is indistinguishable from a hand-built one and carries the same
  * narrowing, role question and export.
  */
-async function labelToMapping(type, marks, stop, tab) {
+async function labelToMapping(type, marks, stop, tab, rootOverride) {
   let desc;
   try {
     desc = await inPage(tab.id,
-      (t, m) => window.__u1SelectorIntel.describeComponent(t, m), [type, marks]);
+      (t, m, f) => window.__u1SelectorIntel.describeComponent(t, m, f),
+      [type, marks, rootOverride || '']);
   } catch (e) { return { err: 'Could not read the page: ' + e.message }; }
   if (!desc) return { err: 'Could not read the page.' };
   if (desc.err) return { err: desc.err };
 
-  const tpl = buildTemplate(type, desc.root, desc.fields || {}, {});
+  // A selector typed in the row wins over the measured one. What the collector
+  // works out is a guess: it can be too wide, too narrow, or rooted a level off,
+  // and correcting it here is the difference between a usable mapping and one
+  // rebuilt by hand in Mappings afterwards. The measured sub-fields are kept —
+  // they are relative to the root and are still the best description of it.
+  let root = desc.root;
+  if (rootOverride && rootOverride !== desc.root) {
+    const hits = await inPage(tab.id, (x) => {
+      try { return document.querySelectorAll(x).length; } catch (e) { return -1; }
+    }, [rootOverride]);
+    if (hits === -1) return { err: `That selector is not valid CSS: ${rootOverride}` };
+    if (!hits) return { err: `That selector matches nothing on this page: ${rootOverride}` };
+    root = rootOverride;
+  }
+  const tpl = buildTemplate(type, root, desc.fields || {}, {});
   if (!tpl) return { err: `Could not build a ${type} mapping from that.` };
 
   let saved;
@@ -4202,7 +4777,7 @@ async function labelToMapping(type, marks, stop, tab) {
   // Kept locally and exported on request; nothing writes the fixture directly.
   rememberLabel({
     type,
-    root: desc.root,
+    root,
     fields: desc.fields || {},
     matches: (desc.counts && desc.counts[Object.keys(desc.fields || {})[0]]) || undefined,
     why: desc.why || 'named by hand during a scan',
@@ -5051,10 +5626,19 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
  * twenty seconds so you can choose which of them is worth paying to read.
  */
 async function collectRegion(tab, scopeSel, handled, opts) {
-  // The paid scan sends every candidate to the model, so sixty is a token
-  // budget. The free survey sends nothing anywhere, so the same number was
-  // simply hiding a third of a busy section behind a "truncated" badge.
-  const limit = (opts && opts.surveyOnly) ? 250 : 60;
+  // COLLECTION is free — it is in-page code and nothing leaves the browser —
+  // so both the survey and the read collect the whole section. The token budget
+  // belongs to the model call, and it is applied there, in batches, so that a
+  // section bigger than one batch costs another call instead of losing its tail.
+  //
+  // It used to be applied here, as a blind head-cut at sixty in DOM order. A
+  // 97-element section was surveyed as "6 menus · form · dialog? · carousel?"
+  // and then read as its first sixty elements: the whole sticky header and the
+  // top of the mega menu, stopping before the form and the carousel ever came
+  // into view. They were not mis-detected and not filtered — they were never
+  // collected. The survey had seen them, the estimate had charged for them, and
+  // nothing anywhere said that thirty-seven elements had been dropped.
+  const limit = SWEEP_COLLECT_MAX;
   const context = await inPage(tab.id,
     (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [limit, scopeSel || null]);
   if (!context) return { err: 'Could not read the page.' };
@@ -5158,6 +5742,10 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     headings: context.headings || [],
     title: context.title || '',
     url: context.url || '',
+    // Carried so a candidate's `box` — which is in CSS pixels — can be turned
+    // into a crop rectangle on `shot`, which is a scaled capture. Without the
+    // width it was taken at, the two coordinate systems cannot be related.
+    viewport: context.viewport || null,
   };
 }
 
@@ -6379,6 +6967,17 @@ const SWEEP_MAX_STOPS = 60;
 // away photographs the skeleton.
 const SWEEP_SETTLE_MS = 700;
 
+/**
+ * How much of a section is collected, and how much goes into one model call.
+ *
+ * These were a single number, and conflating them is what lost the tail of
+ * every busy section. Collecting is free; asking is not. So collect everything
+ * the survey counted, and spend the budget in batches — a 97-element section is
+ * two calls, not sixty elements and silence about the other thirty-seven.
+ */
+const SWEEP_COLLECT_MAX = 250;
+const SWEEP_ASK_BATCH = 60;
+
 // phase: 'screens' once the free survey is done and you are choosing which
 // sections to pay to read; 'components' once those have been read and you are
 // choosing what to fix.
@@ -6609,8 +7208,7 @@ async function sweepMeasure(tab) {
 document.getElementById('sweepStopBtn')?.addEventListener('click', () => {
   aiSweep.abort = true;
   const b = document.getElementById('sweepStopBtn');
-  b.disabled = true;
-  b.textContent = 'Stopping after this section…';
+  if (b) { b.disabled = true; b.textContent = 'Stopping after this section…'; }
 });
 
 document.getElementById('sweepStartBtn')?.addEventListener('click', async () => {
@@ -7076,20 +7674,58 @@ function renderSweepScreens() {
   const list = document.getElementById('sweepPicksList');
   const summary = document.getElementById('sweepPicksSummary');
   if (!wrap || !list) return;
+  // The naming pause now renders INSIDE this list, dropped out of its section's
+  // row. Redrawing the list throws that away — host, handlers and all — and the
+  // promise it is waiting on can then never resolve: the run hangs with no
+  // panel and no way out. Toggling a switch in the summary above was enough to
+  // do it, because that handler asks for a redraw.
+  //
+  // A pause owns the list while it is open. Everything a redraw would have
+  // shown is still true when it closes, and the run redraws then.
+  if (sweepLabel.resolve) return;
 
   const stops = aiSweep.stops;
   const elements = stops.reduce((s, x) => s + x.count, 0);
   const pickable = stops.filter(s => s.count).length;
   const todo = stops.filter(s => s.count && !s.scanned).length;
-  summary.innerHTML = `<div class="ai-meta">${stops.length} section${stops.length === 1 ? '' : 's'} · ` +
+  // Two decisions and a price used to sit in one unbroken block, so the eye
+  // read them as one thing and the price looked like part of the choosing. They
+  // are separate questions — what to read, then what that costs — and each now
+  // says which it is.
+  summary.innerHTML = `<div class="block-title">What to read</div>` +
+    `<div class="ai-meta">${stops.length} section${stops.length === 1 ? '' : 's'} · ` +
     `${elements} element${elements === 1 ? '' : 's'} · nothing spent yet</div>` +
     // Twenty-one sections is twenty-one clicks to clear, and "only the ones
     // with a carousel" starts from none rather than from all. "All" means all
     // the UNREAD ones — the read ones are paid for and are not part of what the
     // next press will charge for.
     `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
-    `Select all ${todo} unsearched section${todo === 1 ? '' : 's'}` +
-    (pickable > todo ? ` <em>(${pickable - todo} completed)</em>` : '') + `</label>`;
+    `Read all ${todo} section${todo === 1 ? '' : 's'} that have not been read yet` +
+    // The dash state. A half-ticked box is the commonest thing on this screen —
+    // you untick a couple of sections — and nothing said so, which made it read
+    // as broken rather than as "some".
+    (pickable > todo
+      ? ` <em>(${pickable - todo} already read — those are not ticked and cost nothing)</em>`
+      : '') + `</label>` +
+    // Twenty-three sections read straight through is half an hour before any of
+    // it can be used. On, because the components from section 1 are ready four
+    // minutes in and there is no reason to sit on them — and off is one tick
+    // away for a run you intend to start and walk away from.
+    // ── How the run should behave, as one either/or ──────────────────────
+    // These are two answers to one question, not two independent switches:
+    // either the run stops at each section and waits for you, or it does not
+    // stop at all. Both ticked is a state the run cannot honour, and both empty
+    // is no answer — so they are radios, and the mutual exclusion is in the
+    // markup rather than in a handler that has to remember to enforce it.
+    `<div class="sweep-mode"><span class="sweep-mode-head">How it should run</span>` +
+    `<label class="sweep-all"><input type="radio" name="sweepMode" id="sweepPauseTick"${
+      sweepLabel.on || sweepPause.on ? ' checked' : ''}>` +
+    `Stop at each section` +
+    `<em> — show me what it found, let me build it, carry on when I press continue</em></label>` +
+    `<label class="sweep-all"><input type="radio" name="sweepMode" id="sweepSilentTick"${
+      !sweepLabel.on && !sweepPause.on ? ' checked' : ''}>` +
+    `Do not stop` +
+    `<em> — read the whole page and make everything accessible on its own</em></label></div>`;
 
   // Two areas, because a half-finished run is the ordinary state — you start
   // one, you stop it, you come back tomorrow. "Which of these have I paid for
@@ -7268,11 +7904,57 @@ function sweepRunningHtml() {
       <div class="sweep-est-note">${found
         ? `${found} component${found === 1 ? '' : 's'} found so far — you can stop and build them from the drawer above.`
         : 'Nothing found yet. You can stop at any section; what is done stays done.'}</div>
+      ${sweepSettledHtml()}
     </div>`;
 }
 
-function sweepEstimateHtml(sections, elements) {
+/**
+ * What each finished section actually settled, as it goes.
+ *
+ * A silent run — "do not ask me anything" — reports its progress as a section
+ * number and a clock, and the only record of what it DECIDED is the scan log,
+ * which is an accordion that starts shut. So twenty minutes in the honest
+ * answer to "what has it done?" was "look in a collapsed panel, line by line".
+ *
+ * Newest first, because the interesting one is the one that just finished.
+ */
+function sweepSettledHtml() {
+  const done = (aiSweep.stops || []).filter((s) => s.scanned && s.outcome);
+  if (!done.length) return '';
+  const rows = done.slice(-6).reverse().map((s) => {
+    const k = (s.found || []).length;
+    const built = (s.found || []).filter((f) => f.done).length;
+    return `
+      <div class="sweep-settled-row">
+        <span class="sweep-settled-n">Section ${s.n}</span>
+        <span class="sweep-settled-what">${escapeHtml(s.outcome)}</span>
+        ${k ? `<span class="sweep-settled-k">${built}/${k} built</span>` : ''}
+      </div>`;
+  }).join('');
+  return `
+    <details class="sweep-settled" open>
+      <summary>${done.length} section${done.length === 1 ? '' : 's'} settled${
+        done.length > 6 ? ' — last 6' : ''}</summary>
+      ${rows}
+    </details>`;
+}
+
+/**
+ * How many model calls a set of sections actually costs.
+ *
+ * Not one per section. A section is asked about in batches of SWEEP_ASK_BATCH,
+ * so a 97-element section is two calls — and quoting it as one was the other
+ * half of the same bug that lost its tail: the number under the button was
+ * right only because the elements past sixty were being silently dropped.
+ */
+function sweepCallsFor(numbers) {
+  const list = (aiSweep.stops || []).filter((s) => numbers.includes(s.n));
+  return list.reduce((a, s) => a + Math.max(1, Math.ceil((s.count || 0) / SWEEP_ASK_BATCH)), 0);
+}
+
+function sweepEstimateHtml(sections, elements, calls) {
   const call = sweepAvgCall();
+  if (calls == null) calls = sections;
   const comps = Math.max(1, Math.round(elements / SWEEP_EST.fixPerElements));
   const measured = aiCost > 0 && aiMapped.length;
   // "26 screens" read as twenty-six pages. They are twenty-six SECTIONS of one
@@ -7281,6 +7963,7 @@ function sweepEstimateHtml(sections, elements) {
   // and saying so is what makes the section count mean anything.
   return `
     <div class="sweep-est">
+      <div class="block-title">What it costs</div>
       <div class="sweep-est-head">Ticked: ${sections} section${sections === 1 ? '' : 's'} on 1 page · ${elements} element${elements === 1 ? '' : 's'}</div>
       <!-- Three stages, each saying whether it costs anything. The survey is
            already done and was free, and leaving it off the list made the two
@@ -7291,7 +7974,8 @@ function sweepEstimateHtml(sections, elements) {
       </div>
       <div class="sweep-est-row">
         <span>Find</span><span>${mins(sweepSecsFor(elements))}</span>
-        <span>~$${(sections * call).toFixed(2)}</span>
+        <span>~$${(calls * call).toFixed(2)}</span>
+        ${calls > sections ? `<em>${calls} calls for ${sections} section${sections === 1 ? '' : 's'} — the busy ones are asked about in more than one</em>` : ''}
       </div>
       <div class="sweep-est-row">
         <span>Build</span><span>${mins(comps * SWEEP_EST.fixSecs)}</span>
@@ -7504,7 +8188,7 @@ function syncSweepMakeBtn() {
     if (est) {
       est.innerHTML = aiSweep.running
         ? sweepRunningHtml()
-        : (picked.length ? sweepEstimateHtml(picked.length, elements) : '');
+        : (picked.length ? sweepEstimateHtml(picked.length, elements, sweepCallsFor(picked)) : '');
     }
     return;
   }
@@ -7782,7 +8466,22 @@ async function pinnedTabIsVisible(tab) {
 
 async function sweepPreviewScreen(n) {
   const stop = aiSweep.stops.find(s => s.n === n);
-  if (!stop || sweepHover.busy || aiSweep.running) return;
+  // A run owns the page's scroll position, so previewing during one would move
+  // the page out from under the section being read. But a run that is HOLDING —
+  // for fixes, or for you to name what is on a section — is not moving
+  // anything, and that is exactly when this list is being looked at. Blocking
+  // both on one flag is why the preview "stopped working": it was disabled at
+  // the only moment it was wanted.
+  // …but NOT while the naming pause is open. That pause is built on the marks
+  // drawn on the page, and this function re-collects — whose first line is
+  // clearMarks(). Hovering the sections list wiped every mark, and the next
+  // press of "build them" failed with "None of those marks are on the page any
+  // more" on a component that was still plainly there.
+  //
+  // The hold-for-fixes banner does not depend on marks, so previewing is still
+  // allowed there.
+  const held = !!sweepPause.resolve;
+  if (!stop || sweepHover.busy || sweepLabel.resolve || (aiSweep.running && !held)) return;
   const tab = await sweepTab();
   if (!tab) return;
   sweepHover.busy = true;
@@ -7851,6 +8550,17 @@ document.getElementById('sweepPicksList')?.addEventListener('mouseleave', () => 
 // Select all / none. It lives in the summary, which is rebuilt on every render,
 // so it is delegated rather than bound to the element.
 document.getElementById('sweepPicksSummary')?.addEventListener('change', (e) => {
+  // Sits in the same rebuilt summary, so it is delegated from the same place.
+  // One question, two answers. Stopping means both halves — being shown what a
+  // section holds, and being given the chance to build it — because a run that
+  // shows you a section and then moves on regardless is not a stop.
+  if (e.target.id === 'sweepPauseTick' || e.target.id === 'sweepSilentTick') {
+    const stopping = e.target.id === 'sweepPauseTick';
+    sweepLabel.on = stopping;
+    sweepPause.on = stopping;
+    saveSweep();
+    return;
+  }
   if (e.target.id !== 'sweepAllTick') return;
   const on = e.target.checked;
   document.querySelectorAll('#sweepPicksList .sweep-screen-tick:not(:disabled)')
@@ -7946,9 +8656,15 @@ async function scanPickedScreens(numbers) {
   aiSweep.running = true;
   aiSweep.abort = false;
   btn.disabled = true;
-  document.getElementById('sweepStopBtn').style.display = '';
-  document.getElementById('sweepStopBtn').disabled = false;
-  document.getElementById('sweepStopBtn').textContent = '■ Stop after this section';
+  // The floating "Stop after this section" button is gone. Every state this
+  // run can be sitting in now carries its own way out — the naming pause and
+  // the hold-for-fixes banner each have one — and a button that only appears
+  // during a run, over the list you are reading, was one more thing in the way.
+  // Deliberately NOT shown. The paid run holds after every section, and both
+  // holds — naming and building — carry their own way out, next to the decision
+  // being made. A button floating over the list you are reading, for the whole
+  // length of a thirty-five minute run, was one more thing in the way.
+  { const b = document.getElementById('sweepStopBtn'); if (b) b.style.display = 'none'; }
   // The rows are not redrawn during a run, so the ▶s that were live a moment
   // ago have to be disarmed where they stand. The finally redraws the list and
   // brings them back.
@@ -8033,6 +8749,14 @@ async function scanPickedScreens(numbers) {
       if (sweepLabel.on) {
         const answer = await labelScreen(stop, collected, tab);
         if (answer.stopped) break;
+        // "Do not ask me again." Both interruptions go: no more naming pause on
+        // the sections after this one, and no more holding to build what they
+        // find. The run reads the rest of the page and applies what it gets.
+        if (answer.auto) {
+          sweepLabel.on = false;
+          sweepPause.on = false;
+          sweepLog(stop.n, 'carrying on without asking — the rest of the page runs on its own', 'skip');
+        }
         labelled = answer.labelled || [];
         if (labelled.length) {
           for (const made of labelled) {
@@ -8046,9 +8770,15 @@ async function scanPickedScreens(numbers) {
           stop.cost = 0;
           stop.secs = Math.round((Date.now() - beganAt) / 1000);
           const k = labelled.length;
+          // Confirming used to be free — it measured the component locally. It
+          // now goes through the same engine the per-component route uses,
+          // which reads the container's markup and costs a call each, because
+          // the free measurement produced mappings whose every sub-selector was
+          // the root again. Saying "nothing charged" over a real charge is the
+          // one thing this line must not do.
           stop.outcome = k
-            ? `${k} component${k === 1 ? '' : 's'} you named — no model call, nothing charged`
-            : 'you marked nothing here as a component — no model call, nothing charged';
+            ? `${k} component${k === 1 ? '' : 's'} you confirmed — saved to Mappings and applied`
+            : 'you marked nothing here as a component — nothing charged';
           sweepLog(stop.n, stop.outcome, k ? '' : 'skip', 0);
           await markScreenRead(stop);
           continue;
@@ -8061,32 +8791,59 @@ async function scanPickedScreens(numbers) {
       // picture attached, it took a minute and a half, and the panel said
       // nothing except a clock ticking past its own estimate. A call is allowed
       // 150 seconds before it is given up on, and that is what it now says.
-      const busyN = collected.candidates.filter((c) => !handled.has(c.selector)).length;
-      showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
-        `Asking Claude about ${busyN} element${busyN === 1 ? '' : 's'} and a picture of this ` +
-        `section. A busy one takes a minute or two — it only gives up if Claude ` +
-        `goes quiet for a minute, so a long answer is never mistaken for a stuck one.`,
-        ((i) / stops.length) * 100);
-      sweepLog(stop.n, `asking about ${busyN} element${busyN === 1 ? '' : 's'}`, 'skip');
+      // Everything still worth asking about — the WHOLE section, not its first
+      // screenful of DOM.
+      const asking = collected.candidates.filter((c) => !handled.has(c.selector));
+      const busyN = asking.length;
+      // One call per batch. The picture goes with every batch: the model is
+      // being asked "which of these elements form a component, and where is it
+      // on this section", and the second half of that question is the image.
+      const batches = [];
+      for (let b = 0; b < asking.length; b += SWEEP_ASK_BATCH) {
+        batches.push(asking.slice(b, b + SWEEP_ASK_BATCH));
+      }
+      sweepLog(stop.n, `asking about ${busyN} element${busyN === 1 ? '' : 's'}` +
+        (batches.length > 1 ? ` in ${batches.length} calls — too many for one` : ''), 'skip');
 
-      const part = await U1AI.discover({
-        screenshot: collected.shot,
-        context: {
-          candidates: collected.candidates.filter((c) => !handled.has(c.selector)),
-          headings: collected.headings,
-          title: collected.title,
-          url: collected.url,
-        },
-      });
-      if (part && part.err) {
-        sweepLog(stop.n, part.err, 'err');
-        await markScreenFailed(stop, part.err);
+      const parts = [];
+      let died = null;
+      for (let b = 0; b < batches.length; b++) {
+        showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
+          (batches.length > 1 ? `Part ${b + 1} of ${batches.length}: asking` : 'Asking') +
+          ` Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'} and a ` +
+          `picture of this section. A busy one takes a minute or two — it only gives up if ` +
+          `Claude goes quiet for a minute, so a long answer is never mistaken for a stuck one.`,
+          ((i) / stops.length) * 100);
+        const got = await U1AI.discover({
+          screenshot: collected.shot,
+          context: {
+            candidates: batches[b],
+            headings: collected.headings,
+            title: collected.title,
+            url: collected.url,
+          },
+        });
+        if (got && got.err) { died = got.err; break; }
+        aiCost += U1AI.estimateCost(got.usage) || 0;
+        parts.push(got);
+        if (aiSweep.abort) break;
+      }
+      if (died && !parts.length) {
+        sweepLog(stop.n, died, 'err');
+        await markScreenFailed(stop, died);
         // A rate limit or a network blip is not a reason to abandon the other
         // sections; a bad key is, and it would fail the same way on every one.
-        if (/API 401/.test(part.err)) break;
+        if (/API 401/.test(died)) break;
         continue;
       }
-      aiCost += U1AI.estimateCost(part.usage) || 0;
+      // Some batches answered and one did not. That is a partial result, and
+      // throwing it away would be worse than keeping it — but it must not be
+      // reported as a complete reading of the section.
+      if (died) sweepLog(stop.n, `part of this section failed: ${died}`, 'err');
+      const part = {
+        components: parts.flatMap((p) => p.components || []),
+        usage: null,
+      };
 
       // needsWork is a LABEL, not a filter — which is how Automatic mode has
       // always treated it. Dropping the rows it marks false looked like a saving
@@ -8141,6 +8898,24 @@ async function scanPickedScreens(numbers) {
         ? `nothing new to map — all ${held} thing${held === 1 ? '' : 's'} here are already mapped, dismissed, or were found in an earlier section`
         : 'read, and nothing on it needs mapping';
       sweepLog(stop.n, stop.outcome, k ? '' : 'skip', stop.cost);
+
+      // ── Build the fixes for this section, then carry on ───────────────────
+      // Only when there is something to build and something still to read.
+      // Holding after the last section, or after one that found nothing, is a
+      // press that asks for a decision there is nothing to decide.
+      const buildable = stop.found.filter((f) => !f.done).length;
+      const rest = stops.length - (i + 1);
+      if (sweepPause.on && buildable && rest > 0 && !aiSweep.abort) {
+        const out = await pauseForFixes(stop, rest);
+        if (out.stopped) break;
+        // Back to being a run: the sections list is what the busy overlay and
+        // the per-section marking are drawn against, and the finally clause
+        // redraws whichever phase it ends in.
+        aiSweep.phase = 'screens';
+        renderSweepScreens();
+        setPlayButtons(false);
+        btn.disabled = true;
+      }
     }
   } catch (err) {
     sweepLog(0, 'Failed: ' + err.message, 'err');
@@ -8153,13 +8928,19 @@ async function scanPickedScreens(numbers) {
     aiSweep.running = false;
     aiSweep.progress = null;
     btn.disabled = false;
-    document.getElementById('sweepStopBtn').style.display = 'none';
+    { const b = document.getElementById('sweepStopBtn'); if (b) b.style.display = 'none'; }
     // The labelling pause asks for the marks to be LEFT on the page, so the run
     // owns taking them down — including when it ends by Stop, by a throw, or in
     // the middle of a section.
     const lblHost = document.getElementById('sweepLabel');
     if (lblHost) { lblHost.style.display = 'none'; lblHost.innerHTML = ''; }
     try { await inPage(tab.id, () => window.__u1SelectorIntel.clearMarks()); } catch {}
+    // Same for the hold-for-fixes banner: a throw inside the loop skips its own
+    // finish(), and a "continue to the next section" button left on screen
+    // after the run has ended is a button that does nothing.
+    sweepPause.resolve = null;
+    const resHost = document.getElementById('sweepResume');
+    if (resHost) { resHost.style.display = 'none'; resHost.innerHTML = ''; resHost.onclick = null; }
     try { await inPage(tab.id, (y) => window.scrollTo(0, y), [startedAt]); } catch {}
     // Regroup: the rows were marked one by one while the run went, and now the
     // list can settle into "still to read" and "already read".
@@ -8235,12 +9016,14 @@ document.getElementById('sweepPicksList')?.addEventListener('click', async (e) =
   if (!stop || !stop.count) return;
   // Re-reading a screen that is already paid for is a real thing to want and a
   // waste to do by accident, so it says which of the two this is.
-  if (!(await confirmSweepCost(1, stop.scanned ? n : 0, stop.count))) return;
+  if (!(await confirmSweepCost(1, stop.scanned ? n : 0, stop.count, sweepCallsFor([n])))) return;
   await scanPickedScreens([n]);
 });
 
 document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
-  if (aiSweep.running) return;
+  // A run owns this button — except while it is holding for fixes, which is the
+  // one moment the run exists specifically so that this button can be pressed.
+  if (aiSweep.running && !sweepPause.resolve) return;
   if (aiSweep.phase === 'screens') {
     const sections = sweepPickedScreens();
     if (!sections.length) return;
@@ -8259,7 +9042,7 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
     // be seen.
     const ticked = aiSweep.stops.filter((s) => sections.includes(s.n))
       .reduce((a, s) => a + (s.count || 0), 0);
-    if (!(await confirmSweepCost(sections.length, 0, ticked))) return;
+    if (!(await confirmSweepCost(sections.length, 0, ticked, sweepCallsFor(sections)))) return;
     await scanPickedScreens(sections);
     return;
   }
@@ -10412,6 +11195,10 @@ document.addEventListener('click', async (e) => {
     btn.disabled = true;
     btn.textContent = 'Finishing this section…';
     aiSweep.abort = true;
+    // Holding for fixes is a wait on a person, not on work — nothing is going
+    // to end it but this. Left alone it span out the full sixty seconds below
+    // and then reported the run as still going.
+    if (sweepPause.resolve) sweepPause.resolve({ stopped: true });
     // The current section is paid for either way, so it is allowed to land.
     for (let i = 0; i < 400 && aiSweep.running; i++) {
       await new Promise((r) => setTimeout(r, 150));
@@ -10471,17 +11258,22 @@ function confirmSweepClear() {
  * until AFTER a run comes back empty, which is the one moment the information
  * is worth nothing. It belongs on the dialog that spends the money.
  */
-async function confirmSweepCost(sections, rereading, elements) {
+async function confirmSweepCost(sections, rereading, elements, calls) {
   const dlg = document.getElementById('sweepCostDialog');
   const each = sweepAvgCall();
   if (!dlg) return true;
+  // A section bigger than one batch is asked about in more than one call. The
+  // dialog that spends the money says how many, or the first busy page comes in
+  // at twice what was agreed to.
+  if (calls == null) calls = sections;
 
   let skipped = 0;
   try { skipped = (await dismissedSelectors()).length; } catch {}
 
   document.getElementById('sweepCostBody').innerHTML =
-    escapeHtml(`Searching ${sections} section${sections === 1 ? '' : 's'} for components — that is ${sections} call${sections === 1 ? '' : 's'} to Claude, ` +
-      `about $${each.toFixed(2)} each, ~$${(sections * each).toFixed(2)} in total, ` +
+    escapeHtml(`Searching ${sections} section${sections === 1 ? '' : 's'} for components — that is ${calls} call${calls === 1 ? '' : 's'} to Claude` +
+      (calls > sections ? ` (the busy sections take more than one)` : '') + `, ` +
+      `about $${each.toFixed(2)} each, ~$${(calls * each).toFixed(2)} in total, ` +
       // The dialog quotes the same number the box above it does, from the same
       // function. Two numbers for one press, differing because one was written
       // later than the other, is how an estimate stops being read at all.

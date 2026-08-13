@@ -465,23 +465,38 @@
            call and no money, and a section named in full is a section that
            never gets charged for — there was no version of "off" worth
            offering. It is on always; what it does still has to be said. -->
-      <div class="input-hint" style="display:block;">
-        The scan pauses on each section with every candidate numbered on the page.
-        What you name is built by measuring the markup — no model call, nothing
-        charged. Name everything in a section and that section is free.
-      </div>
-      <div class="input-hint" style="display:block;">
-        Each component is opened to see what it is: menus, tabs and accordions are
-        pressed and watched, then closed again. Never a link, a submit, or anything
-        labelled pay, delete or send — and navigation is blocked while it runs.
-      </div>
-      <button class="btn-outline" id="sweepStopBtn" style="display:none;">■ Stop after this screen</button>
+      <!-- Both of these are things you need to read ONCE. Standing open above
+           the run, they are two paragraphs between you and the button, on every
+           visit forever. Folded, they are still there for the visit where the
+           question actually comes up — "is it going to press Pay?" is worth a
+           clear answer, just not worth asking again every time. -->
+      <details class="input-note">
+        <summary>What the pause on each section is for</summary>
+        <div class="input-hint">
+          The scan pauses on each section with every candidate numbered on the page.
+          What you name is built by measuring the markup — no model call, nothing
+          charged. Name everything in a section and that section is free.
+        </div>
+      </details>
+      <details class="input-note">
+        <summary>What gets pressed, and what never does</summary>
+        <div class="input-hint">
+          Each component is opened to see what it is: menus, tabs and accordions are
+          pressed and watched, then closed again. Never a link, a submit, or anything
+          labelled pay, delete or send — and navigation is blocked while it runs.
+        </div>
+      </details>
       <!-- Named per stop, so a run that visits fourteen screenfuls can be read
            as it happens instead of only at the end. -->
       <!-- The sweep's own progress. It used to borrow Automatic mode's results
            panel, which carries that route's "Make all of these accessible" and
            "Clear" buttons — so a running sweep put two buttons on screen that
            belonged to the other route and would have acted on nothing. -->
+      <!-- The SURVEY's stop, and only the survey's. It walks the whole page and
+           has no other way out, so it keeps one. The paid run does not show it:
+           that run holds after every section, and each hold carries its own
+           stop where the decision is actually being made. -->
+      <button class="btn-outline" id="sweepStopBtn" style="display:none;">■ Stop after this screen</button>
       <div id="sweepBusy"></div>
       <!-- A run is pinned to one tab, so looking at another one changes nothing
            about it — including which site this panel is filed under. That hold
@@ -509,13 +524,22 @@
     <nav class="stage-trail" id="stageTrail" aria-label="Progress" style="display:none;"></nav>
 
     <div class="ai-results" id="sweepPicks" style="display:none;">
-      <div class="ai-summary" id="sweepPicksSummary"></div>
+      <!-- A run that reads twenty-three sections is half an hour before any of
+           it can be used, and the components from section 1 are ready four
+           minutes in. So the run holds here after every section that found
+           something: build the fixes for it, press continue, and the run picks
+           up where it left off on its own. -->
+      <div id="sweepResume" class="sweep-resume" style="display:none;" role="status"></div>
       <!-- What pressing the button will cost, in time and money, for exactly
-           what is ticked right now — ABOVE the list, because on a page of
-           twenty-six screens it sat below the fold and the number you were
-           deciding on was the one thing you could not see. Empty in the second
-           phase, where the button itself carries the number. -->
+           what is ticked right now.
+           ABOVE the ticks, not under them. It sat below the two checkboxes that
+           determine it, so the order on screen was "decide, then find out what
+           it costs" — and adjusting the decision meant scrolling up, changing a
+           tick, and scrolling back down to see what that did. The number now
+           sits where it can be watched while the ticks move.
+           Empty in the second phase, where the button itself carries the number. -->
       <div id="sweepEstimate"></div>
+      <div class="ai-summary" id="sweepPicksSummary"></div>
       <div id="sweepPicksList"></div>
       <div class="ai-found-actions">
         <button class="btn-primary" id="sweepMakeBtn">✨ Make the ticked ones accessible</button>
