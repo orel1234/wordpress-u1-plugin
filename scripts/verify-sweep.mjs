@@ -735,8 +735,23 @@ console.log('\nreading the whole section');
   // Fixed coordinates written once are right until the page moves, and the
   // pause exists to be scrolled through.
   check('the numbers follow the page instead of being written once',
-    /markFollowFn = \(\) => \{ if \(!markFollowRaf\) place\(\); \};/.test(INTEL) &&
+    /markFollowFn = onMove;/.test(INTEL) &&
     /window\.addEventListener\('scroll', markFollowFn, true\)/.test(INTEL));
+  // …but only when the page MOVES. Re-requesting a frame at the end of every
+  // pass meant 250 marks did 250 rect reads and as many style writes sixty
+  // times a second, for as long as they were up — and the sweep leaves them up
+  // on purpose while you name things. A section that takes seconds sat at
+  // fourteen minutes.
+  check('…and not on every frame, forever',
+    // place() must END the pass, not queue the next one. The old form put the
+    // rAF call as its own last statement, which is what made it perpetual.
+    /markFollowRaf = 0;\s*\n\s*\};/.test(INTEL) &&
+    /const onMove = \(\) => \{\s*\n\s*if \(markFollowRaf\) return;/.test(INTEL));
+  // The hover highlight must not be built on the numbered layer's id, or using
+  // it removes the numbers — the same bug, one function along.
+  check('…and the hover highlight owns a different layer from the numbers',
+    /function highlightSelector[\s\S]*?layer\.id = HILITE_LAYER;/.test(INTEL) &&
+    !/function highlightSelector[\s\S]*?layer\.id = MARK_LAYER;/.test(INTEL));
 
   S.clearMarks();
   check('clearing still takes both layers down',

@@ -1588,12 +1588,26 @@
         b.tag.style.left = Math.max(0, r.left) + 'px';
         b.tag.style.top = Math.max(0, r.top - 14) + 'px';
       }
-      markFollowRaf = requestAnimationFrame(place);
+      markFollowRaf = 0;
     };
 
     document.body.appendChild(layer);
     place();
-    markFollowFn = () => { if (!markFollowRaf) place(); };
+    // Only when something MOVES. This used to re-request a frame at the end of
+    // every pass, unconditionally — so a section with two hundred and fifty
+    // marks on it did two hundred and fifty getBoundingClientRect calls and as
+    // many style writes sixty times a second, for as long as the marks were up.
+    // The sweep leaves them up on purpose while you name things, so the page
+    // the scan then has to read was being pinned at full load the whole time:
+    // a section that takes a few seconds sat at fourteen minutes.
+    //
+    // Layout only changes on scroll or resize, and both are listened for. One
+    // frame is coalesced per burst, which is what the rAF is still for.
+    const onMove = () => {
+      if (markFollowRaf) return;
+      markFollowRaf = requestAnimationFrame(place);
+    };
+    markFollowFn = onMove;
     window.addEventListener('scroll', markFollowFn, true);
     window.addEventListener('resize', markFollowFn);
     return boxes.length;
@@ -1748,15 +1762,28 @@
     // scrollIntoView is smooth and asynchronous, so a rect read now is the rect
     // before the scroll. It follows for as long as it is up, which also covers
     // the user scrolling themselves.
+    let raf = 0;
     const place = () => {
+      raf = 0;
       if (!layer.isConnected) return;
       const r = el.getBoundingClientRect();
       layer.style.left = r.left + 'px';
       layer.style.top = r.top + 'px';
       layer.style.width = r.width + 'px';
       layer.style.height = r.height + 'px';
-      requestAnimationFrame(place);
     };
+    // scrollIntoView above is smooth, so the rect settles over several frames —
+    // but a permanent frame loop for one box is a cost with no end, and this
+    // sits on a page the scan then has to read.
+    const follow = () => { if (!raf) raf = requestAnimationFrame(place); };
+    window.addEventListener('scroll', follow, true);
+    window.addEventListener('resize', follow);
+    const stop = setInterval(function () {
+      if (layer.isConnected) { follow(); return; }
+      clearInterval(stop);
+      window.removeEventListener('scroll', follow, true);
+      window.removeEventListener('resize', follow);
+    }, 120);
     document.body.appendChild(layer);
     place();
     return true;
@@ -1775,7 +1802,14 @@
    * rather than silently drawing nothing.
    */
   function highlightSelector(sel, opts) {
-    clearOverlay();
+    // Its OWN layer, not the numbered one.
+    //
+    // This used to clearOverlay() and then build its layer with MARK_LAYER's
+    // id — so every use of it removed the numbers the labelling pause is built
+    // on. That was fixed for showMark and walked straight back in the moment
+    // hover started going through here instead.
+    clearHilite();
+    stopFollowing();
     let els;
     try { els = Array.prototype.slice.call(document.querySelectorAll(sel), 0, 40); }
     catch (e) { return -1; }          // -1: the selector itself is invalid
@@ -1786,7 +1820,7 @@
     }
 
     const layer = document.createElement('div');
-    layer.id = MARK_LAYER;
+    layer.id = HILITE_LAYER;
     Object.assign(layer.style, {
       position: 'fixed', inset: '0', zIndex: '2147483646', pointerEvents: 'none',
     });

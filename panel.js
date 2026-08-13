@@ -8003,6 +8003,10 @@ function renderSweepScreens() {
       read.map(sweepScreenRowHtml).join('') + `</details>`
     : stops.map(sweepScreenRowHtml).join('');
   list.innerHTML = listHtml;
+  // The one-section fold belongs to an open pause. Redrawing the list removes
+  // the bar that toggles it but not the class that hides everything, so the
+  // other twenty-two stayed hidden with no way to bring them back.
+  list.classList.remove('lbl-focus');
   // Re-apply the "reading now" mark the redraw just threw away.
   if (aiSweep.running && sweepReadingNow != null) markScreenReading(sweepReadingNow);
 

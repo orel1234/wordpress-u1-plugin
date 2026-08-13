@@ -303,7 +303,10 @@ console.log('\nthe hover highlight follows the page it is drawn on');
   const { d, tick } = boot();
   const I = d.window.__u1SelectorIntel;
   const n = I.highlightSelector('.x');
-  const layer = () => d.window.document.getElementById('__u1_mark_layer__');
+  // highlightSelector owns its OWN layer now, separate from the numbered one:
+  // it used to build on MARK_LAYER's id, so every use of it removed the marks
+  // the labelling pause is built on.
+  const layer = () => d.window.document.getElementById('__u1_mark_hilite__');
   check('it returns how many the selector really matches', n === 3, String(n));
 
   // The bug this replaces: boxes were positioned once, and scrollIntoView keeps
@@ -332,7 +335,7 @@ console.log('\nthe hover highlight follows the page it is drawn on');
   const one = boot();
   one.d.window.__u1SelectorIntel.highlightSelector('.x:first-child');
   check('one match says so rather than "1 of 1"',
-    /the only match/.test(one.d.window.document.getElementById('__u1_mark_layer__').lastElementChild.textContent));
+    /the only match/.test(one.d.window.document.getElementById('__u1_mark_hilite__').lastElementChild.textContent));
 
   const bad = boot();
   check('an invalid selector is -1, not a crash', bad.d.window.__u1SelectorIntel.highlightSelector('>>>') === -1);
