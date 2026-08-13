@@ -1,0 +1,777 @@
+/* ============================================================
+ * U1 accessibility mappings — step-shoe-store-production.up.railway.app
+ * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:15:27.686Z
+ * 10 components mapped, 11 left out (see the report).
+ *
+ * Every mapping here was read off the markup, not guessed: required fields
+ * present, sub-selectors resolving to different elements, nothing matching
+ * nothing. Paste AFTER the U1 library <script> tag.
+ * ============================================================ */
+
+/* ---- 1. Library corrections ---- */
+(function () {
+'use strict';
+// ─────────────────────────────────────────────────────────────────────────────
+//  U1 patch — corrects defects in the U1 library from the outside.
+//
+//  Every fix here was verified by reading u1_vanilla-js-a11y.js. The library is
+//  a product on its own release cycle; this file closes the gap in the meantime
+//  and is written so it becomes inert the day a defect is fixed upstream.
+//
+//  Two rules hold throughout:
+//    1. Never touch a state that is already correct. Each fix checks first, so
+//       a corrected library and this patch cannot fight each other.
+//    2. Only observable DOM is touched. Nothing here reaches into U1 internals.
+//
+//  Runs only where U1 is loaded — it corrects what U1 produced.
+// ─────────────────────────────────────────────────────────────────────────────
+(function () {
+  var W = window;
+  if (W.__u1Patch) return;                       // one instance per page
+  // Bump on every change that ships. The whole point is that a page can be
+  // asked "which patch are you actually running" — "I reloaded, I promise" is
+  // not something either of us can verify from the outside.
+  // `skipped` is the record of every fix the wrapper declined to call, and it
+  // exists because the alternative was silence. A tab strip whose `tab`
+  // selector reached outside its list was refused here, u1.fix.tabs was never
+  // called, and nothing anywhere said so — the mapping simply had no effect,
+  // which is indistinguishable from a wrong selector. The panel reads this
+  // after an apply.
+  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13c' });
+
+  var qsa = function (sel, root) {
+    try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+    catch (e) { return []; }
+  };
+  var get = function (el, n) { return el && el.getAttribute ? el.getAttribute(n) : null; };
+  var set = function (el, n, v) {
+    // Writing an attribute that already holds the value would retrigger our own
+    // observer, so every write is guarded.
+    if (el && get(el, n) !== String(v)) el.setAttribute(n, String(v));
+  };
+  var setTabIndex = function (el, v) { if (el && el.tabIndex !== v) el.tabIndex = v; };
+  var closest = function (el, sel) {
+    try { return el && el.closest ? el.closest(sel) : null; } catch (e) { return null; }
+  };
+  var isNative = function (el) {
+    return !!el && /^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(el.tagName) ||
+           (!!el && el.tagName === 'A' && el.hasAttribute('href'));
+  };
+  var visible = function (el) {
+    return !!el && !el.hasAttribute('hidden') && el.getAttribute('aria-hidden') !== 'true' &&
+           !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  };
+  /** Rough but sufficient: does the element carry a name a screen reader can use? */
+  var named = function (el) {
+    if (!el) return false;
+    if ((get(el, 'aria-label') || '').trim()) return true;
+    var by = get(el, 'aria-labelledby');
+    if (by) {
+      for (var i = 0, ids = by.split(/\s+/); i < ids.length; i++) {
+        var n = document.getElementById(ids[i]);
+        if (n && (n.textContent || '').trim()) return true;
+      }
+    }
+    return !!(el.textContent || '').trim();
+  };
+  var FOCUSABLE = 'a[href],button,input,select,textarea,summary,iframe,' +
+    '[contenteditable]:not([contenteditable="false"]),[tabindex]:not([tabindex="-1"])';
+
+  P.util = { qsa: qsa, get: get, set: set, setTabIndex: setTabIndex, closest: closest,
+             isNative: isNative, visible: visible, named: named, FOCUSABLE: FOCUSABLE };
+
+  /** A correction pass. Registered by each region, run together and debounced. */
+  P.correct = function (fn) { P.correctors.push(fn); };
+
+  var queued = false;
+  var run = function () {
+    queued = false;
+    for (var i = 0; i < P.correctors.length; i++) {
+      try { P.correctors[i](); } catch (e) { /* one bad fix must not stop the rest */ }
+    }
+  };
+  var schedule = function () {
+    if (queued) return;
+    queued = true;
+    (W.requestAnimationFrame || setTimeout)(run, 0);
+  };
+  P.schedule = schedule;
+
+  // U1 re-applies itself on re-render, so corrections have to follow it there.
+  try {
+    new MutationObserver(schedule).observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true,
+      // aria-expanded is here because the listbox region corrects it against
+      // what the list is actually doing. Our own writes cannot loop: set()
+      // skips a write that would not change the value, so the pass converges
+      // after one round.
+      attributeFilter: ['role', 'aria-selected', 'aria-checked', 'aria-hidden',
+                        'aria-labeledby', 'aria-current', 'aria-expanded',
+                        'tabindex', 'hidden'],
+    });
+  } catch (e) {}
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', schedule);
+  }
+  schedule();
+
+  // ── 2.4.11 Focus Not Obscured ──────────────────────────────────────────────
+  // A browser scrolls a focused element into view on its own, but only for the
+  // scroller it thinks owns the element. It does not help when focus lands under
+  // a sticky header or a cookie bar, and it does not help inside a horizontally
+  // clipped strip that the page has already scrolled past. Both are ordinary on
+  // a tab bar wide enough to overflow — and a focus ring nobody can see is the
+  // same as no focus ring.
+  //
+  // It runs AFTER the browser's own scroll, as a correction to it rather than a
+  // competitor, and it does nothing at all to an element that is already fully
+  // visible and uncovered.
+  var vpw = function () { return W.innerWidth || document.documentElement.clientWidth; };
+  var vph = function () { return W.innerHeight || document.documentElement.clientHeight; };
+
+  /**
+   * The bottom edge of a pinned element covering the top of `el`, or 0.
+   * Only fixed/sticky things count: anything else scrolls away with the page,
+   * so scrolling further would chase it forever.
+   */
+  var coverAt = function (el, r) {
+    var x = Math.min(Math.max(r.left + 8, 1), vpw() - 1);
+    var y = Math.max(r.top + 4, 1);
+    if (y >= vph()) return 0;
+    var top;
+    try { top = document.elementFromPoint(x, y); } catch (e) { return 0; }
+    if (!top || top === el || el.contains(top) || top.contains(el)) return 0;
+    var pos = '';
+    try { pos = (W.getComputedStyle(top) || {}).position; } catch (e) {}
+    if (pos !== 'fixed' && pos !== 'sticky') return 0;
+    return top.getBoundingClientRect().bottom;
+  };
+
+  var reveal = function (el) {
+    if (!el || !el.getBoundingClientRect || !el.scrollIntoView) return;
+    var vw = vpw(), vh = vph();
+    var r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return;                 // nothing to reveal
+
+    // Something taller than the viewport can never be brought fully into view,
+    // and 'nearest' on it lands on whichever edge happens to be closer — which
+    // is how focusing a tab panel drops you into the middle of a product grid
+    // with the tabs scrolled off above. Its top edge is the part that carries
+    // meaning, so that is what a scroll aims at.
+    //
+    // But only when NO part of it is on screen. Requiring the top edge to be
+    // visible looks right until you Shift+Tab backwards into a long panel from
+    // below: you were reading its bottom, and the page yanks itself to the top.
+    // Any part showing means the browser already did something reasonable.
+    var tall = r.height > vh;
+    var out = tall ? (r.bottom <= 0 || r.top >= vh)
+                   : (r.top < 0 || r.bottom > vh || r.left < 0 || r.right > vw);
+    if (out) {
+      try {
+        el.scrollIntoView(tall ? { block: 'start', inline: 'nearest' }
+                               : { block: 'nearest', inline: 'nearest' });
+      } catch (e) { try { el.scrollIntoView(); } catch (e2) { return; } }
+      r = el.getBoundingClientRect();
+    }
+
+    // scrollIntoView aligns to the VIEWPORT, which parks the element underneath
+    // any sticky header. 2.4.11 is about the focus being seen, not about a
+    // scroll having happened, so the header's height has to come off.
+    var cover = coverAt(el, r);
+    // cover === 0 means nothing is covering it. Without that first test the
+    // comparison is true for any element whose top is above the fold, and the
+    // page scrolls by the whole distance for no reason.
+    if (cover > 0 && cover > r.top) {
+      var by = r.top - cover - 8;
+      try { W.scrollBy({ top: by, left: 0, behavior: 'auto' }); }
+      catch (e) { try { W.scrollBy(0, by); } catch (e2) {} }
+    }
+  };
+
+  document.addEventListener('focusin', function (e) {
+    var el = e.target;
+    // One frame later: the browser has done its own scrolling by then, so this
+    // corrects a settled position instead of racing one.
+    if (W.requestAnimationFrame) W.requestAnimationFrame(function () { reveal(el); });
+    else setTimeout(function () { reveal(el); }, 0);
+  }, true);
+
+  // ── Keyboard, in the capture phase ─────────────────────────────────────────
+  // U1's own handlers sit on the elements themselves. A capture listener on the
+  // document runs first, which is what lets a key be added without racing it.
+  P.keys = function (containerSel, handler) {
+    document.addEventListener('keydown', function (e) {
+      var container = closest(e.target, containerSel);
+      if (container) handler(e, container);
+    }, true);
+  };
+
+  /**
+   * Roving navigation across a set of items.
+   *
+   * With opts.arrows this TAKES OVER the arrow keys rather than supplementing
+   * them. The library moves focus from an index it stores on the fixer object
+   * (activeTabIndex), not from where focus actually is — and the two drift apart
+   * the moment anything else moves focus: a click the fixer did not see, a
+   * re-render, a Tab out and back. Once they have drifted, one arrow press jumps
+   * to an unrelated item. Counting from document.activeElement instead cannot
+   * drift, because there is no second copy of the answer to go stale.
+   *
+   * That means suppressing the library's own handler for these keys, which is
+   * what stopImmediatePropagation in the capture phase does — it never runs, so
+   * it can never move focus a second time.
+   */
+  P.rove = function (containerSel, itemSel, opts) {
+    opts = opts || {};
+    P.keys(containerSel, function (e, container) {
+      var items = qsa(itemSel, container).filter(visible);
+      var here = items.indexOf(closest(e.target, itemSel));
+      if (here === -1) return;
+
+      // 'auto' asks the container, so one registration covers a page holding
+      // both a horizontal and a vertical strip. When the container declines to
+      // say, the DEFAULT is the role's own default and differs per role — a
+      // tablist is horizontal, a listbox is vertical — so the caller supplies
+      // it rather than this function assuming one for everybody.
+      var vertical = opts.vertical === 'auto'
+        ? (get(container, 'aria-orientation') || opts.orientationDefault || 'horizontal') === 'vertical'
+        : !!opts.vertical;
+      var key = e.key, n = items.length;
+      var prev = vertical ? 'ArrowUp' : 'ArrowLeft';
+      var next = vertical ? 'ArrowDown' : 'ArrowRight';
+      var to = -1;
+      if (key === 'Home') to = 0;
+      else if (key === 'End') to = n - 1;
+      else if (opts.arrows && key === prev) to = (here - 1 + n) % n;
+      else if (opts.arrows && key === next) to = (here + 1) % n;
+      else return;
+
+      e.preventDefault();
+      if (opts.arrows) e.stopImmediatePropagation();
+      var target = items[to];
+      if (!target) return;
+      target.focus();
+      if (opts.activate) target.click();
+    });
+  };
+
+  /** NumpadEnter: the library compares event.code, which excludes it. */
+  P.numpadEnter = function (selector) {
+    document.addEventListener('keydown', function (e) {
+      if (e.code !== 'NumpadEnter') return;
+      var el = closest(e.target, selector);
+      // Native controls activate on their own — clicking again would double-fire.
+      if (!el || isNative(el)) return;
+      e.preventDefault();
+      el.click();
+    }, true);
+  };
+
+  // ── Per-match application of u1.fix.* ──────────────────────────────────────
+  // ChangeDetection hands each fixer every matching element, but several fixers
+  // ignore it and re-query with querySelector, which returns only the first. The
+  // result is that a page with two tab strips, two comboboxes or two dialogs
+  // gets one of each fixed. Calling the original once per match, with a selector
+  // narrowed to that match, sidesteps the internals entirely.
+  // radio was missing here, so a page with two radio groups had one of them
+  // fixed — RadioFixer re-queries with querySelector and takes the first.
+  var PER_MATCH = ['tabs', 'combobox', 'listbox', 'dialog', 'tooltip', 'pagination', 'radio'];
+  var MARK = 'data-u1p-instance';
+  var seq = 0;
+
+  // A fixer's first argument is a CONTEXT, and some fixers resolve their other
+  // selectors against it — so the element the context names is not always an
+  // element the fixer can work from. A region registers a resolver here to widen
+  // it to one that is. See the tabs region for the case that needs it.
+  P.contextRoot = {};
+
+  var wrap = function () {
+    var u1 = W.u1 !== undefined ? W.u1 : W.U1 !== undefined ? W.U1 : W.user1st;
+    if (!u1 || !u1.fix || u1.fix.__u1PatchWrapped) return !!(u1 && u1.fix);
+
+    PER_MATCH.forEach(function (name) {
+      var orig = u1.fix[name];
+      if (typeof orig !== 'function') return;
+      u1.fix[name] = function (selector, props) {
+        if (typeof selector !== 'string') return orig.apply(this, arguments);
+        var els = qsa(selector);
+        if (!els.length) return orig.apply(this, arguments);
+
+        var resolve = P.contextRoot[name];
+        var roots = els, widened = false;
+        var perRootProps = null;
+        if (resolve) {
+          roots = [];
+          perRootProps = [];
+          els.forEach(function (el) {
+            var r = resolve(el, props);
+            // false means "this one cannot work" — a selector that matched more
+            // than the caller meant it to. Calling the fixer there would only
+            // throw, and one throw takes the other instances down with it.
+            if (r === false) {
+              widened = true;
+              P.skipped.push({ type: name, selector: selector,
+                               why: 'no ancestor holds this component and its parts together' });
+              return;
+            }
+            // A resolver may hand back BOTH a root and props to call it with.
+            // Widening the context to reach one selector can pull in elements
+            // another selector must not see; the resolver is the only place
+            // that knows both, so it is allowed to narrow the props to match.
+            if (r && typeof r === 'object' && r.root) {
+              widened = true;
+              roots.push(r.root);
+              perRootProps.push(r.props || props);
+              return;
+            }
+            if (r && r !== el) { widened = true; roots.push(r); }
+            else roots.push(el);
+            perRootProps.push(props);
+          });
+          if (!roots.length) return;
+        }
+
+        // One match with nothing to widen is the common case and already
+        // correct — leave it untouched so the patch adds no behaviour where
+        // none is missing.
+        if (roots.length < 2 && !widened) return orig.apply(this, arguments);
+
+        var last;
+        for (var i = 0; i < roots.length; i++) {
+          var token = 'u1p' + (seq++);
+          roots[i].setAttribute(MARK, token);
+          last = orig.call(this, '[' + MARK + '="' + token + '"]',
+                           (perRootProps && perRootProps[i]) || props);
+        }
+        return last;
+      };
+    });
+
+    // landmarks(props, context) takes a different shape: the selectors live
+    // inside props, one entry per role, so it needs its own expansion.
+    var origLandmarks = u1.fix.landmarks;
+    if (typeof origLandmarks === 'function') {
+      u1.fix.landmarks = function (props, context) {
+        if (!props || typeof props !== 'object') return origLandmarks.apply(this, arguments);
+        var self = this, result;
+        Object.keys(props).forEach(function (role) {
+          // The library's schema is not uniform, and this is the whole bug that
+          // was here: banner, contentinfo and main take a single OBJECT, while
+          // complementary, form, navigation, search and application take an
+          // ARRAY. Splitting a call and handing every role back as a bare
+          // object failed LandmarksPropsSchema on five of the eight, and the
+          // library's answer to that is to throw:
+          //
+          //     Error: [ … ]
+          //     Uncaught Error: Invalid Landmarks props provided.
+          //
+          // …which killed the whole u1.fix.landmarks call, including the roles
+          // that were shaped correctly. So the shape it arrived in is the shape
+          // it goes back in.
+          var wasArray = Array.isArray(props[role]);
+          var rewrap = function (entry) { return wasArray ? [entry] : entry; };
+          var entries = [].concat(props[role] || []);
+          entries.forEach(function (entry) {
+            var sel = entry && entry.selectors && entry.selectors.landmark;
+            var els = sel ? qsa(sel) : [];
+            if (els.length < 2) {
+              var one = {}; one[role] = rewrap(entry);
+              result = origLandmarks.call(self, one, context);
+              return;
+            }
+            for (var i = 0; i < els.length; i++) {
+              var token = 'u1p' + (seq++);
+              els[i].setAttribute(MARK, token);
+              var scoped = JSON.parse(JSON.stringify(entry));
+              scoped.selectors.landmark = '[' + MARK + '="' + token + '"]';
+              var single = {}; single[role] = rewrap(scoped);
+              result = origLandmarks.call(self, single, context);
+            }
+          });
+        });
+        return result;
+      };
+    }
+
+    u1.fix.__u1PatchWrapped = true;
+    return true;
+  };
+
+  if (!wrap()) {
+    // The library may still be loading. Keep trying briefly, then stop.
+    var tries = 0;
+    var poll = setInterval(function () {
+      if (wrap() || ++tries > 40) clearInterval(poll);
+    }, 250);
+  }
+
+  // ── Skip links ────────────────────────────────────────────────────────────
+  // U1 gives the target an id and nothing else. Following `href="#id"` moves the
+  // scroll position, but focus only moves if the target can hold it — so on most
+  // browsers the next Tab returns to the top of the page and the skip link
+  // achieves nothing for the people who need it.
+  P.correct(function () {
+    qsa('a.u1st-skip-link[href^="#"]').forEach(function (link) {
+      var target = document.getElementById(link.getAttribute('href').slice(1));
+      if (!target) return;
+      if (!target.hasAttribute('tabindex')) set(target, 'tabindex', '-1');
+      if (link.__u1pSkip) return;
+      link.__u1pSkip = true;
+      // Browsers disagree about whether the target receives focus; doing it
+      // explicitly is the only behaviour that is the same everywhere.
+      link.addEventListener('click', function () {
+        var t = document.getElementById(link.getAttribute('href').slice(1));
+        if (t) setTimeout(function () { t.focus(); }, 0);
+      });
+    });
+  });
+})();
+// Five defects. The first one aborts the whole fixer, so it comes first.
+//
+// TabsFixer is given the TAB LIST as its context, then resolves the tab PANEL
+// selectors against that context — and panels sit outside the tab list, which is
+// the entire point of a tab strip. getElement finds nothing, throws
+// "Selector '<panel>:eq(0)' returned null", and handleTabs never reaches the
+// roving tabindex, the arrow keys or the click handler. Nothing is wired at all.
+//
+// Three lines earlier the SAME panel selectors are resolved against document.body
+// (querySelector with no context) purely to decide isConditionalRendering. One of
+// the two roots is wrong, and the one that throws is the wrong one — so this is a
+// bug, not a contract the caller can satisfy. Widening the context to the nearest
+// ancestor holding both the tabs and the panels satisfies both lookups.
+//
+// aria-labeledby is spelled with one L (the only occurrence in the
+// whole library, so it is a typo and not a convention) and is therefore ignored
+// by every browser. activeTabIndex is reset to 0 on every pass, so a strip that
+// loads with the third tab open is announced as having the first one selected.
+// Home/End are missing although the key constants exist and are used elsewhere.
+// And arrows never call preventDefault, so vertical strips scroll the page.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+
+  // Its own marker, distinct from the wrapper's MARK: the wrapper's names the
+  // CONTEXT the fixer is handed, this one names the tab list inside it, and the
+  // two are different elements the moment we widen.
+  // Each tab that belongs to THIS list gets its own mark, and the scoped
+  // selector is that mark alone. A descendant combinator would be the obvious
+  // way to scope and it is not available: U1's selector validator splits on
+  // [>+~] and rejects a compound containing a space, and the tabs are not
+  // always direct children so `>` will not always reach them. A bare attribute
+  // selector has no combinator to argue about.
+  var TAB_MARK = 'data-u1p-tab';
+  var seq2 = 0;
+
+  P.contextRoot.tabs = function (root, props) {
+    var sel = props && props.selectors;
+    if (!sel || !sel.tab || !sel.tabPanel) return null;
+
+    // isVertical only chooses which arrow keys the library listens for; it never
+    // reaches the DOM. aria-orientation="vertical" is what tells a screen reader
+    // to announce the strip as vertical and to expect Up/Down — without it the
+    // keys and the announcement disagree. This resolver is the one place that
+    // sees the props for a specific strip, so the flag is recorded here and the
+    // correction pass applies it.
+    if (props && props.isVertical) root.setAttribute('data-u1p-vertical', '1');
+    // Already reachable from here — the caller passed a context that works, and
+    // widening it could only pull in a neighbouring strip's tabs.
+    try { if (root.querySelector(sel.tabPanel)) return null; } catch (e) { return null; }
+    // Nearest ancestor holding both. Nearest, not document.body: a page with two
+    // strips must still give each fixer its own tabs and its own panels.
+    var node = root, mine;
+    try { mine = root.querySelectorAll(sel.tab).length; } catch (e) { return null; }
+    if (!mine) return null;
+
+    // Reaching the panel means climbing, and climbing can pull in tabs that
+    // belong to something else — a button class shared with the rest of the
+    // page. That used to end the strip: return false, the wrapper takes it as
+    // "cannot work", u1.fix.tabs is never called and nothing is decorated.
+    //
+    // But the tabs were never the problem. The caller named the right list and
+    // the right panel; only the tab SELECTOR is wider than the list. So mark
+    // the list, scope the selector to it, and climb freely: the widened root
+    // reaches the panel while `tab` still means the six inside #dealTabs.
+    var scoped = null;
+    var scopeToRoot = function () {
+      if (scoped) return scoped;
+      var tok = 'u1pt' + (seq2++);
+      var ours = root.querySelectorAll(sel.tab);
+      for (var i = 0; i < ours.length; i++) ours[i].setAttribute(TAB_MARK, tok);
+      var next = {};
+      for (var k in props) if (Object.prototype.hasOwnProperty.call(props, k)) next[k] = props[k];
+      next.selectors = {};
+      for (var j in sel) if (Object.prototype.hasOwnProperty.call(sel, j)) next.selectors[j] = sel[j];
+      next.selectors.tab = '[' + TAB_MARK + '="' + tok + '"]';
+      scoped = next;
+      return scoped;
+    };
+
+    while ((node = node.parentElement)) {
+      try {
+        // An ancestor that sweeps in tabs which are not ours is still the wrong
+        // root for the UNSCOPED props — so from here on, use the scoped ones.
+        if (node.querySelectorAll(sel.tab).length !== mine) {
+          var up = node;
+          do {
+            try {
+              if (!up.querySelector(sel.tabPanel)) continue;
+              // A panel is in reach — but is it OURS? An ancestor holding two
+              // tab lists holds two strips, and the panel we just found may
+              // belong to the other one. Pairing them is the mistake the plain
+              // count check was there to prevent, and it stays prevented: this
+              // widening is only for a strip whose own panel sits outside it,
+              // not for borrowing a neighbour's.
+              if (sel.tabList && up.querySelectorAll(sel.tabList).length !== 1) return false;
+              return { root: up, props: scopeToRoot() };
+            } catch (e2) { return null; }
+          } while ((up = up.parentElement));
+          return false;   // no ancestor holds a panel at all
+        }
+        if (node.querySelector(sel.tabPanel)) return node;
+      } catch (e) { return null; }
+    }
+    // No ancestor holds both. This match has no panels of its own — it happens
+    // when a class matches two strips and the panel selector belongs to one of
+    // them. Skip it rather than let it throw and take the other one down.
+    return false;
+  };
+
+  P.correct(function () {
+    // The misspelling, wherever it appears.
+    u.qsa('[aria-labeledby]').forEach(function (el) {
+      var v = u.get(el, 'aria-labeledby');
+      if (v && !u.get(el, 'aria-labelledby')) u.set(el, 'aria-labelledby', v);
+      el.removeAttribute('aria-labeledby');
+    });
+
+    u.qsa('[role="tablist"]').forEach(function (list) {
+      var tabs = u.qsa('[role="tab"]', list);
+      if (tabs.length < 2) return;
+
+      if (list.hasAttribute('data-u1p-vertical')) u.set(list, 'aria-orientation', 'vertical');
+
+      var ids = tabs.map(function (t) { return u.get(t, 'aria-controls') || ''; });
+      var distinct = ids.filter(function (v, i) { return v && ids.indexOf(v) === i; });
+      var active = -1;
+
+      if (distinct.length > 1) {
+        // A panel per tab. Which one is on screen is the page's own answer, and
+        // it stays true when the tab changes by a route change or a click we
+        // never saw.
+        tabs.forEach(function (t, i) {
+          var panel = ids[i] && document.getElementById(ids[i]);
+          if (panel && u.visible(panel)) active = i;
+        });
+      } else {
+        // ONE region that the site re-renders per tab. "Which panel is visible"
+        // cannot answer anything here — the same panel is visible for all six
+        // tabs, and reading it that way would mark the LAST tab active every
+        // time. What does answer it is the panel's aria-labelledby: the APG
+        // requires it to name the tab whose content is showing, and it is the
+        // only statement of that left once the library has overwritten
+        // aria-selected on every pass.
+        var panel = distinct[0] ? document.getElementById(distinct[0]) : null;
+        if (!panel) {
+          // aria-controls naming an id that does not exist is its own 4.1.2
+          // failure and it is common — a template writes a fixed value while
+          // the real panel carries a different id. Find the panel by the link
+          // that does resolve, then repair the one that does not.
+          panel = u.qsa('[role="tabpanel"][aria-labelledby]').filter(function (p) {
+            var by = (u.get(p, 'aria-labelledby') || '').split(/\s+/);
+            for (var i = 0; i < tabs.length; i++) {
+              if (tabs[i].id && by.indexOf(tabs[i].id) !== -1) return true;
+            }
+            return false;
+          })[0] || null;
+        }
+        if (panel) {
+          var by = (u.get(panel, 'aria-labelledby') || '').split(/\s+/);
+          tabs.forEach(function (t, i) {
+            if (t.id && by.indexOf(t.id) !== -1) active = i;
+            if (panel.id) u.set(t, 'aria-controls', panel.id);
+          });
+        }
+      }
+
+      // Nothing ARIA could tell us. The site still styles its own active tab,
+      // and that class is a statement of intent worth reading before giving up.
+      if (active === -1) {
+        tabs.forEach(function (t, i) {
+          if (/(^|\s)(active|selected|current|is-active|is-selected)(\s|$)/i.test(t.className || '') ||
+              u.get(t, 'aria-current') === 'true' || u.get(t, 'aria-current') === 'page') active = i;
+        });
+      }
+      if (active === -1) return;   // no signal at all — leave the library's answer
+
+      tabs.forEach(function (t, i) {
+        u.set(t, 'aria-selected', i === active ? 'true' : 'false');
+        u.setTabIndex(t, i === active ? 0 : -1);
+      });
+    });
+  });
+
+  P.rove('[role="tablist"]', '[role="tab"]', { arrows: true, activate: true, vertical: 'auto' });
+  P.numpadEnter('[role="tab"]');
+})();
+// Two problems. The library wires roles and the prev/next/picker clicks but has
+// no pause mechanism at all — no reference to pause, stop or autoplay anywhere
+// in the fixer — so a carousel that advances on its own leaves 2.2.2 unmet. And
+// initialProps assumes slide 0 is the active one instead of reading the page.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+
+  var label = function (running) { return running ? 'Pause the carousel' : 'Resume the carousel'; };
+
+  P.correct(function () {
+    u.qsa('[role="group"][aria-roledescription="carousel"], .u1st-carousel, [data-u1-carousel]')
+      .forEach(function (car) {
+        if (car.__u1pPause) return;
+        // Only carousels that actually move need a control. A static one would
+        // gain a button that does nothing, which is its own accessibility problem.
+        if (!car.querySelector('[aria-hidden="true"], [hidden]')) return;
+        car.__u1pPause = true;
+
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'u1p-carousel-pause';
+        btn.textContent = '⏸';
+        btn.setAttribute('aria-label', label(true));
+        btn.style.cssText = 'position:relative;z-index:2';
+
+        var running = true;
+        btn.addEventListener('click', function () {
+          running = !running;
+          btn.textContent = running ? '⏸' : '▶';
+          btn.setAttribute('aria-label', label(running));
+          // The site owns the timer, so the honest lever is the one every
+          // carousel library already listens to.
+          car.dispatchEvent(new CustomEvent(running ? 'mouseleave' : 'mouseenter',
+            { bubbles: true }));
+          car.setAttribute('data-u1p-paused', String(!running));
+        });
+        car.insertBefore(btn, car.firstChild);
+      });
+  });
+})();
+
+})();
+
+/* ---- 2. Component mappings ---- */
+function __u1ApplyMappings() {
+/* ---- carousel  .ticker ---- */
+window.u1?.fix.carousel(".ticker", {
+  "selectors": {
+    "carouselContainer": ".ticker",
+    "slide": ".ticker__item",
+    "prevButton": "#tickerPrev",
+    "nextButton": "#tickerNext"
+  }
+});
+
+/* ---- carousel  .hero-carousel ---- */
+window.u1?.fix.carousel(".hero-carousel", {
+  "selectors": {
+    "carouselContainer": ".hero-carousel",
+    "slide": ".hero-slide--active",
+    "prevButton": "#heroPrev",
+    "nextButton": "#heroNext",
+    "slidePickerButtons": ".hero-carousel__dots,.hero-carousel__dot"
+  }
+});
+
+/* ---- tabs  .finder__tabs ---- */
+window.u1?.fix.tabs(".finder__tabs", {
+  "isVertical": false,
+  "selectors": {
+    "tabList": ".finder__tabs",
+    "tab": ".finder__tab",
+    "tabPanel": ".finder__panel"
+  }
+});
+
+/* ---- tabs  #dealTabs ---- */
+window.u1?.fix.tabs("#dealTabs", {
+  "isVertical": false,
+  "selectors": {
+    "tabList": "#dealTabs",
+    "tab": "#dealTabs>.tab-bar__btn",
+    "tabPanel": ".deal-grid"
+  }
+});
+
+/* ---- table  #club>div>div>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#club>div>div>div.table-wrap>table.data-table", {
+  "selectors": {
+    "table": "#club>div>div>div.table-wrap>table.data-table",
+    "row": "tr",
+    "cell": "td",
+    "columnheader": "#club>div:nth-child(1)>div:nth-child(3)>div:nth-child(2)>table:nth-child(1)>thead:nth-child(2)>tr:nth-child(1)>th:nth-child(1)",
+    "rowheader": "#club>div:nth-child(1)>div:nth-child(3)>div:nth-child(2)>table:nth-child(1)>tbody:nth-child(3)>tr:nth-child(1)>th:nth-child(1)"
+  }
+});
+
+/* ---- table  #sizes>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#sizes>div.table-wrap>table.data-table", {
+  "selectors": {
+    "table": "#sizes>div.table-wrap>table.data-table",
+    "row": "tr",
+    "cell": "td",
+    "columnheader": "#sizes>div.table-wrap>table.data-table>thead>tr>th",
+    "rowheader": "#sizeTableBody>tr>th"
+  }
+});
+
+/* ---- table  #sizes>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#sizes>div.table-wrap>table.data-table", {
+  "selectors": {
+    "table": "#sizes>div.table-wrap>table.data-table",
+    "row": "tr",
+    "cell": "td",
+    "columnheader": "#sizes>div.table-wrap>table.data-table>thead>tr>th",
+    "rowheader": "#sizeTableBody>tr>th"
+  }
+});
+
+/* ---- table  #locatorDetail>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#locatorDetail>div.table-wrap>table.data-table", {
+  "selectors": {
+    "table": "#locatorDetail>div.table-wrap>table.data-table",
+    "row": "tr",
+    "cell": "td",
+    "rowheader": "th"
+  }
+});
+
+/* ---- tabs  #faqTabs ---- */
+window.u1?.fix.tabs("#faqTabs", {
+  "isVertical": false,
+  "selectors": {
+    "tabList": "#faqTabs",
+    "tab": "#faqTabs>.tab-bar__btn",
+    "tabPanel": ".accordion"
+  }
+});
+
+/* ---- accordion  .accordion__trigger ---- */
+window.u1?.fix.accordion(".accordion__trigger", {
+  "headingLevel": "3",
+  "collapsesOthers": false,
+  "selectors": {
+    "headerSelector": ".accordion__trigger",
+    "contentSelector": ".accordion__panel"
+  }
+});
+}
+__u1ApplyMappings();
+
+/* ---- 3. Responsive re-apply ---- */
+(function () {
+  var lastWidth = window.innerWidth, t = null;
+  window.addEventListener('resize', function () {
+    if (window.innerWidth === lastWidth) return;
+    lastWidth = window.innerWidth;
+    clearTimeout(t);
+    t = setTimeout(function () { try { __u1ApplyMappings(); } catch (e) {} }, 250);
+  });
+})();
