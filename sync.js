@@ -122,9 +122,26 @@ const U1Sync = (() => {
 
   async function pushMappings(hostname, rows) {
     if (!rows.length) return { saved: 0, conflicts: [] };
+    // The screenshot does NOT travel.
+    //
+    // It is a data: URI of the element — local evidence for the drawer and the
+    // close-out report, not configuration anybody else needs — and it is by far
+    // the largest thing on a mapping. Two on elal.com were individually over the
+    // whole request budget because of it, and they were reported to the user as
+    // "too large for the server to accept even on their own": true, and entirely
+    // about a picture the server has no use for.
+    //
+    // A colleague pulling this mapping gets everything that decides behaviour
+    // and re-captures the picture the moment they look at the page.
+    const strip = (m) => {
+      if (!m || typeof m !== 'object' || !m.screenshot) return m;
+      const copy = Object.assign({}, m);
+      delete copy.screenshot;
+      return copy;
+    };
     const all = rows.map((r) => ({
       key: r.key,
-      payload: r.payload,
+      payload: strip(r.payload),
       deleted: !!r.deleted,
       baseUpdatedAt: baseVersions.get(r.key) || null,
     }));

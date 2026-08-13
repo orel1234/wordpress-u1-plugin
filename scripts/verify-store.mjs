@@ -165,6 +165,24 @@ console.log('\n  Mapping push batches:');
         /new TextEncoder\(\)\.encode\(JSON\.stringify\(m\)\)\.length/.test(src));
   check('a mapping too big for any request is named, not silently dropped',
         /oversized\.push\(m\.key\)/.test(src) && /too large for the/.test(src));
+  // The screenshot is a data: URI of the element — local evidence, not shared
+  // configuration, and by far the biggest thing on a mapping. Two on elal.com
+  // were individually over the entire request budget because of it.
+  check('the screenshot is stripped before a mapping is pushed',
+        /delete copy\.screenshot;/.test(src) && /payload: strip\(r\.payload\)/.test(src));
+  {
+    // What that is worth: a mapping with a modest 80KB screenshot on it.
+    const shot = 'data:image/jpeg;base64,' + 'A'.repeat(80 * 1024);
+    const withShot = { type: 'dialog', primary: '.login-widget', config: {}, screenshot: shot };
+    const without = Object.assign({}, withShot); delete without.screenshot;
+    const big = new TextEncoder().encode(JSON.stringify(withShot)).length;
+    const small = new TextEncoder().encode(JSON.stringify(without)).length;
+    // Over the per-request budget on its own — which is exactly what gets a
+    // mapping set aside and reported as "too large even on their own".
+    check('…which is what puts a single mapping over the budget on its own',
+          big > budget && small < budget,
+          `${(big / 1024).toFixed(0)}KB with it, ${small} bytes without`);
+  }
 
   // The real shape, at the sizes a multi-page site reaches.
   const one = (i) => ({

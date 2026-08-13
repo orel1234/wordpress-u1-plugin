@@ -1,0 +1,443 @@
+{
+  "mappings_step-shoe-store-production.up.railway.app": [
+    {
+      "type": "carousel",
+      "primary": ".ticker",
+      "firstArg": ".ticker__item",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "absoluteCarouselContainerLabel": ".ticker__label",
+          "activeSlides": ".ticker__item--active",
+          "carouselContainer": ".ticker",
+          "nextButton": "#tickerNext",
+          "prevButton": "#tickerPrev",
+          "slide": ".ticker__item"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 1
+    },
+    {
+      "type": "menu",
+      "primary": "#megaNav",
+      "firstArg": "#megaNav",
+      "custom": null,
+      "config": {
+        "menubar": false,
+        "selectors": {
+          "horizontalMenu": "#megaNav",
+          "items": "#megaNav>li.mega-nav__item>button.mega-nav__trigger",
+          "menu": "#megaNav",
+          "submenus": ".mega-panel",
+          "triggers": ".mega-nav__trigger"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 2
+    },
+    {
+      "type": "carousel",
+      "primary": ".hero-carousel",
+      "firstArg": ".hero-slide",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "absoluteCarouselContainerLabel": ".hero-carousel",
+          "carouselContainer": ".hero-carousel",
+          "nextButton": ".hero-carousel__arrow--next",
+          "prevButton": ".hero-carousel__arrow--prev",
+          "slide": ".hero-slide",
+          "slidePickerButtons": ".hero-carousel__dot"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 3
+    },
+    {
+      "type": "tabs",
+      "primary": ".finder__tabs",
+      "firstArg": ".finder__tabs",
+      "custom": null,
+      "config": {
+        "isVertical": false,
+        "selectors": {
+          "tab": ".finder__tab",
+          "tabList": ".finder__tabs",
+          "tabPanel": ".finder__panel"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 4
+    },
+    {
+      "type": "form",
+      "primary": "#finderSport>form",
+      "firstArg": "#finderSport>form",
+      "custom": null,
+      "config": {
+        "focusOnInvalidField": true,
+        "selectors": {
+          "form": "#finderSport>form",
+          "inputField": ".finder__control,input,.finder__submit",
+          "submitButton": ".finder__submit"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 5
+    },
+    {
+      "type": "link",
+      "primary": "nav[aria-label=\"Breadcrumb\"]",
+      "firstArg": "nav[aria-label=\"Breadcrumb\"]",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "nav[aria-label=\"Breadcrumb\"]"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 6
+    },
+    {
+      "type": "tabs",
+      "primary": "#dealTabs",
+      "firstArg": "#dealTabs",
+      "custom": null,
+      "config": {
+        "isVertical": false,
+        "selectors": {
+          "tab": "#dealTabs>.tab-bar__btn",
+          "tabList": "#dealTabs",
+          "tabPanel": ".deal-grid"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 7
+    },
+    {
+      "type": "link",
+      "primary": "#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a",
+      "firstArg": "#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 8
+    },
+    {
+      "type": "link",
+      "primary": "#deals>div.section__head>a.btn",
+      "firstArg": "#deals>div.section__head>a.btn",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#deals>div.section__head>a.btn"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 9
+    },
+    {
+      "type": "link",
+      "primary": "#main-content>section.section>div.section__head>a.btn",
+      "firstArg": "#main-content>section.section>div.section__head>a.btn",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#main-content>section.section>div.section__head>a.btn"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 10
+    },
+    {
+      "type": "heading",
+      "primary": "h2.section__title",
+      "firstArg": "h2.section__title",
+      "custom": null,
+      "config": {
+        "level": "2",
+        "selectors": {
+          "heading": "h2.section__title"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 11
+    },
+    {
+      "type": "button",
+      "primary": "#bestsellerRail>article.product-card>button.product-card__wish",
+      "firstArg": "#bestsellerRail>article.product-card>button.product-card__wish",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#bestsellerRail>article.product-card>button.product-card__wish"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 12
+    },
+    {
+      "type": "link",
+      "primary": "#mosaic>a.mosaic__tile",
+      "firstArg": "#mosaic>a.mosaic__tile",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#mosaic>a.mosaic__tile"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 13
+    },
+    {
+      "type": "button",
+      "primary": "#newRail>article.product-card>button.product-card__wish",
+      "firstArg": "#newRail>article.product-card>button.product-card__wish",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#newRail>article.product-card>button.product-card__wish"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 14
+    },
+    {
+      "type": "link",
+      "primary": "#newRail>article.product-card>a.product-card__media",
+      "firstArg": "#newRail>article.product-card>a.product-card__media",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#newRail>article.product-card>a.product-card__media"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 15
+    },
+    {
+      "type": "heading",
+      "primary": ".hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title",
+      "firstArg": ".hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title",
+      "custom": null,
+      "config": {
+        "level": "2",
+        "selectors": {
+          "heading": ".hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 16
+    },
+    {
+      "type": "heading",
+      "primary": "#newRail>article.product-card>div.product-card__body>h3.product-card__name",
+      "firstArg": "#newRail>article.product-card>div.product-card__body>h3.product-card__name",
+      "custom": null,
+      "config": {
+        "level": "3",
+        "selectors": {
+          "heading": "#newRail>article.product-card>div.product-card__body>h3.product-card__name"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 17
+    },
+    {
+      "type": "link",
+      "primary": "#saleRail>article.product-card>a.product-card__media",
+      "firstArg": "#saleRail>article.product-card>a.product-card__media",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#saleRail>article.product-card>a.product-card__media"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 18
+    },
+    {
+      "type": "button",
+      "primary": "#saleRail>article.product-card>button.product-card__wish",
+      "firstArg": "#saleRail>article.product-card>button.product-card__wish",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#saleRail>article.product-card>button.product-card__wish"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 19
+    },
+    {
+      "type": "button",
+      "primary": "#saleRail>article.product-card>button.product-card__add",
+      "firstArg": "#saleRail>article.product-card>button.product-card__add",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#saleRail>article.product-card>button.product-card__add"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 20
+    },
+    {
+      "type": "link",
+      "primary": "#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a",
+      "firstArg": "#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 21
+    },
+    {
+      "type": "link",
+      "primary": "#brandStrip>a.brand-strip__item",
+      "firstArg": "#brandStrip>a.brand-strip__item",
+      "custom": null,
+      "config": {
+        "selectors": {
+          "element": "#brandStrip>a.brand-strip__item"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 22
+    },
+    {
+      "type": "tabs",
+      "primary": "#dealTab-week",
+      "firstArg": "#dealTab-week",
+      "custom": null,
+      "config": {
+        "isVertical": false,
+        "selectors": {
+          "tab": ".tab-bar__btn",
+          "tabList": "#dealTab-week"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 23
+    },
+    {
+      "type": "accordion",
+      "primary": "#faqPanel>div.accordion__item>h3>button.accordion__trigger",
+      "firstArg": "#faqPanel>div.accordion__item>h3>button.accordion__trigger",
+      "custom": null,
+      "config": {
+        "collapsesOthers": false,
+        "headingLevel": "3",
+        "selectors": {
+          "headerSelector": "#faqPanel>div.accordion__item>h3>button.accordion__trigger"
+        }
+      },
+      "overwriteRole": null,
+      "screenshot": null,
+      "pageUrl": "https://step-shoe-store-production.up.railway.app/",
+      "pageTitle": "STEP — an ordinary site",
+      "capturedAt": 1786640922016,
+      "fixNo": 24
+    }
+  ]
+}
