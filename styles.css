@@ -4862,3 +4862,21 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   font-weight: 400;
   color: var(--u1-primary-text);
 }
+
+/* The busy banner is position:fixed over the panel, so its height is the amount
+   of the panel it hides. Left to grow with its message it covered the list it
+   is reporting on — which is what "it's cut off" was. Two lines, then ellipsis;
+   the whole sentence is on the tooltip. */
+#sweepBusy.pinned .ai-busy-sub {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+  max-height: 2.8em;
+}
+#sweepBusy.pinned .ai-busy-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

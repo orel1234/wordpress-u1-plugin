@@ -6109,7 +6109,16 @@ function clearMapBusy() {
 // elapsed count of 4:37 is the whole answer, and it needs no interpretation.
 let sweepBusyTimer = null;
 
-function showSweepBusy(title, sub, pct) {
+/**
+ * The pinned progress banner.
+ *
+ * `sub` is one short line — this is position:fixed over the panel, so its
+ * height is the amount of the panel it hides, and a three-line message covered
+ * the list it was reporting on. `long` is the full sentence, on the tooltip:
+ * worth saying, not worth three lines of a fixed header on every section of a
+ * thirty-section run.
+ */
+function showSweepBusy(title, sub, pct, long) {
   const host = document.getElementById('sweepBusy');
   if (!host) return;
   // Pinned for the duration, because the picks list below it is long enough
@@ -6123,7 +6132,7 @@ function showSweepBusy(title, sub, pct) {
         <span${determinate ? ` style="width:${clamped}%"` : ''}></span>
       </div>
       <div class="ai-busy-title">${escapeHtml(title)}${determinate ? ` — ${clamped}%` : ''}</div>
-      <div class="ai-busy-sub">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
+      <div class="ai-busy-sub" title="${escapeHtml(long || sub || '')}">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
     </div>`;
 
   // Restarted per step, because the number that matters is how long THIS step
@@ -9276,11 +9285,17 @@ async function scanPickedScreens(numbers) {
       let died = null;
       for (let b = 0; b < batches.length; b++) {
         showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
-          (batches.length > 1 ? `Part ${b + 1} of ${batches.length}: asking` : 'Asking') +
-          ` Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'} and a ` +
+          // Short enough for a banner pinned over the panel. The reassurance
+          // that a slow answer is not a stuck one is on the tooltip: it is
+          // worth saying once, not worth three lines of a fixed header on
+          // every section of a thirty-section run.
+          (batches.length > 1 ? `Part ${b + 1}/${batches.length} · ` : '') +
+          `asking Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'}` +
+          ` — a busy section takes a minute or two`,
+          ((i) / stops.length) * 100,
+          `Asking Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'} and a ` +
           `picture of this section. A busy one takes a minute or two — it only gives up if ` +
-          `Claude goes quiet for a minute, so a long answer is never mistaken for a stuck one.`,
-          ((i) / stops.length) * 100);
+          `Claude goes quiet for a minute, so a long answer is never mistaken for a stuck one.`);
         const got = await U1AI.discover({
           screenshot: collected.shot,
           context: {

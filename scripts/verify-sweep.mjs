@@ -2193,7 +2193,14 @@ console.log('\nwhich step a section is on');
   check('the paid half says it is the model, and what it was given',
     /asking\$\{''\}? Claude about \$\{batches\[b\]\.length\} element|Claude about \$\{batches\[b\]\.length\} element/.test(scan));
   check('…and describes the limit it actually has, not a stopwatch',
-    /it only gives up if Claude \$\{''\}?goes quiet for a minute|goes quiet for a minute/.test(scan));
+    /goes quiet for a minute/.test(scan));
+  // Said, but not in the banner's body: it is position:fixed over the panel, so
+  // every line of it is a line of the list it is reporting on that you cannot
+  // see. The short line shows; the full sentence is the tooltip.
+  check('…on the tooltip, so the pinned banner stays one short line',
+    /function showSweepBusy\(title, sub, pct, long\)/.test(panelSrc) &&
+    /title="\$\{escapeHtml\(long \|\| sub \|\| ''\)\}"/.test(panelSrc) &&
+    /a busy section takes a minute or two/.test(scan));
   // The panel must not print a rule the code does not follow — that is how
   // "usually 10–30 seconds" got there, and then "gives up at 2:30" after it.
   check('and that is the rule the call really follows',
