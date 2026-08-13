@@ -940,15 +940,72 @@ button {
   background: var(--u1-surface-2, rgba(127, 127, 127, 0.10));
 }
 
+/* The three Picker modes. Emoji came off them: ✍️ 🤖 🪄 are three unrelated
+   pictures for three steps of one idea, they render differently on every OS,
+   and at 11px they were carrying more visual weight than the words.
+
+   Unselected is a light purple — these are all live choices, and grey read as
+   two of them being disabled, which two of them now genuinely can be. Selected
+   is the deep fill, so the difference between "available" and "you are here" is
+   light against dark rather than colour against grey. */
 .map-mode-btn {
-  padding: 5px 14px;
+  padding: 6px 14px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--u1-radius-sm);
   background: transparent;
-  color: var(--u1-text-muted);
+  color: var(--u1-primary-text);
   font: inherit;
   font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background .12s, color .12s;
+}
+
+.map-mode-btn:hover:not(.active):not(.is-locked) {
+  background: var(--u1-primary-dim);
+  color: oklch(0.86 0.10 293);
+}
+
+/* Beside a folded section heading: what is in there, without opening it. */
+.section-flag {
+  margin-inline-start: 8px;
+  padding: 2px 8px;
+  border-radius: var(--u1-radius-pill);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.section-flag.is-ok     { color: var(--u1-success); background: oklch(0.68 0.18 150 / 0.14); }
+.section-flag.is-needed { color: var(--u1-warn);    background: oklch(0.75 0.12 70 / 0.14); }
+
+/* A section heading that folds. It is a heading first — the caret is the only
+   thing that makes it also a control, so it has to be visible. */
+#aiKeyDetails > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+}
+#aiKeyDetails > summary::-webkit-details-marker { display: none; }
+#aiKeyDetails > summary::after {
+  content: "▸";
+  margin-inline-start: auto;
+  color: var(--u1-text-dim);
+  font-size: 10px;
+  transition: transform .15s;
+}
+#aiKeyDetails[open] > summary::after { transform: rotate(90deg); }
+
+/* Written into the site's own markup, not by U1 — the distinction the Config
+   tab was missing entirely while Setup listed three of them. */
+.skip-detected-flag {
+  margin-inline-start: 8px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--u1-text-dim);
 }
 
 /* No key saved. Not `disabled` — a disabled button is skipped by the keyboard
@@ -979,9 +1036,9 @@ button {
 }
 
 .map-mode-btn.active {
-  background: var(--u1-primary);
+  background: var(--u1-primary-hover);   /* the darker end of the ramp */
   color: #fff;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .map-mode-hint {
@@ -1553,8 +1610,12 @@ button {
 .input-hint {
   grid-column: 1 / -1;
   flex-basis: 100%;
-  margin: 2px 0 2px 118px;
-  padding: 6px 9px;
+  /* Was indented 118px to sit under a label column. In a 420px panel that left
+     the text about 250px wide and wrapping every four words, in a box that
+     already spans the full row — so the indent bought alignment with a column
+     most of these hints are not in, and cost half the reading width. */
+  margin: 4px 0;
+  padding: 8px 11px;
   font-size: 11px;
   line-height: 1.45;
   color: var(--u1-text-muted);

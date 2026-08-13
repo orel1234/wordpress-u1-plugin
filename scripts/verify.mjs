@@ -364,6 +364,57 @@ console.log('\nAI modes are gated on the key, at the door:');
     fail(`typography wrong — names:${namesFonts} noFetch:${fetchesNone}`);
   }
 
+  // ── Two settings that stopped being settings ──────────────────────────────
+  //
+  // Both defaulted to OFF and both only ever made the tool worse when off.
+  // Precise event detection off means a trigger is guessed from tag/role/aria,
+  // which finds nothing on a page written without any of those — the exact
+  // page this tool exists for. The labelling pause off means paying for a
+  // section you could have named for free.
+  const noPrecise = !/preciseEventsToggle/.test(panel) && !/preciseEventsToggle/.test(html);
+  const alwaysPrecise = /if \(!existing\.length\) await setPreciseEvents\(true\)/.test(panel);
+  if (noPrecise && alwaysPrecise) {
+    pass('precise event detection is on always, with no checkbox to forget');
+  } else {
+    fail(`precise events wrong — checkboxGone:${noPrecise} alwaysOn:${alwaysPrecise}`);
+  }
+
+  const noTick = !/sweepLabelTick/.test(panel) && !/sweepLabelTick/.test(html);
+  const alwaysLabel = /const sweepLabel = \{ on: true,/.test(panel);
+  if (noTick && alwaysLabel) {
+    pass('the naming pause is on always — a free section cannot be missed by forgetting');
+  } else {
+    fail(`the naming pause is still optional — checkboxGone:${noTick} alwaysOn:${alwaysLabel}`);
+  }
+  // Removing a control must not remove what it explained.
+  if (/The scan pauses on each section/.test(html) &&
+      /a trigger is guessed|Precise event detection used to be a checkbox/.test(html)) {
+    pass('what those two do is still stated, now that nothing asks about them');
+  } else {
+    fail('a behaviour became automatic and undocumented at the same time');
+  }
+
+  // ── Config knew nothing about the skip links the page already has ─────────
+  //
+  // Setup listed three, read off the live page. Config said "No skip links
+  // configured" at the same moment. Both true; neither mentioned the other.
+  if (/detectedSkipLinks\.length\s*\n?\s*\?/.test(panel) &&
+      /skip-detected-flag/.test(panel) && /skip-detected-flag/.test(read('styles.css'))) {
+    pass("Config names the skip links the site already has, instead of only its own");
+  } else {
+    fail('Config still reports "none" while Setup lists the page\'s own skip links');
+  }
+
+  // ── The Picker's three modes ─────────────────────────────────────────────
+  const noEmoji = !/map-mode-btn[^>]*>\s*[\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}]/u.test(html);
+  const litPurple = /\.map-mode-btn \{[^}]*color: var\(--u1-primary-text\)/s.test(read('styles.css'));
+  const darkActive = /\.map-mode-btn\.active \{[^}]*var\(--u1-primary-hover\)/s.test(read('styles.css'));
+  if (noEmoji && litPurple && darkActive) {
+    pass('the mode tabs are words, light purple, and darker when you are on one');
+  } else {
+    fail(`mode tabs wrong — noEmoji:${noEmoji} light:${litPurple} darkActive:${darkActive}`);
+  }
+
   // One family per role. Forty hardcoded stacks meant a palette change could
   // not reach half of them.
   const stray = [...css.matchAll(/font-family:\s*([^;]+);/g)]

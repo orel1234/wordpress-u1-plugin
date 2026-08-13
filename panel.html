@@ -230,38 +230,38 @@
        deciding. The modes are locked on it now, so this is what unlocks
        them, and it belongs somewhere you can go and find. -->
   <div class="section" id="aiKeySection">
-    <div class="section-title">Anthropic API key<span class="dot">.</span></div>
-    <div class="input-hint" style="display:block;margin-bottom:10px;">
-      Needed for Picker's <strong>Automatic</strong> and <strong>Whole page</strong> modes.
-      Without it those two stay locked.
-    </div>
-    <div class="ai-key-row" id="aiKeyRow">
-      <label class="ai-field-label" for="aiKeyInput">Paste your key</label>
-      <div class="key-line">
-        <input type="password" id="aiKeyInput" class="key-input" placeholder="sk-ant-…"
-               autocomplete="off" spellcheck="false" autocapitalize="off">
-        <button class="btn-ghost btn-sm" id="aiKeyToggle" type="button" title="Show or hide the key">Show</button>
+    <!-- An accordion, and closed once a key is saved. It is a set-once field:
+         after the first time, it is a locked box taking up a third of the tab
+         to say "saved". Open it when there is nothing in it, and when you want
+         to change it. -->
+    <details id="aiKeyDetails">
+      <summary class="section-title">Anthropic API key<span class="dot">.</span>
+        <span class="section-flag" id="aiKeyFlag"></span>
+      </summary>
+      <div class="input-hint" style="display:block;">
+        Needed for Picker's <strong>Automatic</strong> and <strong>Whole page</strong> modes.
+        Without it those two stay locked.
       </div>
-      <div class="btn-row" style="margin-top:10px;">
-        <button class="btn-primary" id="aiKeySave">Save key</button>
+      <div class="ai-key-row" id="aiKeyRow">
+        <label class="ai-field-label" for="aiKeyInput">Paste your key</label>
+        <div class="key-line">
+          <input type="password" id="aiKeyInput" class="key-input" placeholder="sk-ant-…"
+                 autocomplete="off" spellcheck="false" autocapitalize="off">
+          <button class="btn-ghost btn-sm" id="aiKeyToggle" type="button" title="Show or hide the key">Show</button>
+        </div>
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="btn-primary" id="aiKeySave">Save key</button>
+        </div>
+        <div class="input-hint" style="display:block;">Stored on this machine only, and kept out of exported backups. It is sent straight to api.anthropic.com from this panel.</div>
       </div>
-      <div class="input-hint" style="display:block;">Stored on this machine only, and kept out of exported backups. It is sent straight to api.anthropic.com from this panel.</div>
-    </div>
-    <div class="ai-status" id="aiKeyStatus"></div>
+      <div class="ai-status" id="aiKeyStatus"></div>
+    </details>
   </div>
 
-  <!-- 1.1b DETECTION ─────────────────────────────────────────────────
-       Lives here with the other settings. It spent a while inside the AI
-       dialog, where its long explanation had nowhere to go and rendered as a
-       squeezed column of capitals. -->
-  <div class="section">
-    <div class="section-title">Detection<span class="dot">.</span></div>
-    <label class="root-toggle" id="preciseEventsRow">
-      <input type="checkbox" id="preciseEventsToggle">
-      <span><strong>Precise event detection</strong> — needs a page reload</span>
-    </label>
-    <div class="input-hint" style="display:block;">Off, a trigger is recognised from its tag, role, aria-* and data-* attributes. On, the real click handlers are recorded as the page loads, so detection is exact. Reload the page once after switching this on.</div>
-  </div>
+  <!-- Precise event detection used to be a checkbox here. It is not a choice:
+       with it off, a trigger is guessed from tag/role/aria/data, and on a page
+       written without any of those that guess finds nothing. It is on always,
+       registered at boot, and there is nothing to decide. -->
 
   <!-- 1.2 SKIP LINKS ──────────────────────────────────────────────── -->
   <div class="section">
@@ -402,9 +402,9 @@
        as one field inside Element understated what pressing it does. Only the
        Element section's contents swap; Mappings below is common to all three. -->
   <div class="map-mode wide" role="tablist" aria-label="Mapping mode">
-    <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true">✍️ Manual</button>
-    <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false">🤖 Automatic (AI)</button>
-    <button class="map-mode-btn" id="modeSweepBtn" role="tab" aria-selected="false">🪄 Whole page (AI)</button>
+    <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true">Manual</button>
+    <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false">Automatic (AI)</button>
+    <button class="map-mode-btn" id="modeSweepBtn" role="tab" aria-selected="false">Whole page (AI)</button>
   </div>
   <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
 
@@ -461,14 +461,14 @@
            what a thing IS rather than what it is called, and switching it off
            only made the answers worse — there was never a reason to. What it
            does still has to be stated, so the hint stays and the checkbox goes. -->
-      <label class="sweep-all" for="sweepLabelTick">
-        <input type="checkbox" id="sweepLabelTick">
-        Stop on each section and let me say what things are
-      </label>
-      <div class="input-hint" style="display:block;margin:-4px 0 0 24px;">
-        The scan pauses with every candidate numbered on the page. What you name is
-        built by measuring the markup — no model call, nothing charged. Name everything
-        in a section and that section is free.
+      <!-- The pause used to be a checkbox. Naming a component costs no model
+           call and no money, and a section named in full is a section that
+           never gets charged for — there was no version of "off" worth
+           offering. It is on always; what it does still has to be said. -->
+      <div class="input-hint" style="display:block;">
+        The scan pauses on each section with every candidate numbered on the page.
+        What you name is built by measuring the markup — no model call, nothing
+        charged. Name everything in a section and that section is free.
       </div>
       <div class="input-hint" style="display:block;">
         Each component is opened to see what it is: menus, tabs and accordions are

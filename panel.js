@@ -3087,7 +3087,33 @@ async function refreshConfigSkipList() {
   const links = stored[skipKey] || [];
   const ul = document.getElementById('configSkipList');
   if (!links.length) {
-    ul.innerHTML = '<div class="empty-state">No skip links configured. Set them in Setup.</div>';
+    // "No skip links configured" was true and useless. Setup was listing three
+    // of them, read off the live page, at the same moment — so the panel said
+    // both "here are your skip links" and "you have none", on two tabs, with
+    // neither line mentioning the other.
+    //
+    // They are different things, and the difference is the whole answer: those
+    // are in the SITE'S OWN markup and this panel does not manage them, while
+    // the configured list is what U1 will render. That was the one thing not
+    // said anywhere.
+    ul.innerHTML = detectedSkipLinks.length
+      ? '<div class="empty-state">' +
+          `The page already has ${detectedSkipLinks.length} skip link` +
+          `${detectedSkipLinks.length === 1 ? '' : 's'} of its own, written into the ` +
+          'site\'s markup. U1 is not rendering <em>those</em> — nothing is configured ' +
+          'here, so U1 adds none of its own.' +
+        '</div>' +
+        '<ul class="detected-list">' + detectedSkipLinks.map((s) => `
+          <li>
+            <span class="bullet">•</span>
+            <span>"${escapeHtml(s.label || '')}"</span>
+            <span class="arrow">→</span>
+            <span class="target">${escapeHtml(s.selector || s.target || '')}</span>
+            <span class="skip-detected-flag">the page's own</span>
+          </li>`).join('') + '</ul>' +
+        '<div class="empty-state">Add them in Setup to have U1 render them too, or ' +
+        'leave them to the site.</div>'
+      : '<div class="empty-state">No skip links configured. Set them in Setup.</div>';
   } else {
     ul.innerHTML = '<ul class="detected-list">' + links.map((s, i) => `
       <li data-skip-idx="${i}">
@@ -3938,11 +3964,12 @@ showBuildStamp();
 // which is correct, they are buttons — and the component is the strip they
 // form. There is no single candidate to label, so labelling one at a time could
 // never have described it. That strip is the one the model failed to identify.
-const sweepLabel = { on: false, resolve: null, marks: new Set(), busy: false };
-
-document.getElementById('sweepLabelTick')?.addEventListener('change', (e) => {
-  sweepLabel.on = !!e.target.checked;
-});
+//
+// `on` is no longer a setting. Naming a component costs no model call and no
+// money, and a section named in full is never charged for — there was no
+// version of "off" worth offering, and the checkbox was one more thing to have
+// forgotten to tick before paying for a scan.
+const sweepLabel = { on: true, resolve: null, marks: new Set(), busy: false };
 
 /**
  * Every component a person named, in the corpus's own shape.
@@ -4444,8 +4471,6 @@ const $modeManualBtn = document.getElementById('modeManualBtn');
 const $modeAutoBtn = document.getElementById('modeAutoBtn');
 const $modeSweepBtn = document.getElementById('modeSweepBtn');
 const $modeHint = document.getElementById('modeHint');
-const $preciseEventsRow = document.getElementById('preciseEventsRow');
-const $preciseEventsToggle = document.getElementById('preciseEventsToggle');
 
 let mapMode = 'manual';
 
@@ -4565,6 +4590,16 @@ let aiUnlocked = false;
 
 async function refreshAiLocks() {
   try { aiUnlocked = !!(await U1AI.getKey()); } catch { aiUnlocked = false; }
+  // The key section is a set-once field. Open while there is nothing in it —
+  // it is the thing standing between you and two of the three Picker modes —
+  // and folded away once there is, where it says only that it is saved.
+  const det = document.getElementById('aiKeyDetails');
+  if (det) det.open = !aiUnlocked;
+  const flag = document.getElementById('aiKeyFlag');
+  if (flag) {
+    flag.textContent = aiUnlocked ? 'saved' : 'needed';
+    flag.className = 'section-flag ' + (aiUnlocked ? 'is-ok' : 'is-needed');
+  }
   for (const btn of [$modeAutoBtn, $modeSweepBtn]) {
     if (!btn) continue;
     btn.classList.toggle('is-locked', !aiUnlocked);
@@ -4581,6 +4616,8 @@ function aiModeAllowed() {
   if (aiUnlocked) return true;
   document.querySelector('.tab-btn[data-tab="setup"]')?.click();
   const box = document.getElementById('aiKeySection');
+  const det = document.getElementById('aiKeyDetails');
+  if (det) det.open = true;   // being sent to a folded heading explains nothing
   if (box) {
     box.scrollIntoView({ block: 'center', behavior: 'smooth' });
     // A tab change and a scroll is a lot of movement with no stated cause, so
@@ -8760,25 +8797,21 @@ async function setPreciseEvents(on) {
   }
 }
 
-$preciseEventsToggle?.addEventListener('change', async () => {
-  const on = $preciseEventsToggle.checked;
-  const ok = await setPreciseEvents(on);
-  if (!ok) { $preciseEventsToggle.checked = !on; return; }
-  showNotice(document.getElementById('applyStatus'),
-    on ? 'Event recording is on — reload the page once, then Analyze again.' : 'Back to working it out from the markup.',
-    'success', 4000);
-});
-
-// Restore the toggle's state on load (and re-register, since dynamic scripts do
-// persist but the checkbox has to agree with reality either way).
+// Precise event detection, always on.
+//
+// It was a checkbox in Setup, defaulting to off. Off, a trigger is guessed from
+// its tag, role and aria/data attributes — and on a page written with none of
+// those, that guess finds nothing at all, which is the exact page this tool
+// exists for. Switching it on only ever made the answers better; the only thing
+// the choice bought was a way to have the scan quietly underperform.
+//
+// The one real cost is that the recorder must be installed BEFORE the page's
+// own script runs, so a page already open when it is first registered needs one
+// reload. That is said in Setup rather than asked about.
 (async () => {
-  if (!$preciseEventsToggle) return;
   try {
-    const stored = await U1Store.get(PRECISE_EVENTS_KEY);
-    const wanted = !!stored[PRECISE_EVENTS_KEY];
     const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [RECORDER_ID] });
-    $preciseEventsToggle.checked = !!existing.length || wanted;
-    if (wanted && !existing.length) await setPreciseEvents(true);
+    if (!existing.length) await setPreciseEvents(true);
   } catch {}
 })();
 
