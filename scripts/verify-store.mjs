@@ -296,5 +296,25 @@ console.log('\n  The survey upload:');
         `${(withCands / 1024).toFixed(0)}KB of candidates alone, limit ${LIMIT / 1024}KB`);
 }
 
+// ── Delete-all is destructive and shared ────────────────────────────────────
+console.log('\n  Delete all mappings:');
+{
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const block = /document\.getElementById\('deleteAllBtn'\)[\s\S]*?\n\}\);/.exec(panelSrc);
+  check('there is a button, and it asks first', !!block && /dlg\.showModal\(\)/.test(block[0]));
+  check('…and says how many and of what before it takes them',
+        !!block && /mapping\$\{list\.length === 1 \? '' : 's'\} on \$\{escapeHtml\(currentHostname\)\}/.test(block[0]));
+  // These live on the server too. A "local only" delete comes straight back.
+  check('…deletes through set(), so the server is told',
+        !!block && /await U1Store\.set\(\{ \[key\]: \[\] \}\)/.test(block[0]) &&
+        !/setLocalOnly\(\{ \[key\]: \[\] \}\)/.test(block[0]));
+  check('…and says so when only this machine forgot them',
+        !!block && /err\.localOnly/.test(block[0]));
+  // One site. Not every client on the machine, from a debug button.
+  check('…for this site only',
+        !!block && /storageKey\('mappings', currentHostname\)/.test(block[0]) &&
+        !/listSites|SITE_PREFIXES/.test(block[0]));
+}
+
 console.log(failures === 0 ? '\n✅ The store keeps every stored key intact.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

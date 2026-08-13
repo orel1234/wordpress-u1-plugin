@@ -6360,6 +6360,65 @@ function renderAiComponents(found) {
 
 const showCompSlide = (i) => slideTo('aiComp', i, '.ai-comp', () => paintAiRowStrength());
 
+/**
+ * Every mapping for this site, gone. For clearing the board between runs.
+ *
+ * Destructive and SHARED — these are on the server too, so this is not just
+ * this machine's copy — so it says what it will take before it takes it, and
+ * offers the export first. A debugging convenience that quietly deletes a
+ * colleague's afternoon is not a convenience.
+ *
+ * Deliberately per-site: `currentHostname` only. Deleting every mapping for
+ * every client from a debug button is not a thing anyone should be one press
+ * away from.
+ */
+document.getElementById('deleteAllBtn')?.addEventListener('click', async () => {
+  const key = storageKey('mappings', currentHostname);
+  const list = (await U1Store.get([key]))[key] || [];
+  const status = document.getElementById('applyAllStatus');
+  if (!list.length) { showNotice(status, 'There are none to delete.', 'info', 4000); return; }
+
+  const dlg = document.getElementById('deleteAllDialog');
+  const byType = {};
+  for (const m of list) byType[m.custom || m.type || '?'] = (byType[m.custom || m.type || '?'] || 0) + 1;
+  document.getElementById('deleteAllBody').innerHTML =
+    `<strong>${list.length} mapping${list.length === 1 ? '' : 's'} on ${escapeHtml(currentHostname)}</strong> — ` +
+    escapeHtml(Object.entries(byType).map(([t, n]) => `${n} ${t}`).join(', ')) + '.<br><br>' +
+    'They go from this computer and from the server, so your colleagues lose them too. ' +
+    'The page keeps whatever U1 already applied until it is reloaded.<br><br>' +
+    'Export from the Export tab first if you might want them back.';
+
+  const go = await new Promise((resolve) => {
+    const done = (v) => {
+      dlg.close();
+      document.getElementById('deleteAllGo').onclick = null;
+      document.getElementById('deleteAllCancel').onclick = null;
+      resolve(v);
+    };
+    document.getElementById('deleteAllGo').onclick = () => done(true);
+    document.getElementById('deleteAllCancel').onclick = () => done(false);
+    dlg.showModal();
+  });
+  if (!go) return;
+
+  try {
+    // Through set(), not setLocalOnly: the server has to be told, or the next
+    // pull brings every one of them straight back.
+    await U1Store.set({ [key]: [] });
+    showNotice(status, `${list.length} mapping${list.length === 1 ? '' : 's'} deleted. ` +
+      `Reload the page to see it without them.`, 'success', 8000);
+  } catch (err) {
+    // Local went; the server did not. Say which, because "deleted" and
+    // "deleted here" are different states and the next pull tells them apart.
+    showNotice(status, err.localOnly
+      ? `Deleted on this computer. The server still has them (${err.message}) — they will ` +
+        `come back on the next pull unless this succeeds.`
+      : 'Could not delete them: ' + err.message, 'error', 12000);
+  }
+  await loadMappingsList();
+  refreshExportInfo();
+});
+
 // Remove a conflicting older mapping, on request, from the approved list.
 document.getElementById('aiApproved')?.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-dropkey]');

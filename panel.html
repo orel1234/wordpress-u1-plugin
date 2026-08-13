@@ -109,6 +109,15 @@
     </div>
   </dialog>
 
+  <dialog id="deleteAllDialog" class="u1-dialog">
+    <div class="dialog-title">Delete every mapping for this site?</div>
+    <p class="dialog-sub" id="deleteAllBody"></p>
+    <div class="btn-row">
+      <button class="btn-outline" id="deleteAllCancel">Keep them</button>
+      <button class="btn-primary" id="deleteAllGo">Delete them all</button>
+    </div>
+  </dialog>
+
   <dialog id="sweepClearDialog" class="u1-dialog">
     <div class="dialog-title">Throw away this survey?</div>
     <p class="dialog-sub" id="sweepClearBody"></p>
@@ -717,6 +726,10 @@
     <div class="btn-row" id="applyAllRow" style="display:none;">
       <button class="btn-outline" id="applyAllBtn">Apply All Mappings on Page</button>
       <button class="btn-outline" id="copyAllBtn">Copy All</button>
+      <!-- For clearing the board between runs. Destructive and shared — these
+           are on the server too — so it says what it will take before it
+           takes it. -->
+      <button class="btn-ghost btn-sm" id="deleteAllBtn">🗑 Delete all</button>
     </div>
     <div class="notice" id="applyAllStatus"></div>
     <div id="testResults" class="test-results" style="display:none;"></div>
