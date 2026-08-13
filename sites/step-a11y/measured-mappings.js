@@ -1,6 +1,6 @@
 /* ============================================================
  * U1 accessibility mappings — step-shoe-store-clean-production.up.railway.app
- * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:40:50.511Z
+ * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:47:39.887Z
  * 10 components mapped, 11 left out (see the report).
  *
  * Every mapping here was read off the markup, not guessed: required fields
@@ -37,7 +37,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13c' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13d' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -642,6 +642,71 @@
     e.stopImmediatePropagation();
     items[(here + 1) % items.length].focus();
   });
+
+  // ── Opening a submenu, and getting back out of it ────────────────────────
+  //
+  // Neither of these is in the library, and they are the two things a keyboard
+  // user does with a menu. Reported on a live mapping: pressing the trigger did
+  // not open the panel, and Escape from inside a submenu left focus stranded
+  // in a panel that had closed behind it.
+  //
+  // Both are done by driving the PAGE's own behaviour — the trigger is clicked
+  // rather than the panel being shown by hand — so a site that opens on click,
+  // on class, or on its own state machine keeps working. Nothing here decides
+  // what "open" means; it only makes the keyboard reach it.
+  var triggerFor = function (panel) {
+    if (!panel) return null;
+    // Whoever says they control it.
+    if (panel.id) {
+      var by = u.qsa('[aria-controls="' + panel.id + '"], [data-controls="' + panel.id + '"]');
+      if (by.length) return by[0];
+    }
+    // Otherwise the control just before it: a trigger and its panel are
+    // siblings, or the panel is the trigger's own next element.
+    var prev = panel.previousElementSibling;
+    if (prev && prev.matches && prev.matches('button,[role="button"],a[href]')) return prev;
+    var up = panel.parentElement;
+    if (up) {
+      var t = up.querySelector('button,[role="button"],a[href]');
+      if (t && !t.contains(panel) && !panel.contains(t)) return t;
+    }
+    return null;
+  };
+
+  // Enter, Space or Down on a closed trigger opens it and steps inside.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+    var t = u.closest(e.target, '[aria-expanded]');
+    if (!t || u.get(t, 'aria-expanded') !== 'false') return;
+    // A native button already opens on Enter and Space; only Down is ours.
+    if (u.isNative(t) && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    t.click();
+    var panelId = u.get(t, 'aria-controls') || u.get(t, 'data-controls');
+    var panel = panelId ? document.getElementById(panelId) : t.nextElementSibling;
+    (window.requestAnimationFrame || setTimeout)(function () {
+      if (!panel) return;
+      var first = u.qsa(u.FOCUSABLE, panel).filter(u.visible)[0];
+      if (first) first.focus();
+    }, 0);
+  }, true);
+
+  // Escape closes the submenu and puts focus back where it came from. Without
+  // it, focus is left inside a panel that is no longer on screen — the tab
+  // order simply stops.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var panel = u.closest(e.target, '[role="menu"], [role="menubar"]');
+    // A menubar is the bar itself, not something to escape out of.
+    if (!panel || u.get(panel, 'role') === 'menubar') return;
+    var t = triggerFor(panel);
+    if (!t) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (u.get(t, 'aria-expanded') === 'true') t.click();   // let the page close it
+    u.set(t, 'aria-expanded', 'false');
+    t.focus();
+  }, true);
 })();
 // Two problems. The library wires roles and the prev/next/picker clicks but has
 // no pause mechanism at all — no reference to pause, stop or autoplay anywhere

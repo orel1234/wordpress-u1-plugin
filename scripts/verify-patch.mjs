@@ -445,6 +445,54 @@ console.log('\nlandmarks keep their schema shape');
     seen.some(p => p.main && !Array.isArray(p.main)));
 }
 
+// ── A menu opens, and Escape gets you back out ──────────────────────────────
+//
+// The two things a keyboard user does with a menu, neither of them in the
+// library. Reported on a live mapping: the trigger did not open the panel, and
+// Escape from inside a submenu left focus stranded in a panel that had closed.
+console.log('\nopening a submenu and escaping it');
+{
+  const dom = boot(`
+    <nav id="bar">
+      <button id="t" aria-expanded="false" aria-controls="p">Shop</button>
+      <div id="p" role="menu" hidden>
+        <a id="a1" href="/a" role="menuitem">All</a>
+        <a id="a2" href="/b" role="menuitem">New</a>
+      </div>
+    </nav>`, ['core', 'menu']);
+  const d = dom.window.document;
+  const t = d.getElementById('t'), p = d.getElementById('p');
+  // The page's own behaviour: the trigger toggles its panel.
+  t.addEventListener('click', () => {
+    const open = p.hasAttribute('hidden');
+    if (open) { p.removeAttribute('hidden'); t.setAttribute('aria-expanded', 'true'); }
+    else { p.setAttribute('hidden', ''); t.setAttribute('aria-expanded', 'false'); }
+  });
+
+  const key = (el, k) => el.dispatchEvent(new dom.window.KeyboardEvent('keydown',
+    { key: k, bubbles: true, cancelable: true }));
+
+  t.focus();
+  key(t, 'ArrowDown');
+  check('Down on a closed trigger opens it', t.getAttribute('aria-expanded') === 'true');
+  check('…by driving the page rather than showing the panel itself',
+    !p.hasAttribute('hidden'));
+
+  // Focus moves inside on the next frame; drive it directly for the test.
+  d.getElementById('a1').focus();
+  key(d.getElementById('a1'), 'Escape');
+  check('Escape closes the submenu', t.getAttribute('aria-expanded') === 'false');
+  check('…and focus goes back to the trigger, not nowhere',
+    d.activeElement === t, d.activeElement && d.activeElement.id);
+
+  // A native button already opens on Enter and Space; taking those over would
+  // fire the page's handler twice.
+  const before = t.getAttribute('aria-expanded');
+  key(t, 'Enter');
+  check('…and Enter on a native button is left to the browser',
+    t.getAttribute('aria-expanded') === before);
+}
+
 // ── Static corrections: do they fix it, and only when asked? ────────────────
 console.log('\nstatic corrections');
 {
