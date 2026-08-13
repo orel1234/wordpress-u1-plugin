@@ -2353,14 +2353,28 @@
       level = Number(ar) || 0;
     }
 
-    // Does opening one shut the others? Read it off the page rather than
-    // guessing: if only one panel is open right now and the rest are not, that
-    // is the single-open behaviour.
-    var open = 0;
-    for (var k = 0; k < panels.length; k++) {
-      var p = panels[k];
-      if (!p.hasAttribute('hidden') && p.getAttribute('aria-hidden') !== 'true' &&
-          (p.offsetHeight || p.getClientRects().length)) open++;
+    // Does opening one shut the others?
+    //
+    // Ask the TRIGGERS first. A panel closed by a class — `accordion__panel
+    // is-hidden` — is only closed if the stylesheet says so, and reading its
+    // height gets the answer wrong wherever CSS is not applied. The trigger's
+    // own aria-expanded/data-expanded is the page stating the fact, and it is
+    // true with or without a stylesheet.
+    var open = 0, said = false;
+    for (var e = 0; e < triggers.length; e++) {
+      var st = triggers[e].getAttribute('aria-expanded');
+      if (st === null) st = triggers[e].getAttribute('data-expanded');
+      if (st === null) continue;
+      said = true;
+      if (st === 'true') open++;
+    }
+    // Only when nothing says: fall back to whether the panel is showing.
+    if (!said) {
+      for (var k = 0; k < panels.length; k++) {
+        var p = panels[k];
+        if (!p.hasAttribute('hidden') && p.getAttribute('aria-hidden') !== 'true' &&
+            (p.offsetHeight || p.getClientRects().length)) open++;
+      }
     }
 
     return {

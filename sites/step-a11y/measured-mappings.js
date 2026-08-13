@@ -1,7 +1,7 @@
 /* ============================================================
  * U1 accessibility mappings — step-shoe-store-clean-production.up.railway.app
- * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:29:55.757Z
- * 9 components mapped, 12 left out (see the report).
+ * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:40:50.511Z
+ * 10 components mapped, 11 left out (see the report).
  *
  * Every mapping here was read off the markup, not guessed: required fields
  * present, sub-selectors resolving to different elements, nothing matching
@@ -613,6 +613,36 @@
   P.rove('[role="tablist"]', '[role="tab"]', { arrows: true, activate: true, vertical: 'auto' });
   P.numpadEnter('[role="tab"]');
 })();
+// navigateMenuItem and navigateMenubarItem contain no preventDefault at all, so
+// arrows move focus and scroll the page at the same time. Home and End are never
+// handled even though KEYBOARD_EVENT_CODE defines them. And the RTL flip is
+// applied to ArrowRight but not to ArrowLeft, so in Hebrew one direction is
+// mirrored and the other is not.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+  var SEL = '[role="menu"], [role="menubar"]';
+
+  P.rove(SEL, '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]',
+         { arrows: true });
+
+  // The missing half of the RTL flip. The library mirrors ArrowRight; mirroring
+  // ArrowLeft as well would double up, so this only completes the direction it
+  // left out, and only when the menu really is right-to-left.
+  P.keys(SEL, function (e, menu) {
+    if (e.key !== 'ArrowLeft') return;
+    var dir = '';
+    try { dir = getComputedStyle(menu).direction; } catch (err) {}
+    if (dir !== 'rtl') return;
+    var items = u.qsa('[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]', menu)
+                 .filter(u.visible);
+    var here = items.indexOf(u.closest(e.target, '[role^="menuitem"]'));
+    if (here === -1) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    items[(here + 1) % items.length].focus();
+  });
+})();
 // Two problems. The library wires roles and the prev/next/picker clicks but has
 // no pause mechanism at all — no reference to pause, stop or autoplay anywhere
 // in the fixer — so a carousel that advances on its own leaves 2.2.2 unmet. And
@@ -665,7 +695,7 @@
 // avoid, so it says so instead.
 if (!window.u1 || !window.u1.fix) {
   console.error(
-    '[u1] The U1 library is not on this page, so none of the 9 mappings below ran.\n' +
+    '[u1] The U1 library is not on this page, so none of the 10 mappings below ran.\n' +
     '     Load it first:\n' +
     '       <link rel="stylesheet" href="https://dev.oreltest.user1st.com/u1.css">\n' +
     '       <script src="https://dev.oreltest.user1st.com/u1_vanilla-js-a11y.js"></' + 'script>\n' +
@@ -680,6 +710,18 @@ window.u1?.fix.carousel(".ticker", {
     "slide": ".ticker__item",
     "prevButton": "#tickerPrev",
     "nextButton": "#tickerNext"
+  }
+});
+
+/* ---- menu  #megaNav ---- */
+window.u1?.fix.menu("#megaNav", {
+  "menubar": false,
+  "selectors": {
+    "menu": "#megaNav",
+    "horizontalMenu": "#megaNav",
+    "items": "#megaNav>li>button,#megaNav>li>div>div>ul>li>a,#megaNav>li>div>div>a",
+    "triggers": ".mega-nav__trigger",
+    "submenus": ".mega-panel"
   }
 });
 
@@ -720,8 +762,8 @@ window.u1?.fix.table("#club>div>div>div.table-wrap>table.data-table", {
     "table": "#club>div>div>div.table-wrap>table.data-table",
     "row": "#club>div>div>div.table-wrap>table.data-table>thead>tr,#club>div>div>div.table-wrap>table.data-table>tbody>tr",
     "cell": "#club>div>div>div.table-wrap>table.data-table>tbody>tr>td",
-    "columnheader": "#club>div:nth-child(1)>div:nth-child(3)>div:nth-child(2)>table:nth-child(1)>thead:nth-child(2)>tr:nth-child(1)>th:nth-child(1)",
-    "rowheader": "#club>div:nth-child(1)>div:nth-child(3)>div:nth-child(2)>table:nth-child(1)>tbody:nth-child(3)>tr:nth-child(1)>th:nth-child(1)"
+    "columnheader": "#club>div>div>div.table-wrap>table.data-table>thead>tr>th",
+    "rowheader": "#club>div>div>div.table-wrap>table.data-table>tbody>tr>th"
   }
 });
 

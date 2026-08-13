@@ -125,6 +125,33 @@ const sub = (root, items) => {
   const matched = hit(sel);
   const inside = matched.filter((x) => root.contains(x)).length;
   const all = matched.length;
+
+  // It has to match the items it was ASKED about — all of them.
+  //
+  // commonSelectorFor answered `#megaNav>li.mega-nav__item>button.mega-nav__trigger`
+  // for a menu's 142 items: true of seven of them, and a mapping built on it
+  // decorates seven links and leaves 135 alone. Correct about what it named and
+  // wrong as an answer to the question, and nothing was checking the difference.
+  //
+  // When it under-covers, group the real paths instead. The items sit at three
+  // depths below #megaNav, which no single simple selector describes and a
+  // comma group describes exactly.
+  const covers = (x) => { const h = hit(x); return items.every((i) => h.includes(i)); };
+  if (!covers(sel)) {
+    const chainOf = (item) => {
+      const steps = [];
+      for (let n = item; n && n !== root; n = n.parentElement) steps.unshift(n.tagName.toLowerCase());
+      return steps.length ? rootSel + '>' + steps.join('>') : '';
+    };
+    const group = [...new Set(items.map(chainOf).filter(Boolean))].join(',');
+    if (group && covers(group)) {
+      const h = hit(group);
+      // A group that also sweeps in elements from elsewhere is not an answer.
+      if (h.every((x) => root.contains(x))) return group;
+    }
+    return '';
+  }
+
   if (all > inside) {
     // U1 rejects descendant spaces, so the anchor has to be a chain of direct
     // children — and it has to be the REAL one. A table's rows live inside
@@ -320,7 +347,17 @@ for (const c of comps) {
 
   // Sub-selectors must be DIFFERENT elements. Three fields all pointing at the
   // root is not a mapping — u1 decorates one element and does nothing else.
-  const same = Object.entries(m.fields).filter(([k, v]) => k !== pKey && v === m.primary).map(([k]) => k);
+  //
+  // Except where the schema means two names for the same thing. u1.fix.menu
+  // takes `menu` and `horizontalMenu` and both ARE the list — that is how the
+  // working mapping in the client guide is written. Naming an alias is not the
+  // fault this check is for, which is a field describing a different PART and
+  // pointing at the root instead.
+  const ALIAS_OF_ROOT = { menu: ['menu', 'horizontalMenu'], table: ['table'], grid: ['grid'], form: ['form'] };
+  const alias = ALIAS_OF_ROOT[type] || [];
+  const same = Object.entries(m.fields)
+    .filter(([k, v]) => k !== pKey && !alias.includes(k) && v === m.primary)
+    .map(([k]) => k);
   if (same.length) { skipped.push({ type, sel: c.selector, why: same.join(', ') + ' is the root again' }); continue; }
 
   // A field we could not express is an ABSENT field. Emitting "" tells u1 the
