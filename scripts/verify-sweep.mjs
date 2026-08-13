@@ -910,6 +910,17 @@ console.log('\nholding after each section');
     /if \(sweepPause\.resolve\) sweepPause\.resolve\(\{ stopped: true \}\)/.test(src));
   check('opting out of every further hold is offered where it is felt',
     /sweepPause\.on = !e\.target\.checked/.test(fn));
+  // The trap this replaces: the primary button said "Continue to the next
+  // section" and built nothing, so the obvious press moved the run forward and
+  // made nothing — "8 COMPONENTS FOUND" beside "No mappings yet".
+  check('the primary action BUILDS before it carries on',
+    /Build these \$\{k\} and continue/.test(fn) &&
+    /await buildPickedComponents\(\);/.test(fn));
+  check('…and carrying on without building is a separate, named choice',
+    /id="sweepResumeSkip"/.test(fn) && /Skip — carry on without building/.test(fn));
+  check('…and one function does the building for both it and the button',
+    /async function buildPickedComponents\(\)/.test(src) &&
+    (src.match(/await buildPickedComponents\(\)/g) || []).length >= 2);
 
   // The guard exists so a run cannot be started on top of itself. The hold is
   // the one moment the run is there specifically so this button can be pressed.

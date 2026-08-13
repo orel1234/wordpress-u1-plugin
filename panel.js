@@ -4196,7 +4196,8 @@ function pauseForFixes(stop, left) {
     <div class="sweep-resume-sub">Build the fixes for them now, then continue —
       ${left} section${left === 1 ? '' : 's'} still to read. Nothing is charged while this waits.</div>
     <div class="sweep-resume-btns">
-      <button class="btn-primary btn-sm" id="sweepResumeGo">Continue to the next section →</button>
+      <button class="btn-primary btn-sm" id="sweepResumeGo">Build these ${k} and continue →</button>
+      <button class="btn-outline btn-sm" id="sweepResumeSkip">Skip — carry on without building</button>
       <button class="btn-ghost btn-sm" id="sweepResumeStop">Stop the run here</button>
       <label class="sweep-resume-auto"><input type="checkbox" id="sweepResumeAuto">
         Do not stop again — read the rest straight through</label>
@@ -4214,10 +4215,25 @@ function pauseForFixes(stop, left) {
     // Stop set aiSweep.abort and then span for sixty seconds waiting on a
     // aiSweep.running that only this promise could clear.
     sweepPause.resolve = finish;
-    host.onclick = (e) => {
+    host.onclick = async (e) => {
       if (e.target.closest('#sweepResumeAuto')) { sweepPause.on = !e.target.checked; return; }
       if (e.target.closest('#sweepResumeStop')) { aiSweep.abort = true; finish({ stopped: true }); return; }
-      if (e.target.closest('#sweepResumeGo')) finish({ stopped: false });
+      if (e.target.closest('#sweepResumeSkip')) { finish({ stopped: false }); return; }
+      // The primary action BUILDS, then carries on. It used to only carry on,
+      // with building left to a separate button in the list — so the obvious
+      // press moved the run forward and made nothing, and the drawer ended up
+      // reading "8 components found" beside "No mappings yet".
+      const go = e.target.closest('#sweepResumeGo');
+      if (go) {
+        const label = go.textContent;
+        go.disabled = true;
+        go.textContent = 'Building…';
+        try { await buildPickedComponents(); }
+        catch (err) { showNotice(document.getElementById('sweepPicksStatus'),
+          'Could not build them: ' + err.message, 'error', 9000); }
+        finally { go.disabled = false; go.textContent = label; }
+        finish({ stopped: false });
+      }
     };
   });
 }
@@ -9495,33 +9511,16 @@ document.getElementById('sweepPicksList')?.addEventListener('click', async (e) =
   await scanPickedScreens([n]);
 });
 
-document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
-  // A run owns this button — except while it is holding for fixes, which is the
-  // one moment the run exists specifically so that this button can be pressed.
-  if (aiSweep.running && !sweepPause.resolve) return;
-  if (aiSweep.phase === 'screens') {
-    const sections = sweepPickedScreens();
-    if (!sections.length) return;
-    // The estimate is already on screen, under the list, and it moved as the
-    // ticks moved — so this is a confirmation of a number that has been visible
-    // the whole time, not a figure produced at the moment of charging.
-    // One press, one dialog, and the run starts.
-    //
-    // It used to take two presses: the first re-labelled the button and wrote
-    // the cost into the status line under the list — which on a long list is
-    // below the fold. Reported as "I press it and nothing happens", and that is
-    // exactly right: the confirmation was real and invisible, and twelve
-    // seconds later it silently disarmed itself.
-    //
-    // The guard stays, because this spends money. It just says so where it can
-    // be seen.
-    const ticked = aiSweep.stops.filter((s) => sections.includes(s.n))
-      .reduce((a, s) => a + (s.count || 0), 0);
-    if (!(await confirmSweepCost(sections.length, 0, ticked, sweepCallsFor(sections)))) return;
-    await scanPickedScreens(sections);
-    return;
-  }
-
+/**
+ * Build every ticked component. Shared by the button and by the hold.
+ *
+ * Extracted because the hold's own primary action has to do this and then
+ * carry on: it used to say "Continue to the next section →" and build nothing,
+ * so a section that found eight components and a person who pressed the
+ * obvious button moved on with eight found and none made. The drawer then read
+ * "8 COMPONENTS FOUND" beside "No mappings yet", which is exactly what it was.
+ */
+async function buildPickedComponents() {
   const btn = document.getElementById('sweepMakeBtn');
   const status = document.getElementById('sweepPicksStatus');
   const picked = new Set(sweepPicked());
@@ -9605,6 +9604,21 @@ document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
   // waiting. Hiding it left the review on screen and nothing else, which reads
   // as the end of the job on a page with twenty-five sections left in it.
   renderSweepPicks();
+  return { built: (aiBulk.failed || []).length === 0, failed: (aiBulk.failed || []).length };
+}
+
+document.getElementById('sweepMakeBtn')?.addEventListener('click', async () => {
+  if (aiSweep.running && !sweepPause.resolve) return;
+  if (aiSweep.phase === 'screens') {
+    const sections = sweepPickedScreens();
+    if (!sections.length) return;
+    const ticked = aiSweep.stops.filter((s) => sections.includes(s.n))
+      .reduce((a, s) => a + (s.count || 0), 0);
+    if (!(await confirmSweepCost(sections.length, 0, ticked, sweepCallsFor(sections)))) return;
+    await scanPickedScreens(sections);
+    return;
+  }
+  await buildPickedComponents();
 });
 
 const aiMapCardError = (row, why) => `
