@@ -312,8 +312,8 @@ console.log('\nAI modes are gated on the key, at the door:');
 {
   const css = read('styles.css');
   const locked = /btn\.classList\.toggle\('is-locked', !aiUnlocked\)/.test(panel);
-  const gated = /if \(aiModeAllowed\(\)\) setMapMode\('auto'\)/.test(panel) &&
-                /if \(aiModeAllowed\(\)\) setMapMode\('sweep'\)/.test(panel);
+  const gated = /if \(await aiModeAllowed\(\)\) setMapMode\('auto'\)/.test(panel) &&
+                /if \(await aiModeAllowed\(\)\) setMapMode\('sweep'\)/.test(panel);
   const onBoot = /await refreshAiLocks\(\);\n  await loadConfigForm\(\)/.test(panel);
   const onSave = /showNotice\(\$aiKeyStatus, 'Key saved[^\n]*\n\s*\/\/[^\n]*\n\s*await refreshAiLocks\(\)/.test(panel);
   if (locked && gated && onBoot && onSave) {
@@ -414,6 +414,13 @@ console.log('\nAI modes are gated on the key, at the door:');
   } else {
     fail(`mode tabs wrong — noEmoji:${noEmoji} light:${litPurple} darkActive:${darkActive}`);
   }
+
+  // A check for boot-order hazards lived here briefly and was removed: it was
+  // written on a wrong diagnosis (a temporal dead zone that cannot happen —
+  // init() is the last line of the file, so every top-level binding is
+  // initialised before it runs) and it reported seven healthy functions as
+  // broken. scripts/verify-boot.mjs replaces it by starting the panel for real,
+  // which is the only thing that would have caught the actual fault.
 
   // One family per role. Forty hardcoded stacks meant a palette change could
   // not reach half of them.

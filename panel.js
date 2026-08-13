@@ -2137,6 +2137,20 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 let currentHostname = 'unknown';
 
+// Whether an Anthropic key is saved, which is what the two paid Picker modes
+// are gated on. It lives up HERE, with the other module state, because boot
+// calls refreshAiLocks() a couple of hundred lines below this and the function
+// that writes it is two thousand lines further down.
+//
+// It was declared next to that function, which reads better and does not work:
+// `let` is hoisted but not initialised, so the boot-time write hit the temporal
+// dead zone and threw a ReferenceError — and the `catch` meant to absorb it
+// assigns the same binding, so it threw a second time, out of the catch. Boot
+// stopped there. Reported as: clicking the AI tabs sends me to Setup, from a
+// panel whose tabs were not even drawn as locked, because the code that draws
+// them that way is the code that died.
+let aiUnlocked = false;
+
 // Skip links found in the page's own markup. Session-only: shown in Setup and
 // offered as a starting point, never written to storage on its own.
 let detectedSkipLinks = [];
@@ -4586,8 +4600,12 @@ $modeManualBtn?.addEventListener('click', () => setMapMode('manual'));
 // So the gate moves to the door. A locked mode says it is locked, says what
 // unlocks it, and pressing it takes you to the place that unlocks it rather
 // than simply refusing.
-let aiUnlocked = false;
-
+//
+// `aiUnlocked` is declared with the rest of the module state at the top of the
+// file, NOT here beside the function that owns it. Boot calls this at line
+// ~2300 and this is line ~4590: a `let` is not hoisted-initialised, so the
+// write below landed in the temporal dead zone, threw, and threw AGAIN out of
+// the catch that was supposed to handle it. See the note up there.
 async function refreshAiLocks() {
   try { aiUnlocked = !!(await U1AI.getKey()); } catch { aiUnlocked = false; }
   // The key section is a set-once field. Open while there is nothing in it —
@@ -4611,15 +4629,38 @@ async function refreshAiLocks() {
   }
 }
 
-/** True when the mode may be entered. Otherwise: go to where it is unlocked. */
-function aiModeAllowed() {
+/**
+ * True when the mode may be entered. Otherwise: go to where it is unlocked,
+ * and say so.
+ *
+ * Re-reads the key rather than trusting `aiUnlocked`. That flag is written by
+ * refreshAiLocks, which is one step in a long boot sequence — and a flag that
+ * says "locked" because the step that would have said otherwise did not run is
+ * indistinguishable, at the point of the click, from a genuine no. Reported as:
+ * clicking the AI tabs sends me to Setup now. Reading storage is one await and
+ * removes the entire class of that.
+ *
+ * It also repaints the buttons, so a wrong answer corrects itself the first
+ * time it is pressed instead of persisting for the life of the panel.
+ */
+async function aiModeAllowed() {
+  await refreshAiLocks();
   if (aiUnlocked) return true;
+  // Refusing silently is the worst of the three options. The panel simply
+  // changed tab, and "why did it do that" is left to be worked out from a
+  // section highlight two scrolls away.
+  showNotice($aiKeyStatus,
+    'That mode calls Claude, so it needs an Anthropic API key. Paste one here and it unlocks.',
+    'warn', 8000);
   document.querySelector('.tab-btn[data-tab="setup"]')?.click();
   const box = document.getElementById('aiKeySection');
   const det = document.getElementById('aiKeyDetails');
   if (det) det.open = true;   // being sent to a folded heading explains nothing
   if (box) {
-    box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // Guarded: a throw here would abandon this function before it returns
+    // false, and the caller would get a rejected promise instead of "no".
+    // Scrolling is the least important thing this does.
+    try { box.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } catch {}
     // A tab change and a scroll is a lot of movement with no stated cause, so
     // the thing you were sent to says, briefly, that it is the thing.
     box.classList.add('is-calling');
@@ -4628,8 +4669,8 @@ function aiModeAllowed() {
   return false;
 }
 
-$modeAutoBtn?.addEventListener('click', () => { if (aiModeAllowed()) setMapMode('auto'); });
-$modeSweepBtn?.addEventListener('click', () => { if (aiModeAllowed()) setMapMode('sweep'); });
+$modeAutoBtn?.addEventListener('click', async () => { if (await aiModeAllowed()) setMapMode('auto'); });
+$modeSweepBtn?.addEventListener('click', async () => { if (await aiModeAllowed()) setMapMode('sweep'); });
 
 
 
@@ -4774,7 +4815,7 @@ async function markKeyState() {
     if (!hasKey) $aiKeyRow.style.display = '';
     // A first run needs the key, so ask for it up front. After that the dialog
     // is behind ⚙ and the screen belongs to the results.
-    if (!hasKey && mapMode === 'auto') aiModeAllowed();   // sends you to Setup
+    if (!hasKey && mapMode === 'auto') await aiModeAllowed();   // sends you to Setup
   } catch {}
 })();
 
@@ -7864,7 +7905,7 @@ async function scanPickedScreens(numbers) {
     return;
   }
   if (!(await U1AI.getKey())) {
-    aiModeAllowed();   // no key: Setup is where that is fixed
+    await aiModeAllowed();   // no key: Setup is where that is fixed
     showNotice(status, 'Paste your Anthropic API key first.', 'error', 4000);
     return;
   }

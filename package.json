@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "check:version": "node scripts/build.mjs --check-only",
-    "verify": "node scripts/verify-probe.mjs && node scripts/verify.mjs && node scripts/verify-store.mjs && node scripts/verify-mappings.mjs && node scripts/verify-checks.mjs && node scripts/verify-patch.mjs && node scripts/verify-patch-context.mjs && node scripts/verify-patch-focus.mjs && node scripts/verify-sweep.mjs && node scripts/verify-stream.mjs && node scripts/verify-anon.mjs && node scripts/verify-detect.mjs && node scripts/verify-detect.mjs --real && node scripts/verify-detect.mjs --hostile",
+    "verify": "node scripts/verify-probe.mjs && node scripts/verify.mjs && node scripts/verify-boot.mjs && node scripts/verify-store.mjs && node scripts/verify-mappings.mjs && node scripts/verify-checks.mjs && node scripts/verify-patch.mjs && node scripts/verify-patch-context.mjs && node scripts/verify-patch-focus.mjs && node scripts/verify-sweep.mjs && node scripts/verify-stream.mjs && node scripts/verify-anon.mjs && node scripts/verify-detect.mjs && node scripts/verify-detect.mjs --real && node scripts/verify-detect.mjs --hostile",
     "build": "npm run verify && node scripts/build.mjs"
   },
   "devDependencies": {
