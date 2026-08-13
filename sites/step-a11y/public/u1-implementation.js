@@ -38,7 +38,7 @@ window.u1?.setConfiguration({
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13b' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13c' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }

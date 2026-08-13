@@ -530,6 +530,31 @@ console.log('\nstatic corrections');
   check('…and never hidden while still focusable — the fault it would create',
     inert || [...x.querySelectorAll('a,button')].every((f) => f.getAttribute('tabindex') === '-1'));
 
+  // filter-results — a field that narrows a list already on the page.
+  w = run(`<input id="f" type="search">
+           <div id="list">
+             <button class="it">Tel Aviv</button>
+             <button class="it">Sarona</button>
+             <button class="it" hidden>Haifa</button>
+           </div>`,
+    { 'filter-results': { field: '#f', results: '#list', item: '.it', noun: 'branch' } });
+  const field = w.document.getElementById('f');
+  const status = w.document.querySelector('.u1p-filter-status');
+  check('the field is tied to the list it controls',
+    field.getAttribute('aria-controls') === 'list');
+  check('…and a status region is added beside the list, not on it',
+    !!status && status.getAttribute('aria-live') === 'polite' &&
+    status.nextElementSibling === w.document.getElementById('list'));
+  check('…which counts what is actually showing, in the page\'s own words',
+    /^2 branches$/.test(status.textContent), status.textContent);
+  // The list itself must NOT be the live region: that re-reads every result on
+  // every keystroke, which is worse than silence.
+  check('…and the list is not made to announce itself',
+    !w.document.getElementById('list').hasAttribute('aria-live'));
+  // And the thing it must never do: this is not a combobox.
+  check('…and nothing is told it is a combobox with a popup',
+    field.getAttribute('role') !== 'combobox' && !field.hasAttribute('aria-expanded'));
+
   // Idempotent: correctors run on every mutation, so twice must equal once.
   w = run(`<div id="a" tabindex="7">x</div><span id="real">N</span>`, { 'tabindex-positive': {} });
   w.__u1Patch.correctors.forEach((f) => { try { f(); } catch (e) {} });

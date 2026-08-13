@@ -767,6 +767,14 @@ let rulesEveryType = [], rulesUnknownFields = [], rulesShipped = false, rulesUse
 
   // Every mappable type a person can pick has to be covered.
   const SKIP = new Set(['aria-label', 'keyboard-grid', 'keyboard-clickable', 'keyboard-tabs', 'loading']);
+  // Sections that describe a PATTERN rather than a u1.fix.* type. They are
+  // named here so a new one cannot be added without a decision — a section
+  // matching no schema is otherwise checked by nothing.
+  const PATTERNS = new Set(['filter with live results — NOT a combobox']);
+  for (const name of Object.keys(sections)) {
+    if (PATTERNS.has(name) || schemas[name]) continue;
+    if (!/^The rules that hold/.test(name)) rulesUnknownFields.push(`section "${name}" matches no component`);
+  }
   rulesEveryType = Object.keys(schemas).filter((t) => !SKIP.has(t) && !sections[t]);
 
   // And every field name the file mentions in backticks has to be real.

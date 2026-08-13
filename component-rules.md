@@ -120,6 +120,36 @@ suggestions. It usually carries no roles at all — no `role="combobox"`, no
 beside it under a common parent. `.search-suggestions`, `.autocomplete__list`,
 `.results`, `ul` next to an input are all the same thing.
 
+## filter with live results — NOT a combobox
+
+A field that narrows a list which is **already on the page**: a branch locator,
+a "filter by city" box, a search that rewrites the results below it as you type.
+
+**Do not map this as a combobox, and do not give it `role="combobox"` or
+`aria-expanded`.** An ARIA combobox has a popup that opens and closes. This list
+is always there. Those roles describe a control that does not exist and leave a
+screen reader waiting for a popup that never comes — worse than leaving it
+alone.
+
+What is actually missing is **WCAG 4.1.3 Status Messages**. You type a letter,
+fourteen branches become two, and nothing says so: the change is purely visual.
+
+- `field` — the input that filters
+- `results` — the container holding the results
+- `item` — one result
+- `noun` — what a result IS, for the announcement: "branch", "product", "flight"
+
+The fix:
+
+1. `aria-controls` on the field, naming the results container
+2. a visually hidden `role="status" aria-live="polite"` element **beside** the
+   list, saying how many are showing
+3. never `aria-live` on the list itself — that re-reads every result on every
+   keystroke, which is worse than silence
+
+Telling the two apart: if the list is visible before anyone types, it is this.
+If typing makes a list appear that was not there, it is a combobox.
+
 ## form
 
 - `form` — the form element
@@ -162,7 +192,10 @@ trigger. Both are required.
 The day cells are the point: without `days.day` there is nothing to move
 between with the arrow keys.
 
-## checkbox, radio, switch
+## checkbox, radio
+
+There is no `switch` type — a switch is mapped as a checkbox, and U1 gives it
+`role="switch"` from the markup where the page says so.
 
 The state classes are the point. `checkedState` and `uncheckedState` are the
 classes the page toggles, read off the markup. Without them U1 has no way to

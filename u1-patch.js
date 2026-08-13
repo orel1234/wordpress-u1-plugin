@@ -26,7 +26,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13b' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13c' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -1415,6 +1415,74 @@
       m.autoplay = false;
       if (!m.paused && !m.__u1pPaused) { m.__u1pPaused = true; try { m.pause(); } catch (e) {} }
       if (!m.hasAttribute('controls')) m.setAttribute('controls', '');
+    });
+  });
+
+  // ── filter-results ───────────────────────────────────────────────────────
+  //
+  // A field that filters a list already on the page. NOT a combobox: an ARIA
+  // combobox has a popup that opens and closes, and this list is always there.
+  // role="combobox" plus aria-expanded would describe a control that does not
+  // exist and leave a screen reader waiting for a popup that never comes.
+  //
+  // What is actually missing is WCAG 4.1.3. You type a letter, fourteen
+  // branches become two, and nothing says so — the change is only visible.
+  // So: tie the field to the list it controls, and announce the count as it
+  // changes.
+  P.correct(function () {
+    if (!on('filter-results')) return;
+    var cfg = window.__u1Statics['filter-results'] || {};
+    if (!cfg.field || !cfg.results) return;
+    u.qsa(cfg.field).forEach(function (field) {
+      var list = document.querySelector(cfg.results);
+      if (!list) return;
+
+      if (!list.id) list.id = 'u1p-results-' + Math.random().toString(36).slice(2, 9);
+      u.set(field, 'aria-controls', list.id);
+
+      // The status lives BESIDE the list, not on it. Making the list itself a
+      // live region re-announces every result on every keystroke, which is
+      // worse than silence — a count is the useful sentence.
+      var say = field.__u1pSay;
+      if (!say) {
+        say = document.createElement('div');
+        say.className = 'u1p-filter-status';
+        say.setAttribute('role', 'status');
+        say.setAttribute('aria-live', 'polite');
+        say.style.cssText =
+          'position:absolute;width:1px;height:1px;overflow:hidden;' +
+          'clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap';
+        list.parentNode.insertBefore(say, list);
+        field.__u1pSay = say;
+      }
+
+      var visible = function () {
+        return u.qsa(cfg.item, list).filter(u.visible).length;
+      };
+      var report = function () {
+        var n = visible();
+        if (say.__u1pLast === n) return;      // only when it has actually moved
+        say.__u1pLast = n;
+        var word = cfg.noun || 'result';
+        // "2 branchs" is the kind of thing a screen reader reads aloud, so the
+        // plural is worth getting right rather than adding an s and hoping.
+        var many = /(s|x|z|ch|sh)$/i.test(word) ? word + 'es'
+                 : /[^aeiou]y$/i.test(word) ? word.slice(0, -1) + 'ies'
+                 : word + 's';
+        say.textContent = n === 0
+          ? ('No ' + many + ' match')
+          : (n + ' ' + (n === 1 ? word : many));
+      };
+
+      if (!field.__u1pFilter) {
+        field.__u1pFilter = true;
+        // The page does its own filtering on input; this runs after it, so the
+        // count is of what is left rather than what was there.
+        field.addEventListener('input', function () {
+          (W.requestAnimationFrame || setTimeout)(function () { report(); }, 0);
+        });
+      }
+      report();
     });
   });
 

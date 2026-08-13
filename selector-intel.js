@@ -2471,6 +2471,75 @@
     return sels;
   }
 
+  /**
+   * A filter field and the list it filters, measured from either.
+   *
+   * NOT a combobox, and calling it one would make the page worse. An ARIA
+   * combobox has a popup that opens and closes; this list is always there and
+   * typing narrows it. Giving it role="combobox" and aria-expanded describes a
+   * control that does not exist, and a screen reader then waits for a popup
+   * that never comes.
+   *
+   * What it actually needs is WCAG 4.1.3: type a letter, the list changes, and
+   * nothing says so. The branch locator on the shop page is exactly this —
+   * fourteen results narrowing to two in silence.
+   *
+   * The shape: a text or search input, and a container of three or more
+   * sibling items that is visible right now, close enough to be its results.
+   */
+  function filterListShape(rootSel) {
+    var el;
+    try { el = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!el) return null;
+
+    var TEXTY = 'input[type="search"],input[type="text"],input:not([type])';
+    var input = null, list = null, wrap = el;
+
+    for (var up = 0; up < 5 && wrap; up++) {
+      try {
+        input = wrap.matches(TEXTY) ? wrap : wrap.querySelector(TEXTY);
+        list = null;
+        if (input) {
+          var kids = Array.prototype.slice.call(wrap.querySelectorAll('*'));
+          for (var i = 0; i < kids.length; i++) {
+            var c = kids[i];
+            if (c === input || c.contains(input)) continue;
+            // Three or more element children that look alike is a list of
+            // results. Two is a pair of buttons.
+            var items = Array.prototype.slice.call(c.children).filter(function (x) { return x.nodeType === 1; });
+            if (items.length < 3) continue;
+            var first = items[0].tagName + '|' + (items[0].className || '');
+            var alike = items.filter(function (x) { return x.tagName + '|' + (x.className || '') === first; });
+            if (alike.length < 3) continue;
+            list = c; break;
+          }
+        }
+      } catch (e) { return null; }
+      if (input && list) break;
+      wrap = wrap.parentElement;
+      if (!wrap || wrap === document.body || wrap === document.documentElement) return null;
+    }
+    if (!input || !list) return null;
+
+    var items2 = Array.prototype.slice.call(list.children).filter(function (x) { return x.nodeType === 1; });
+    var itemSel = commonSelectorFor(list, items2, robustSelector(list));
+    var sels = {
+      field: robustSelector(input),
+      results: robustSelector(list),
+      item: (itemSel && itemSel.selector) || '',
+    };
+    for (var k in sels) if (!sels[k] || !isU1Valid(sels[k])) return null;
+    sels.count = items2.length;
+    // Its own label, if the page gave it one — the field needs a name whatever
+    // else is done to it.
+    try {
+      var lab = (input.id && document.querySelector('label[for="' + input.id + '"]')) ||
+                (input.closest ? input.closest('label') : null);
+      sels.labelled = !!(lab || input.getAttribute('aria-label') || input.getAttribute('aria-labelledby'));
+    } catch (e) { sels.labelled = false; }
+    return sels;
+  }
+
   function tabPanelsFor(tabListSel, tabSel) {
     var listEl, tabs = [];
     try {
@@ -2899,7 +2968,7 @@
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
-    menuItemsRoot, tabPanelsFor, accordionShape, comboboxShape, openedBy, listboxRoot, listboxShape,
+    menuItemsRoot, tabPanelsFor, accordionShape, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,

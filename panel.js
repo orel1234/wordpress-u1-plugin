@@ -11137,6 +11137,30 @@ const STATIC_FIXABLE = {
   'lang-missing':        { does: 'Set the page language, so a screen reader reads it in the right voice.', needsLang: true },
 };
 
+/**
+ * Filter-and-results: a field that narrows a list already on the page.
+ *
+ * Not in STATIC_FIXABLE because no scan rule finds it — it is not a fault in
+ * the markup, it is a pattern with a missing status message, and the only way
+ * to see it is by shape. Offered from the Scan tab beside the exclude control,
+ * measured by filterListShape and applied as a static fix.
+ */
+async function offerFilterResults() {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return null;
+  return inPage(tab.id, () => {
+    const S = window.__u1SelectorIntel;
+    if (!S || !S.filterListShape) return null;
+    // Any text or search input on the page is a candidate for the pattern; the
+    // shape says whether it really is one.
+    for (const f of document.querySelectorAll('input[type="search"],input[type="text"],input:not([type])')) {
+      const shape = S.filterListShape(S.robustSelector(f));
+      if (shape) return shape;
+    }
+    return null;
+  });
+}
+
 /** Why a rule offers no bulk fix — shown instead of a button, never as silence. */
 const STATIC_WHY_NOT = {
   'img-alt-missing': 'needs alt text only you can write',
