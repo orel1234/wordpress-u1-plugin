@@ -439,13 +439,32 @@
 
     try {
       if (type === 'dialog') {
-        const trigger = q(sel.trigger) || root;
+        // A dialog's trigger is usually NOT a descendant of the dialog
+        // container itself (the container is often portaled to the end of
+        // <body>), so this can't be scoped the way tabpanel/tab lookups are —
+        // but if sel.trigger matches more than one element on the page, the
+        // report should say so instead of silently driving whichever one
+        // document.querySelector happens to return first.
+        if (sel.trigger) {
+          let triggerCount = -1;
+          try { triggerCount = document.querySelectorAll(sel.trigger).length; } catch {}
+          if (triggerCount > 1) rec('Trigger selector matches multiple elements', 'warn',
+            `"${sel.trigger}" matches ${triggerCount} elements — this test drove the first one.`);
+        }
+        const trigger = q(sel.trigger, root) || q(sel.trigger) || root;
         trigger.focus(); await delay(120); rec('Focus the trigger', activeInside(trigger) ? 'pass' : 'warn', '', trigger);
+        // Elements already open before the click (a cookie banner, another
+        // mapping's modal) must not be mistaken for the one THIS trigger
+        // opens — the unscoped fallback below only makes sense for dialogs
+        // that are genuinely new.
+        const openBefore = new Set(qa('[role=dialog],[role=alertdialog],dialog:not([hidden])').filter(visible));
         trigger.click();
         // Wait for the dialog to actually appear rather than betting on a delay.
         const dlg = await waitFor(() => {
-          const d = (visible(root) ? root : null) || document.querySelector('[role=dialog],[role=alertdialog],dialog:not([hidden])');
-          return d && visible(d) ? d : false;
+          if (visible(root)) return root;
+          const fresh = qa('[role=dialog],[role=alertdialog],dialog:not([hidden])')
+            .find(el => visible(el) && !openBefore.has(el));
+          return fresh || false;
         }, 2000);
         rec('Trigger opens the dialog', dlg ? 'pass' : 'warn', dlg ? '' : 'No dialog appeared after activating the trigger.', dlg);
         if (dlg) {
@@ -587,7 +606,7 @@
         // the key went to <body>, and the whole widget came back "pass, pass".
         // A listbox with a trigger has to be OPENED first, exactly as the dialog
         // branch does, because everything worth testing only exists once it is.
-        const trigger = q(sel.trigger);
+        const trigger = q(sel.trigger, root) || q(sel.trigger);
         const listWasOpen = visible(root);
 
         if (trigger && !listWasOpen) {
@@ -704,11 +723,18 @@
         // once opened. Open it via the trigger, WAIT for the grid to actually
         // render (portals are async — this is why the old fixed-delay version
         // sometimes "didn't test" it), then verify arrow-key cell navigation.
-        const trigger = q(sel.trigger) || root;
-        let container = q(sel.container) || (root && root.matches && root.matches('[role=grid]') ? root : null) || q('[role=grid]');
+        const trigger = q(sel.trigger, root) || q(sel.trigger) || root;
+        // sel.container / '[role=grid]' with no scope at all would grab the
+        // first datepicker grid ANYWHERE on the page — wrong widget entirely
+        // on a page with more than one. Root's own subtree first, always.
+        let container = q(sel.container, root) || q(sel.container)
+          || (root && root.matches && root.matches('[role=grid]') ? root : null) || q('[role=grid]', root) || q('[role=grid]');
         if (!container || !visible(container)) {
           if (trigger) { trigger.focus(); await delay(100); trigger.click(); }
-          container = await waitFor(() => { const c = q(sel.container) || q('[role=grid]'); return c && visible(c) ? c : false; }, 2500);
+          container = await waitFor(() => {
+            const c = q(sel.container, root) || q(sel.container) || q('[role=grid]', root) || q('[role=grid]');
+            return c && visible(c) ? c : false;
+          }, 2500);
         }
         if (!container) {
           rec('Grid/datepicker opens', 'warn', 'No grid appeared. Open the datepicker on the page first, then run the test.');
