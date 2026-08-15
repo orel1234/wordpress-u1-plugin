@@ -15,28 +15,28 @@
 
 <!-- ======================= SKIP LINKS ======================= -->
 <div class="skip-links">
-  <a href="#main-content">Skip to main content</a>
-  <a href="#megaNav">Skip to navigation</a>
-  <a href="#footer">Skip to footer</a>
+  <a href="#main-content" data-i18n>Skip to main content</a>
+  <a href="#megaNav" data-i18n>Skip to navigation</a>
+  <a href="#footer" data-i18n>Skip to footer</a>
 </div>
 
 <!-- ======================= UTILITY BAR ======================= -->
 <div class="util-bar">
   <div class="util-bar__inner">
     <ul class="util-bar__list util-bar__list--start">
-      <li><a class="util-bar__link" href="#locator">🏬 Find a branch</a></li>
+      <li><a class="util-bar__link" href="#locator" data-i18n>🏬 Find a branch</a></li>
       <li><span class="util-bar__sep" aria-hidden="true"></span></li>
-      <li><a class="util-bar__link" href="#">📦 Track my order</a></li>
+      <li><a class="util-bar__link" href="#" data-i18n>📦 Track my order</a></li>
       <li><span class="util-bar__sep" aria-hidden="true"></span></li>
-      <li><a class="util-bar__link" href="#">↩️ Start a return</a></li>
+      <li><a class="util-bar__link" href="#" data-i18n>↩️ Start a return</a></li>
       <li><span class="util-bar__sep" aria-hidden="true"></span></li>
-      <li><a class="util-bar__link" href="#faq">💬 Help center</a></li>
+      <li><a class="util-bar__link" href="#faq" data-i18n>💬 Help center</a></li>
       <li><span class="util-bar__sep" aria-hidden="true"></span></li>
-      <li><a class="util-bar__link" href="#">🏢 Corporate orders</a></li>
+      <li><a class="util-bar__link" href="#" data-i18n>🏢 Corporate orders</a></li>
     </ul>
     <ul class="util-bar__list util-bar__list--end">
       <li>
-        <label class="visually-hidden" for="langSelect">Language</label>
+        <label class="visually-hidden" for="langSelect" data-i18n>Language</label>
         <select class="util-bar__select" id="langSelect">
           <option>English</option><option>עברית</option><option>العربية</option>
           <option>Русский</option><option>Français</option>
@@ -49,9 +49,9 @@
         </select>
       </li>
       <li><span class="util-bar__sep" aria-hidden="true"></span></li>
-      <li><a class="util-bar__link" href="#">♿ Accessibility</a></li>
-      <li><a class="util-bar__link" href="#">👤 Sign in</a></li>
-      <li><a class="util-bar__link" href="#club">⭐ Join STEP Club</a></li>
+      <li><a class="util-bar__link" href="#" data-i18n>♿ Accessibility</a></li>
+      <li><a class="util-bar__link" href="#" data-i18n>👤 Sign in</a></li>
+      <li><a class="util-bar__link" href="#club" data-i18n>⭐ Join STEP Club</a></li>
     </ul>
   </div>
 </div>
@@ -59,7 +59,7 @@
 <!-- ======================= ANNOUNCEMENT TICKER ======================= -->
 <div class="ticker">
   <div class="ticker__inner">
-    <span class="ticker__label">Updates</span>
+    <span class="ticker__label" data-i18n>Updates</span>
     <div class="ticker__viewport" id="tickerViewport"></div>
     <div class="ticker__nav">
       <button class="ticker__btn" type="button" id="tickerPrev" aria-label="Previous announcement">‹</button>
@@ -81,17 +81,17 @@
     <div class="portal-header__tools">
       <button class="tool-btn" type="button" id="searchOpen">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        Search
+        <span data-i18n>Search</span>
       </button>
-      <button class="tool-btn" type="button" data-modal-open="sizeModal">📏 Size guide</button>
-      <a class="tool-btn" href="#locator">🏬 Branches</a>
-      <a class="tool-btn" href="#">♥ Wishlist</a>
+      <button class="tool-btn" type="button" data-modal-open="sizeModal" data-i18n>📏 Size guide</button>
+      <a class="tool-btn" href="#locator" data-i18n>🏬 Branches</a>
+      <a class="tool-btn" href="#" data-i18n>♥ Wishlist</a>
       <button class="tool-btn" type="button" id="cartToggle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8h12l-1.2 11.2a1 1 0 0 1-1 .8H8.2a1 1 0 0 1-1-.8L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
-        Cart
+        <span data-i18n>Cart</span>
         <span class="tool-btn__badge icon-btn__badge is-hidden" data-cart-badge>0</span>
       </button>
-      <a class="tool-btn tool-btn--primary" href="#club">Join the club</a>
+      <a class="tool-btn tool-btn--primary" href="#club" data-i18n>Join the club</a>
     </div>
   </div>
   <nav class="mega-nav" aria-label="Main">
@@ -101,20 +101,20 @@
 
 <!-- ======================= SEARCH OVERLAY ======================= -->
 <div class="search-overlay is-hidden" id="searchOverlay">
-  <div class="search-panel" aria-label="Search the store">
+  <div class="search-panel" aria-label="Search the store" data-i18n-attr="aria-label">
     <div class="search-panel__field">
-      <label class="visually-hidden" for="searchInput">Search products</label>
-      <input class="search-panel__input" id="searchInput" type="search" placeholder="Search for a shoe, a brand, or a category…">
-      <button class="btn btn--outline" type="button" id="searchClose">Close</button>
+      <label class="visually-hidden" for="searchInput" data-i18n>Search products</label>
+      <input class="search-panel__input" id="searchInput" type="search" placeholder="Search for a shoe, a brand, or a category…" data-i18n-attr="placeholder">
+      <button class="btn btn--outline" type="button" id="searchClose" data-i18n>Close</button>
     </div>
     <div class="search-panel__group">
-      <h2 class="search-panel__group-title">Trending searches</h2>
+      <h2 class="search-panel__group-title" data-i18n>Trending searches</h2>
       <div class="search-chips">
-        <button class="search-chip" type="button" data-search-chip>running</button>
-        <button class="search-chip" type="button" data-search-chip>sneakers</button>
-        <button class="search-chip" type="button" data-search-chip>boots</button>
-        <button class="search-chip" type="button" data-search-chip>casual</button>
-        <button class="search-chip" type="button" data-search-chip>sport</button>
+        <button class="search-chip" type="button" data-search-chip data-i18n>running</button>
+        <button class="search-chip" type="button" data-search-chip data-i18n>sneakers</button>
+        <button class="search-chip" type="button" data-search-chip data-i18n>boots</button>
+        <button class="search-chip" type="button" data-search-chip data-i18n>casual</button>
+        <button class="search-chip" type="button" data-search-chip data-i18n>sport</button>
         <button class="search-chip" type="button" data-search-chip>Air Classic</button>
         <button class="search-chip" type="button" data-search-chip>Trail Master</button>
         <button class="search-chip" type="button" data-search-chip>Volt High</button>
@@ -123,17 +123,17 @@
       </div>
     </div>
     <div class="search-panel__group">
-      <h2 class="search-panel__group-title">Products</h2>
+      <h2 class="search-panel__group-title" data-i18n>Products</h2>
       <div class="search-results" id="searchResults"></div>
     </div>
     <div class="search-panel__group">
-      <h2 class="search-panel__group-title">Help topics</h2>
+      <h2 class="search-panel__group-title" data-i18n>Help topics</h2>
       <div class="search-chips">
-        <a class="search-chip" href="#faq">Delivery times</a>
-        <a class="search-chip" href="#faq">Return policy</a>
-        <a class="search-chip" href="#sizes">Size conversion</a>
-        <a class="search-chip" href="#club">Club points</a>
-        <a class="search-chip" href="#locator">Branch hours</a>
+        <a class="search-chip" href="#faq" data-i18n>Delivery times</a>
+        <a class="search-chip" href="#faq" data-i18n>Return policy</a>
+        <a class="search-chip" href="#sizes" data-i18n>Size conversion</a>
+        <a class="search-chip" href="#club" data-i18n>Club points</a>
+        <a class="search-chip" href="#locator" data-i18n>Branch hours</a>
       </div>
     </div>
   </div>
@@ -143,8 +143,8 @@
 <div class="cart-drawer-overlay is-hidden" id="cartDrawerOverlay">
   <aside class="cart-drawer" id="cartDrawer">
     <div class="cart-drawer__header">
-      <h2 class="cart-drawer__title">Your Cart</h2>
-      <button class="icon-btn" id="cartDrawerClose" aria-label="Close cart">✕</button>
+      <h2 class="cart-drawer__title" data-i18n>Your Cart</h2>
+      <button class="icon-btn" id="cartDrawerClose" aria-label="Close cart" data-i18n-attr="aria-label">✕</button>
     </div>
     <div class="cart-drawer__items" id="cartDrawerItems"></div>
     <div class="cart-drawer__footer" id="cartDrawerFooter"></div>
@@ -154,73 +154,73 @@
 <main id="main-content" tabindex="-1">
 
   <!-- ======================= HERO CAROUSEL ======================= -->
-  <section class="hero-carousel" aria-label="Featured promotions">
+  <section class="hero-carousel" aria-label="Featured promotions" data-i18n-attr="aria-label">
     <div class="hero-carousel__track" id="heroTrack"></div>
-    <button class="hero-carousel__arrow hero-carousel__arrow--prev" type="button" id="heroPrev" aria-label="Previous slide">‹</button>
-    <button class="hero-carousel__arrow hero-carousel__arrow--next" type="button" id="heroNext" aria-label="Next slide">›</button>
+    <button class="hero-carousel__arrow hero-carousel__arrow--prev" type="button" id="heroPrev" aria-label="Previous slide" data-i18n-attr="aria-label">‹</button>
+    <button class="hero-carousel__arrow hero-carousel__arrow--next" type="button" id="heroNext" aria-label="Next slide" data-i18n-attr="aria-label">›</button>
     <div class="hero-carousel__dots" id="heroDots"></div>
     <div class="hero-carousel__progress" id="heroProgress" style="width:0"></div>
   </section>
 
   <!-- ======================= FINDER WIDGET ======================= -->
-  <section class="finder container" aria-label="Find your shoe">
+  <section class="finder container" aria-label="Find your shoe" data-i18n-attr="aria-label">
     <div class="finder__card">
-      <div class="finder__tabs" aria-label="Search modes">
-        <button class="finder__tab" data-selected="true" data-finder-tab="finderSport">👟 By sport</button>
-        <button class="finder__tab" data-selected="false" data-finder-tab="finderFit">📏 Size &amp; fit</button>
-        <button class="finder__tab" data-selected="false" data-finder-tab="finderPickup">🏬 Store pickup</button>
-        <button class="finder__tab" data-selected="false" data-finder-tab="finderGift">🎁 Gift card</button>
-        <button class="finder__tab" data-selected="false" data-finder-tab="finderService">🛠️ Book a service</button>
+      <div class="finder__tabs" aria-label="Search modes" data-i18n-attr="aria-label">
+        <button class="finder__tab" data-selected="true" data-finder-tab="finderSport" data-i18n>👟 By sport</button>
+        <button class="finder__tab" data-selected="false" data-finder-tab="finderFit" data-i18n>📏 Size &amp; fit</button>
+        <button class="finder__tab" data-selected="false" data-finder-tab="finderPickup" data-i18n>🏬 Store pickup</button>
+        <button class="finder__tab" data-selected="false" data-finder-tab="finderGift" data-i18n>🎁 Gift card</button>
+        <button class="finder__tab" data-selected="false" data-finder-tab="finderService" data-i18n>🛠️ Book a service</button>
       </div>
 
       <div class="finder__panel" id="finderSport">
         <form data-finder-form>
           <div class="finder__row">
             <div class="finder__field">
-              <label class="finder__label" for="sportWho">Shopping for</label>
+              <label class="finder__label" for="sportWho" data-i18n>Shopping for</label>
               <select class="finder__control" id="sportWho">
-                <option>Men</option><option>Women</option><option>Kids</option><option>Unisex</option>
+                <option data-i18n>Men</option><option data-i18n>Women</option><option data-i18n>Kids</option><option data-i18n>Unisex</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="sportActivity">Activity</label>
+              <label class="finder__label" for="sportActivity" data-i18n>Activity</label>
               <select class="finder__control" id="sportActivity">
-                <option>Road running</option><option>Trail running</option><option>Gym &amp; training</option>
-                <option>Basketball</option><option>Football</option><option>Walking</option>
-                <option>Hiking</option><option>Everyday wear</option>
+                <option data-i18n>Road running</option><option data-i18n>Trail running</option><option data-i18n>Gym &amp; training</option>
+                <option data-i18n>Basketball</option><option data-i18n>Football</option><option data-i18n>Walking</option>
+                <option data-i18n>Hiking</option><option data-i18n>Everyday wear</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="sportSurface">Surface</label>
+              <label class="finder__label" for="sportSurface" data-i18n>Surface</label>
               <select class="finder__control" id="sportSurface">
-                <option>Pavement</option><option>Treadmill</option><option>Gravel</option>
-                <option>Mountain trail</option><option>Indoor court</option><option>Grass</option>
+                <option data-i18n>Pavement</option><option data-i18n>Treadmill</option><option data-i18n>Gravel</option>
+                <option data-i18n>Mountain trail</option><option data-i18n>Indoor court</option><option data-i18n>Grass</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="sportBudget">Budget</label>
+              <label class="finder__label" for="sportBudget" data-i18n>Budget</label>
               <select class="finder__control" id="sportBudget">
-                <option>Up to $300</option><option>$300–$450</option><option>$450–$600</option><option>$600+</option>
+                <option data-i18n>Up to $300</option><option data-i18n>$300–$450</option><option data-i18n>$450–$600</option><option data-i18n>$600+</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="sportSize">Size (EU)</label>
+              <label class="finder__label" for="sportSize" data-i18n>Size (EU)</label>
               <select class="finder__control" id="sportSize">
-                <option>Any</option><option>36</option><option>37</option><option>38</option><option>39</option>
+                <option data-i18n>Any</option><option>36</option><option>37</option><option>38</option><option>39</option>
                 <option>40</option><option>41</option><option>42</option><option>43</option><option>44</option>
                 <option>45</option><option>46</option><option>47</option><option>48</option>
               </select>
             </div>
             <div class="finder__field">
-              <button class="btn btn--accent finder__submit" type="submit">Find my shoe</button>
+              <button class="btn btn--accent finder__submit" type="submit" data-i18n>Find my shoe</button>
             </div>
           </div>
           <div class="finder__extras">
-            <label class="finder__check"><input type="checkbox"> In stock near me only</label>
-            <label class="finder__check"><input type="checkbox"> Wide fit</label>
-            <label class="finder__check"><input type="checkbox"> Waterproof</label>
-            <label class="finder__check"><input type="checkbox"> Vegan materials</label>
-            <label class="finder__check"><input type="checkbox" checked> Include sale items</label>
+            <label class="finder__check"><input type="checkbox"> <span data-i18n>In stock near me only</span></label>
+            <label class="finder__check"><input type="checkbox"> <span data-i18n>Wide fit</span></label>
+            <label class="finder__check"><input type="checkbox"> <span data-i18n>Waterproof</span></label>
+            <label class="finder__check"><input type="checkbox"> <span data-i18n>Vegan materials</span></label>
+            <label class="finder__check"><input type="checkbox" checked> <span data-i18n>Include sale items</span></label>
           </div>
         </form>
       </div>
@@ -229,39 +229,39 @@
         <form data-finder-form>
           <div class="finder__row">
             <div class="finder__field">
-              <label class="finder__label" for="fitLength">Foot length (cm)</label>
+              <label class="finder__label" for="fitLength" data-i18n>Foot length (cm)</label>
               <input class="finder__control" id="fitLength" type="number" min="15" max="35" step="0.5" value="26.5">
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="fitWidth">Foot width</label>
+              <label class="finder__label" for="fitWidth" data-i18n>Foot width</label>
               <select class="finder__control" id="fitWidth">
-                <option>Narrow</option><option selected>Regular</option><option>Wide</option><option>Extra wide</option>
+                <option data-i18n>Narrow</option><option selected data-i18n>Regular</option><option data-i18n>Wide</option><option data-i18n>Extra wide</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="fitArch">Arch height</label>
+              <label class="finder__label" for="fitArch" data-i18n>Arch height</label>
               <select class="finder__control" id="fitArch">
-                <option>Low / flat</option><option selected>Neutral</option><option>High</option>
+                <option data-i18n>Low / flat</option><option selected data-i18n>Neutral</option><option data-i18n>High</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="fitPronation">Pronation</label>
+              <label class="finder__label" for="fitPronation" data-i18n>Pronation</label>
               <select class="finder__control" id="fitPronation">
-                <option>Not sure</option><option>Neutral</option><option>Overpronation</option><option>Supination</option>
+                <option data-i18n>Not sure</option><option data-i18n>Neutral</option><option data-i18n>Overpronation</option><option data-i18n>Supination</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="fitSystem">Size system</label>
+              <label class="finder__label" for="fitSystem" data-i18n>Size system</label>
               <select class="finder__control" id="fitSystem">
                 <option>EU</option><option>US</option><option>UK</option><option>CM</option>
               </select>
             </div>
             <div class="finder__field">
-              <button class="btn btn--accent finder__submit" type="submit">Show my size</button>
+              <button class="btn btn--accent finder__submit" type="submit" data-i18n>Show my size</button>
             </div>
           </div>
           <div class="finder__extras">
-            <span>Not sure? <a href="#sizes" style="color:var(--color-accent);text-decoration:underline">Use the full size chart</a> or book a free in-store measurement.</span>
+            <span><span data-i18n>Not sure? </span><a href="#sizes" style="color:var(--color-accent);text-decoration:underline" data-i18n>Use the full size chart</a><span data-i18n> or book a free in-store measurement.</span></span>
           </div>
         </form>
       </div>
@@ -270,7 +270,7 @@
         <form data-finder-form>
           <div class="finder__row">
             <div class="finder__field">
-              <label class="finder__label" for="pickupCity">City</label>
+              <label class="finder__label" for="pickupCity" data-i18n>City</label>
               <select class="finder__control" id="pickupCity">
                 <option>Tel Aviv</option><option>Jerusalem</option><option>Haifa</option><option>Beersheba</option>
                 <option>Netanya</option><option>Rishon LeZion</option><option>Petah Tikva</option>
@@ -278,25 +278,25 @@
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="pickupWhen">Pickup time</label>
+              <label class="finder__label" for="pickupWhen" data-i18n>Pickup time</label>
               <select class="finder__control" id="pickupWhen">
-                <option>Today, within 4 hours</option><option>Today, evening</option>
-                <option>Tomorrow morning</option><option>Tomorrow evening</option><option>This weekend</option>
+                <option data-i18n>Today, within 4 hours</option><option data-i18n>Today, evening</option>
+                <option data-i18n>Tomorrow morning</option><option data-i18n>Tomorrow evening</option><option data-i18n>This weekend</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="pickupItem">What are you collecting?</label>
+              <label class="finder__label" for="pickupItem" data-i18n>What are you collecting?</label>
               <select class="finder__control" id="pickupItem">
-                <option>A new order</option><option>An online order</option><option>A repaired pair</option><option>Custom insoles</option>
+                <option data-i18n>A new order</option><option data-i18n>An online order</option><option data-i18n>A repaired pair</option><option data-i18n>Custom insoles</option>
               </select>
             </div>
             <div class="finder__field">
-              <button class="btn btn--accent finder__submit" type="submit">Check availability</button>
+              <button class="btn btn--accent finder__submit" type="submit" data-i18n>Check availability</button>
             </div>
           </div>
           <div class="finder__extras">
-            <label class="finder__check"><input type="checkbox" checked> Notify me by SMS when ready</label>
-            <label class="finder__check"><input type="checkbox"> Wheelchair accessible branches only</label>
+            <label class="finder__check"><input type="checkbox" checked> <span data-i18n>Notify me by SMS when ready</span></label>
+            <label class="finder__check"><input type="checkbox"> <span data-i18n>Wheelchair accessible branches only</span></label>
           </div>
         </form>
       </div>
@@ -305,32 +305,32 @@
         <form data-finder-form>
           <div class="finder__row">
             <div class="finder__field">
-              <label class="finder__label" for="giftAmount">Amount</label>
+              <label class="finder__label" for="giftAmount" data-i18n>Amount</label>
               <select class="finder__control" id="giftAmount">
                 <option>$100</option><option>$200</option><option>$300</option>
-                <option>$500</option><option>$1,000</option><option>Custom amount</option>
+                <option>$500</option><option>$1,000</option><option data-i18n>Custom amount</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="giftType">Delivery</label>
+              <label class="finder__label" for="giftType" data-i18n>Delivery</label>
               <select class="finder__control" id="giftType">
-                <option>Email (instant)</option><option>SMS</option><option>Printed card by post</option><option>Collect in branch</option>
+                <option data-i18n>Email (instant)</option><option data-i18n>SMS</option><option data-i18n>Printed card by post</option><option data-i18n>Collect in branch</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="giftTo">Recipient name</label>
-              <input class="finder__control" id="giftTo" type="text" placeholder="Who is it for?">
+              <label class="finder__label" for="giftTo" data-i18n>Recipient name</label>
+              <input class="finder__control" id="giftTo" type="text" placeholder="Who is it for?" data-i18n-attr="placeholder">
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="giftDate">Send on</label>
+              <label class="finder__label" for="giftDate" data-i18n>Send on</label>
               <input class="finder__control" id="giftDate" type="date">
             </div>
             <div class="finder__field">
-              <button class="btn btn--accent finder__submit" type="submit">Buy a gift card</button>
+              <button class="btn btn--accent finder__submit" type="submit" data-i18n>Buy a gift card</button>
             </div>
           </div>
           <div class="finder__extras">
-            <span>Gift cards are valid for five years, usable online and in every branch, and can be topped up.</span>
+            <span data-i18n>Gift cards are valid for five years, usable online and in every branch, and can be topped up.</span>
           </div>
         </form>
       </div>
@@ -339,15 +339,15 @@
         <form data-finder-form>
           <div class="finder__row">
             <div class="finder__field">
-              <label class="finder__label" for="svcType">Service</label>
+              <label class="finder__label" for="svcType" data-i18n>Service</label>
               <select class="finder__control" id="svcType">
-                <option>Gait analysis (20 min, free)</option><option>Custom insole fitting (45 min)</option>
-                <option>Shoe repair drop-off</option><option>Deep cleaning</option>
-                <option>Personal shopper session (60 min)</option><option>Kids fit check (10 min, free)</option>
+                <option data-i18n>Gait analysis (20 min, free)</option><option data-i18n>Custom insole fitting (45 min)</option>
+                <option data-i18n>Shoe repair drop-off</option><option data-i18n>Deep cleaning</option>
+                <option data-i18n>Personal shopper session (60 min)</option><option data-i18n>Kids fit check (10 min, free)</option>
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="svcBranch">Branch</label>
+              <label class="finder__label" for="svcBranch" data-i18n>Branch</label>
               <select class="finder__control" id="svcBranch">
                 <option>Tel Aviv — Dizengoff Center</option><option>Tel Aviv — Sarona Market</option>
                 <option>Ramat Gan — Ayalon Mall</option><option>Jerusalem — Malha Mall</option>
@@ -356,23 +356,23 @@
               </select>
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="svcDate">Date</label>
+              <label class="finder__label" for="svcDate" data-i18n>Date</label>
               <input class="finder__control" id="svcDate" type="date">
             </div>
             <div class="finder__field">
-              <label class="finder__label" for="svcTime">Time</label>
+              <label class="finder__label" for="svcTime" data-i18n>Time</label>
               <select class="finder__control" id="svcTime">
                 <option>09:30</option><option>10:30</option><option>11:30</option><option>13:00</option>
                 <option>14:30</option><option>16:00</option><option>17:30</option><option>19:00</option>
               </select>
             </div>
             <div class="finder__field">
-              <button class="btn btn--accent finder__submit" type="submit">Book appointment</button>
+              <button class="btn btn--accent finder__submit" type="submit" data-i18n>Book appointment</button>
             </div>
           </div>
           <div class="finder__extras">
-            <label class="finder__check"><input type="checkbox" checked> Send me a reminder the day before</label>
-            <label class="finder__check"><input type="checkbox"> I need step-free access</label>
+            <label class="finder__check"><input type="checkbox" checked> <span data-i18n>Send me a reminder the day before</span></label>
+            <label class="finder__check"><input type="checkbox"> <span data-i18n>I need step-free access</span></label>
           </div>
         </form>
       </div>
@@ -382,8 +382,8 @@
   <!-- ======================= BREADCRUMBS ======================= -->
   <nav class="container" aria-label="Breadcrumb">
     <ol class="crumbs">
-      <li><a href="index.html">Home</a></li>
-      <li>Everything at STEP</li>
+      <li><a href="index.html" data-i18n>Home</a></li>
+      <li data-i18n>Everything at STEP</li>
     </ol>
   </nav>
 
@@ -396,19 +396,19 @@
   <section class="section container" style="padding-block:var(--space-5)">
     <div class="flash">
       <div>
-        <span class="eyebrow" style="color:#f2c9bd">Limited time</span>
-        <h2 class="flash__title">Mid-Season Sale — up to 70% off</h2>
-        <p class="flash__desc">More than 900 styles reduced across every department. STEP Club members get an extra 10% applied automatically at checkout, on top of the sale price.</p>
+        <span class="eyebrow" style="color:#f2c9bd" data-i18n>Limited time</span>
+        <h2 class="flash__title" data-i18n>Mid-Season Sale — up to 70% off</h2>
+        <p class="flash__desc" data-i18n>More than 900 styles reduced across every department. STEP Club members get an extra 10% applied automatically at checkout, on top of the sale price.</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:20px">
-          <a class="btn btn--accent" href="shop.html">Shop the sale</a>
-          <a class="btn btn--outline" style="border-color:#f6f2ea;color:#f6f2ea" href="#club">Join and save 10% more</a>
+          <a class="btn btn--accent" href="shop.html" data-i18n>Shop the sale</a>
+          <a class="btn btn--outline" style="border-color:#f6f2ea;color:#f6f2ea" href="#club" data-i18n>Join and save 10% more</a>
         </div>
       </div>
       <div class="flash__clock" id="flashClock" aria-label="Time remaining in the sale">
-        <div class="flash__unit"><span class="flash__num" data-clock="days">00</span><span class="flash__unit-label">Days</span></div>
-        <div class="flash__unit"><span class="flash__num" data-clock="hours">00</span><span class="flash__unit-label">Hours</span></div>
-        <div class="flash__unit"><span class="flash__num" data-clock="minutes">00</span><span class="flash__unit-label">Minutes</span></div>
-        <div class="flash__unit"><span class="flash__num" data-clock="seconds">00</span><span class="flash__unit-label">Seconds</span></div>
+        <div class="flash__unit"><span class="flash__num" data-clock="days">00</span><span class="flash__unit-label" data-i18n>Days</span></div>
+        <div class="flash__unit"><span class="flash__num" data-clock="hours">00</span><span class="flash__unit-label" data-i18n>Hours</span></div>
+        <div class="flash__unit"><span class="flash__num" data-clock="minutes">00</span><span class="flash__unit-label" data-i18n>Minutes</span></div>
+        <div class="flash__unit"><span class="flash__num" data-clock="seconds">00</span><span class="flash__unit-label" data-i18n>Seconds</span></div>
       </div>
     </div>
   </section>
@@ -417,11 +417,11 @@
   <section class="section container" id="deals">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Deals</span>
-        <h2 class="section__title">Top offers right now</h2>
-        <p class="section__subtitle">Updated every morning. Prices shown include all current discounts.</p>
+        <span class="eyebrow" data-i18n>Deals</span>
+        <h2 class="section__title" data-i18n>Top offers right now</h2>
+        <p class="section__subtitle" data-i18n>Updated every morning. Prices shown include all current discounts.</p>
       </div>
-      <a class="btn btn--outline" href="shop.html">See all offers</a>
+      <a class="btn btn--outline" href="shop.html" data-i18n>See all offers</a>
     </div>
     <div class="tab-bar" id="dealTabs" aria-label="Deal categories"></div>
     <div class="deal-grid" id="dealGrid" data-labelledby="dealTab-week"></div>
@@ -431,16 +431,16 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Most reviewed</span>
-        <h2 class="section__title">Bestsellers this month</h2>
-        <p class="section__subtitle">Ranked by verified purchase reviews from the last 30 days</p>
+        <span class="eyebrow" data-i18n>Most reviewed</span>
+        <h2 class="section__title" data-i18n>Bestsellers this month</h2>
+        <p class="section__subtitle" data-i18n>Ranked by verified purchase reviews from the last 30 days</p>
       </div>
-      <a class="btn btn--outline" href="shop.html">Shop all</a>
+      <a class="btn btn--outline" href="shop.html" data-i18n>Shop all</a>
     </div>
     <div class="rail">
-      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left">‹</button>
+      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left" data-i18n-attr="aria-label">‹</button>
       <div class="rail__viewport"><div class="rail__track" id="bestsellerRail"></div></div>
-      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right">›</button>
+      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right" data-i18n-attr="aria-label">›</button>
     </div>
   </section>
 
@@ -448,8 +448,8 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Departments</span>
-        <h2 class="section__title">Shop by category</h2>
+        <span class="eyebrow" data-i18n>Departments</span>
+        <h2 class="section__title" data-i18n>Shop by category</h2>
       </div>
     </div>
     <div class="mosaic" id="mosaic"></div>
@@ -459,16 +459,16 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Just landed</span>
-        <h2 class="section__title">New arrivals</h2>
-        <p class="section__subtitle">Forty new styles added for Fall/Winter 2026</p>
+        <span class="eyebrow" data-i18n>Just landed</span>
+        <h2 class="section__title" data-i18n>New arrivals</h2>
+        <p class="section__subtitle" data-i18n>Forty new styles added for Fall/Winter 2026</p>
       </div>
-      <a class="btn btn--outline" href="shop.html?badge=new">See everything new</a>
+      <a class="btn btn--outline" href="shop.html?badge=new" data-i18n>See everything new</a>
     </div>
     <div class="rail">
-      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left">‹</button>
+      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left" data-i18n-attr="aria-label">‹</button>
       <div class="rail__viewport"><div class="rail__track" id="newRail"></div></div>
-      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right">›</button>
+      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right" data-i18n-attr="aria-label">›</button>
     </div>
   </section>
 
@@ -476,10 +476,10 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Brands</span>
-        <h2 class="section__title">Twelve houses we stock</h2>
+        <span class="eyebrow" data-i18n>Brands</span>
+        <h2 class="section__title" data-i18n>Twelve houses we stock</h2>
       </div>
-      <a class="btn btn--outline" href="shop.html">All brands</a>
+      <a class="btn btn--outline" href="shop.html" data-i18n>All brands</a>
     </div>
     <div class="brand-strip" id="brandStrip"></div>
   </section>
@@ -488,16 +488,16 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Reduced</span>
-        <h2 class="section__title">On sale now</h2>
-        <p class="section__subtitle">Final pairs, discontinued colors, and last-season models</p>
+        <span class="eyebrow" data-i18n>Reduced</span>
+        <h2 class="section__title" data-i18n>On sale now</h2>
+        <p class="section__subtitle" data-i18n>Final pairs, discontinued colors, and last-season models</p>
       </div>
-      <a class="btn btn--outline" href="shop.html?badge=sale">Shop the sale</a>
+      <a class="btn btn--outline" href="shop.html?badge=sale" data-i18n>Shop the sale</a>
     </div>
     <div class="rail">
-      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left">‹</button>
+      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left" data-i18n-attr="aria-label">‹</button>
       <div class="rail__viewport"><div class="rail__track" id="saleRail"></div></div>
-      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right">›</button>
+      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right" data-i18n-attr="aria-label">›</button>
     </div>
   </section>
 
@@ -505,8 +505,8 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Categories</span>
-        <h2 class="section__title">Shop by style</h2>
+        <span class="eyebrow" data-i18n>Categories</span>
+        <h2 class="section__title" data-i18n>Shop by style</h2>
       </div>
     </div>
     <div class="category-grid" id="categoryGrid"></div>
@@ -516,11 +516,11 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Featured</span>
-        <h2 class="section__title">Hottest right now</h2>
-        <p class="section__subtitle">The season's top styles, hand-picked by our buyers</p>
+        <span class="eyebrow" data-i18n>Featured</span>
+        <h2 class="section__title" data-i18n>Hottest right now</h2>
+        <p class="section__subtitle" data-i18n>The season's top styles, hand-picked by our buyers</p>
       </div>
-      <a class="btn btn--outline" href="shop.html">Shop all</a>
+      <a class="btn btn--outline" href="shop.html" data-i18n>Shop all</a>
     </div>
     <div class="product-grid" id="featuredGrid"></div>
   </section>
@@ -530,34 +530,34 @@
     <div class="container">
       <div class="section__head">
         <div>
-          <span class="eyebrow">STEP Club</span>
-          <h2 class="section__title">Free to join. Four tiers. Points on everything.</h2>
-          <p class="section__subtitle">More than 340,000 members. Points post 14 days after delivery and stay valid for 24 months.</p>
+          <span class="eyebrow" data-i18n>STEP Club</span>
+          <h2 class="section__title" data-i18n>Free to join. Four tiers. Points on everything.</h2>
+          <p class="section__subtitle" data-i18n>More than 340,000 members. Points post 14 days after delivery and stay valid for 24 months.</p>
         </div>
-        <a class="btn btn--accent" href="#">Join the club</a>
+        <a class="btn btn--accent" href="#" data-i18n>Join the club</a>
       </div>
       <div class="tier-grid" id="tierGrid"></div>
 
       <div style="margin-top:var(--space-6)">
-        <h3 style="font-size:20px;margin-bottom:var(--space-4)">Benefits at a glance</h3>
+        <h3 style="font-size:20px;margin-bottom:var(--space-4)" data-i18n>Benefits at a glance</h3>
         <div class="table-wrap">
           <table class="data-table">
-            <caption>Comparison of STEP Club membership tiers. Benefits are cumulative — each tier includes everything below it.</caption>
+            <caption data-i18n>Comparison of STEP Club membership tiers. Benefits are cumulative — each tier includes everything below it.</caption>
             <thead>
-              <tr><th scope="col">Benefit</th><th scope="col">Step</th><th scope="col">Stride</th><th scope="col">Sprint</th><th scope="col">Summit</th></tr>
+              <tr><th scope="col" data-i18n>Benefit</th><th scope="col" data-i18n>Step</th><th scope="col" data-i18n>Stride</th><th scope="col" data-i18n>Sprint</th><th scope="col" data-i18n>Summit</th></tr>
             </thead>
             <tbody>
-              <tr><th scope="row">Points per $10 spent</th><td>1</td><td>1.5</td><td>2</td><td>3</td></tr>
-              <tr><th scope="row">Free standard shipping</th><td>Over $300</td><td class="data-table__yes">Always</td><td class="data-table__yes">Always</td><td class="data-table__yes">Always</td></tr>
-              <tr><th scope="row">Free express shipping</th><td class="data-table__no">No</td><td class="data-table__no">No</td><td class="data-table__yes">Yes</td><td class="data-table__yes">Yes</td></tr>
-              <tr><th scope="row">Free returns</th><td class="data-table__yes">Yes</td><td class="data-table__yes">Yes</td><td class="data-table__yes">Yes</td><td class="data-table__yes">For life</td></tr>
-              <tr><th scope="row">Early access to drops</th><td class="data-table__no">No</td><td>24 hours</td><td>48 hours</td><td>72 hours</td></tr>
-              <tr><th scope="row">Birthday reward</th><td>$25</td><td>$50</td><td>$75</td><td>$150</td></tr>
-              <tr><th scope="row">Free custom insoles</th><td class="data-table__no">No</td><td class="data-table__no">No</td><td>Once a year</td><td>Twice a year</td></tr>
-              <tr><th scope="row">Personal shopper</th><td class="data-table__no">No</td><td class="data-table__no">No</td><td class="data-table__no">No</td><td class="data-table__yes">Included</td></tr>
-              <tr><th scope="row">Dedicated support line</th><td class="data-table__no">No</td><td class="data-table__no">No</td><td class="data-table__yes">Yes</td><td class="data-table__yes">Yes</td></tr>
-              <tr><th scope="row">Launch event invitations</th><td class="data-table__no">No</td><td class="data-table__no">No</td><td class="data-table__no">No</td><td class="data-table__yes">Yes</td></tr>
-              <tr><th scope="row">Annual credit</th><td>—</td><td>—</td><td>—</td><td>$150</td></tr>
+              <tr><th scope="row" data-i18n>Points per $10 spent</th><td>1</td><td>1.5</td><td>2</td><td>3</td></tr>
+              <tr><th scope="row" data-i18n>Free standard shipping</th><td data-i18n>Over $300</td><td class="data-table__yes" data-i18n>Always</td><td class="data-table__yes" data-i18n>Always</td><td class="data-table__yes" data-i18n>Always</td></tr>
+              <tr><th scope="row" data-i18n>Free express shipping</th><td class="data-table__no" data-i18n>No</td><td class="data-table__no" data-i18n>No</td><td class="data-table__yes" data-i18n>Yes</td><td class="data-table__yes" data-i18n>Yes</td></tr>
+              <tr><th scope="row" data-i18n>Free returns</th><td class="data-table__yes" data-i18n>Yes</td><td class="data-table__yes" data-i18n>Yes</td><td class="data-table__yes" data-i18n>Yes</td><td class="data-table__yes" data-i18n>For life</td></tr>
+              <tr><th scope="row" data-i18n>Early access to drops</th><td class="data-table__no" data-i18n>No</td><td data-i18n>24 hours</td><td data-i18n>48 hours</td><td data-i18n>72 hours</td></tr>
+              <tr><th scope="row" data-i18n>Birthday reward</th><td>$25</td><td>$50</td><td>$75</td><td>$150</td></tr>
+              <tr><th scope="row" data-i18n>Free custom insoles</th><td class="data-table__no" data-i18n>No</td><td class="data-table__no" data-i18n>No</td><td data-i18n>Once a year</td><td data-i18n>Twice a year</td></tr>
+              <tr><th scope="row" data-i18n>Personal shopper</th><td class="data-table__no" data-i18n>No</td><td class="data-table__no" data-i18n>No</td><td class="data-table__no" data-i18n>No</td><td class="data-table__yes" data-i18n>Included</td></tr>
+              <tr><th scope="row" data-i18n>Dedicated support line</th><td class="data-table__no" data-i18n>No</td><td class="data-table__no" data-i18n>No</td><td class="data-table__yes" data-i18n>Yes</td><td class="data-table__yes" data-i18n>Yes</td></tr>
+              <tr><th scope="row" data-i18n>Launch event invitations</th><td class="data-table__no" data-i18n>No</td><td class="data-table__no" data-i18n>No</td><td class="data-table__no" data-i18n>No</td><td class="data-table__yes" data-i18n>Yes</td></tr>
+              <tr><th scope="row" data-i18n>Annual credit</th><td>—</td><td>—</td><td>—</td><td>$150</td></tr>
             </tbody>
           </table>
         </div>
@@ -569,16 +569,16 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Highest rated</span>
-        <h2 class="section__title">Top rated by customers</h2>
-        <p class="section__subtitle">Every rating comes from a verified purchase</p>
+        <span class="eyebrow" data-i18n>Highest rated</span>
+        <h2 class="section__title" data-i18n>Top rated by customers</h2>
+        <p class="section__subtitle" data-i18n>Every rating comes from a verified purchase</p>
       </div>
-      <a class="btn btn--outline" href="shop.html">Shop all</a>
+      <a class="btn btn--outline" href="shop.html" data-i18n>Shop all</a>
     </div>
     <div class="rail">
-      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left">‹</button>
+      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll left" data-i18n-attr="aria-label">‹</button>
       <div class="rail__viewport"><div class="rail__track" id="topRatedRail"></div></div>
-      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right">›</button>
+      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll right" data-i18n-attr="aria-label">›</button>
     </div>
   </section>
 
@@ -586,19 +586,19 @@
   <section class="section container" id="sizes">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Fit</span>
-        <h2 class="section__title">Size conversion chart</h2>
-        <p class="section__subtitle">Measure in the evening, standing, with the socks you plan to wear</p>
+        <span class="eyebrow" data-i18n>Fit</span>
+        <h2 class="section__title" data-i18n>Size conversion chart</h2>
+        <p class="section__subtitle" data-i18n>Measure in the evening, standing, with the socks you plan to wear</p>
       </div>
-      <button class="btn btn--outline" type="button" data-modal-open="sizeModal">How to measure</button>
+      <button class="btn btn--outline" type="button" data-modal-open="sizeModal" data-i18n>How to measure</button>
     </div>
     <div class="table-wrap">
       <table class="data-table">
-        <caption>EU, US, UK and centimeter conversions for adult footwear. Kids' sizing uses a separate chart shown on each product page.</caption>
+        <caption data-i18n>EU, US, UK and centimeter conversions for adult footwear. Kids' sizing uses a separate chart shown on each product page.</caption>
         <thead>
           <tr>
             <th scope="col">EU</th><th scope="col">US</th><th scope="col">UK</th>
-            <th scope="col">Foot length (cm)</th><th scope="col">Category</th><th scope="col">Shop</th>
+            <th scope="col" data-i18n>Foot length (cm)</th><th scope="col" data-i18n>Category</th><th scope="col" data-i18n>Shop</th>
           </tr>
         </thead>
         <tbody id="sizeTableBody"></tbody>
@@ -610,17 +610,17 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Compare</span>
-        <h2 class="section__title">Four flagships, side by side</h2>
-        <p class="section__subtitle">Specifications measured in-house on a size 42 sample</p>
+        <span class="eyebrow" data-i18n>Compare</span>
+        <h2 class="section__title" data-i18n>Four flagships, side by side</h2>
+        <p class="section__subtitle" data-i18n>Specifications measured in-house on a size 42 sample</p>
       </div>
     </div>
     <div class="table-wrap">
       <table class="data-table">
-        <caption>Technical comparison of the Cloudline Pro Race, Cloudline Daily, Air Classic Low and Alpine Boot Pro.</caption>
+        <caption data-i18n>Technical comparison of the Cloudline Pro Race, Cloudline Daily, Air Classic Low and Alpine Boot Pro.</caption>
         <thead>
           <tr>
-            <th scope="col">Specification</th>
+            <th scope="col" data-i18n>Specification</th>
             <th scope="col">Cloudline Pro Race</th><th scope="col">Cloudline Daily</th>
             <th scope="col">Air Classic Low</th><th scope="col">Alpine Boot Pro</th>
           </tr>
@@ -634,18 +634,18 @@
   <section class="section container">
     <div class="video-band">
       <div>
-        <span class="eyebrow" style="color:#e2b7ab">Behind the design</span>
-        <h2 style="font-size:32px;margin-top:8px">Two years to make a 198-gram racer</h2>
-        <p style="margin-top:14px;font-size:15.5px;line-height:1.8;opacity:.86">We followed the Cloudline Pro from the first foam samples through 4,000 kilometers of athlete testing to the finished shoe now sitting in fourteen branches. Eleven minutes, no marketing voiceover.</p>
+        <span class="eyebrow" style="color:#e2b7ab" data-i18n>Behind the design</span>
+        <h2 style="font-size:32px;margin-top:8px" data-i18n>Two years to make a 198-gram racer</h2>
+        <p style="margin-top:14px;font-size:15.5px;line-height:1.8;opacity:.86" data-i18n>We followed the Cloudline Pro from the first foam samples through 4,000 kilometers of athlete testing to the finished shoe now sitting in fourteen branches. Eleven minutes, no marketing voiceover.</p>
         <ul class="video-band__list">
-          <li>▸ Chapter 1 — Why plate geometry matters more than plate stiffness (2:14)</li>
-          <li>▸ Chapter 2 — Testing with the national marathon squad (4:02)</li>
-          <li>▸ Chapter 3 — Sixteen midsole prototypes, and the one that survived (6:38)</li>
-          <li>▸ Chapter 4 — Getting the weight under 200 grams (8:51)</li>
+          <li data-i18n>▸ Chapter 1 — Why plate geometry matters more than plate stiffness (2:14)</li>
+          <li data-i18n>▸ Chapter 2 — Testing with the national marathon squad (4:02)</li>
+          <li data-i18n>▸ Chapter 3 — Sixteen midsole prototypes, and the one that survived (6:38)</li>
+          <li data-i18n>▸ Chapter 4 — Getting the weight under 200 grams (8:51)</li>
         </ul>
       </div>
       <div class="video-band__frame">
-        <button class="video-band__play" type="button" aria-label="Play the design documentary">▶</button>
+        <button class="video-band__play" type="button" aria-label="Play the design documentary" data-i18n-attr="aria-label">▶</button>
       </div>
     </div>
   </section>
@@ -653,12 +653,12 @@
   <!-- ======================= STATS ======================= -->
   <section class="section container">
     <div class="stat-grid">
-      <div class="stat-card"><span class="stat-card__num" data-count-to="340000" data-count-suffix="+">0</span><span class="stat-card__label">Club members</span></div>
-      <div class="stat-card"><span class="stat-card__num" data-count-to="14">0</span><span class="stat-card__label">Branches nationwide</span></div>
-      <div class="stat-card"><span class="stat-card__num" data-count-to="1284">0</span><span class="stat-card__label">Styles in stock</span></div>
-      <div class="stat-card"><span class="stat-card__num" data-count-to="98" data-count-suffix="%">0</span><span class="stat-card__label">Orders shipped same day</span></div>
-      <div class="stat-card"><span class="stat-card__num" data-count-to="62" data-count-suffix="%">0</span><span class="stat-card__label">Recycled content, average</span></div>
-      <div class="stat-card"><span class="stat-card__num" data-count-to="48">0</span><span class="stat-card__label">Years in business</span></div>
+      <div class="stat-card"><span class="stat-card__num" data-count-to="340000" data-count-suffix="+">0</span><span class="stat-card__label" data-i18n>Club members</span></div>
+      <div class="stat-card"><span class="stat-card__num" data-count-to="14">0</span><span class="stat-card__label" data-i18n>Branches nationwide</span></div>
+      <div class="stat-card"><span class="stat-card__num" data-count-to="1284">0</span><span class="stat-card__label" data-i18n>Styles in stock</span></div>
+      <div class="stat-card"><span class="stat-card__num" data-count-to="98" data-count-suffix="%">0</span><span class="stat-card__label" data-i18n>Orders shipped same day</span></div>
+      <div class="stat-card"><span class="stat-card__num" data-count-to="62" data-count-suffix="%">0</span><span class="stat-card__label" data-i18n>Recycled content, average</span></div>
+      <div class="stat-card"><span class="stat-card__num" data-count-to="48">0</span><span class="stat-card__label" data-i18n>Years in business</span></div>
     </div>
   </section>
 
@@ -666,30 +666,30 @@
   <section class="section container" id="reviews">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Reviews</span>
-        <h2 class="section__title">What customers actually said</h2>
-        <p class="section__subtitle">Unedited, from verified purchases only</p>
+        <span class="eyebrow" data-i18n>Reviews</span>
+        <h2 class="section__title" data-i18n>What customers actually said</h2>
+        <p class="section__subtitle" data-i18n>Unedited, from verified purchases only</p>
       </div>
-      <a class="btn btn--outline" href="#">Read all 18,402 reviews</a>
+      <a class="btn btn--outline" href="#" data-i18n>Read all 18,402 reviews</a>
     </div>
     <div class="reviews">
       <div class="rating-summary">
         <div class="rating-summary__score">4.7</div>
         <div class="rating-summary__stars" aria-hidden="true">★★★★★</div>
-        <p class="rating-summary__count">Based on 18,402 verified reviews</p>
+        <p class="rating-summary__count" data-i18n>Based on 18,402 verified reviews</p>
         <div class="rating-bars">
-          <div class="rating-bar"><span>5 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:74%"></span></span><span>74%</span></div>
-          <div class="rating-bar"><span>4 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:18%"></span></span><span>18%</span></div>
-          <div class="rating-bar"><span>3 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:5%"></span></span><span>5%</span></div>
-          <div class="rating-bar"><span>2 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:2%"></span></span><span>2%</span></div>
-          <div class="rating-bar"><span>1 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:1%"></span></span><span>1%</span></div>
+          <div class="rating-bar"><span data-i18n>5 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:74%"></span></span><span>74%</span></div>
+          <div class="rating-bar"><span data-i18n>4 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:18%"></span></span><span>18%</span></div>
+          <div class="rating-bar"><span data-i18n>3 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:5%"></span></span><span>5%</span></div>
+          <div class="rating-bar"><span data-i18n>2 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:2%"></span></span><span>2%</span></div>
+          <div class="rating-bar"><span data-i18n>1 star</span><span class="rating-bar__track"><span class="rating-bar__fill" style="width:1%"></span></span><span>1%</span></div>
         </div>
-        <a class="btn btn--outline btn--block" href="#" style="margin-top:18px">Write a review</a>
+        <a class="btn btn--outline btn--block" href="#" style="margin-top:18px" data-i18n>Write a review</a>
       </div>
       <div class="rail">
-        <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll reviews left">‹</button>
+        <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll reviews left" data-i18n-attr="aria-label">‹</button>
         <div class="rail__viewport"><div class="rail__track rail__track--wide" id="reviewRail"></div></div>
-        <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll reviews right">›</button>
+        <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll reviews right" data-i18n-attr="aria-label">›</button>
       </div>
     </div>
   </section>
@@ -698,16 +698,16 @@
   <section class="section container">
     <div class="section__head">
       <div>
-        <span class="eyebrow">The STEP Journal</span>
-        <h2 class="section__title">Guides, care, and fit advice</h2>
-        <p class="section__subtitle">Written by our fit specialists and an in-house physiotherapist</p>
+        <span class="eyebrow" data-i18n>The STEP Journal</span>
+        <h2 class="section__title" data-i18n>Guides, care, and fit advice</h2>
+        <p class="section__subtitle" data-i18n>Written by our fit specialists and an in-house physiotherapist</p>
       </div>
-      <a class="btn btn--outline" href="#">All articles</a>
+      <a class="btn btn--outline" href="#" data-i18n>All articles</a>
     </div>
     <div class="rail">
-      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll articles left">‹</button>
+      <button class="rail__btn rail__btn--prev" type="button" aria-label="Scroll articles left" data-i18n-attr="aria-label">‹</button>
       <div class="rail__viewport"><div class="rail__track rail__track--wide" id="articleRail"></div></div>
-      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll articles right">›</button>
+      <button class="rail__btn rail__btn--next" type="button" aria-label="Scroll articles right" data-i18n-attr="aria-label">›</button>
     </div>
   </section>
 
@@ -715,22 +715,22 @@
   <section class="section container">
     <div class="split-band">
       <div class="promo-band promo-band--gift">
-        <span class="eyebrow" style="color:#f4cec4">Gift cards</span>
-        <h2 class="promo-band__title">When you cannot guess the size</h2>
-        <p class="promo-band__desc">Digital or printed, from $100 to any amount you choose. Valid five years, usable online and in every branch, and topping up is free.</p>
+        <span class="eyebrow" style="color:#f4cec4" data-i18n>Gift cards</span>
+        <h2 class="promo-band__title" data-i18n>When you cannot guess the size</h2>
+        <p class="promo-band__desc" data-i18n>Digital or printed, from $100 to any amount you choose. Valid five years, usable online and in every branch, and topping up is free.</p>
         <div class="promo-band__actions">
-          <a class="btn btn--accent" href="#">Buy a gift card</a>
-          <a class="btn btn--outline" style="border-color:#fff;color:#fff" href="#">Check a balance</a>
+          <a class="btn btn--accent" href="#" data-i18n>Buy a gift card</a>
+          <a class="btn btn--outline" style="border-color:#fff;color:#fff" href="#" data-i18n>Check a balance</a>
         </div>
       </div>
       <div class="promo-band promo-band--app">
-        <span class="eyebrow" style="color:#bcd0c4">Mobile app</span>
-        <h2 class="promo-band__title">Scan any shoe in store</h2>
-        <p class="promo-band__desc">Check stock in your size across all fourteen branches, see your club balance, and skip the queue with in-app checkout.</p>
+        <span class="eyebrow" style="color:#bcd0c4" data-i18n>Mobile app</span>
+        <h2 class="promo-band__title" data-i18n>Scan any shoe in store</h2>
+        <p class="promo-band__desc" data-i18n>Check stock in your size across all fourteen branches, see your club balance, and skip the queue with in-app checkout.</p>
         <div class="promo-band__actions">
-          <a class="store-badge" href="#">🍎 App Store</a>
-          <a class="store-badge" href="#">🤖 Google Play</a>
-          <a class="store-badge" href="#">📱 Get a link by SMS</a>
+          <a class="store-badge" href="#" data-i18n>🍎 App Store</a>
+          <a class="store-badge" href="#" data-i18n>🤖 Google Play</a>
+          <a class="store-badge" href="#" data-i18n>📱 Get a link by SMS</a>
         </div>
       </div>
     </div>
@@ -740,16 +740,16 @@
   <section class="section container" id="locator">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Branches</span>
-        <h2 class="section__title">Fourteen branches nationwide</h2>
-        <p class="section__subtitle">Free fitting in every branch. Gait analysis in six.</p>
+        <span class="eyebrow" data-i18n>Branches</span>
+        <h2 class="section__title" data-i18n>Fourteen branches nationwide</h2>
+        <p class="section__subtitle" data-i18n>Free fitting in every branch. Gait analysis in six.</p>
       </div>
-      <a class="btn btn--outline" href="#">Full branch list</a>
+      <a class="btn btn--outline" href="#" data-i18n>Full branch list</a>
     </div>
     <div class="locator">
       <div>
-        <label class="visually-hidden" for="locatorFilter">Filter branches</label>
-        <input class="subscribe__input" id="locatorFilter" type="search" placeholder="Filter by city, street, or service…" style="width:100%;margin-bottom:12px">
+        <label class="visually-hidden" for="locatorFilter" data-i18n>Filter branches</label>
+        <input class="subscribe__input" id="locatorFilter" type="search" placeholder="Filter by city, street, or service…" style="width:100%;margin-bottom:12px" data-i18n-attr="placeholder">
         <div class="locator__list" id="locatorList"></div>
       </div>
       <div class="locator__detail" id="locatorDetail"></div>
@@ -761,10 +761,10 @@
     <div class="section__head">
       <div>
         <span class="eyebrow">@stepshoes</span>
-        <h2 class="section__title">From the community</h2>
-        <p class="section__subtitle">Tag #StepEveryDay to be featured</p>
+        <h2 class="section__title" data-i18n>From the community</h2>
+        <p class="section__subtitle" data-i18n>Tag #StepEveryDay to be featured</p>
       </div>
-      <a class="btn btn--outline" href="#">Follow us</a>
+      <a class="btn btn--outline" href="#" data-i18n>Follow us</a>
     </div>
     <div class="ig-grid" id="igGrid"></div>
   </section>
@@ -773,11 +773,11 @@
   <section class="section container" id="faq">
     <div class="section__head">
       <div>
-        <span class="eyebrow">Help</span>
-        <h2 class="section__title">Frequently asked questions</h2>
-        <p class="section__subtitle">Cannot find it here? Live chat is open Sunday to Thursday, 08:00–22:00.</p>
+        <span class="eyebrow" data-i18n>Help</span>
+        <h2 class="section__title" data-i18n>Frequently asked questions</h2>
+        <p class="section__subtitle" data-i18n>Cannot find it here? Live chat is open Sunday to Thursday, 08:00–22:00.</p>
       </div>
-      <a class="btn btn--outline" href="#">Contact support</a>
+      <a class="btn btn--outline" href="#" data-i18n>Contact support</a>
     </div>
     <div class="tab-bar" id="faqTabs" aria-label="Help topics"></div>
     <div class="accordion" id="faqPanel" data-labelledby="faqTab-orders"></div>
@@ -788,39 +788,39 @@
     <div class="subscribe">
       <div class="subscribe__grid">
         <div>
-          <span class="eyebrow">Newsletter</span>
-          <h2 class="section__title" style="margin-top:6px">Join the STEP Club newsletter</h2>
-          <p class="section__subtitle">Pick the topics you actually want. Change or unsubscribe in one click, any time.</p>
+          <span class="eyebrow" data-i18n>Newsletter</span>
+          <h2 class="section__title" style="margin-top:6px" data-i18n>Join the STEP Club newsletter</h2>
+          <p class="section__subtitle" data-i18n>Pick the topics you actually want. Change or unsubscribe in one click, any time.</p>
           <div class="subscribe__topics">
-            <label class="subscribe__topic"><input type="checkbox" checked> New arrivals</label>
-            <label class="subscribe__topic"><input type="checkbox" checked> Sales and offers</label>
-            <label class="subscribe__topic"><input type="checkbox"> Running and training</label>
-            <label class="subscribe__topic"><input type="checkbox"> Kids and school</label>
-            <label class="subscribe__topic"><input type="checkbox"> Care and repair tips</label>
-            <label class="subscribe__topic"><input type="checkbox"> Branch events</label>
-            <label class="subscribe__topic"><input type="checkbox"> Sustainability updates</label>
-            <label class="subscribe__topic"><input type="checkbox"> Club-only drops</label>
+            <label class="subscribe__topic"><input type="checkbox" checked> <span data-i18n>New arrivals</span></label>
+            <label class="subscribe__topic"><input type="checkbox" checked> <span data-i18n>Sales and offers</span></label>
+            <label class="subscribe__topic"><input type="checkbox"> <span data-i18n>Running and training</span></label>
+            <label class="subscribe__topic"><input type="checkbox"> <span data-i18n>Kids and school</span></label>
+            <label class="subscribe__topic"><input type="checkbox"> <span data-i18n>Care and repair tips</span></label>
+            <label class="subscribe__topic"><input type="checkbox"> <span data-i18n>Branch events</span></label>
+            <label class="subscribe__topic"><input type="checkbox"> <span data-i18n>Sustainability updates</span></label>
+            <label class="subscribe__topic"><input type="checkbox"> <span data-i18n>Club-only drops</span></label>
           </div>
         </div>
         <form class="subscribe__fields" id="subscribeForm">
-          <label class="visually-hidden" for="subName">Full name</label>
-          <input class="subscribe__input" id="subName" type="text" placeholder="Full name" required>
-          <label class="visually-hidden" for="subEmail">Email address</label>
-          <input class="subscribe__input" id="subEmail" type="email" placeholder="Email address" required>
-          <label class="visually-hidden" for="subPhone">Phone (optional)</label>
-          <input class="subscribe__input" id="subPhone" type="tel" placeholder="Phone (optional, for SMS offers)">
-          <label class="visually-hidden" for="subBirthday">Birthday</label>
+          <label class="visually-hidden" for="subName" data-i18n>Full name</label>
+          <input class="subscribe__input" id="subName" type="text" placeholder="Full name" required data-i18n-attr="placeholder">
+          <label class="visually-hidden" for="subEmail" data-i18n>Email address</label>
+          <input class="subscribe__input" id="subEmail" type="email" placeholder="Email address" required data-i18n-attr="placeholder">
+          <label class="visually-hidden" for="subPhone" data-i18n>Phone (optional)</label>
+          <input class="subscribe__input" id="subPhone" type="tel" placeholder="Phone (optional, for SMS offers)" data-i18n-attr="placeholder">
+          <label class="visually-hidden" for="subBirthday" data-i18n>Birthday</label>
           <input class="subscribe__input" id="subBirthday" type="date">
-          <label class="visually-hidden" for="subSize">Usual size</label>
+          <label class="visually-hidden" for="subSize" data-i18n>Usual size</label>
           <select class="subscribe__input" id="subSize">
-            <option value="">Usual size (optional)</option>
+            <option value="" data-i18n>Usual size (optional)</option>
             <option>36</option><option>37</option><option>38</option><option>39</option><option>40</option>
             <option>41</option><option>42</option><option>43</option><option>44</option><option>45</option>
             <option>46</option><option>47</option><option>48</option>
           </select>
-          <label class="subscribe__topic"><input type="checkbox" required> I agree to the privacy policy and terms of use</label>
-          <button class="btn btn--accent" type="submit">Subscribe</button>
-          <p class="subscribe__fine">We send two to four emails a month. We never sell your details, and every email carries a one-click unsubscribe link.</p>
+          <label class="subscribe__topic"><input type="checkbox" required> <span data-i18n>I agree to the privacy policy and terms of use</span></label>
+          <button class="btn btn--accent" type="submit" data-i18n>Subscribe</button>
+          <p class="subscribe__fine" data-i18n>We send two to four emails a month. We never sell your details, and every email carries a one-click unsubscribe link.</p>
         </form>
       </div>
     </div>
@@ -829,18 +829,18 @@
   <!-- ======================= SEO TEXT ======================= -->
   <section class="section container">
     <div class="seo-text">
-      <h3>Footwear for every activity, in one place</h3>
-      <p>STEP has been fitting shoes since 1978, starting from a single counter and growing into fourteen branches and a warehouse that ships nationwide. Across running, sneakers, boots, kids, and sport we carry 1,284 styles from twelve houses, including twelve colorways sold nowhere else in the country.</p>
-      <h3>Fit first, everything else second</h3>
-      <p>Every branch measures feet free of charge, and six branches run a treadmill gait analysis that takes about twenty minutes. There is no obligation to buy afterwards, and the specialist is not paid on commission — which is why the recommendation is as often the cheaper shoe as the expensive one.</p>
-      <h3>Buying online without the guesswork</h3>
-      <p>Product pages carry the same measurements our staff use in store: stack height, drop, weight on a size 42, and whether the model runs small or large based on aggregated exchange data rather than opinion. Standard delivery takes three to five business days, express arrives next day when ordered before 2 pm, and same-day pickup is available in every branch.</p>
-      <h3>Returns that do not require an argument</h3>
-      <p>Sixty days on full-price footwear, thirty on sale items, free either way. Drop the parcel at any branch or book a courier collection from your account. Refunds are processed within two business days of the parcel arriving, and exchanges ship as soon as the courier scans your return rather than waiting for it to land.</p>
-      <h3>Care, repair, and a longer second life</h3>
-      <p>Eight branches offer resoling, stitching, heel replacement, and eyelet repair, usually within five to seven business days. Custom insoles are fitted in a forty-five minute appointment, and club members at Sprint tier and above get a pair free once a year.</p>
-      <h3>Sustainability, measured rather than claimed</h3>
-      <p>Recycled content averages 62% across our own-label uppers, and every figure on a product page is the audited number from the supplier, not a marketing estimate. Our take-back scheme has collected 41,000 pairs since 2021, sorted for resale, donation, or granulation into playground surfacing.</p>
+      <h3 data-i18n>Footwear for every activity, in one place</h3>
+      <p data-i18n>STEP has been fitting shoes since 1978, starting from a single counter and growing into fourteen branches and a warehouse that ships nationwide. Across running, sneakers, boots, kids, and sport we carry 1,284 styles from twelve houses, including twelve colorways sold nowhere else in the country.</p>
+      <h3 data-i18n>Fit first, everything else second</h3>
+      <p data-i18n>Every branch measures feet free of charge, and six branches run a treadmill gait analysis that takes about twenty minutes. There is no obligation to buy afterwards, and the specialist is not paid on commission — which is why the recommendation is as often the cheaper shoe as the expensive one.</p>
+      <h3 data-i18n>Buying online without the guesswork</h3>
+      <p data-i18n>Product pages carry the same measurements our staff use in store: stack height, drop, weight on a size 42, and whether the model runs small or large based on aggregated exchange data rather than opinion. Standard delivery takes three to five business days, express arrives next day when ordered before 2 pm, and same-day pickup is available in every branch.</p>
+      <h3 data-i18n>Returns that do not require an argument</h3>
+      <p data-i18n>Sixty days on full-price footwear, thirty on sale items, free either way. Drop the parcel at any branch or book a courier collection from your account. Refunds are processed within two business days of the parcel arriving, and exchanges ship as soon as the courier scans your return rather than waiting for it to land.</p>
+      <h3 data-i18n>Care, repair, and a longer second life</h3>
+      <p data-i18n>Eight branches offer resoling, stitching, heel replacement, and eyelet repair, usually within five to seven business days. Custom insoles are fitted in a forty-five minute appointment, and club members at Sprint tier and above get a pair free once a year.</p>
+      <h3 data-i18n>Sustainability, measured rather than claimed</h3>
+      <p data-i18n>Recycled content averages 62% across our own-label uppers, and every figure on a product page is the audited number from the supplier, not a marketing estimate. Our take-back scheme has collected 41,000 pairs since 2021, sorted for resale, donation, or granulation into playground surfacing.</p>
     </div>
   </section>
 
@@ -853,7 +853,7 @@
 
     <div class="mega-footer__row">
       <div>
-        <h3 class="mega-footer__title">Follow us</h3>
+        <h3 class="mega-footer__title" data-i18n>Follow us</h3>
         <div class="social-list">
           <a href="#" aria-label="Instagram">📷</a>
           <a href="#" aria-label="Facebook">👍</a>
@@ -866,35 +866,35 @@
         </div>
       </div>
       <div>
-        <h3 class="mega-footer__title">We accept</h3>
+        <h3 class="mega-footer__title" data-i18n>We accept</h3>
         <div class="pay-list">
           <span class="pay-chip">Visa</span><span class="pay-chip">Mastercard</span>
           <span class="pay-chip">American Express</span><span class="pay-chip">Diners</span>
           <span class="pay-chip">Apple Pay</span><span class="pay-chip">Google Pay</span>
           <span class="pay-chip">PayPal</span><span class="pay-chip">Bit</span>
-          <span class="pay-chip">Gift card</span><span class="pay-chip">Club points</span>
+          <span class="pay-chip" data-i18n>Gift card</span><span class="pay-chip" data-i18n>Club points</span>
         </div>
       </div>
       <div>
-        <h3 class="mega-footer__title">Certified</h3>
+        <h3 class="mega-footer__title" data-i18n>Certified</h3>
         <div class="cert-list">
-          <span class="cert-chip">SSL secured</span><span class="cert-chip">PCI DSS</span>
+          <span class="cert-chip" data-i18n>SSL secured</span><span class="cert-chip">PCI DSS</span>
           <span class="cert-chip">ISO 14001</span><span class="cert-chip">WCAG 2.2 AA</span>
-          <span class="cert-chip">Fair Trade partner</span>
+          <span class="cert-chip" data-i18n>Fair Trade partner</span>
         </div>
       </div>
     </div>
 
     <div>
-      <h3 class="mega-footer__title" style="margin-top:var(--space-6)">Popular searches</h3>
+      <h3 class="mega-footer__title" style="margin-top:var(--space-6)" data-i18n>Popular searches</h3>
       <p class="mega-footer__seo" id="footerSeo"></p>
     </div>
 
     <div class="mega-footer__bottom">
-      <span>© 2026 STEP Footwear Ltd. All rights reserved. Company no. 51-2938471.</span>
+      <span data-i18n>© 2026 STEP Footwear Ltd. All rights reserved. Company no. 51-2938471.</span>
       <span>
-        <a href="#">Terms</a> · <a href="#">Privacy</a> · <a href="#">Cookies</a> ·
-        <a href="#">Accessibility statement</a> · <a href="#">Sitemap</a>
+        <a href="#" data-i18n>Terms</a> · <a href="#" data-i18n>Privacy</a> · <a href="#" data-i18n>Cookies</a> ·
+        <a href="#" data-i18n>Accessibility statement</a> · <a href="#" data-i18n>Sitemap</a>
       </span>
     </div>
   </div>
@@ -904,37 +904,37 @@
 <div class="cookie-bar is-hidden" id="cookieBar">
   <div class="cookie-bar__inner">
     <p class="cookie-bar__text">
-      We use cookies to keep your cart, remember your size preferences, and measure which pages are useful.
-      Analytics and marketing cookies are optional and stay off until you accept them.
-      Read our <a href="#" style="color:var(--color-accent);text-decoration:underline">cookie policy</a>.
+      <span data-i18n>We use cookies to keep your cart, remember your size preferences, and measure which pages are useful.</span>
+      <span data-i18n>Analytics and marketing cookies are optional and stay off until you accept them.</span>
+      <span data-i18n>Read our </span><a href="#" style="color:var(--color-accent);text-decoration:underline" data-i18n>cookie policy</a><span data-i18n>.</span>
     </p>
     <div class="cookie-bar__actions">
-      <button class="btn btn--accent" type="button" data-cookie="all">Accept all</button>
-      <button class="btn btn--outline" type="button" data-cookie="essential">Essential only</button>
-      <button class="btn btn--outline" type="button" data-cookie="custom">Manage preferences</button>
+      <button class="btn btn--accent" type="button" data-cookie="all" data-i18n>Accept all</button>
+      <button class="btn btn--outline" type="button" data-cookie="essential" data-i18n>Essential only</button>
+      <button class="btn btn--outline" type="button" data-cookie="custom" data-i18n>Manage preferences</button>
     </div>
   </div>
 </div>
 
 <!-- ======================= FLOATING UI ======================= -->
 <div class="fab-stack">
-  <button class="fab" type="button" id="backToTop" aria-label="Back to top">↑</button>
-  <button class="fab fab--accent" type="button" id="chatToggle" aria-label="Open live chat">💬</button>
+  <button class="fab" type="button" id="backToTop" aria-label="Back to top" data-i18n-attr="aria-label">↑</button>
+  <button class="fab fab--accent" type="button" id="chatToggle" aria-label="Open live chat" data-i18n-attr="aria-label">💬</button>
 </div>
 
 <div class="chat-window is-hidden" id="chatWindow">
   <div class="chat-window__head">
-    <strong style="font-size:14.5px">STEP support</strong>
-    <button class="icon-btn" type="button" id="chatClose" aria-label="Close chat" style="color:#fff">✕</button>
+    <strong style="font-size:14.5px" data-i18n>STEP support</strong>
+    <button class="icon-btn" type="button" id="chatClose" aria-label="Close chat" style="color:#fff" data-i18n-attr="aria-label">✕</button>
   </div>
   <div class="chat-window__body" id="chatBody">
-    <p class="chat-msg chat-msg--bot">Hi! I'm here Sunday to Thursday, 08:00–22:00. What can I help you find?</p>
-    <p class="chat-msg chat-msg--bot">You can ask about sizing, an order, or booking a fitting.</p>
+    <p class="chat-msg chat-msg--bot" data-i18n>Hi! I'm here Sunday to Thursday, 08:00–22:00. What can I help you find?</p>
+    <p class="chat-msg chat-msg--bot" data-i18n>You can ask about sizing, an order, or booking a fitting.</p>
   </div>
   <form class="chat-window__foot" id="chatForm">
-    <label class="visually-hidden" for="chatInput">Message</label>
-    <input class="chat-window__input" id="chatInput" type="text" placeholder="Type a message…">
-    <button class="btn btn--accent" type="submit">Send</button>
+    <label class="visually-hidden" for="chatInput" data-i18n>Message</label>
+    <input class="chat-window__input" id="chatInput" type="text" placeholder="Type a message…" data-i18n-attr="placeholder">
+    <button class="btn btn--accent" type="submit" data-i18n>Send</button>
   </form>
 </div>
 
@@ -942,27 +942,29 @@
 <div class="modal is-hidden" id="sizeModal">
   <div class="modal__box" data-labelledby="sizeModalTitle">
     <div class="modal__head">
-      <h2 id="sizeModalTitle" style="font-size:22px">How to measure your foot</h2>
-      <button class="icon-btn" type="button" data-modal-close aria-label="Close">✕</button>
+      <h2 id="sizeModalTitle" style="font-size:22px" data-i18n>How to measure your foot</h2>
+      <button class="icon-btn" type="button" data-modal-close aria-label="Close" data-i18n-attr="aria-label">✕</button>
     </div>
     <div class="modal__body">
       <ol style="display:flex;flex-direction:column;gap:14px;font-size:14.5px;line-height:1.75;color:var(--color-ink-soft);padding-inline-start:20px;list-style:decimal">
-        <li>Measure in the evening. Feet swell over the day, and a shoe fitted in the morning is often half a size too small by 6 pm.</li>
-        <li>Wear the socks you plan to use with the shoe. A running sock and a wool winter sock differ by nearly half a size.</li>
-        <li>Place a sheet of paper flat against a wall and stand on it with your heel touching the wall, weight even on both feet.</li>
-        <li>Mark the tip of your longest toe — which is not always the big toe.</li>
-        <li>Measure from the wall edge of the paper to the mark, in centimeters. Repeat for the other foot.</li>
-        <li>Use the larger of the two numbers, add 8–10 mm for everyday shoes or 10–12 mm for running, and match it to the CM column in our chart.</li>
+        <li data-i18n>Measure in the evening. Feet swell over the day, and a shoe fitted in the morning is often half a size too small by 6 pm.</li>
+        <li data-i18n>Wear the socks you plan to use with the shoe. A running sock and a wool winter sock differ by nearly half a size.</li>
+        <li data-i18n>Place a sheet of paper flat against a wall and stand on it with your heel touching the wall, weight even on both feet.</li>
+        <li data-i18n>Mark the tip of your longest toe — which is not always the big toe.</li>
+        <li data-i18n>Measure from the wall edge of the paper to the mark, in centimeters. Repeat for the other foot.</li>
+        <li data-i18n>Use the larger of the two numbers, add 8–10 mm for everyday shoes or 10–12 mm for running, and match it to the CM column in our chart.</li>
       </ol>
-      <p style="margin-top:18px;font-size:14px;color:var(--color-ink-soft)">Still unsure? Any branch will measure both feet at no charge, with no appointment needed.</p>
+      <p style="margin-top:18px;font-size:14px;color:var(--color-ink-soft)" data-i18n>Still unsure? Any branch will measure both feet at no charge, with no appointment needed.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px">
-        <a class="btn btn--accent" href="#sizes">Open the size chart</a>
-        <a class="btn btn--outline" href="#locator">Find a branch</a>
+        <a class="btn btn--accent" href="#sizes" data-i18n>Open the size chart</a>
+        <a class="btn btn--outline" href="#locator" data-i18n>Find a branch</a>
       </div>
     </div>
   </div>
 </div>
 
+<script src="i18n/i18n.js"></script>
+<script src="i18n/translations.js"></script>
 <script src="real-script.js"></script>
 <script src="real-mega.js"></script>
 <script id="u1-js" src="https://dev.oreltest.user1st.com/u1_vanilla-js-a11y.js" type="text/javascript"></script>

@@ -122,6 +122,7 @@ Store.PRODUCTS = [
 
 Store.getProduct = id => Store.PRODUCTS.find(p => p.id === Number(id));
 Store.getCategoryLabel = slug => (Store.CATEGORIES.find(c => c.slug === slug) || {}).label || slug;
+Store.t = s => (window.T ? window.T(s) : s);
 
 /* ==========================================================================
    0b. NAVIGATION — multi-level menu config, rendered into every header
@@ -329,7 +330,7 @@ Store.header = (() => {
         </div>
         <div>
           <div class="cart-line__name">${Store.utils.escapeHtml(product.name)}</div>
-          <div class="cart-line__meta">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
+          <div class="cart-line__meta">${Store.t('Size')} ${size} · ${Store.utils.escapeHtml(colorName)}</div>
           <div class="cart-line__qty">
             <div class="qty-stepper" data-drawer-qty>
               <button class="qty-stepper__btn" type="button" data-step="-1">−</button>
@@ -340,7 +341,7 @@ Store.header = (() => {
         </div>
         <div class="cart-line__col-end">
           <span class="cart-line__price">${Store.utils.formatPrice(product.price * qty)}</span>
-          <button class="cart-line__remove" type="button" data-remove>Remove</button>
+          <button class="cart-line__remove" type="button" data-remove>${Store.t('Remove')}</button>
         </div>
       </div>`;
   }
@@ -352,7 +353,7 @@ Store.header = (() => {
     const items = Store.cart.withProducts();
 
     if (!items.length) {
-      itemsEl.innerHTML = `<div class="cart-drawer__empty">Your cart is empty right now.<br>Time to find a new pair 👟</div>`;
+      itemsEl.innerHTML = `<div class="cart-drawer__empty">${Store.t('Your cart is empty right now.')}<br>${Store.t('Time to find a new pair 👟')}</div>`;
       footerEl.innerHTML = '';
       return;
     }
@@ -360,12 +361,12 @@ Store.header = (() => {
     itemsEl.innerHTML = items.map(lineTemplate).join('');
     const { subtotal, shipping, discount, total } = Store.cart.totals();
     footerEl.innerHTML = `
-      <div class="summary-row"><span>Subtotal</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
-      ${discount ? `<div class="summary-row"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
-      <div class="summary-row"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
-      <div class="summary-row summary-row--total"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
-      <a class="btn btn--primary btn--block" href="cart.html">View Cart</a>
-      <a class="btn btn--outline btn--block" href="checkout.html">Checkout</a>`;
+      <div class="summary-row"><span>${Store.t('Subtotal')}</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
+      ${discount ? `<div class="summary-row"><span>${Store.t('Discount')}</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
+      <div class="summary-row"><span>${Store.t('Shipping')}</span><span>${shipping === 0 ? Store.t('Free') : Store.utils.formatPrice(shipping)}</span></div>
+      <div class="summary-row summary-row--total"><span>${Store.t('Total')}</span><span>${Store.utils.formatPrice(total)}</span></div>
+      <a class="btn btn--primary btn--block" href="cart.html">${Store.t('View Cart')}</a>
+      <a class="btn btn--outline btn--block" href="checkout.html">${Store.t('Checkout')}</a>`;
   }
 
   function openDrawer() {
@@ -428,13 +429,18 @@ Store.header = (() => {
     if (newsletterForm) {
       newsletterForm.addEventListener('submit', e => {
         e.preventDefault();
-        Store.toast.show('Thanks for subscribing! Updates and perks are on their way 💌', 'success');
+        Store.toast.show(Store.t('Thanks for subscribing! Updates and perks are on their way 💌'), 'success');
         newsletterForm.reset();
       });
     }
   }
 
-  return { init, renderBadge, renderDrawer, openDrawer, closeDrawer };
+  function refresh() {
+    renderNav();
+    if (!document.getElementById('cartDrawerOverlay').classList.contains('is-hidden')) renderDrawer();
+  }
+
+  return { init, refresh, renderBadge, renderDrawer, openDrawer, closeDrawer };
 })();
 
 /* ==========================================================================
@@ -460,7 +466,7 @@ Store.homePage = (() => {
 
   function productCardTemplate(p) {
     const oldPriceHtml = p.oldPrice ? `<span class="product-card__price--old">${Store.utils.formatPrice(p.oldPrice)}</span>` : '';
-    const badgeHtml = p.badge ? `<span class="product-card__tag ${p.badge === 'sale' ? 'product-card__tag--sale' : ''}">${p.badge === 'sale' ? 'Sale' : 'New'}</span>` : '';
+    const badgeHtml = p.badge ? `<span class="product-card__tag ${p.badge === 'sale' ? 'product-card__tag--sale' : ''}">${Store.t(p.badge === 'sale' ? 'Sale' : 'New')}</span>` : '';
     return `
       <article class="product-card">
         ${badgeHtml}
@@ -469,7 +475,7 @@ Store.homePage = (() => {
           ${Store.shoeIconSVG('#fff')}
         </a>
         <div class="product-card__body">
-          <span class="product-card__category">${Store.getCategoryLabel(p.category)}</span>
+          <span class="product-card__category">${Store.t(Store.getCategoryLabel(p.category))}</span>
           <h3 class="product-card__name"><a href="product.html?id=${p.id}">${Store.utils.escapeHtml(p.name)}</a></h3>
           <span class="product-card__rating">${Store.utils.stars(p.rating)} <span style="color:var(--color-ink-faint)">(${p.reviews})</span></span>
           <div class="product-card__price-row">
@@ -477,10 +483,10 @@ Store.homePage = (() => {
             ${oldPriceHtml}
           </div>
           <div class="product-card__swatches">
-            ${p.colors.map(c => `<span class="product-card__swatch" style="background:${c.hex}" title="${c.name}"></span>`).join('')}
+            ${p.colors.map(c => `<span class="product-card__swatch" style="background:${c.hex}" title="${Store.t(c.name)}"></span>`).join('')}
           </div>
         </div>
-        <button class="product-card__add" type="button" data-quick-add="${p.id}">Add to Cart</button>
+        <button class="product-card__add" type="button" data-quick-add="${p.id}">${Store.t('Add to Cart')}</button>
       </article>`;
   }
 
@@ -509,7 +515,7 @@ Store.homePage = (() => {
     if (quickAdd) {
       const product = Store.getProduct(quickAdd.dataset.quickAdd);
       Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
-      Store.toast.show(`${product.name} added to cart`, 'success');
+      Store.toast.show(`${product.name} ${Store.t('added to cart')}`, 'success');
     } else if (wish) {
       const pressed = wish.dataset.pressed === 'true';
       wish.dataset.pressed = String(!pressed);
@@ -524,7 +530,13 @@ Store.homePage = (() => {
     document.body.addEventListener('click', handleGridClick);
   }
 
-  return { init, productCardTemplate };
+  function refresh() {
+    if (!document.getElementById('featuredGrid')) return;
+    renderCategories();
+    renderFeatured();
+  }
+
+  return { init, refresh, productCardTemplate };
 })();
 
 /* ==========================================================================
@@ -559,10 +571,10 @@ Store.shopPage = (() => {
   function renderFilterChips() {
     const el = document.getElementById('activeFilterChips');
     const chips = [];
-    state.categories.forEach(c => chips.push({ type: 'cat', value: c, label: Store.getCategoryLabel(c) }));
-    state.sizes.forEach(s => chips.push({ type: 'size', value: s, label: `Size ${s}` }));
-    if (state.maxPrice < 900) chips.push({ type: 'price', value: '', label: `Under ${Store.utils.formatPrice(state.maxPrice)}` });
-    if (state.badge) chips.push({ type: 'badge', value: state.badge, label: state.badge === 'sale' ? 'Sale' : 'New Arrivals' });
+    state.categories.forEach(c => chips.push({ type: 'cat', value: c, label: Store.t(Store.getCategoryLabel(c)) }));
+    state.sizes.forEach(s => chips.push({ type: 'size', value: s, label: `${Store.t('Size')} ${s}` }));
+    if (state.maxPrice < 900) chips.push({ type: 'price', value: '', label: `${Store.t('Under')} ${Store.utils.formatPrice(state.maxPrice)}` });
+    if (state.badge) chips.push({ type: 'badge', value: state.badge, label: Store.t(state.badge === 'sale' ? 'Sale' : 'New Arrivals') });
 
     el.innerHTML = chips.map(c => `
       <span class="filter-chip" data-chip-type="${c.type}" data-chip-value="${c.value}">
@@ -577,7 +589,7 @@ Store.shopPage = (() => {
       return `
         <label class="filter-check">
           <input class="filter-check__input" type="checkbox" value="${c.slug}" ${state.categories.has(c.slug) ? 'checked' : ''}>
-          ${c.label} <span class="filter-check__count">${count}</span>
+          ${Store.t(c.label)} <span class="filter-check__count">${count}</span>
         </label>`;
     }).join('');
 
@@ -592,16 +604,17 @@ Store.shopPage = (() => {
 
   function renderGrid() {
     const grid = document.getElementById('shopGrid');
+    if (!grid) return;
     const filtered = getFiltered();
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     state.page = Math.min(state.page, totalPages);
     const pageItems = filtered.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
 
-    document.getElementById('resultCount').textContent = `${filtered.length} products`;
+    document.getElementById('resultCount').textContent = `${filtered.length} ${Store.t('products')}`;
 
     grid.innerHTML = pageItems.length
       ? pageItems.map(Store.homePage.productCardTemplate).join('')
-      : `<p class="empty-state">No products match your filters.<br>Try removing a few filters.</p>`;
+      : `<p class="empty-state">${Store.t('No products match your filters.')}<br>${Store.t('Try removing a few filters.')}</p>`;
 
     renderPagination(totalPages);
     renderFilterChips();
@@ -679,7 +692,7 @@ Store.shopPage = (() => {
       if (quickAdd) {
         const product = Store.getProduct(quickAdd.dataset.quickAdd);
         Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
-        Store.toast.show(`${product.name} added to cart`, 'success');
+        Store.toast.show(`${product.name} ${Store.t('added to cart')}`, 'success');
       } else if (wish) {
         const pressed = wish.dataset.pressed === 'true';
         wish.dataset.pressed = String(!pressed);
@@ -701,7 +714,7 @@ Store.shopPage = (() => {
     renderGrid();
   }
 
-  return { init };
+  return { init, refresh: renderGrid };
 })();
 
 /* ==========================================================================
@@ -728,7 +741,7 @@ Store.productPage = (() => {
       <button class="color-swatch ${c.name === selectedColor.name ? 'color-swatch--active' : ''}" type="button" data-color="${Store.utils.escapeHtml(c.name)}">
         <span class="color-swatch__fill" style="background:${c.hex}"></span>
       </button>`).join('');
-    document.getElementById('selectedColorLabel').textContent = selectedColor.name;
+    document.getElementById('selectedColorLabel').textContent = Store.t(selectedColor.name);
   }
 
   function renderSizes() {
@@ -737,28 +750,28 @@ Store.productPage = (() => {
   }
 
   function renderInfo() {
-    document.getElementById('breadcrumbCategory').textContent = Store.getCategoryLabel(product.category);
+    document.getElementById('breadcrumbCategory').textContent = Store.t(Store.getCategoryLabel(product.category));
     document.getElementById('breadcrumbCategory').href = `shop.html?cat=${product.category}`;
     document.getElementById('breadcrumbName').textContent = product.name;
-    document.getElementById('productCategoryLabel').textContent = Store.getCategoryLabel(product.category);
+    document.getElementById('productCategoryLabel').textContent = Store.t(Store.getCategoryLabel(product.category));
     document.getElementById('productTitle').textContent = product.name;
     document.getElementById('productStars').textContent = Store.utils.stars(product.rating);
-    document.getElementById('productReviewCount').textContent = `${product.rating} · ${product.reviews} reviews`;
+    document.getElementById('productReviewCount').textContent = `${product.rating} · ${product.reviews} ${Store.t('reviews')}`;
     document.getElementById('productPrice').textContent = Store.utils.formatPrice(product.price);
-    document.getElementById('productDesc').textContent = product.desc;
+    document.getElementById('productDesc').textContent = Store.t(product.desc);
     document.title = `${product.name} — STEP`;
 
     const oldPriceEl = document.getElementById('productOldPrice');
     if (product.oldPrice) { oldPriceEl.textContent = Store.utils.formatPrice(product.oldPrice); oldPriceEl.classList.toggle('is-hidden', !!(false)); }
     else oldPriceEl.classList.toggle('is-hidden', !!(true));
 
-    document.getElementById('descPanel').textContent = product.desc;
+    document.getElementById('descPanel').textContent = Store.t(product.desc);
     document.getElementById('detailsPanel').innerHTML = `
       <div class="spec-list">
-        <div><span>Upper material</span><strong>${product.details.material}</strong></div>
-        <div><span>Sole</span><strong>${product.details.sole}</strong></div>
-        <div><span>Country of origin</span><strong>${product.details.origin}</strong></div>
-        <div><span>Weight</span><strong>${product.details.weight}</strong></div>
+        <div><span>${Store.t('Upper material')}</span><strong>${Store.t(product.details.material)}</strong></div>
+        <div><span>${Store.t('Sole')}</span><strong>${Store.t(product.details.sole)}</strong></div>
+        <div><span>${Store.t('Country of origin')}</span><strong>${Store.t(product.details.origin)}</strong></div>
+        <div><span>${Store.t('Weight')}</span><strong>${product.details.weight}</strong></div>
       </div>`;
   }
 
@@ -809,7 +822,7 @@ Store.productPage = (() => {
       }
       const qty = Number(document.getElementById('qtyValue').textContent);
       Store.cart.add(product.id, selectedSize, selectedColor.name, qty);
-      Store.toast.show(`${product.name} (size ${selectedSize}) added to cart`, 'success');
+      Store.toast.show(`${product.name} (${Store.t('size')} ${selectedSize}) ${Store.t('added to cart')}`, 'success');
       Store.header.openDrawer();
     });
   }
@@ -833,7 +846,14 @@ Store.productPage = (() => {
     initAddToCart();
   }
 
-  return { init };
+  function refresh() {
+    if (!document.getElementById('productDetail') || !product) return;
+    renderInfo();
+    renderColors();
+    renderRelated();
+  }
+
+  return { init, refresh };
 })();
 
 /* ==========================================================================
@@ -850,7 +870,7 @@ Store.cartPage = (() => {
             <div class="cart-table__thumb" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
             <div>
               <div class="cart-table__name">${Store.utils.escapeHtml(product.name)}</div>
-              <div class="cart-table__meta">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
+              <div class="cart-table__meta">${Store.t('Size')} ${size} · ${Store.utils.escapeHtml(colorName)}</div>
             </div>
           </div>
         </td>
@@ -863,14 +883,14 @@ Store.cartPage = (() => {
           </div>
         </td>
         <td><strong>${Store.utils.formatPrice(product.price * qty)}</strong></td>
-        <td><button class="cart-line__remove" type="button" data-remove>Remove</button></td>
+        <td><button class="cart-line__remove" type="button" data-remove>${Store.t('Remove')}</button></td>
       </tr>`;
   }
 
   function renderSummary() {
     const { subtotal, shipping, discount, total, promo, freeShippingRemaining } = Store.cart.totals();
     document.getElementById('summarySubtotal').textContent = Store.utils.formatPrice(subtotal);
-    document.getElementById('summaryShipping').textContent = shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping);
+    document.getElementById('summaryShipping').textContent = shipping === 0 ? Store.t('Free') : Store.utils.formatPrice(shipping);
     document.getElementById('summaryTotal').textContent = Store.utils.formatPrice(total);
 
     const discountRow = document.getElementById('summaryDiscountRow');
@@ -882,8 +902,8 @@ Store.cartPage = (() => {
     const freeShipNote = document.getElementById('freeShippingNote');
     if (freeShipNote) {
       freeShipNote.textContent = freeShippingRemaining > 0
-        ? `Add ${Store.utils.formatPrice(freeShippingRemaining)} more for free shipping!`
-        : 'You qualify for free shipping 🎉';
+        ? `${Store.t('Add')} ${Store.utils.formatPrice(freeShippingRemaining)} ${Store.t('more for free shipping!')}`
+        : Store.t('You qualify for free shipping 🎉');
     }
 
     const checkoutBtn = document.getElementById('goToCheckoutBtn');
@@ -921,7 +941,7 @@ Store.cartPage = (() => {
     } else if (removeBtn) {
       const row = removeBtn.closest('tr');
       Store.cart.remove(Number(row.dataset.index));
-      Store.toast.show('Item removed from cart', 'info');
+      Store.toast.show(Store.t('Item removed from cart'), 'info');
       render();
     }
   }
@@ -935,11 +955,11 @@ Store.cartPage = (() => {
       const rate = Store.cart.setPromo(input.value);
       const msg = document.getElementById('promoMsg');
       if (rate) {
-        msg.textContent = `Code "${input.value.trim().toUpperCase()}" applied — ${Math.round(rate * 100)}% off`;
+        msg.textContent = `${Store.t('Code')} "${input.value.trim().toUpperCase()}" ${Store.t('applied —')} ${Math.round(rate * 100)}${Store.t('% off')}`;
         msg.className = 'promo-msg promo-msg--success';
-        Store.toast.show('Promo code applied!', 'success');
+        Store.toast.show(Store.t('Promo code applied!'), 'success');
       } else {
-        msg.textContent = 'Invalid promo code. Try SALE10 or WELCOME15.';
+        msg.textContent = Store.t('Invalid promo code. Try SALE10 or WELCOME15.');
         msg.className = 'promo-msg promo-msg--error';
       }
       render();
@@ -960,12 +980,17 @@ Store.cartPage = (() => {
     const existingPromo = Store.cart.getPromo();
     if (existingPromo) {
       const msg = document.getElementById('promoMsg');
-      msg.textContent = `Code "${existingPromo.code}" applied — ${Math.round(existingPromo.rate * 100)}% off`;
+      msg.textContent = `${Store.t('Code')} "${existingPromo.code}" ${Store.t('applied —')} ${Math.round(existingPromo.rate * 100)}${Store.t('% off')}`;
       msg.className = 'promo-msg promo-msg--success';
     }
   }
 
-  return { init };
+  function refresh() {
+    if (!document.getElementById('cartTableWrap')) return;
+    render();
+  }
+
+  return { init, refresh };
 })();
 
 /* ==========================================================================
@@ -1166,4 +1191,14 @@ document.addEventListener('DOMContentLoaded', () => {
   Store.productPage.init();
   Store.cartPage.init();
   Store.checkoutPage.init();
+
+  if (window.STEP_I18N) {
+    window.STEP_I18N.onLanguageChange(() => {
+      Store.header.refresh();
+      Store.homePage.refresh();
+      Store.shopPage.refresh();
+      Store.productPage.refresh();
+      Store.cartPage.refresh();
+    });
+  }
 });

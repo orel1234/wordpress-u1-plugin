@@ -96,7 +96,7 @@
       // after one round.
       attributeFilter: ['role', 'aria-selected', 'aria-checked', 'aria-hidden',
                         'aria-labeledby', 'aria-current', 'aria-expanded',
-                        'tabindex', 'hidden'],
+                        'tabindex', 'hidden', 'lang', 'dir'],
     });
   } catch (e) {}
   if (document.readyState === 'loading') {

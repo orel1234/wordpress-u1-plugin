@@ -336,6 +336,13 @@ Mega.SEO_LINKS = [
 const el = id => document.getElementById(id);
 const esc = s => Store.utils.escapeHtml(s);
 const price = n => Store.utils.formatPrice(n);
+const t = s => (window.T ? window.T(s) : s);
+
+// Remembered so a language switch can re-render each widget in its
+// last-selected state instead of resetting it back to the defaults.
+let currentDealTab = 'week';
+let currentFaqTab = 'orders';
+let currentStoreIndex = 0;
 
 Mega.render = {
   menu() {
@@ -345,22 +352,22 @@ Mega.render = {
       <li class="mega-nav__item">
         <button class="mega-nav__trigger ${item.hot ? 'mega-nav__trigger--hot' : ''}"
                 type="button" data-expanded="false" data-controls="megaPanel${i}" data-mega-trigger="${i}">
-          ${esc(item.label)} <span class="mega-nav__caret" aria-hidden="true">▾</span>
+          ${esc(t(item.label))} <span class="mega-nav__caret" aria-hidden="true">▾</span>
         </button>
         <div class="mega-panel is-hidden" id="megaPanel${i}" data-mega-panel="${i}">
           ${item.cols.map(col => `
             <div>
-              <h3 class="mega-panel__col-title">${esc(col.title)}</h3>
+              <h3 class="mega-panel__col-title">${esc(t(col.title))}</h3>
               <ul class="mega-panel__links">
-                ${col.links.map(l => `<li><a href="shop.html">${esc(l)}</a></li>`).join('')}
+                ${col.links.map(l => `<li><a href="shop.html">${esc(t(l))}</a></li>`).join('')}
               </ul>
             </div>`).join('')}
           <div class="mega-panel__promo">
-            <span class="mega-panel__promo-tag">${esc(item.promo.tag)}</span>
+            <span class="mega-panel__promo-tag">${esc(t(item.promo.tag))}</span>
             ${Store.shoeIconSVG(Mega.color(i))}
-            <h3 class="mega-panel__promo-title">${esc(item.promo.title)}</h3>
-            <p class="mega-panel__promo-desc">${esc(item.promo.desc)}</p>
-            <a class="btn btn--outline" href="shop.html">Explore</a>
+            <h3 class="mega-panel__promo-title">${esc(t(item.promo.title))}</h3>
+            <p class="mega-panel__promo-desc">${esc(t(item.promo.desc))}</p>
+            <a class="btn btn--outline" href="shop.html">${esc(t('Explore'))}</a>
           </div>
         </div>
       </li>`).join('');
@@ -371,7 +378,7 @@ Mega.render = {
     if (!host) return;
     host.innerHTML = Mega.TICKER.map((msg, i) => `
       <p class="ticker__item ${i === 0 ? 'ticker__item--active' : ''}" data-ticker-item="${i}">
-        <span aria-hidden="true">✦</span> ${esc(msg)} <a href="shop.html">Details</a>
+        <span aria-hidden="true">✦</span> ${esc(t(msg))} <a href="shop.html">${esc(t('Details'))}</a>
       </p>`).join('');
   },
 
@@ -384,13 +391,13 @@ Mega.render = {
            aria-label="Slide ${i + 1} of ${Mega.SLIDES.length}">
         <div class="hero-slide__inner">
           <div>
-            <span class="hero-slide__eyebrow">${esc(s.eyebrow)}</span>
-            <h2 class="hero-slide__title">${s.title}</h2>
-            <p class="hero-slide__desc">${esc(s.desc)}</p>
-            <div class="hero-slide__meta">${s.meta.map(m => `<span>✓ ${esc(m)}</span>`).join('')}</div>
+            <span class="hero-slide__eyebrow">${esc(t(s.eyebrow))}</span>
+            <h2 class="hero-slide__title">${t(s.title)}</h2>
+            <p class="hero-slide__desc">${esc(t(s.desc))}</p>
+            <div class="hero-slide__meta">${s.meta.map(m => `<span>✓ ${esc(t(m))}</span>`).join('')}</div>
             <div class="hero-slide__actions">
-              <a class="btn btn--accent" href="shop.html">${esc(s.primary)}</a>
-              <a class="btn btn--outline" style="border-color:#f6f2ea;color:#f6f2ea" href="shop.html">${esc(s.secondary)}</a>
+              <a class="btn btn--accent" href="shop.html">${esc(t(s.primary))}</a>
+              <a class="btn btn--outline" style="border-color:#f6f2ea;color:#f6f2ea" href="shop.html">${esc(t(s.secondary))}</a>
             </div>
           </div>
           <div class="hero-slide__art">
@@ -400,7 +407,7 @@ Mega.render = {
       </div>`).join('');
     dots.innerHTML = Mega.SLIDES.map((s, i) => `
       <button class="hero-carousel__dot ${i === 0 ? 'hero-carousel__dot--active' : ''}" type="button"
-              data-slide-dot="${i}" aria-label="Go to slide ${i + 1}: ${esc(s.eyebrow)}"></button>`).join('');
+              data-slide-dot="${i}" aria-label="Go to slide ${i + 1}: ${esc(t(s.eyebrow))}"></button>`).join('');
   },
 
   quick() {
@@ -409,19 +416,20 @@ Mega.render = {
     host.innerHTML = Mega.QUICK.map(q => `
       <a class="quick-strip__item" href="shop.html">
         <span class="quick-strip__icon" aria-hidden="true">${q.icon}</span>
-        <span>${esc(q.label)}</span>
+        <span>${esc(t(q.label))}</span>
       </a>`).join('');
   },
 
   dealTabs() {
     const host = el('dealTabs');
     if (!host) return;
-    host.innerHTML = Mega.DEAL_TABS.map((t, i) => `
-      <button class="tab-bar__btn" type="button" id="dealTab-${t.id}"
-              data-controls="dealPanel" data-selected="${i === 0}" data-deal-tab="${t.id}">${esc(t.label)}</button>`).join('');
+    host.innerHTML = Mega.DEAL_TABS.map((tab, i) => `
+      <button class="tab-bar__btn" type="button" id="dealTab-${tab.id}"
+              data-controls="dealPanel" data-selected="${tab.id === currentDealTab}" data-deal-tab="${tab.id}">${esc(t(tab.label))}</button>`).join('');
   },
 
   deals(tabId) {
+    currentDealTab = tabId;
     const host = el('dealGrid');
     if (!host) return;
     host.innerHTML = (Mega.DEALS[tabId] || []).map((d, i) => {
@@ -429,15 +437,15 @@ Mega.render = {
       return `
         <article class="deal-card">
           <div class="deal-card__media" style="background:${Mega.color(i)}">
-            <span class="deal-card__ribbon">${esc(ribbon)}</span>
+            <span class="deal-card__ribbon">${esc(t(ribbon))}</span>
             ${Store.shoeIconSVG('#fff')}
           </div>
           <div class="deal-card__body">
             <span class="deal-card__route">${esc(brand)}</span>
             <h3 class="deal-card__name"><a href="shop.html">${esc(name)}</a></h3>
-            <p class="deal-card__note">${esc(note)}</p>
+            <p class="deal-card__note">${esc(t(note))}</p>
             <div class="deal-card__foot">
-              <span class="deal-card__from">was ${price(was)}<br>from</span>
+              <span class="deal-card__from">${esc(t('was'))} ${price(was)}<br>${esc(t('from'))}</span>
               <span class="deal-card__price">${price(now)}</span>
             </div>
           </div>
@@ -456,31 +464,31 @@ Mega.render = {
     if (!host) return;
     host.innerHTML = Mega.BRANDS.map(([name, sub]) => `
       <a class="brand-strip__item" href="shop.html">
-        ${esc(name)}<span class="brand-strip__sub">${esc(sub)}</span>
+        ${esc(name)}<span class="brand-strip__sub">${esc(t(sub))}</span>
       </a>`).join('');
   },
 
   mosaic() {
     const host = el('mosaic');
     if (!host) return;
-    host.innerHTML = Mega.MOSAIC.map((t, i) => `
-      <a class="mosaic__tile ${t.size ? 'mosaic__tile--' + t.size : ''}" href="shop.html" style="background:${Mega.color(i)}">
+    host.innerHTML = Mega.MOSAIC.map((tile, i) => `
+      <a class="mosaic__tile ${tile.size ? 'mosaic__tile--' + tile.size : ''}" href="shop.html" style="background:${Mega.color(i)}">
         ${Store.shoeIconSVG('#fff')}
-        <span class="mosaic__name">${esc(t.name)}</span>
-        <span class="mosaic__count">${esc(t.count)}</span>
+        <span class="mosaic__name">${esc(t(tile.name))}</span>
+        <span class="mosaic__count">${esc(t(tile.count))}</span>
       </a>`).join('');
   },
 
   tiers() {
     const host = el('tierGrid');
     if (!host) return;
-    host.innerHTML = Mega.TIERS.map(t => `
-      <article class="tier-card ${t.featured ? 'tier-card--featured' : ''}">
-        ${t.featured ? '<span class="tier-card__badge">Most popular</span>' : ''}
-        <h3 class="tier-card__name">${esc(t.name)}</h3>
-        <span class="tier-card__points">${esc(t.points)}</span>
-        <ul class="tier-card__perks">${t.perks.map(p => `<li>${esc(p)}</li>`).join('')}</ul>
-        <a class="btn btn--outline" href="shop.html">Learn more</a>
+    host.innerHTML = Mega.TIERS.map(tier => `
+      <article class="tier-card ${tier.featured ? 'tier-card--featured' : ''}">
+        ${tier.featured ? `<span class="tier-card__badge">${esc(t('Most popular'))}</span>` : ''}
+        <h3 class="tier-card__name">${esc(t(tier.name))}</h3>
+        <span class="tier-card__points">${esc(t(tier.points))}</span>
+        <ul class="tier-card__perks">${tier.perks.map(p => `<li>${esc(t(p))}</li>`).join('')}</ul>
+        <a class="btn btn--outline" href="shop.html">${esc(t('Learn more'))}</a>
       </article>`).join('');
   },
 
@@ -489,18 +497,18 @@ Mega.render = {
     if (!host) return;
     host.innerHTML = Mega.SIZE_ROWS.map(r => `
       <tr>
-        <th scope="row">${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${esc(r[4])}</td>
-        <td><a href="shop.html">Shop size ${r[0]}</a></td>
+        <th scope="row">${r[0]}</th><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${esc(t(r[4]))}</td>
+        <td><a href="shop.html">${esc(t('Shop size'))} ${r[0]}</a></td>
       </tr>`).join('');
   },
 
   compareTable() {
     const host = el('compareTableBody');
     if (!host) return;
-    const cell = v => v === true ? '<span class="data-table__yes">Yes</span>'
-      : v === false ? '<span class="data-table__no">No</span>' : esc(v);
+    const cell = v => v === true ? `<span class="data-table__yes">${esc(t('Yes'))}</span>`
+      : v === false ? `<span class="data-table__no">${esc(t('No'))}</span>` : esc(t(v));
     host.innerHTML = Mega.COMPARE_ROWS.map(r => `
-      <tr><th scope="row">${esc(r[0])}</th>${r.slice(1).map(v => `<td>${cell(v)}</td>`).join('')}</tr>`).join('');
+      <tr><th scope="row">${esc(t(r[0]))}</th>${r.slice(1).map(v => `<td>${cell(v)}</td>`).join('')}</tr>`).join('');
   },
 
   articles() {
@@ -510,10 +518,10 @@ Mega.render = {
       <article class="article-card">
         <div class="article-card__media" style="background:${Mega.color(i + 1)}">${Store.shoeIconSVG('#fff')}</div>
         <div class="article-card__body">
-          <span class="article-card__tag">${esc(tag)}</span>
-          <h3 class="article-card__title"><a href="#">${esc(title)}</a></h3>
-          <p class="article-card__excerpt">${esc(excerpt)}</p>
-          <div class="article-card__meta"><span>${esc(date)}</span><span>${esc(read)}</span></div>
+          <span class="article-card__tag">${esc(t(tag))}</span>
+          <h3 class="article-card__title"><a href="#">${esc(t(title))}</a></h3>
+          <p class="article-card__excerpt">${esc(t(excerpt))}</p>
+          <div class="article-card__meta"><span>${esc(date)}</span><span>${esc(t(read))}</span></div>
         </div>
       </article>`).join('');
   },
@@ -539,12 +547,12 @@ Mega.render = {
           <span class="review-card__avatar" style="background:${Mega.color(i)}">${esc(name[0])}</span>
           <span>
             <span class="review-card__name">${esc(name)}</span><br>
-            <span class="review-card__date">${esc(date)} · Verified purchase</span>
+            <span class="review-card__date">${esc(date)} · ${esc(t('Verified purchase'))}</span>
           </span>
         </div>
         <span class="review-card__stars" aria-label="${stars} out of 5 stars">${Store.utils.stars(stars)}</span>
-        <p class="review-card__text">${esc(text)}</p>
-        <span class="review-card__product">Reviewed: ${esc(product)}</span>
+        <p class="review-card__text">${esc(t(text))}</p>
+        <span class="review-card__product">${esc(t('Reviewed'))}: ${esc(product)}</span>
       </article>`).join('');
   },
 
@@ -552,50 +560,52 @@ Mega.render = {
     const host = el('locatorList');
     if (!host) return;
     host.innerHTML = Mega.STORES.map(([name, addr, hours, tags, open], i) => `
-      <button class="locator__item" type="button" data-store="${i}" data-current="${i === 0}">
+      <button class="locator__item" type="button" data-store="${i}" data-current="${i === currentStoreIndex}">
         <span class="locator__name">${esc(name)}</span>
         <span class="locator__addr">${esc(addr)}</span>
-        <span class="${open ? 'locator__open' : 'locator__closed'}">${open ? 'Open now' : 'Closed now'} · ${esc(hours)}</span>
-        <span class="locator__tags">${tags.map(t => `<span class="locator__tag">${esc(t)}</span>`).join('')}</span>
+        <span class="${open ? 'locator__open' : 'locator__closed'}">${open ? esc(t('Open now')) : esc(t('Closed now'))} · ${esc(hours)}</span>
+        <span class="locator__tags">${tags.map(tag => `<span class="locator__tag">${esc(t(tag))}</span>`).join('')}</span>
       </button>`).join('');
   },
 
   storeDetail(i) {
+    currentStoreIndex = i;
     const host = el('locatorDetail');
     if (!host) return;
     const [name, addr, hours, tags, open] = Mega.STORES[i];
     host.innerHTML = `
-      <div class="locator__map" aria-hidden="true">Map preview — ${esc(name)}</div>
+      <div class="locator__map" aria-hidden="true">${esc(t('Map preview'))} — ${esc(name)}</div>
       <h3 style="font-size:22px">${esc(name)}</h3>
       <p style="margin-top:6px;color:var(--color-ink-soft);font-size:14px">${esc(addr)}</p>
-      <p style="margin-top:6px" class="${open ? 'locator__open' : 'locator__closed'}">${open ? 'Open now' : 'Closed now'}</p>
-      <div class="locator__tags" style="margin-top:12px">${tags.map(t => `<span class="locator__tag">${esc(t)}</span>`).join('')}</div>
+      <p style="margin-top:6px" class="${open ? 'locator__open' : 'locator__closed'}">${open ? esc(t('Open now')) : esc(t('Closed now'))}</p>
+      <div class="locator__tags" style="margin-top:12px">${tags.map(tag => `<span class="locator__tag">${esc(t(tag))}</span>`).join('')}</div>
       <div class="table-wrap" style="margin-top:16px">
         <table class="data-table" style="min-width:0">
-          <caption>Opening hours</caption>
+          <caption>${esc(t('Opening hours'))}</caption>
           <tbody>
-            ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'].map(d => `<tr><th scope="row">${d}</th><td>${esc(hours)}</td></tr>`).join('')}
-            <tr><th scope="row">Friday</th><td>09:00–14:00</td></tr>
-            <tr><th scope="row">Saturday</th><td>Closed</td></tr>
+            ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'].map(d => `<tr><th scope="row">${esc(t(d))}</th><td>${esc(hours)}</td></tr>`).join('')}
+            <tr><th scope="row">${esc(t('Friday'))}</th><td>09:00–14:00</td></tr>
+            <tr><th scope="row">${esc(t('Saturday'))}</th><td>${esc(t('Closed'))}</td></tr>
           </tbody>
         </table>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
-        <a class="btn btn--accent" href="#">Get directions</a>
-        <a class="btn btn--outline" href="#">Call branch</a>
-        <a class="btn btn--outline" href="#">Book a fitting</a>
+        <a class="btn btn--accent" href="#">${esc(t('Get directions'))}</a>
+        <a class="btn btn--outline" href="#">${esc(t('Call branch'))}</a>
+        <a class="btn btn--outline" href="#">${esc(t('Book a fitting'))}</a>
       </div>`;
   },
 
   faqTabs() {
     const host = el('faqTabs');
     if (!host) return;
-    host.innerHTML = Mega.FAQ_TABS.map((t, i) => `
-      <button class="tab-bar__btn" type="button" id="faqTab-${t.id}" data-selected="${i === 0}"
-              data-controls="faqPanel" data-faq-tab="${t.id}">${esc(t.label)}</button>`).join('');
+    host.innerHTML = Mega.FAQ_TABS.map((tab, i) => `
+      <button class="tab-bar__btn" type="button" id="faqTab-${tab.id}" data-selected="${tab.id === currentFaqTab}"
+              data-controls="faqPanel" data-faq-tab="${tab.id}">${esc(t(tab.label))}</button>`).join('');
   },
 
   faq(tabId) {
+    currentFaqTab = tabId;
     const host = el('faqPanel');
     if (!host) return;
     host.innerHTML = (Mega.FAQ[tabId] || []).map(([q, a], i) => `
@@ -603,10 +613,10 @@ Mega.render = {
         <h3>
           <button class="accordion__trigger" type="button" data-expanded="false"
                   data-controls="faqBody-${tabId}-${i}" data-accordion>
-            <span>${esc(q)}</span><span class="accordion__icon" aria-hidden="true">+</span>
+            <span>${esc(t(q))}</span><span class="accordion__icon" aria-hidden="true">+</span>
           </button>
         </h3>
-        <div class="accordion__panel is-hidden" id="faqBody-${tabId}-${i}">${esc(a)}</div>
+        <div class="accordion__panel is-hidden" id="faqBody-${tabId}-${i}">${esc(t(a))}</div>
       </div>`).join('');
   },
 
@@ -615,11 +625,11 @@ Mega.render = {
     if (!host) return;
     host.innerHTML = Mega.FOOTER.map(col => `
       <div>
-        <h3 class="mega-footer__title">${esc(col.title)}</h3>
-        <ul class="mega-footer__links">${col.links.map(l => `<li><a href="#">${esc(l)}</a></li>`).join('')}</ul>
+        <h3 class="mega-footer__title">${esc(t(col.title))}</h3>
+        <ul class="mega-footer__links">${col.links.map(l => `<li><a href="#">${esc(t(l))}</a></li>`).join('')}</ul>
       </div>`).join('');
     const seo = el('footerSeo');
-    if (seo) seo.innerHTML = Mega.SEO_LINKS.map(l => `<a href="shop.html">${esc(l)}</a>`).join(' ');
+    if (seo) seo.innerHTML = Mega.SEO_LINKS.map(l => `<a href="shop.html">${esc(t(l))}</a>`).join(' ');
   },
 
   searchSuggestions(query) {
@@ -633,11 +643,42 @@ Mega.render = {
         <span class="search-result__thumb" style="background:${p.colors[0].hex}">${Store.shoeIconSVG('#fff')}</span>
         <span>
           <span class="search-result__name">${esc(p.name)}</span><br>
-          <span class="search-result__meta">${esc(Store.getCategoryLabel(p.category))} · ${Store.utils.stars(p.rating)} (${p.reviews})</span>
+          <span class="search-result__meta">${esc(t(Store.getCategoryLabel(p.category)))} · ${Store.utils.stars(p.rating)} (${p.reviews})</span>
         </span>
         <span class="search-result__price">${price(p.price)}</span>
       </a>`).join('')
-      : `<p style="padding:16px;color:var(--color-ink-soft)">No products match “${esc(query)}”. Try a category such as running or boots.</p>`;
+      : `<p style="padding:16px;color:var(--color-ink-soft)">${esc(t('No products match'))} “${esc(query)}”. ${esc(t('Try a category such as running or boots.'))}</p>`;
+  },
+
+  // Re-runs every data-driven section in place, in whatever tab/selection
+  // state was last active, so a language switch doesn't reset the page —
+  // it just redraws the same view with translated strings.
+  refreshAll() {
+    Mega.render.menu();
+    Mega.render.ticker();
+    Mega.render.hero();
+    Mega.render.quick();
+    Mega.render.dealTabs();
+    Mega.render.deals(currentDealTab);
+    Mega.render.brands();
+    Mega.render.mosaic();
+    Mega.render.tiers();
+    Mega.render.sizeTable();
+    Mega.render.compareTable();
+    Mega.render.articles();
+    Mega.render.instagram();
+    Mega.render.reviews();
+    Mega.render.stores();
+    Mega.render.storeDetail(currentStoreIndex);
+    Mega.render.faqTabs();
+    Mega.render.faq(currentFaqTab);
+    Mega.render.footer();
+
+    const byBadge = badge => Store.PRODUCTS.filter(p => p.badge === badge);
+    Mega.render.productRail('bestsellerRail', [...Store.PRODUCTS].sort((a, b) => b.reviews - a.reviews).slice(0, 12));
+    Mega.render.productRail('newRail', byBadge('new').concat(Store.PRODUCTS.slice(0, 12)).slice(0, 12));
+    Mega.render.productRail('saleRail', byBadge('sale').concat(Store.PRODUCTS.filter(p => p.oldPrice)).slice(0, 12));
+    Mega.render.productRail('topRatedRail', [...Store.PRODUCTS].sort((a, b) => b.rating - a.rating).slice(0, 12));
   }
 };
 
@@ -755,7 +796,7 @@ Mega.widgets = {
     }));
     Store.utils.qsa('[data-finder-form]').forEach(form => form.addEventListener('submit', e => {
       e.preventDefault();
-      Store.toast.show('Searching the catalog for your selection…', 'info');
+      Store.toast.show(t('Searching the catalog for your selection…'), 'info');
       setTimeout(() => { window.location.href = 'shop.html'; }, 900);
     }));
   },
@@ -880,7 +921,7 @@ Mega.widgets = {
       if (!btn) return;
       localStorage.setItem('step_cookie_choice', btn.dataset.cookie);
       bar.classList.toggle('is-hidden', !!(true));
-      Store.toast.show('Cookie preferences saved.', 'success');
+      Store.toast.show(t('Cookie preferences saved.'), 'success');
     });
   },
 
@@ -906,7 +947,7 @@ Mega.widgets = {
       input.value = '';
       body.scrollTop = body.scrollHeight;
       setTimeout(() => {
-        body.insertAdjacentHTML('beforeend', `<p class="chat-msg chat-msg--bot">${esc(REPLIES[i++ % REPLIES.length])}</p>`);
+        body.insertAdjacentHTML('beforeend', `<p class="chat-msg chat-msg--bot">${esc(t(REPLIES[i++ % REPLIES.length]))}</p>`);
         body.scrollTop = body.scrollHeight;
       }, 700);
     });
@@ -939,7 +980,7 @@ Mega.widgets = {
     if (!form) return;
     form.addEventListener('submit', e => {
       e.preventDefault();
-      Store.toast.show('You are on the list. Check your inbox to confirm.', 'success');
+      Store.toast.show(t('You are on the list. Check your inbox to confirm.'), 'success');
       form.reset();
     });
   }
@@ -951,32 +992,11 @@ Mega.widgets = {
 document.addEventListener('DOMContentLoaded', () => {
   if (!document.getElementById('megaNav')) return;
 
-  Mega.render.menu();
-  Mega.render.ticker();
-  Mega.render.hero();
-  Mega.render.quick();
-  Mega.render.dealTabs();
-  Mega.render.deals('week');
-  Mega.render.brands();
-  Mega.render.mosaic();
-  Mega.render.tiers();
-  Mega.render.sizeTable();
-  Mega.render.compareTable();
-  Mega.render.articles();
-  Mega.render.instagram();
-  Mega.render.reviews();
-  Mega.render.stores();
-  Mega.render.faqTabs();
-  Mega.render.faq('orders');
-  Mega.render.footer();
-
-  const byBadge = badge => Store.PRODUCTS.filter(p => p.badge === badge);
-  Mega.render.productRail('bestsellerRail', [...Store.PRODUCTS].sort((a, b) => b.reviews - a.reviews).slice(0, 12));
-  Mega.render.productRail('newRail', byBadge('new').concat(Store.PRODUCTS.slice(0, 12)).slice(0, 12));
-  Mega.render.productRail('saleRail', byBadge('sale').concat(Store.PRODUCTS.filter(p => p.oldPrice)).slice(0, 12));
-  Mega.render.productRail('topRatedRail', [...Store.PRODUCTS].sort((a, b) => b.rating - a.rating).slice(0, 12));
+  Mega.render.refreshAll();
 
   Object.values(Mega.widgets).forEach(fn => {
     try { fn(); } catch (err) { console.error('[mega] widget failed', err); }
   });
+
+  if (window.STEP_I18N) window.STEP_I18N.onLanguageChange(() => Mega.render.refreshAll());
 });

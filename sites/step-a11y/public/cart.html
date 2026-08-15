@@ -6,7 +6,7 @@
 <title>Shopping Cart — STEP</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;600;700&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="real-styles.css">
   <link id="u1-css" rel="stylesheet" href="https://dev.oreltest.user1st.com/u1.css">
 </head>
 <body>
@@ -20,6 +20,8 @@
     <button class="nav-toggle icon-btn" id="navToggle">☰</button>
     <nav class="main-nav" id="mainNav"></nav>
     <div class="header-tools">
+      <label class="visually-hidden" for="langSelect" data-i18n>Language</label>
+      <select class="util-bar__select" id="langSelect"></select>
       <button class="icon-btn" id="cartToggle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l-1.2 11.2a1 1 0 0 1-1 .8H8.2a1 1 0 0 1-1-.8L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
         <span class="icon-btn__badge" data-cart-badge hidden>0</span>
@@ -31,8 +33,8 @@
 <div class="cart-drawer-overlay" id="cartDrawerOverlay" hidden>
   <aside class="cart-drawer" id="cartDrawer">
     <div class="cart-drawer__header">
-      <h2 class="cart-drawer__title">Your Cart</h2>
-      <button class="icon-btn" id="cartDrawerClose">✕</button>
+      <h2 class="cart-drawer__title" data-i18n>Your Cart</h2>
+      <button class="icon-btn" id="cartDrawerClose" aria-label="Close cart" data-i18n-attr="aria-label">✕</button>
     </div>
     <div class="cart-drawer__items" id="cartDrawerItems"></div>
     <div class="cart-drawer__footer" id="cartDrawerFooter"></div>
@@ -40,8 +42,8 @@
 </div>
 
 <main id="main-content" class="container" style="padding-block:var(--space-6)">
-  <div class="breadcrumbs"><a href="index.html">Home</a> / <span>Shopping Cart</span></div>
-  <h1 class="section__title" style="margin-bottom:var(--space-5)">Your Shopping Cart</h1>
+  <div class="breadcrumbs"><a href="index.html" data-i18n>Home</a> / <span data-i18n>Shopping Cart</span></div>
+  <h1 class="section__title" style="margin-bottom:var(--space-5)" data-i18n>Your Shopping Cart</h1>
 
   <div class="cart-layout">
     <div>
@@ -49,10 +51,10 @@
         <table class="cart-table">
           <thead>
             <tr>
-              <th>Product</th>
-              <th>Unit Price</th>
-              <th>Quantity</th>
-              <th>Total</th>
+              <th data-i18n>Product</th>
+              <th data-i18n>Unit Price</th>
+              <th data-i18n>Quantity</th>
+              <th data-i18n>Total</th>
               <th></th>
             </tr>
           </thead>
@@ -62,30 +64,30 @@
 
       <div class="cart-empty" id="cartEmpty" hidden>
         <svg class="shoe-icon" viewBox="0 0 220 110"><path d="M18,88 L18,30 C18,25 22,21 27,21 L46,21 C51,21 55,24 57,29 L62,38 C78,31 96,27 112,29 C144,33 171,47 190,67 C198,76 202,82 202,88 Z" fill="currentColor"/><path d="M14,88 L202,88 C210,88 216,93 215,100 C214,104 209,106 202,106 L24,106 C16,106 11,101 11,94 C11,92 12,90 14,88 Z" fill="currentColor" opacity="0.5"/></svg>
-        <h2 style="margin-bottom:var(--space-2)">Your cart is empty</h2>
-        <p style="color:var(--color-ink-soft);margin-bottom:var(--space-5)">Looks like you haven't picked a pair of shoes yet. Let's fix that.</p>
-        <a class="btn btn--primary" href="shop.html">Continue Shopping</a>
+        <h2 style="margin-bottom:var(--space-2)" data-i18n>Your cart is empty</h2>
+        <p style="color:var(--color-ink-soft);margin-bottom:var(--space-5)" data-i18n>Looks like you haven't picked a pair of shoes yet. Let's fix that.</p>
+        <a class="btn btn--primary" href="shop.html" data-i18n>Continue Shopping</a>
       </div>
     </div>
 
     <!-- ======================= ORDER SUMMARY ======================= -->
     <aside class="order-summary">
-      <h2 class="order-summary__title">Order Summary</h2>
-      <div class="summary-row"><span>Subtotal</span><span id="summarySubtotal">$0</span></div>
-      <div class="summary-row" id="summaryDiscountRow" hidden><span>Discount</span><span id="summaryDiscount"></span></div>
-      <div class="summary-row"><span>Shipping</span><span id="summaryShipping">$0</span></div>
+      <h2 class="order-summary__title" data-i18n>Order Summary</h2>
+      <div class="summary-row"><span data-i18n>Subtotal</span><span id="summarySubtotal">$0</span></div>
+      <div class="summary-row" id="summaryDiscountRow" hidden><span data-i18n>Discount</span><span id="summaryDiscount"></span></div>
+      <div class="summary-row"><span data-i18n>Shipping</span><span id="summaryShipping">$0</span></div>
       <p style="font-size:12px;color:var(--color-ink-soft)" id="freeShippingNote"></p>
 
       <form class="promo-row" id="promoForm">
-        <input type="text" id="promoInput" placeholder="Promo code (e.g. SALE10)">
-        <button class="btn btn--outline btn--small" type="submit">Apply</button>
+        <input type="text" id="promoInput" placeholder="Promo code (e.g. SALE10)" data-i18n-attr="placeholder">
+        <button class="btn btn--outline btn--small" type="submit" data-i18n>Apply</button>
       </form>
       <p class="promo-msg" id="promoMsg"></p>
 
-      <div class="summary-row summary-row--total"><span>Total</span><span id="summaryTotal">$0</span></div>
+      <div class="summary-row summary-row--total"><span data-i18n>Total</span><span id="summaryTotal">$0</span></div>
 
-      <a class="btn btn--primary btn--block" id="goToCheckoutBtn" href="checkout.html" style="margin-top:var(--space-2)">Proceed to Checkout</a>
-      <a class="btn btn--ghost btn--block" href="shop.html">Continue Shopping</a>
+      <a class="btn btn--primary btn--block" id="goToCheckoutBtn" href="checkout.html" style="margin-top:var(--space-2)" data-i18n>Proceed to Checkout</a>
+      <a class="btn btn--ghost btn--block" href="shop.html" data-i18n>Continue Shopping</a>
     </aside>
   </div>
 </main>
@@ -97,34 +99,36 @@
         <svg class="logo__mark" viewBox="0 0 220 110"><path d="M18,88 L18,30 C18,25 22,21 27,21 L46,21 C51,21 55,24 57,29 L62,38 C78,31 96,27 112,29 C144,33 171,47 190,67 C198,76 202,82 202,88 Z" fill="currentColor"/><path d="M14,88 L202,88 C210,88 216,93 215,100 C214,104 209,106 202,106 L24,106 C16,106 11,101 11,94 C11,92 12,90 14,88 Z" fill="currentColor" opacity="0.5"/></svg>
         STEP
       </div>
-      <p style="margin-top:12px;font-size:14px;max-width:280px;line-height:1.7">The leading shoe store for sport, running, and everyday style.</p>
+      <p style="margin-top:12px;font-size:14px;max-width:280px;line-height:1.7" data-i18n>The leading shoe store for sport, running, and everyday style.</p>
     </div>
     <div>
-      <h4 class="site-footer__title">Shop</h4>
+      <h4 class="site-footer__title" data-i18n>Shop</h4>
       <ul class="site-footer__links">
-        <li><a href="shop.html">All Products</a></li>
-        <li><a href="shop.html?cat=sneakers">Sneakers</a></li>
+        <li><a href="shop.html" data-i18n>All Products</a></li>
+        <li><a href="shop.html?cat=sneakers" data-i18n>Sneakers</a></li>
       </ul>
     </div>
     <div>
-      <h4 class="site-footer__title">Customer Service</h4>
+      <h4 class="site-footer__title" data-i18n>Customer Service</h4>
       <ul class="site-footer__links">
-        <li><a href="#">Shipping & Returns</a></li>
-        <li><a href="#">FAQ</a></li>
+        <li><a href="#" data-i18n>Shipping & Returns</a></li>
+        <li><a href="#" data-i18n>FAQ</a></li>
       </ul>
     </div>
     <div>
-      <h4 class="site-footer__title">Follow Us</h4>
+      <h4 class="site-footer__title" data-i18n>Follow Us</h4>
       <ul class="site-footer__links">
         <li><a href="#">Instagram</a></li>
         <li><a href="#">Facebook</a></li>
       </ul>
     </div>
   </div>
-  <div class="site-footer__bottom">© 2026 STEP. All rights reserved.</div>
+  <div class="site-footer__bottom" data-i18n>© 2026 STEP. All rights reserved.</div>
 </footer>
 
-<script src="script.js"></script>
+<script src="i18n/i18n.js"></script>
+<script src="i18n/translations.js"></script>
+<script src="real-script.js"></script>
 <script id="u1-js" src="https://dev.oreltest.user1st.com/u1_vanilla-js-a11y.js" type="text/javascript"></script>
 <script src="u1-implementation.js"></script>
 </body>

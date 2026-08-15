@@ -166,10 +166,34 @@
                      document.querySelector('.hfeed.site') ||
                      document.body;
 
-          var isRtl =
-              document.documentElement.dir === 'rtl' ||
-              document.body.dir === 'rtl' ||
-              ((document.documentElement.lang || '').toLowerCase().indexOf('he') === 0);
+          // An explicit window.u1.dir (set by the generated implementation
+          // snippet from the panel's Direction control) always wins; otherwise
+          // fall back to reading the page's own dir/lang.
+          function computeIsRtl() {
+              if (window.u1 && window.u1.dir === 'rtl') return true;
+              if (window.u1 && window.u1.dir === 'ltr') return false;
+              return document.documentElement.dir === 'rtl' ||
+                  document.body.dir === 'rtl' ||
+                  ((document.documentElement.lang || '').toLowerCase().indexOf('he') === 0);
+          }
+
+          var isRtl = computeIsRtl();
+          var skipLinkAnchors = [];
+
+          // dir/lang can change after load (a language switcher, WPML/Polylang,
+          // or a client-side i18n toggle) — reposition already-built skip links
+          // instead of leaving them stuck with the direction computed at init.
+          function repositionSkipLinks(rtl) {
+              skipLinkAnchors.forEach(function (a) {
+                  if (rtl) {
+                      a.style.right = '80px';
+                      a.style.left = '';
+                  } else {
+                      a.style.left = '80px';
+                      a.style.right = '';
+                  }
+              });
+          }
 
           // טופ מתחת ל-WP Admin Bar (רק לפוקוס, כדי שלא ייחתך)
           var wpAdminBar = document.getElementById('wpadminbar');
@@ -286,6 +310,7 @@
               });
 
               if (!firstLinkElement) firstLinkElement = a;
+              skipLinkAnchors.push(a);
               wrapper.appendChild(a);
           }
 
@@ -321,6 +346,21 @@
               var obs = new MutationObserver(removeThemeSkipLinks);
               obs.observe(document.body, { childList: true, subtree: true });
               setTimeout(function () { obs.disconnect(); }, 5000);
+
+              // Kept alive for the life of the page — unlike the cleanup
+              // observers above, a language switch can happen at any point in
+              // the session, not just in the first few seconds after load.
+              var dirObserver = new MutationObserver(function () {
+                  var rtl = computeIsRtl();
+                  if (rtl !== isRtl) {
+                      isRtl = rtl;
+                      repositionSkipLinks(isRtl);
+                  }
+              });
+              dirObserver.observe(document.documentElement, {
+                  attributes: true,
+                  attributeFilter: ['lang', 'dir']
+              });
           }
       }
 

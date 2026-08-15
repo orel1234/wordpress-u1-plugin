@@ -466,6 +466,7 @@ function setConfigCall(config) {
   const obj = { visualFocus: { style } };
   let src = `window.u1?.setConfiguration(${jsObjSource(obj)});`;
   if (cfg.language && cfg.language !== 'en') src += `\nwindow.u1.lang = '${cfg.language}';`;
+  if (cfg.direction === 'rtl') src += `\nwindow.u1.dir = 'rtl';`;
   return src;
 }
 
