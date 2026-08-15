@@ -847,6 +847,15 @@ async function applyConfig(config) {
         }
         const u1 = u1AsObj || window.u1;
 
+        // The EXPORTED snippet (docx-gen.js setConfigCall) never writes
+        // cfg.direction/cfg.language into a nested .config object — it sets
+        // window.u1.dir / window.u1.lang directly, which is what our own
+        // skip-link RTL detection (u1-runtime.js computeIsRtl) reads. Without
+        // this, previewing "Run on Page" here would look different from what
+        // actually happens once the same config is deployed for real.
+        if (cfg.direction) u1.dir = cfg.direction;
+        if (cfg.language) u1.lang = cfg.language;
+
         // 4) Try known refresh entry-points
         const hooks = ['applyConfig', 'refresh', 'init', 'run', 'start'];
         for (const name of hooks) {

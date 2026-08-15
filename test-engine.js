@@ -264,13 +264,18 @@
       // with the content they control. So a CORRECTLY built strip failed this
       // check every time. Follow aria-controls first, since that is the link
       // the tabs themselves declare, and fall back to the document.
+      // Falling back to an UNSCOPED qa('[role=tabpanel]') here used to let any
+      // tabpanel anywhere in the document — belonging to a completely different
+      // widget — count as this one's, which could mask role/tab failures on
+      // THIS strip behind a false PASS. If there are no tabs in root to read
+      // aria-controls from, and the mapping's own tabPanel selector finds
+      // nothing either, that is a real failure, not something to paper over.
       const panelIds = qa('[role=tab]', root).map(t => t.getAttribute('aria-controls')).filter(Boolean);
       const byControls = panelIds.map(id => document.getElementById(id)).filter(Boolean);
-      const panels = byControls.length ? byControls
-        : qa(sel.tabPanel).length ? qa(sel.tabPanel) : qa('[role=tabpanel]');
+      const panels = byControls.length ? byControls : qa(sel.tabPanel);
       steps.push(panels.length
         ? P('role="tabpanel" present', `${panels.length} panel${panels.length === 1 ? '' : 's'}, outside the tab list where they belong.`, '4.1.2')
-        : F('role="tabpanel" present', 'No [role="tabpanel"] anywhere, and no tab names one through aria-controls.', '4.1.2'));
+        : F('role="tabpanel" present', 'No [role="tabpanel"] found via aria-controls from this strip\'s tabs, and the configured tab panel selector matches nothing.', '4.1.2'));
     } else if (type === 'listbox') {
       steps.push(root.getAttribute('role') === 'listbox' ? P('role="listbox"', '', '4.1.2') : F('role="listbox"', `role="${root.getAttribute('role') || '(none)'}".`, '4.1.2'));
       const opts = qa(sel.options, root);
@@ -331,8 +336,28 @@
     return steps;
   }
 
+  // Same non-unique-selector logic recommendSelector() already has for the
+  // Picker's mapping-creation form (line ~48) — surfaced here too, because a
+  // test result computed from document.querySelector()'s first match, with no
+  // note that a second/third match exists, reads as "the fix is broken" when
+  // the fix may be sitting correctly on a DIFFERENT element than the one this
+  // run happened to check.
+  const PER_MATCH_TYPES = ['tabs', 'combobox', 'listbox', 'dialog', 'tooltip', 'pagination', 'radio'];
+  function uniquenessStep(type, primary) {
+    let count = -1;
+    try { count = document.querySelectorAll(primary).length; } catch { return null; }
+    if (count <= 1) return null;
+    return PER_MATCH_TYPES.includes(type)
+      ? W('Selector matches multiple elements',
+          `"${primary}" matches ${count} elements on this page. This test only checked the first one — if it fails here, the others may still be fixed correctly.`, '')
+      : W('Selector matches multiple elements',
+          `"${primary}" matches ${count} elements — U1 fixes only the first, and this test checked only that one. Point this at a unique #id if you meant a specific instance.`, '');
+  }
+
   function runStaticChecks(type, primary, selectors, cfg) {
     const steps = checksFor(type, primary, selectors, cfg);
+    const note = uniquenessStep(type, primary);
+    if (note) steps.unshift(note);
     const fails = steps.filter(s => s.status === 'fail').length;
     const warns = steps.filter(s => s.status === 'warn').length;
     return { steps, summary: { total: steps.length, pass: steps.length - fails - warns, fail: fails, warn: warns } };
