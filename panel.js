@@ -7364,17 +7364,45 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
     // saveMappingEntry reads the list, mutates it and writes it back with no
     // locking, so running these concurrently would have each write clobber the
     // others and silently drop mappings. This loop is load-bearing, not style.
+    //
+    // `committed` starts as whatever is already saved for this host, and grows
+    // as this batch saves — so item 8 in a sweep's "approve all" is checked
+    // against item 3 from the SAME batch, not just against mappings that
+    // predate this run. Without that, a whole-page sweep whose sections
+    // overlap (a header visible in more than one section, say) would save two
+    // different u1.fix.* calls on the same element and apply BOTH — this used
+    // to be caught only after the fact, in Phase C below, by which point the
+    // clash had already been written to the page. Checking here stops the
+    // second mapping from ever being saved or applied in the first place.
+    const bulkMapKey = storageKey('mappings', currentHostname);
+    const committed = (await U1Store.get([bulkMapKey]))[bulkMapKey] || [];
     const saved = [];
     for (let n = 0; n < items.length; n++) {
       const it = items[n];
       btn.textContent = `Saving ${n + 1} of ${items.length}…`;
       setBulkStatus(`Saving ${n + 1} of ${items.length} — ${it.tpl.primary}`, 'info', 0);
+      const clashes = await overlappingMappings(it.tpl.primary, committed);
+      if (clashes.length) {
+        // Visible in the SAME "applied in this batch" list everything else
+        // lands in — not just tallied into aiBulk.failed, which belongs to
+        // the pre-approval review screen this run has already moved past.
+        // Reuses addApproved's existing clash-button UI (`data-dropkey`) so
+        // resolving it — keep the earlier mapping, or drop it and re-run this
+        // one — is one click, the same offer a post-hoc clash already gave.
+        addApproved(aiMapped[it.i].row, {
+          ok: false,
+          msg: `Skipped — already mapped by ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')}. Two mappings on the same element fight; the earlier one stays.`,
+          clashes,
+        }, it.tpl.code);
+        continue;
+      }
       try {
         const r = await saveMappingEntry(it.tpl, { refreshUi: false });
         // Declining the role question is an answer, not a failure — it must not
         // land in the failed list beside real errors.
         if (r && r.cancelled) continue;
         saved.push(it);
+        committed.push({ type: it.tpl.type, firstArg: it.tpl.firstArg, primary: it.tpl.primary });
       } catch (err) {
         aiBulk.failed.push({ label: it.tpl.primary, err: err.message });
       }
@@ -7411,16 +7439,12 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
     }
 
     // ── Phase C: report into the same approved list the single flow uses ─────
-    const key = storageKey('mappings', currentHostname);
-    const existing = (await U1Store.get([key]))[key] || [];
+    // Clashes are no longer detected here — Phase A already refused to save
+    // (let alone apply) anything that overlapped with a mapping already
+    // committed in this same batch, so nothing that reaches `details` can
+    // clash with anything else in it.
     for (const { x, verdict } of details) {
       const entry = aiMapped[x.i];
-      const clashes = await overlappingMappings(x.tpl.primary, existing);
-      if (clashes.length) {
-        verdict.clashes = clashes;
-        verdict.ok = false;
-        verdict.msg += ` Also mapped by ${clashes.map(c => `u1.fix.${c.type} on ${c.sel}`).join(', ')} — two on the same elements fight, and the second wins.`;
-      }
       const card = document.querySelector(`#aiSlideTrack .ai-map-card[data-card="${x.i}"]`);
       if (card) card.dataset.done = '1';
       if (entry?.row?.compIndex != null) {
