@@ -8217,11 +8217,16 @@ function renderSweepScreens() {
   const elements = stops.reduce((s, x) => s + x.count, 0);
   const pickable = stops.filter(s => s.count).length;
   const todo = stops.filter(s => s.count && !s.scanned).length;
+  // Once every section has been read, "what to read" and "how it should run"
+  // are questions about a run that is over — they used to stay expanded
+  // forever, standing between the completed run and the one thing left worth
+  // doing: going back to scan again (Scan the whole page, above this).
+  const sweepDone = stops.length > 0 && stops.every(s => !s.count || s.scanned);
   // Two decisions and a price used to sit in one unbroken block, so the eye
   // read them as one thing and the price looked like part of the choosing. They
   // are separate questions — what to read, then what that costs — and each now
   // says which it is.
-  summary.innerHTML = `<div class="block-title">What to read</div>` +
+  const summaryBody = `<div class="block-title">What to read</div>` +
     `<div class="ai-meta">${stops.length} section${stops.length === 1 ? '' : 's'} · ` +
     `${elements} element${elements === 1 ? '' : 's'} · nothing spent yet</div>` +
     // Twenty-one sections is twenty-one clicks to clear, and "only the ones
@@ -8256,6 +8261,15 @@ function renderSweepScreens() {
     `Do not stop` +
     `<em> — read the whole page and make everything accessible on its own</em></label></div>`;
 
+  // While the run is still live, these choices are still choices — shown
+  // plain, the way they always were. Once nothing is left to read, they
+  // become a record of a decision already acted on, so they fold away with
+  // the rest of the finished run — a summary you can reopen, not a form you
+  // have to look past.
+  summary.innerHTML = sweepDone
+    ? `<details class="sweep-part"><summary>What was read · ${stops.length} section${stops.length === 1 ? '' : 's'} · ${elements} element${elements === 1 ? '' : 's'}</summary>${summaryBody}</details>`
+    : summaryBody;
+
   // Two areas, because a half-finished run is the ordinary state — you start
   // one, you stop it, you come back tomorrow. "Which of these have I paid for
   // and which are still owed" is the only question the list has to answer then,
@@ -8273,7 +8287,11 @@ function renderSweepScreens() {
         ? `<div class="sweep-part"><h4>Still to search · ${left.filter(x => x.count).length}</h4>` +
           left.map(sweepScreenRowHtml).join('') + `</div>`
         : `<div class="sweep-part sweep-part-empty">Every section is completed.</div>`) +
-      `<details class="sweep-part sweep-part-done" open><summary>Completed · ${read.length}` +
+      // Open while there is still a "still to search" list above it, for the
+      // same reason a receipt stays visible mid-purchase. Once that list is
+      // gone, this is the only thing left on screen — leaving it expanded
+      // then is a scroll of finished rows between you and scanning again.
+      `<details class="sweep-part sweep-part-done"${sweepDone ? '' : ' open'}><summary>Completed · ${read.length}` +
       (foundSoFar
         ? ` · ${foundSoFar} component${foundSoFar === 1 ? '' : 's'} found` +
           `<button class="btn-outline btn-xs" data-build-found>${aiSweep.running
