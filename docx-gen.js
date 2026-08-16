@@ -281,35 +281,10 @@ function buildStylesXml() {
 
 function buildDocumentXml(hostname, cssLink, jsLink, files, skipLinks, config) {
   const safeSkipLinks = Array.isArray(skipLinks) ? skipLinks : [];
-  const safeConfig    = config || {
-    visualFocus: { style: { color: 'white', secondaryColor: 'black', doubleBorder: true } },
-    skipLinks: safeSkipLinks,
-    language: 'en',
-    direction: 'ltr',
-  };
 
   const skipLinksHtml = safeSkipLinks.length > 0
     ? safeSkipLinks.map(s => `<a href="${s.target}" class="skip-link">${s.label}</a>`).join('\n')
     : '<!-- No skip links configured. -->';
-
-  // Pretty-print the config object as JS source for embedding
-  const configJsSource = `window.u1.config = ${JSON.stringify(safeConfig, null, 4)
-    .replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:')};`;
-
-  const phpConfig = `function u1_config() {
-?>
-<script type='text/javascript'>
-document.addEventListener('DOMContentLoaded', function () {
-
-    window.u1 = window.u1 || {};
-
-    ${configJsSource.split('\n').join('\n    ')}
-
-});
-</script>
-<?php
-}
-add_action('wp_footer', 'u1_config');`;
 
   const phpJs = `function add_u1_js() {
 ?>
@@ -345,14 +320,14 @@ add_action('wp_footer', 'u1_load_fix_files');`
     : null;
 
   const fixFilesStep = phpFiles ? [
-    heading('Step 5: Add the Accessibility Fixes', 1),
+    heading('Step 4: Configuration and Accessibility Fixes', 1),
     para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
-      ' (' + names.join(', ') + ') alongside this document — the site-specific fixes and the ' +
-      'library corrections they depend on.', 'Normal'),
+      ' (' + names.join(', ') + ') alongside this document — the site configuration, the ' +
+      'site-specific fixes, and the library corrections they depend on.', 'Normal'),
     bullet(`Upload ${names.join(', ')} into your active theme's folder — the same place as style.css (via FTP, or the Theme File Editor's "Add New File").`),
-    bullet('Back in functions.php, paste the following code below what you added in Step 4:'),
+    bullet('Back in functions.php, paste the following code below what you added in Step 3:'),
     ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
-      para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. The code below keeps that order.', 'Normal'),
+      para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. u1-config.js can load in any position relative to the other two. The code below keeps the right order.', 'Normal'),
     ] : []),
     emptyPara(),
     para('PHP', 'CodeLabel'),
@@ -398,17 +373,7 @@ add_action('wp_footer', 'u1_load_fix_files');`
     codeBlock(phpJs),
     emptyPara(),
 
-    // Step 4
-    heading('Step 4: Configuration', 1),
-    para('In this step, we will add the visual settings, language and direction, and skip links registration for the site.', 'Normal'),
-    bullet('Stay in the functions.php file.'),
-    bullet('Paste the following code block below the code you added in the previous step:'),
-    emptyPara(),
-    para('PHP', 'CodeLabel'),
-    codeBlock(phpConfig),
-    emptyPara(),
-
-    // Step 5 (only if there are fix files to link)
+    // Step 4 (only if there are files to link — config, patch, fixes, monitoring)
     ...fixFilesStep,
 
     // Closing
@@ -483,11 +448,15 @@ function skipLinksHtmlOf(skipLinks) {
 
 // The package's file names, in the order they must load: u1-patch.js wraps
 // window.u1.fix.* before u1-fixes.js calls it, so it has to come first
-// wherever these are listed or linked. u1-monitoring.js is inert unless the
-// page loads with ?u1qa=1, so its position never matters.
+// wherever these are listed or linked. u1-config.js only sets config the real
+// U1 library reads, and u1-monitoring.js is inert unless the page loads with
+// ?u1qa=1, so neither one's position relative to the others matters — config
+// is listed first anyway, so it's in effect before the fixes that might read
+// direction/language run.
 function fileList(files) {
   const f = files || {};
   const list = [];
+  if (f.config) list.push('u1-config.js');
   if (f.patch) list.push('u1-patch.js');
   if (f.fixes) list.push('u1-fixes.js');
   if (f.monitoring) list.push('u1-monitoring.js');
@@ -510,7 +479,6 @@ function setConfigCall(config) {
 function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
   const skipHtml = skipLinksHtmlOf(skipLinks);
   const hasSkip  = (Array.isArray(skipLinks) ? skipLinks : []).length > 0;
-  const configScript = `<script>\n${setConfigCall(config)}\n</script>`;
   const names = fileList(files);
   const fileTags = names.map((n) => `<script src="${n}"></script>`).join('\n');
 
@@ -540,22 +508,15 @@ function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
     codeBlock(`<script id="u1-js" src="${jsLink}" type="text/javascript"></script>`),
     emptyPara(),
 
-    heading('Step 3: Configuration', 1),
-    para('Place this immediately after loading the U1 library (e.g. in your main entry file or a <script> tag after the SDK):', 'Normal'),
-    emptyPara(),
-    para('JavaScript', 'CodeLabel'),
-    codeBlock(configScript),
-    emptyPara(),
-
     ...(names.length ? [
-      heading('Step 4: Add the Accessibility Fixes', 1),
+      heading('Step 3: Configuration and Accessibility Fixes', 1),
       para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
-        ' (' + names.join(', ') + ') alongside this document — the site-specific fixes and the ' +
-        'library corrections they depend on.', 'Normal'),
+        ' (' + names.join(', ') + ') alongside this document — the site configuration, the ' +
+        'site-specific fixes, and the library corrections they depend on.', 'Normal'),
       bullet(`Copy ${names.join(', ')} to your server, alongside your other JS files.`),
       bullet('Immediately after the U1 JS SDK script from Step 2, add:'),
       ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
-        para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. The order below is correct.', 'Normal'),
+        para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. u1-config.js can load in any position relative to the other two. The order below is correct.', 'Normal'),
       ] : []),
       emptyPara(),
       para('HTML', 'CodeLabel'),
@@ -781,10 +742,28 @@ function safeFilenamePart(s) {
   return String(s || '').replace(/\./g, '-');
 }
 
+// React and Angular set config through their own npm-package APIs
+// (setU1Configuration / NgA11yDirectiveModule.forRoot) — that's framework
+// glue code the dev has to touch anyway, so it stays inline in the guide
+// rather than becoming a droppable file. WordPress and plain HTML/JS have no
+// such framework layer, so their config is just as droppable as the fixes.
+function buildConfigFileContent(config, skipLinks, siteType) {
+  if (siteType === 'react' || siteType === 'angular') return '';
+  const safeConfig = safeConfigOf(config, skipLinks);
+  if (siteType === 'js') return setConfigCall(config);
+  // wordpress (and the default): the older window.u1.config assignment form,
+  // matching what this guide has always told WordPress implementers to paste.
+  const src = `window.u1.config = ${JSON.stringify(safeConfig, null, 4)
+    .replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:')};`;
+  return `window.u1 = window.u1 || {};\n${src}`;
+}
+
 function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks, config, siteType) {
   const type = siteType || 'wordpress';
   const safeHost = safeFilenamePart(hostname);
+  const configContent = buildConfigFileContent(config, skipLinks, type);
   const files = {
+    config: !!configContent,
     patch: !!(built && built.patch),
     fixes: !!(built && built.fixes),
     monitoring: !!(built && built.monitoring),
@@ -794,6 +773,7 @@ function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks,
 
   const pkg = new ZipWriter();
   pkg.add(`U1-Implementation-Guide-${type}-${safeHost}.docx`, docxBytes);
+  if (files.config) pkg.add('u1-config.js', configContent);
   if (files.patch) pkg.add('u1-patch.js', built.patch);
   if (files.fixes) pkg.add('u1-fixes.js', built.fixes);
   if (files.monitoring) pkg.add('u1-monitoring.js', built.monitoring);
