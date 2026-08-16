@@ -417,6 +417,135 @@
 })();
 //#endregion
 
+//#region u1-patch:accordion
+// AccordionRoles.assignOnLoadAccordionAttr() has two real defects, verified by
+// reading AccordionRoles/AccordionEvents/AccordionFixer in u1_vanilla-js-a11y.js:
+//
+//   1. It only calls assignOnLoadAriaControlsAttr() — which sets aria-controls —
+//      when headerContentMatch is true, i.e. accordionHeaders.length exactly
+//      equals accordionContent.length. Any accordion whose header/content counts
+//      do not line up 1:1 (one extra decorative header, a selector that also
+//      catches something outside the widget) gets NO aria-controls on ANY
+//      header, not just the mismatched one.
+//   2. The same branch hard-codes aria-expanded="false" on every header, even
+//      one whose panel is already open on load — reporting an expanded section
+//      as collapsed.
+//
+// Both only run once, at fix() time, and the whole fixer sits behind
+// FixerAbstract's own wait-for-visible gate (a ChangeDetection poll keyed to
+// props.selectors.headerSelector) — on some pages that gate never resolves at
+// all, and NONE of assignOnLoadAccordionAttr() runs, ever, for any header.
+//
+// Rather than depend on that gate, this wraps u1.fix.accordion to capture the
+// exact headerSelector/contentSelector/disabledElementsSelector a mapping was
+// given — the same information AccordionFixer.fix() itself reads off
+// this.props.selectors — and reimplements assignOnLoadAccordionAttr() correctly
+// from outside, converging every pass through the normal P.correct loop instead
+// of running once. A click/keydown listener forces an immediate extra pass,
+// because a site's own toggle (a class flip, a jQuery slideToggle) is not one of
+// the attributes core's MutationObserver watches, so nothing else would notice it.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+  var configs = [];
+
+  var already = function (header, content) {
+    return configs.some(function (c) { return c.header === header && c.content === content; });
+  };
+  var wrapOne = function (u1) {
+    if (!u1 || !u1.fix || typeof u1.fix.accordion !== 'function' || u1.fix.accordion.__u1pWrapped) return;
+    var orig = u1.fix.accordion;
+    var wrapped = function (selector, props) {
+      var sel = props && props.selectors;
+      if (sel && typeof sel.headerSelector === 'string' && typeof sel.contentSelector === 'string'
+          && !already(sel.headerSelector, sel.contentSelector)) {
+        configs.push({
+          header: sel.headerSelector,
+          content: sel.contentSelector,
+          disabled: typeof sel.disabledElementsSelector === 'string' ? sel.disabledElementsSelector : null,
+        });
+        // A newly captured config has never been through P.correct — the core
+        // loop only re-runs on a DOM mutation or the load-time pass that
+        // already happened before this call existed. Without this, the first
+        // application of a mapping waited for an unrelated mutation to arrive
+        // before anything showed up, which reads exactly like "Apply did
+        // nothing" even though it is only "Apply hasn't been picked up yet".
+        P.schedule();
+      }
+      return orig.apply(this, arguments);
+    };
+    wrapped.__u1pWrapped = true;
+    u1.fix.accordion = wrapped;
+  };
+  var currentU1 = function () {
+    return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
+  };
+  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  else {
+    var tries = 0;
+    var poll = setInterval(function () {
+      var u1 = currentU1();
+      if ((u1 && u1.fix && (wrapOne(u1), true)) || ++tries > 40) clearInterval(poll);
+    }, 250);
+  }
+
+  var syncPair = function (header, content) {
+    if (!/^button$/i.test(header.tagName)) {
+      u.set(header, 'role', 'button');
+      u.setTabIndex(header, 0);
+    }
+    var headerId = header.id || (header.id = 'u1p-acc-h-' + Math.random().toString(36).slice(2, 9));
+    var contentId = content.id || (content.id = 'u1p-acc-c-' + Math.random().toString(36).slice(2, 9));
+    u.set(content, 'role', 'region');
+    u.set(content, 'aria-labelledby', headerId);
+    u.set(header, 'aria-controls', contentId);              // defect 1: missing when counts mismatched
+    u.set(header, 'aria-expanded', u.visible(content) ? 'true' : 'false'); // defect 2: re-derived every pass
+  };
+
+  P.correct(function () {
+    configs.forEach(function (cfg) {
+      var headers = u.qsa(cfg.header);
+      var content = u.qsa(cfg.content);
+      var n = Math.min(headers.length, content.length);
+      for (var i = 0; i < n; i++) syncPair(headers[i], content[i]);
+      for (var j = n; j < headers.length; j++) {
+        if (!/^button$/i.test(headers[j].tagName)) {
+          u.set(headers[j], 'role', 'button');
+          u.setTabIndex(headers[j], 0);
+        }
+      }
+      if (cfg.disabled) {
+        for (var k = 0; k < n; k++) {
+          try { if (headers[k].matches(cfg.disabled)) u.set(headers[k], 'aria-disabled', 'true'); } catch (e) {}
+        }
+      }
+    });
+  });
+
+  var headerSelectorList = function () {
+    return configs.map(function (c) { return c.header; }).filter(Boolean).join(',');
+  };
+  var kick = function () {
+    if (window.requestAnimationFrame) {
+      requestAnimationFrame(function () { requestAnimationFrame(P.schedule); });
+    } else setTimeout(P.schedule, 50);
+    setTimeout(P.schedule, 350);              // catches slideToggle-style animated collapses
+  };
+  document.addEventListener('keydown', function (e) {
+    if (!configs.length || (e.code !== 'Space' && e.code !== 'Enter')) return;
+    var header = u.closest(e.target, headerSelectorList());
+    if (!header || u.isNative(header)) return;
+    e.preventDefault();
+    header.click();
+    kick();
+  }, true);
+  document.addEventListener('click', function (e) {
+    if (!configs.length) return;
+    if (u.closest(e.target, headerSelectorList())) kick();
+  }, true);
+})();
+//#endregion
+
 //#region u1-patch:dialog
 // The worst defect in the library. focusInBound() opens with
 //   querySelectorAll(TABBABLE, dialog).filter(isVisible)[0].focus()
@@ -473,11 +602,58 @@
 // the label-to-field linking sits after that return. A form mapped without an
 // error selector therefore never gets its labels connected, which is a 1.3.1 and
 // 3.3.2 failure caused by an unrelated field being left blank.
+//
+// role="form" and handleRequiredFields() (aria-required) sit BEFORE that
+// return, so they are not this same bug — but fix() itself only ever runs once
+// FixerAbstract's wait-for-visible gate resolves (a ChangeDetection poll keyed
+// to props.selectors.form), and on some pages that gate never resolves at all,
+// same as accordion's fixer (see that region's comment). Wrapping u1.fix.form
+// captures the mapping's own form/requiredField selectors — exactly what
+// FormFixer.fix() reads off this.props.selectors — so role="form" and
+// aria-required apply independent of whether that gate ever fires.
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
+  var configs = [];
+
+  var already = function (form, required) {
+    return configs.some(function (c) { return c.form === form && c.required === required; });
+  };
+  var wrapOne = function (u1) {
+    if (!u1 || !u1.fix || typeof u1.fix.form !== 'function' || u1.fix.form.__u1pWrapped) return;
+    var orig = u1.fix.form;
+    var wrapped = function (selector, props) {
+      var sel = props && props.selectors;
+      var formSel = (sel && typeof sel.form === 'string' && sel.form) || (typeof selector === 'string' ? selector : null);
+      var reqSel = (sel && typeof sel.requiredField === 'string') ? sel.requiredField : null;
+      if (formSel && !already(formSel, reqSel)) {
+        configs.push({ form: formSel, required: reqSel });
+        P.schedule();          // see the matching comment in u1-patch:accordion
+      }
+      return orig.apply(this, arguments);
+    };
+    wrapped.__u1pWrapped = true;
+    u1.fix.form = wrapped;
+  };
+  var currentU1 = function () {
+    return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
+  };
+  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  else {
+    var tries = 0;
+    var poll = setInterval(function () {
+      var u1 = currentU1();
+      if ((u1 && u1.fix && (wrapOne(u1), true)) || ++tries > 40) clearInterval(poll);
+    }, 250);
+  }
 
   P.correct(function () {
+    configs.forEach(function (cfg) {
+      u.qsa(cfg.form).forEach(function (form) {
+        if (form.tagName !== 'FORM' && u.get(form, 'role') !== 'form') u.set(form, 'role', 'form');
+        if (cfg.required) u.qsa(cfg.required, form).forEach(function (el) { u.set(el, 'aria-required', 'true'); });
+      });
+    });
     u.qsa('form, [role="form"]').forEach(function (form) {
       u.qsa('input, select, textarea', form).forEach(function (field) {
         if (field.type === 'hidden' || field.disabled) return;
