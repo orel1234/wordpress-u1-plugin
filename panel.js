@@ -1059,8 +1059,26 @@ async function applyKeyboardGrid(container, config) {
 //
 // The export inlines a SLICED patch, because there size matters. Here it does
 // not, and slicing per apply would push a second set of correctors onto a page
-// that already has core installed. So: the whole file, once, guarded by
-// __u1Patch inside the patch itself.
+// that already has core installed. So: the whole file, once.
+//
+// "Once" is NOT actually guarded by __u1Patch inside the patch itself, despite
+// what that used to say here — __u1Patch's own top-of-file guard only stops
+// the CORE region from running twice. Every other region (dialog, form, tabs,
+// the rest) only checks "does core exist", then unconditionally registers a
+// fresh P.correct() closure. Re-running the file — which every single Apply
+// click used to do, unconditionally — pushed one more duplicate corrector per
+// region onto P.correctors EVERY time, forever, for the life of the tab. A
+// long test session doing dozens of Applies on one page without a reload grew
+// that array into the hundreds, and core's MutationObserver re-runs the whole
+// thing on every DOM mutation anywhere on the page (childList+subtree on
+// documentElement) — on a page with any continuous DOM churn (ads, widgets,
+// animations) that is a permanent, worsening tax on every animation frame.
+// This is what a "the whole computer froze" report from repeated testing on
+// the same tab looks like, not a single runaway loop.
+//
+// The fix is to check first: only inject when __u1Patch genuinely is not on
+// the page yet, so the file's body only ever runs once per page load, no
+// matter how many times Apply gets clicked afterwards.
 //
 // world:'MAIN' is not optional — the patch wraps window.u1.fix.*, and in the
 // isolated world there is no window.u1 to wrap.
@@ -1069,6 +1087,10 @@ async function applyKeyboardGrid(container, config) {
 // the panel could never show what the client would actually get.
 async function ensurePatchOnPage(tabId) {
   try {
+    const already = await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', func: () => !!window.__u1Patch,
+    });
+    if (already && already[0] && already[0].result) return true;
     await chrome.scripting.executeScript({
       target: { tabId }, world: 'MAIN', files: ['u1-patch.js'],
     });
