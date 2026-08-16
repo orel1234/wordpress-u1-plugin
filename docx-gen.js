@@ -279,7 +279,7 @@ function buildStylesXml() {
 
 // ── Document body builder ─────────────────────────────────────────────────────
 
-function buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+function buildDocumentXml(hostname, cssLink, jsLink, files, skipLinks, config) {
   const safeSkipLinks = Array.isArray(skipLinks) ? skipLinks : [];
   const safeConfig    = config || {
     visualFocus: { style: { color: 'white', secondaryColor: 'black', doubleBorder: true } },
@@ -287,10 +287,6 @@ function buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config
     language: 'en',
     direction: 'ltr',
   };
-
-  const mappingLines = (mappings && mappings.length > 0)
-    ? mappings.join('\n\n')
-    : '// No mappings saved yet.';
 
   const skipLinksHtml = safeSkipLinks.length > 0
     ? safeSkipLinks.map(s => `<a href="${s.target}" class="skip-link">${s.label}</a>`).join('\n')
@@ -300,7 +296,7 @@ function buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config
   const configJsSource = `window.u1.config = ${JSON.stringify(safeConfig, null, 4)
     .replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:')};`;
 
-  const phpConfig = `function u1_config_and_mapping() {
+  const phpConfig = `function u1_config() {
 ?>
 <script type='text/javascript'>
 document.addEventListener('DOMContentLoaded', function () {
@@ -309,14 +305,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
     ${configJsSource.split('\n').join('\n    ')}
 
-    // Mappings
-    ${mappingLines.split('\n').join('\n    ')}
-
 });
 </script>
 <?php
 }
-add_action('wp_footer', 'u1_config_and_mapping');`;
+add_action('wp_footer', 'u1_config');`;
 
   const phpJs = `function add_u1_js() {
 ?>
@@ -341,11 +334,39 @@ add_action('wp_footer', 'add_u1_js');`;
       ]
     : [];
 
+  const names = fileList(files);
+  const phpFiles = names.length
+    ? `function u1_load_fix_files() {
+?>
+${names.map(n => `<script src="<?php echo esc_url( get_stylesheet_directory_uri() . '/${n}' ); ?>"></script>`).join('\n')}
+<?php
+}
+add_action('wp_footer', 'u1_load_fix_files');`
+    : null;
+
+  const fixFilesStep = phpFiles ? [
+    heading('Step 5: Add the Accessibility Fixes', 1),
+    para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
+      ' (' + names.join(', ') + ') alongside this document — the site-specific fixes and the ' +
+      'library corrections they depend on.', 'Normal'),
+    bullet(`Upload ${names.join(', ')} into your active theme's folder — the same place as style.css (via FTP, or the Theme File Editor's "Add New File").`),
+    bullet('Back in functions.php, paste the following code below what you added in Step 4:'),
+    ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
+      para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. The code below keeps that order.', 'Normal'),
+    ] : []),
+    emptyPara(),
+    para('PHP', 'CodeLabel'),
+    codeBlock(phpFiles),
+    emptyPara(),
+    bullet('Click to save/update the file in WordPress.'),
+    emptyPara(),
+  ] : [];
+
   const bodyParts = [
     // Title
     para(`A Simple Guide to Implementing User1st (${hostname}) in WordPress`, 'Title'),
     emptyPara(),
-    para('This guide explains how to implement the User1st system code on your WordPress site in 4 simple steps.', 'Normal'),
+    para('This guide explains how to implement the User1st system code on your WordPress site.', 'Normal'),
     emptyPara(),
 
     // Step 1
@@ -378,16 +399,17 @@ add_action('wp_footer', 'add_u1_js');`;
     emptyPara(),
 
     // Step 4
-    heading('Step 4: Configuration and Site Mapping', 1),
-    para('In the final step, we will add the visual settings, language/direction, skip links registration and the specific accessibility mappings for the site.', 'Normal'),
+    heading('Step 4: Configuration', 1),
+    para('In this step, we will add the visual settings, language and direction, and skip links registration for the site.', 'Normal'),
     bullet('Stay in the functions.php file.'),
     bullet('Paste the following code block below the code you added in the previous step:'),
     emptyPara(),
     para('PHP', 'CodeLabel'),
     codeBlock(phpConfig),
     emptyPara(),
-    bullet('Click to save/update the file in WordPress.'),
-    emptyPara(),
+
+    // Step 5 (only if there are fix files to link)
+    ...fixFilesStep,
 
     // Closing
     para('That\'s it! At this point, the User1st system should be properly implemented and configured on your website.', 'Normal'),
@@ -459,6 +481,19 @@ function skipLinksHtmlOf(skipLinks) {
     : '<!-- No skip links configured. -->';
 }
 
+// The package's file names, in the order they must load: u1-patch.js wraps
+// window.u1.fix.* before u1-fixes.js calls it, so it has to come first
+// wherever these are listed or linked. u1-monitoring.js is inert unless the
+// page loads with ?u1qa=1, so its position never matters.
+function fileList(files) {
+  const f = files || {};
+  const list = [];
+  if (f.patch) list.push('u1-patch.js');
+  if (f.fixes) list.push('u1-fixes.js');
+  if (f.monitoring) list.push('u1-monitoring.js');
+  return list;
+}
+
 // visualFocus.style → the { color, secondaryColor, doubleBorder } used by setConfiguration.
 function setConfigCall(config) {
   const cfg = config || {};
@@ -472,12 +507,12 @@ function setConfigCall(config) {
 
 // ── JS / plain-HTML guide ─────────────────────────────────────────────────────
 
-function buildBodyPartsJS(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
   const skipHtml = skipLinksHtmlOf(skipLinks);
   const hasSkip  = (Array.isArray(skipLinks) ? skipLinks : []).length > 0;
-  const mappingLines = (mappings && mappings.length) ? mappings.join('\n\n') : '// No mappings saved yet.';
-  const configScript =
-    `<script>\n${setConfigCall(config).split('\n').join('\n')}\n\n// Component mappings\n${mappingLines}\n</script>`;
+  const configScript = `<script>\n${setConfigCall(config)}\n</script>`;
+  const names = fileList(files);
+  const fileTags = names.map((n) => `<script src="${n}"></script>`).join('\n');
 
   return [
     para(`Implementing User1st on ${hostname} (HTML / JavaScript)`, 'Title'),
@@ -505,19 +540,39 @@ function buildBodyPartsJS(hostname, cssLink, jsLink, mappings, skipLinks, config
     codeBlock(`<script id="u1-js" src="${jsLink}" type="text/javascript"></script>`),
     emptyPara(),
 
-    heading('Step 3: Configuration and Site Mapping', 1),
+    heading('Step 3: Configuration', 1),
     para('Place this immediately after loading the U1 library (e.g. in your main entry file or a <script> tag after the SDK):', 'Normal'),
     emptyPara(),
     para('JavaScript', 'CodeLabel'),
     codeBlock(configScript),
     emptyPara(),
+
+    ...(names.length ? [
+      heading('Step 4: Add the Accessibility Fixes', 1),
+      para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
+        ' (' + names.join(', ') + ') alongside this document — the site-specific fixes and the ' +
+        'library corrections they depend on.', 'Normal'),
+      bullet(`Copy ${names.join(', ')} to your server, alongside your other JS files.`),
+      bullet('Immediately after the U1 JS SDK script from Step 2, add:'),
+      ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
+        para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. The order below is correct.', 'Normal'),
+      ] : []),
+      emptyPara(),
+      para('HTML', 'CodeLabel'),
+      codeBlock(fileTags),
+      emptyPara(),
+      para('Update the src paths above if the files are placed somewhere other than alongside this page.', 'Normal'),
+      emptyPara(),
+    ] : []),
+
     para('That\'s it — the User1st system is now implemented and configured on your site.', 'Normal'),
   ];
 }
 
 // ── React guide (npm @u1 packages) ────────────────────────────────────────────
 
-function buildBodyPartsReact(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+function buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config) {
+  const names = fileList(files);
   const style = ((config || {}).visualFocus || {}).style || {};
   const u1Config = { desktop: { visualFocus: {
     outlineColor: style.color || 'blue',
@@ -564,11 +619,23 @@ function buildBodyPartsReact(hostname, cssLink, jsLink, mappings, skipLinks, con
     codeBlock(`import ReactDOM from 'react-dom/client';\nimport App from './App';\nimport '@u1/react-a11y-hooks/u1.css';\nimport '@u1/toolbar';\n\nReactDOM.createRoot(document.getElementById('root')).render(\n  <React.Fragment>\n    <u1-app enabled={true} />\n    <App />\n  </React.Fragment>\n);`),
     emptyPara(),
 
-    heading('Step 6: Apply the component mappings', 1),
-    para('These are the per-component accessibility fixes built for this site. Run them AFTER the U1 library has loaded and configuration is applied (e.g. inside the same useEffect, after setU1Configuration):', 'Normal'),
-    para('JavaScript', 'CodeLabel'),
-    codeBlock((mappings && mappings.length) ? mappings.join('\n\n') : '// No mappings saved yet.'),
-    emptyPara(),
+    ...(names.length ? [
+      heading('Step 6: Add the Accessibility Fixes', 1),
+      para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
+        ' (' + names.join(', ') + ') alongside this document — the per-component fixes built for ' +
+        'this site and the library corrections they depend on. They are plain scripts, not React ' +
+        'components, so they load as static assets rather than an import.', 'Normal'),
+      bullet(`Copy ${names.join(', ')} into your project's public/ folder.`),
+      bullet('In public/index.html, add the following AFTER the U1 toolbar script tag (or wherever <u1-app> loads from):'),
+      ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
+        para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. The order below is correct.', 'Normal'),
+      ] : []),
+      emptyPara(),
+      para('HTML', 'CodeLabel'),
+      codeBlock(names.map((n) => `<script src="%PUBLIC_URL%/${n}"></script>`).join('\n') +
+        '\n\n<!-- Vite / Next.js: replace %PUBLIC_URL% with "" — files in public/ are served from the site root. -->'),
+      emptyPara(),
+    ] : []),
 
     heading('Step 7: Run and verify', 1),
     bullet('Run: npm install && npm run dev'),
@@ -578,7 +645,8 @@ function buildBodyPartsReact(hostname, cssLink, jsLink, mappings, skipLinks, con
 
 // ── Angular guide (npm @u1 packages) ──────────────────────────────────────────
 
-function buildBodyPartsAngular(hostname, cssLink, jsLink, mappings, skipLinks, config) {
+function buildBodyPartsAngular(hostname, cssLink, jsLink, files, skipLinks, config) {
+  const names = fileList(files);
   const style = ((config || {}).visualFocus || {}).style || {};
   const u1Config = { desktop: { visualFocus: { outlineColor: style.color || 'red' }, button: { display: true } } };
 
@@ -622,11 +690,19 @@ function buildBodyPartsAngular(hostname, cssLink, jsLink, mappings, skipLinks, c
     codeBlock(`<u1-app [enabled]="true"></u1-app>`),
     emptyPara(),
 
-    heading('Step 6: Apply the component mappings', 1),
-    para('These are the per-component accessibility fixes built for this site. Run them AFTER the U1 library has initialised — for example in AppComponent.ngAfterViewInit():', 'Normal'),
-    para('JavaScript', 'CodeLabel'),
-    codeBlock((mappings && mappings.length) ? mappings.join('\n\n') : '// No mappings saved yet.'),
-    emptyPara(),
+    ...(names.length ? [
+      heading('Step 6: Add the Accessibility Fixes', 1),
+      para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
+        ' (' + names.join(', ') + ') alongside this document — the per-component fixes built for ' +
+        'this site and the library corrections they depend on. They are plain scripts, not Angular ' +
+        'modules, so they load as global assets rather than an import.', 'Normal'),
+      bullet(`Copy ${names.join(', ')} into src/assets/.`),
+      bullet('In angular.json, add them to the build target\'s "scripts" array, in this exact order (patch first — it wraps window.u1.fix.* before fixes.js calls it):'),
+      emptyPara(),
+      para('angular.json', 'CodeLabel'),
+      codeBlock(`"scripts": [\n${names.map((n) => `  "src/assets/${n}"`).join(',\n')}\n]`),
+      emptyPara(),
+    ] : []),
 
     heading('Step 7: Run and verify', 1),
     bullet('Run: npm install && ng serve'),
@@ -634,19 +710,23 @@ function buildBodyPartsAngular(hostname, cssLink, jsLink, mappings, skipLinks, c
   ];
 }
 
-function buildDocumentXmlForType(siteType, hostname, cssLink, jsLink, mappings, skipLinks, config) {
+function buildDocumentXmlForType(siteType, hostname, cssLink, jsLink, files, skipLinks, config) {
   switch (siteType) {
-    case 'react':   return wrapDoc(buildBodyPartsReact(hostname, cssLink, jsLink, mappings, skipLinks, config));
-    case 'angular': return wrapDoc(buildBodyPartsAngular(hostname, cssLink, jsLink, mappings, skipLinks, config));
-    case 'js':      return wrapDoc(buildBodyPartsJS(hostname, cssLink, jsLink, mappings, skipLinks, config));
+    case 'react':   return wrapDoc(buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config));
+    case 'angular': return wrapDoc(buildBodyPartsAngular(hostname, cssLink, jsLink, files, skipLinks, config));
+    case 'js':      return wrapDoc(buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config));
     case 'wordpress':
-    default:        return buildDocumentXml(hostname, cssLink, jsLink, mappings, skipLinks, config);
+    default:        return buildDocumentXml(hostname, cssLink, jsLink, files, skipLinks, config);
   }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings, skipLinks, config, siteType) {
+// The .docx's own bytes (it is itself a zip — the OOXML package format).
+// Separated from the outer package zip below so the two nestings don't get
+// tangled: this ZipWriter instance builds ONLY word/document.xml etc; the
+// outer one in generateAndDownloadPackage treats the whole result as one file.
+function buildDocxBytes(hostname, cssLink, jsLink, files, skipLinks, config, siteType) {
   const zip = new ZipWriter();
   const type = siteType || 'wordpress';
 
@@ -675,17 +755,40 @@ function generateAndDownloadDocx(hostname, cssLink, jsLink, mappings, skipLinks,
 </Relationships>`);
 
   zip.add('word/styles.xml', buildStylesXml());
-  zip.add('word/document.xml', buildDocumentXmlForType(type, hostname, cssLink, jsLink, mappings, skipLinks, config));
+  zip.add('word/document.xml', buildDocumentXmlForType(type, hostname, cssLink, jsLink, files, skipLinks, config));
 
-  const bytes = zip.toUint8Array();
-  const blob  = new Blob([bytes], {
-    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  });
+  return zip.toUint8Array();
+}
+
+// Everything the client's dev needs, as one download: the guide (.docx) plus
+// the three separate source files it now only REFERENCES rather than embeds.
+// Previously the whole thing was pasted as raw text inside the Word document
+// — which meant a dev copying code out of Word first had to survive smart
+// quotes and autocorrected dashes mangling it. Real files sidestep that
+// entirely, and the guide's job shrinks to "put these where they belong".
+function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks, config, siteType) {
+  const type = siteType || 'wordpress';
+  const files = {
+    patch: !!(built && built.patch),
+    fixes: !!(built && built.fixes),
+    monitoring: !!(built && built.monitoring),
+  };
+
+  const docxBytes = buildDocxBytes(hostname, cssLink, jsLink, files, skipLinks, config, siteType);
+
+  const pkg = new ZipWriter();
+  pkg.add(`U1-Implementation-Guide-${type}-${hostname}.docx`, docxBytes);
+  if (files.patch) pkg.add('u1-patch.js', built.patch);
+  if (files.fixes) pkg.add('u1-fixes.js', built.fixes);
+  if (files.monitoring) pkg.add('u1-monitoring.js', built.monitoring);
+
+  const bytes = pkg.toUint8Array();
+  const blob  = new Blob([bytes], { type: 'application/zip' });
 
   const url = URL.createObjectURL(blob);
   const a   = document.createElement('a');
   a.href     = url;
-  a.download = `U1-Implementation-Guide-${type}-${hostname}.docx`;
+  a.download = `U1-Package-${type}-${hostname}.zip`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
