@@ -250,14 +250,21 @@ body {
   color: var(--u1-dot);
 }
 
-/* ── Section (dashed border container) ──────────────────────────────────── */
+/* ── Section (stacked content, divided by a hairline — not a boxed card) ───
+   Was a dashed-border box around every section on every tab. The redesign's
+   own content area is just a vertical stack (gap: 24px in the mockup); nothing
+   between sections but a plain line. A box round each one read as "N separate
+   panels" when they are one continuous tab. ────────────────────────────────── */
 
 .section {
-  border: 1px dashed var(--u1-border-dashed);
-  border-radius: var(--u1-radius-md);
-  padding: 14px 14px 16px;
-  margin-bottom: 14px;
-  background: var(--u1-surface);
+  padding: 0;
+  margin: 0 0 24px;
+}
+
+.section + .section {
+  margin-top: 0;
+  padding-top: 24px;
+  border-top: 1px solid var(--u1-border);
 }
 
 .section-title {
