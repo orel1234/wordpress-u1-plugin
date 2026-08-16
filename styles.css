@@ -841,6 +841,17 @@ button {
   min-width: 0;
 }
 
+/* Approve & apply on a card with no selector focuses this field instead of
+   just leaving a toast — the flash is what makes "focus jumped here" register
+   as "this is the thing to fix," not just an unexplained cursor move. */
+@keyframes input-flash-error {
+  0%, 100% { border-color: var(--u1-danger, #e5484d); background: rgba(229,72,77,0.12); }
+  50% { border-color: transparent; background: transparent; }
+}
+.input-flash-error {
+  animation: input-flash-error 0.4s ease-in-out 2;
+}
+
 /* The badge reserves only what the bars need. It used to reserve 78px for
    bars + the word STRONG, which on a ~150px input left the selector itself
    unreadable — the one thing the row exists to show. The word now lives in the

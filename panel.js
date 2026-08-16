@@ -10068,7 +10068,27 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
       return;
     }
     if (!aiWorkspaceMatchesSite()) { warnWrongSite(status); return; }
-    if (!tpl) { showNotice(status, 'Nothing to save — the selector is empty.', 'error', 3500); return; }
+    if (!tpl) {
+      // Approve & apply doing nothing but leave a small toast is exactly the
+      // failure mode a low-confidence card produces most often — the AI left
+      // the primary selector empty on purpose because it couldn't find one it
+      // trusted, so this button silently has nothing to do. A toast that
+      // fades in 3.5s next to a button that never even changed its own text
+      // reads as "the click didn't register," not "there's a field to fill
+      // in above." Open the form, put focus where the fix actually is, and
+      // don't let it fade on its own.
+      const card = save.closest('.ai-map-card');
+      const editDetails = card?.querySelector('.ai-map-edit');
+      if (editDetails) editDetails.open = true;
+      const primaryInput = card?.querySelector('input[data-field="__primary"]');
+      if (primaryInput) {
+        primaryInput.focus();
+        primaryInput.classList.add('input-flash-error');
+        setTimeout(() => primaryInput.classList.remove('input-flash-error'), 1500);
+      }
+      showNotice(status, 'Nothing to save yet — no selector could be determined for this element. Fill one in above (⚠️ note explains why the AI left it blank), or use "Open in builder".', 'error', 0);
+      return;
+    }
 
     save.disabled = true; save.textContent = 'Saving…';
 
