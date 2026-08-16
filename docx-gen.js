@@ -766,8 +766,24 @@ function buildDocxBytes(hostname, cssLink, jsLink, files, skipLinks, config, sit
 // — which meant a dev copying code out of Word first had to survive smart
 // quotes and autocorrected dashes mangling it. Real files sidestep that
 // entirely, and the guide's job shrinks to "put these where they belong".
+// A hostname's dots survive fine inside a zip ENTRY name, but not in the
+// top-level filename Chrome hands to the OS: many real sites (this one
+// included — step-shoe-store-clean-production.up.railway.app) end in a TLD
+// that collides with a reserved extension. ".app" is macOS's own bundle
+// extension, so "…railway.app.zip" embeds "railway.app" — a dot-separated
+// segment ending in .app — right before the real extension. Chrome and
+// Finder's file-type sniffing sometimes takes that as the file actually
+// BEING an application bundle instead of a zip, and macOS then refuses to
+// open it ("may be damaged or incomplete") or saves it under an inconsistent
+// name on retry. Flattening every dot in the hostname to a hyphen removes the
+// pattern entirely, for every hostname, not just .app ones.
+function safeFilenamePart(s) {
+  return String(s || '').replace(/\./g, '-');
+}
+
 function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks, config, siteType) {
   const type = siteType || 'wordpress';
+  const safeHost = safeFilenamePart(hostname);
   const files = {
     patch: !!(built && built.patch),
     fixes: !!(built && built.fixes),
@@ -777,7 +793,7 @@ function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks,
   const docxBytes = buildDocxBytes(hostname, cssLink, jsLink, files, skipLinks, config, siteType);
 
   const pkg = new ZipWriter();
-  pkg.add(`U1-Implementation-Guide-${type}-${hostname}.docx`, docxBytes);
+  pkg.add(`U1-Implementation-Guide-${type}-${safeHost}.docx`, docxBytes);
   if (files.patch) pkg.add('u1-patch.js', built.patch);
   if (files.fixes) pkg.add('u1-fixes.js', built.fixes);
   if (files.monitoring) pkg.add('u1-monitoring.js', built.monitoring);
@@ -788,7 +804,7 @@ function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks,
   const url = URL.createObjectURL(blob);
   const a   = document.createElement('a');
   a.href     = url;
-  a.download = `U1-Package-${type}-${hostname}.zip`;
+  a.download = `U1-Package-${type}-${safeHost}.zip`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
