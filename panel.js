@@ -5722,17 +5722,49 @@ function scaleShot(dataUrl, maxEdge) {
 // Pressing anything in this panel moves focus off the page, and a great many
 // widgets close on focus-out — which is why "just open it first" does not work
 // on its own. The countdown hands the page back to you before the capture.
+// A fixed 5-second count then one shot at collectRegion meant a dialog that
+// took six seconds to find on the page — or a user who needed a moment
+// longer — landed on "Nothing reviewable inside X, check the selector, and
+// open it if it is a dialog," which reads as a wrong selector even when the
+// selector was always right. Collection itself is free (no model call, see
+// collectRegion above), so there is nothing to lose by polling for it
+// instead of guessing one delay for every dialog on every site. Capped, and
+// cancellable, so it does not poll forever if the dialog never opens.
+let aiDelayedPollActive = false;
 document.getElementById('aiDelayedBtn')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   const original = btn.textContent;
-  btn.disabled = true;
-  for (let n = 5; n > 0; n--) {
-    btn.textContent = `⏱ Scanning in ${n}\u2026 open it now`;
-    await new Promise(r => setTimeout(r, 1000));
+
+  if (aiDelayedPollActive) { aiDelayedPollActive = false; return; } // second click cancels
+
+  aiDelayedPollActive = true;
+  btn.classList.add('is-polling');
+  const MAX_MS = 60000, TICK_MS = 1200;
+  const started = Date.now();
+  try {
+    const tab = await getTab();
+    if (!isInjectable(tab)) { showNotice($aiStatus, 'Cannot read this page.', 'error', 4000); return; }
+    const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
+    const handled = await alreadyHandled();
+
+    while (aiDelayedPollActive && Date.now() - started < MAX_MS) {
+      const elapsed = Math.round((Date.now() - started) / 1000);
+      btn.textContent = `⏱ Looking… open it now (${elapsed}s, click to cancel)`;
+      const collected = await collectRegion(tab, scopeSel, handled);
+      if (aiDelayedPollActive && collected && !collected.err && collected.candidates && collected.candidates.length) {
+        document.getElementById('aiDiscoverBtn')?.click();
+        return;
+      }
+      await new Promise(r => setTimeout(r, TICK_MS));
+    }
+    if (aiDelayedPollActive) {
+      showNotice($aiStatus, `Still nothing after ${Math.round(MAX_MS / 1000)}s — check the selector, or press this again once the dialog is open.`, 'error', 8000);
+    }
+  } finally {
+    aiDelayedPollActive = false;
+    btn.classList.remove('is-polling');
+    btn.textContent = original;
   }
-  btn.textContent = original;
-  btn.disabled = false;
-  document.getElementById('aiDiscoverBtn')?.click();
 });
 
 document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => {
@@ -6719,6 +6751,30 @@ document.getElementById('aiDismissBtn')?.addEventListener('click', () => {
 
 document.getElementById('aiScopeBtn')?.addEventListener('click', () => {
   document.getElementById('aiDiscoverBtn')?.click();
+});
+
+// 🔍 — same purpose as the 👁 eye button elsewhere (testSelector): show
+// what the typed container selector actually resolves to, BEFORE spending a
+// scan (and a model call) on it. Typing `.signin` with no way to check it
+// first meant finding out it matched the wrong element only after "Nothing
+// reviewable inside .signin" came back.
+document.getElementById('aiScopeFindBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('aiScopeFindBtn');
+  const input = document.getElementById('aiScopeInput');
+  const sel = (input?.value || '').trim();
+  if (!sel) { showNotice($aiStatus, 'Type a container selector first.', 'error', 3000); return; }
+  btn.disabled = true;
+  try {
+    const res = await testSelector(sel);
+    if (res.err || res.error) { showNotice($aiStatus, res.err || res.error, 'error', 5000); return; }
+    showNotice($aiStatus,
+      res.count === 0 ? `Matches nothing on this page — check the selector, and open it first if it is a dialog.`
+      : res.count === 1 ? `1 match — outlined on the page.`
+      : `${res.count} matches — all outlined. Scan uses whichever this selector resolves to.`,
+      res.count ? 'success' : 'error', 4000);
+  } finally {
+    btn.disabled = false;
+  }
 });
 document.getElementById('aiScopeInput')?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); document.getElementById('aiDiscoverBtn')?.click(); }

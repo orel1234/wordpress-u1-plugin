@@ -3742,6 +3742,7 @@ dialog.ai-box textarea { width: 100%; box-sizing: border-box; }
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
+  margin-top: 10px;
 }
 .ai-run-line .btn-primary { width: 100%; }
 .ai-run-line .btn-outline { padding: 10px 13px; font-size: 13px; }
@@ -4157,13 +4158,16 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
 /* The countdown scan sits under the main action as a quieter alternative. */
 .ai-delayed {
   width: 100%;
-  margin-top: 6px;
+  margin-top: 12px;
   border: 1px dashed var(--u1-border);
   border-radius: var(--u1-radius-sm);
   color: var(--u1-text-muted);
 }
 .ai-delayed:hover:not(:disabled) { border-color: var(--u1-primary-text); color: var(--u1-text); }
 .ai-delayed:disabled { border-style: solid; border-color: var(--u1-primary-text); color: var(--u1-text); opacity: 1; }
+/* Polling for the dialog to appear — stays clickable (a second click cancels
+   it), so this can't reuse :disabled's styling; it needs its own. */
+.ai-delayed.is-polling { border-style: solid; border-color: var(--u1-primary-text); color: var(--u1-text); }
 
 /* What the scan could not see. */
 .ai-hint-line {
@@ -4180,7 +4184,7 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
 /* Scan one part of the page instead of all of it. */
 .ai-scope-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 6px;
   margin-top: 6px;
 }
