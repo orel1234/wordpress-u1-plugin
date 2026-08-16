@@ -474,6 +474,27 @@ function setConfigCall(config) {
   return src;
 }
 
+// The @u1/react-a11y-hooks and @u1/ng-a11y-directives packages each want the
+// visual-focus setting in their own shape (desktop.visualFocus.outlineColor/
+// outline/outlineStyle/outlineWidth, not visualFocus.style.color/
+// secondaryColor/doubleBorder) — shared here so the doc body and the
+// u1-config.js file it now imports from build the exact same object instead
+// of two copies that could drift.
+function reactU1Config(config) {
+  const style = ((config || {}).visualFocus || {}).style || {};
+  return { desktop: { visualFocus: {
+    outlineColor: style.color || 'blue',
+    outline: `${style.color || 'blue'} ${style.width || 2}px solid`,
+    outlineStyle: 'solid',
+    outlineWidth: `${style.width || 2}px`,
+  }, button: { display: true } } };
+}
+
+function angularU1Config(config) {
+  const style = ((config || {}).visualFocus || {}).style || {};
+  return { desktop: { visualFocus: { outlineColor: style.color || 'red' }, button: { display: true } } };
+}
+
 // ── JS / plain-HTML guide ─────────────────────────────────────────────────────
 
 function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
@@ -534,13 +555,7 @@ function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
 
 function buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config) {
   const names = fileList(files);
-  const style = ((config || {}).visualFocus || {}).style || {};
-  const u1Config = { desktop: { visualFocus: {
-    outlineColor: style.color || 'blue',
-    outline: `${style.color || 'blue'} ${style.width || 2}px solid`,
-    outlineStyle: 'solid',
-    outlineWidth: `${style.width || 2}px`,
-  }, button: { display: true } } };
+  const scriptNames = names.filter((n) => n !== 'u1-config.js');
 
   return [
     para(`U1 Installation & Integration Guide for React — ${hostname}`, 'Title'),
@@ -567,9 +582,12 @@ function buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config
     emptyPara(),
 
     heading('Step 4: Configure U1', 1),
-    para('Apply the configuration once when the app starts:', 'Normal'),
+    para('This package includes u1-config.js alongside this document — the visual-focus settings for this site, as a plain ES module.', 'Normal'),
+    bullet('Copy u1-config.js into src/.'),
+    bullet('Apply it once when the app starts:'),
+    emptyPara(),
     para('JavaScript', 'CodeLabel'),
-    codeBlock(`import React, { useEffect } from 'react';\nimport { setU1Configuration } from '@u1/react-a11y-hooks';\n\nconst u1Configuration = ${jsObjSource(u1Config)};\n\nexport default function App() {\n  useEffect(() => {\n    setU1Configuration(u1Configuration);\n  }, []);\n  return <div>Hello, world!</div>;\n}`),
+    codeBlock(`import React, { useEffect } from 'react';\nimport { setU1Configuration } from '@u1/react-a11y-hooks';\nimport { u1Configuration } from './u1-config';\n\nexport default function App() {\n  useEffect(() => {\n    setU1Configuration(u1Configuration);\n  }, []);\n  return <div>Hello, world!</div>;\n}`),
     emptyPara(),
 
     heading('Step 5: Install and mount the Toolbar', 1),
@@ -580,20 +598,25 @@ function buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config
     codeBlock(`import ReactDOM from 'react-dom/client';\nimport App from './App';\nimport '@u1/react-a11y-hooks/u1.css';\nimport '@u1/toolbar';\n\nReactDOM.createRoot(document.getElementById('root')).render(\n  <React.Fragment>\n    <u1-app enabled={true} />\n    <App />\n  </React.Fragment>\n);`),
     emptyPara(),
 
-    ...(names.length ? [
+    // u1-config.js is handled in Step 4 as an import, not a <script src> —
+    // it's a plain ES module in a React project, not a static asset the way
+    // patch/fixes/monitoring are (those call window.u1.fix.*, which works
+    // identically whether a script tag or a bundler loaded it; a config
+    // object a component imports does not).
+    ...(scriptNames.length ? [
       heading('Step 6: Add the Accessibility Fixes', 1),
-      para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
-        ' (' + names.join(', ') + ') alongside this document — the per-component fixes built for ' +
+      para('This package includes ' + scriptNames.length + ' file' + (scriptNames.length === 1 ? '' : 's') +
+        ' (' + scriptNames.join(', ') + ') alongside this document — the per-component fixes built for ' +
         'this site and the library corrections they depend on. They are plain scripts, not React ' +
         'components, so they load as static assets rather than an import.', 'Normal'),
-      bullet(`Copy ${names.join(', ')} into your project's public/ folder.`),
+      bullet(`Copy ${scriptNames.join(', ')} into your project's public/ folder.`),
       bullet('In public/index.html, add the following AFTER the U1 toolbar script tag (or wherever <u1-app> loads from):'),
-      ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
+      ...(scriptNames.includes('u1-patch.js') && scriptNames.includes('u1-fixes.js') ? [
         para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. The order below is correct.', 'Normal'),
       ] : []),
       emptyPara(),
       para('HTML', 'CodeLabel'),
-      codeBlock(names.map((n) => `<script src="%PUBLIC_URL%/${n}"></script>`).join('\n') +
+      codeBlock(scriptNames.map((n) => `<script src="%PUBLIC_URL%/${n}"></script>`).join('\n') +
         '\n\n<!-- Vite / Next.js: replace %PUBLIC_URL% with "" — files in public/ are served from the site root. -->'),
       emptyPara(),
     ] : []),
@@ -608,8 +631,7 @@ function buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config
 
 function buildBodyPartsAngular(hostname, cssLink, jsLink, files, skipLinks, config) {
   const names = fileList(files);
-  const style = ((config || {}).visualFocus || {}).style || {};
-  const u1Config = { desktop: { visualFocus: { outlineColor: style.color || 'red' }, button: { display: true } } };
+  const scriptNames = names.filter((n) => n !== 'u1-config.js');
 
   return [
     para(`U1 Installation & Integration Guide for Angular — ${hostname}`, 'Title'),
@@ -630,8 +652,11 @@ function buildBodyPartsAngular(hostname, cssLink, jsLink, files, skipLinks, conf
     emptyPara(),
 
     heading('Step 3: Import the U1 module in app.module.ts', 1),
+    para('This package includes u1-config.js alongside this document — the visual-focus settings for this site, as a plain ES module.', 'Normal'),
+    bullet('Copy u1-config.js into src/app/.'),
+    emptyPara(),
     para('TypeScript', 'CodeLabel'),
-    codeBlock(`import { NgA11yDirectiveModule } from '@u1/ng-a11y-directives';\n\n@NgModule({\n  imports: [\n    // ...\n    NgA11yDirectiveModule.forRoot(${jsObjSource(u1Config)}),\n  ],\n})\nexport class AppModule {}`),
+    codeBlock(`import { NgA11yDirectiveModule } from '@u1/ng-a11y-directives';\nimport { u1Config } from './u1-config';\n\n@NgModule({\n  imports: [\n    // ...\n    NgA11yDirectiveModule.forRoot(u1Config),\n  ],\n})\nexport class AppModule {}`),
     emptyPara(),
 
     heading('Step 4: Add the U1 CSS in angular.json', 1),
@@ -651,17 +676,22 @@ function buildBodyPartsAngular(hostname, cssLink, jsLink, files, skipLinks, conf
     codeBlock(`<u1-app [enabled]="true"></u1-app>`),
     emptyPara(),
 
-    ...(names.length ? [
+    // u1-config.js is handled in Step 3 as an import, not a global script —
+    // it's a plain ES module here, not a static asset the way
+    // patch/fixes/monitoring are (those call window.u1.fix.*, which works
+    // identically as a global script; a config object a module imports does
+    // not).
+    ...(scriptNames.length ? [
       heading('Step 6: Add the Accessibility Fixes', 1),
-      para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
-        ' (' + names.join(', ') + ') alongside this document — the per-component fixes built for ' +
+      para('This package includes ' + scriptNames.length + ' file' + (scriptNames.length === 1 ? '' : 's') +
+        ' (' + scriptNames.join(', ') + ') alongside this document — the per-component fixes built for ' +
         'this site and the library corrections they depend on. They are plain scripts, not Angular ' +
         'modules, so they load as global assets rather than an import.', 'Normal'),
-      bullet(`Copy ${names.join(', ')} into src/assets/.`),
+      bullet(`Copy ${scriptNames.join(', ')} into src/assets/.`),
       bullet('In angular.json, add them to the build target\'s "scripts" array, in this exact order (patch first — it wraps window.u1.fix.* before fixes.js calls it):'),
       emptyPara(),
       para('angular.json', 'CodeLabel'),
-      codeBlock(`"scripts": [\n${names.map((n) => `  "src/assets/${n}"`).join(',\n')}\n]`),
+      codeBlock(`"scripts": [\n${scriptNames.map((n) => `  "src/assets/${n}"`).join(',\n')}\n]`),
       emptyPara(),
     ] : []),
 
@@ -748,11 +778,12 @@ function safeFilenamePart(s) {
 // rather than becoming a droppable file. WordPress and plain HTML/JS have no
 // such framework layer, so their config is just as droppable as the fixes.
 function buildConfigFileContent(config, skipLinks, siteType) {
-  if (siteType === 'react' || siteType === 'angular') return '';
-  const safeConfig = safeConfigOf(config, skipLinks);
+  if (siteType === 'react') return `export const u1Configuration = ${jsObjSource(reactU1Config(config))};`;
+  if (siteType === 'angular') return `export const u1Config = ${jsObjSource(angularU1Config(config))};`;
   if (siteType === 'js') return setConfigCall(config);
   // wordpress (and the default): the older window.u1.config assignment form,
   // matching what this guide has always told WordPress implementers to paste.
+  const safeConfig = safeConfigOf(config, skipLinks);
   const src = `window.u1.config = ${JSON.stringify(safeConfig, null, 4)
     .replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:')};`;
   return `window.u1 = window.u1 || {};\n${src}`;
