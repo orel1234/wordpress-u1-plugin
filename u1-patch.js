@@ -1167,47 +1167,18 @@
 //#endregion
 
 //#region u1-patch:carousel
-// Two problems. The library wires roles and the prev/next/picker clicks but has
-// no pause mechanism at all — no reference to pause, stop or autoplay anywhere
-// in the fixer — so a carousel that advances on its own leaves 2.2.2 unmet. And
-// initialProps assumes slide 0 is the active one instead of reading the page.
-(function () {
-  var P = window.__u1Patch; if (!P) return;
-  var u = P.util;
-
-  var label = function (running) { return running ? 'Pause the carousel' : 'Resume the carousel'; };
-
-  P.correct(function () {
-    u.qsa('[role="group"][aria-roledescription="carousel"], .u1st-carousel, [data-u1-carousel]')
-      .forEach(function (car) {
-        if (car.__u1pPause) return;
-        // Only carousels that actually move need a control. A static one would
-        // gain a button that does nothing, which is its own accessibility problem.
-        if (!car.querySelector('[aria-hidden="true"], [hidden]')) return;
-        car.__u1pPause = true;
-
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'u1p-carousel-pause';
-        btn.textContent = '⏸';
-        btn.setAttribute('aria-label', label(true));
-        btn.style.cssText = 'position:relative;z-index:2';
-
-        var running = true;
-        btn.addEventListener('click', function () {
-          running = !running;
-          btn.textContent = running ? '⏸' : '▶';
-          btn.setAttribute('aria-label', label(running));
-          // The site owns the timer, so the honest lever is the one every
-          // carousel library already listens to.
-          car.dispatchEvent(new CustomEvent(running ? 'mouseleave' : 'mouseenter',
-            { bubbles: true }));
-          car.setAttribute('data-u1p-paused', String(!running));
-        });
-        car.insertBefore(btn, car.firstChild);
-      });
-  });
-})();
+// The library wires roles and the prev/next/picker clicks but has no pause
+// mechanism at all — no reference to pause, stop or autoplay anywhere in the
+// fixer — so a carousel that advances on its own leaves 2.2.2 unmet.
+//
+// This used to auto-inject a real <button> into the client's page to close
+// that gap. Pulled: a visible, interactively-behaved control is a bigger
+// intervention than the attribute-only fixes everywhere else in this file —
+// wrong placement, wrong styling, or fighting the site's own pause button (if
+// any) is a worse outcome on a real client site than leaving 2.2.2 flagged.
+// This is now a static-scan recommendation only (panel.js SCAN_RULES
+// 'carousel-nopause') — a human decides where and how a pause control belongs
+// on THIS site, U1 does not decide it for them.
 //#endregion
 
 //#region u1-patch:loading

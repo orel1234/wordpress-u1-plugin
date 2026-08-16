@@ -10911,6 +10911,7 @@ const SCAN_RULES = {
   'dup-ids':              { title: 'Duplicate id attribute', wcag: '4.1.1', severity: 'Medium', category: 'Screen Reader Support', why: 'Duplicate IDs break label and ARIA associations.', fix: 'Make every id on the page unique.' },
   'zoom-disabled':        { title: 'Zoom is disabled', wcag: '1.4.4', severity: 'High', category: 'Text Resize and Magnification', why: 'Users cannot enlarge content enough to read.', fix: 'Do not disable zoom; avoid user-scalable=no / maximum-scale.' },
   'autoplay-audio':       { title: 'Autoplay media cannot be stopped', wcag: '1.4.2', severity: 'High', category: 'Media Animation Motion', why: 'Autoplay audio interrupts users and screen readers.', fix: 'Do not autoplay, or provide pause/stop/mute controls.' },
+  'carousel-nopause':     { title: 'Auto-advancing carousel has no pause control', wcag: '2.2.2', severity: 'High', category: 'Media Animation Motion', why: 'Content that moves, updates, or auto-advances for more than five seconds must be pausable — this carousel changes slides on its own with no way to stop it.', fix: 'Add a visible pause/stop control placed and styled to match the rest of the page — not something to auto-generate; where it belongs is a design decision for this specific site.' },
   'video-nocaptions':     { title: 'Video has no captions', wcag: '1.2.2', severity: 'High', category: 'Media Animation Motion', why: 'Users who cannot hear the audio miss the content.', fix: 'Add a captions track (<track kind="captions">).' },
   'switch-nostate':       { title: 'Switch has no state', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Users cannot tell if a role="switch" is On or Off.', fix: 'Add aria-checked="true/false" to the switch.' },
   'checkbox-nostate':     { title: 'Custom checkbox has no state', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Users cannot perceive selected / unselected / mixed.', fix: 'Add aria-checked="true/false/mixed" to role="checkbox".' },
@@ -11095,6 +11096,20 @@ async function scanPageStatic() {
         Array.from(document.querySelectorAll('audio[autoplay],video[autoplay]')).forEach(el => {
           if (!el.muted && !el.controls) add('autoplay-audio', el, el.tagName.toLowerCase() + ' autoplay');
         });
+
+        // ── Carousel with no pause control (WCAG 2.2.2) ─────────────────
+        // Recommendation only — U1 does not inject a button for this (see
+        // u1-patch.js's carousel region for why). Same "does it actually
+        // move" guard the patch used to use: a static carousel gaining a
+        // flagged issue that doesn't apply to it would be its own false
+        // positive. A real pause/stop control anywhere in the carousel
+        // (however the site built it) means this is already handled.
+        Array.from(document.querySelectorAll('[role="group"][aria-roledescription="carousel"],.u1st-carousel,[data-u1-carousel]')).forEach(el => {
+          const moves = !!el.querySelector('[aria-hidden="true"],[hidden]');
+          if (!moves) return;
+          const hasPauseControl = !!el.querySelector('[aria-label*="pause" i],[aria-label*="stop" i],button[class*="pause" i]');
+          if (!hasPauseControl) add('carousel-nopause', el, '(auto-advancing carousel)');
+        });
         Array.from(document.querySelectorAll('video')).slice(0, 20).forEach(el => {
           if (!el.querySelector('track[kind=captions],track[kind=subtitles]')) add('video-nocaptions', el, '(video without captions track)');
         });
@@ -11232,6 +11247,7 @@ const STATIC_WHY_NOT = {
   'slider-novalue': 'map it as a slider', 'meter-novalue': 'map it as a meter',
   'combobox-noexpanded': 'map it as an autocomplete', 'video-nocaptions': 'needs caption files',
   'target-size-small': 'a CSS change — the exported bundle carries no stylesheet',
+  'carousel-nopause': 'a visible control the client places — U1 does not add UI to the page',
   'dup-ids': 'renaming an id breaks whatever queries it',
   'heading-skip': 'map the heading and give it the right level',
   'h1-missing': 'decide which element is the page heading', 'h1-multiple': 'decide which one is the page heading',
