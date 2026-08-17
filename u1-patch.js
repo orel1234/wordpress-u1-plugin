@@ -688,9 +688,128 @@
 // from assistive technology. And when the label contains a link ("I accept the
 // <a>terms</a>"), aria-hidden lands on an ancestor of focusable content, which
 // is a violation in its own right.
+//
+// CheckboxFixer.fix() only runs once FixerAbstract's wait-for-visible gate
+// resolves (a ChangeDetection poll keyed to props.selectors.element), and on
+// some pages that gate never resolves at all — same as accordion/form (see
+// those regions' comments). Wrapping u1.fix.checkbox captures the mapping's
+// own element/checkedState/uncheckedState/exclude/disabled/label selectors —
+// exactly what CheckboxFixer.fix() and ToggleStateService.fix() read off
+// this.props.selectors — so role="checkbox", the checked/unchecked ARIA sync,
+// disabled/excluded handling and the label naming all apply independent of
+// whether that gate ever fires.
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
+  var configs = [];
+
+  var already = function (el) { return configs.some(function (c) { return c.element === el; }); };
+  var wrapOne = function (u1) {
+    if (!u1 || !u1.fix || typeof u1.fix.checkbox !== 'function' || u1.fix.checkbox.__u1pWrapped) return;
+    var orig = u1.fix.checkbox;
+    var wrapped = function (selector, props) {
+      var sel = props && props.selectors;
+      var elSel = (sel && typeof sel.element === 'string' && sel.element) || (typeof selector === 'string' ? selector : null);
+      if (elSel && !already(elSel)) {
+        configs.push({
+          element: elSel,
+          checkedState: (sel && typeof sel.checkedState === 'string') ? sel.checkedState : null,
+          uncheckedState: (sel && typeof sel.uncheckedState === 'string') ? sel.uncheckedState : null,
+          exclude: (sel && typeof sel.exclude === 'string') ? sel.exclude : null,
+          disabled: (sel && typeof sel.disabled === 'string') ? sel.disabled : null,
+          label: (sel && typeof sel.label === 'string') ? sel.label : null,
+        });
+        P.schedule();
+      }
+      return orig.apply(this, arguments);
+    };
+    wrapped.__u1pWrapped = true;
+    u1.fix.checkbox = wrapped;
+  };
+  var currentU1 = function () {
+    return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
+  };
+  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  else {
+    var tries = 0;
+    var poll = setInterval(function () {
+      var u1 = currentU1();
+      if ((u1 && u1.fix && (wrapOne(u1), true)) || ++tries > 40) clearInterval(poll);
+    }, 250);
+  }
+
+  // Mirrors ToggleStateService.fix(): an element-level match on checkedState
+  // wins when unambiguous; when both or neither selector matches, checkedState
+  // is retried as a DESCENDANT lookup, since some mappings point it at an
+  // inner icon/class rather than the checkbox itself.
+  var deriveChecked = function (box, cfg) {
+    var isTrue = false, isFalse = false;
+    try { isTrue = cfg.checkedState ? box.matches(cfg.checkedState) : false; } catch (e) {}
+    try { isFalse = cfg.uncheckedState ? box.matches(cfg.uncheckedState) : false; } catch (e) {}
+    if (isTrue && !isFalse) return 'true';
+    if (!isTrue && isFalse) return 'false';
+    if (cfg.checkedState) {
+      var desc = false;
+      try { desc = !!box.querySelector(cfg.checkedState); } catch (e) {}
+      return desc ? 'true' : 'false';
+    }
+    return null;
+  };
+
+  P.correct(function () {
+    configs.forEach(function (cfg) {
+      var boxes = u.qsa(cfg.element);
+      var labelEl = cfg.label ? u.qsa(cfg.label)[0] : null;
+      var labelText = labelEl && (labelEl.textContent || '').trim();
+      boxes.forEach(function (box) {
+        if (u.get(box, 'role') !== 'checkbox') u.set(box, 'role', 'checkbox');
+        u.setTabIndex(box, 0);
+        if (cfg.checkedState || cfg.uncheckedState) {
+          var checked = deriveChecked(box, cfg);
+          if (checked !== null) u.set(box, 'aria-checked', checked);
+        }
+        if (labelEl && labelText) {
+          u.set(box, 'aria-label', labelText);
+          if (!labelEl.querySelector(u.FOCUSABLE)) u.set(labelEl, 'aria-hidden', 'true');
+        }
+      });
+      if (cfg.disabled) {
+        u.qsa(cfg.disabled).forEach(function (el) {
+          u.set(el, 'aria-disabled', 'true');
+          u.setTabIndex(el, -1);
+        });
+      }
+      if (cfg.exclude) {
+        u.qsa(cfg.exclude).forEach(function (el) {
+          if (!u.visible(el)) el.style.visibility = 'hidden';
+        });
+      }
+    });
+  });
+
+  // Space activates a non-native checkbox (addKeyboardEvent's contract), and
+  // either kind of activation must force an immediate re-sync: the checked
+  // state is read from a CSS class/selector the site's own JS flips, which is
+  // not one of the attributes core's MutationObserver watches.
+  var checkboxSelectorList = function () {
+    return configs.map(function (c) { return c.element; }).filter(Boolean).join(',');
+  };
+  var kick = function () {
+    if (window.requestAnimationFrame) requestAnimationFrame(function () { requestAnimationFrame(P.schedule); });
+    else setTimeout(P.schedule, 50);
+  };
+  document.addEventListener('keydown', function (e) {
+    if (!configs.length || e.code !== 'Space') return;
+    var box = u.closest(e.target, checkboxSelectorList());
+    if (!box || u.isNative(box)) return;
+    e.preventDefault();
+    box.click();
+    kick();
+  }, true);
+  document.addEventListener('click', function (e) {
+    if (!configs.length) return;
+    if (u.closest(e.target, checkboxSelectorList())) kick();
+  }, true);
 
   P.correct(function () {
     // Naming runs FIRST. The hidden-ancestor sweep below strips the very
