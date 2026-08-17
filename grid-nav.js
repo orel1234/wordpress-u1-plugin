@@ -515,7 +515,19 @@ window.__u1MakeClickable = function (opts) {
       if (name && !el.getAttribute('aria-label') && !el.textContent.trim()) el.setAttribute('aria-label', name);
       syncState(el, t, r);
 
-      if (t !== el && isVisuallyHidden(t)) {
+      // A real native control — input/button/select/textarea/a[href] — is never
+      // hidden here, even when it is visually invisible. MDC-style checkboxes
+      // (Angular Material's mat-checkbox among them) render the actual <input>
+      // at opacity:0 and paint the checkmark via a sibling SVG/div purely for
+      // looks, while the input itself stays the framework-managed, already-
+      // tabbable, already-role="checkbox" accessible interface. isVisuallyHidden
+      // cannot tell that apart from a genuinely decorative hidden proxy, so it
+      // used to hide BOTH — pulling an already-working, framework-wired native
+      // checkbox out of the accessibility tree because it happened to be
+      // styled invisible, which broke it worse than doing nothing would have.
+      const tIsNative = t && (/^(BUTTON|INPUT|SELECT|TEXTAREA)$/.test(t.tagName) ||
+                              (t.tagName === 'A' && t.hasAttribute('href')));
+      if (t !== el && isVisuallyHidden(t) && !tIsNative) {
         t.setAttribute('tabindex', '-1');
         // tabindex first, then aria-hidden — hiding a focusable element from the
         // accessibility tree while it can still be tabbed to is itself a defect.
