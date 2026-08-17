@@ -7,7 +7,7 @@
 
 /* ---- 0. Configuration ---- */
 window.u1?.setConfiguration({
-  visualFocus: { style: { color: "#762323", doubleBorder: true, secondaryColor: "#000000" } }
+  visualFocus: { style: { color: "#960808", doubleBorder: true, secondaryColor: "#000000" } }
 });
 
 /* ---- 1. Library corrections ---- */
@@ -108,7 +108,7 @@ window.u1?.setConfiguration({
       // after one round.
       attributeFilter: ['role', 'aria-selected', 'aria-checked', 'aria-hidden',
                         'aria-labeledby', 'aria-current', 'aria-expanded',
-                        'tabindex', 'hidden'],
+                        'tabindex', 'hidden', 'lang', 'dir'],
     });
   } catch (e) {}
   if (document.readyState === 'loading') {
@@ -427,15 +427,188 @@ window.u1?.setConfiguration({
     });
   });
 })();
+// AccordionRoles.assignOnLoadAccordionAttr() has two real defects, verified by
+// reading AccordionRoles/AccordionEvents/AccordionFixer in u1_vanilla-js-a11y.js:
+//
+//   1. It only calls assignOnLoadAriaControlsAttr() — which sets aria-controls —
+//      when headerContentMatch is true, i.e. accordionHeaders.length exactly
+//      equals accordionContent.length. Any accordion whose header/content counts
+//      do not line up 1:1 (one extra decorative header, a selector that also
+//      catches something outside the widget) gets NO aria-controls on ANY
+//      header, not just the mismatched one.
+//   2. The same branch hard-codes aria-expanded="false" on every header, even
+//      one whose panel is already open on load — reporting an expanded section
+//      as collapsed.
+//
+// Both only run once, at fix() time, and the whole fixer sits behind
+// FixerAbstract's own wait-for-visible gate (a ChangeDetection poll keyed to
+// props.selectors.headerSelector) — on some pages that gate never resolves at
+// all, and NONE of assignOnLoadAccordionAttr() runs, ever, for any header.
+//
+// Rather than depend on that gate, this wraps u1.fix.accordion to capture the
+// exact headerSelector/contentSelector/disabledElementsSelector a mapping was
+// given — the same information AccordionFixer.fix() itself reads off
+// this.props.selectors — and reimplements assignOnLoadAccordionAttr() correctly
+// from outside, converging every pass through the normal P.correct loop instead
+// of running once. A click/keydown listener forces an immediate extra pass,
+// because a site's own toggle (a class flip, a jQuery slideToggle) is not one of
+// the attributes core's MutationObserver watches, so nothing else would notice it.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+  var configs = [];
+
+  var already = function (header, content) {
+    return configs.some(function (c) { return c.header === header && c.content === content; });
+  };
+  var wrapOne = function (u1) {
+    if (!u1 || !u1.fix || typeof u1.fix.accordion !== 'function' || u1.fix.accordion.__u1pWrapped) return;
+    var orig = u1.fix.accordion;
+    var wrapped = function (selector, props) {
+      var sel = props && props.selectors;
+      if (sel && typeof sel.headerSelector === 'string' && typeof sel.contentSelector === 'string'
+          && !already(sel.headerSelector, sel.contentSelector)) {
+        configs.push({
+          header: sel.headerSelector,
+          content: sel.contentSelector,
+          disabled: typeof sel.disabledElementsSelector === 'string' ? sel.disabledElementsSelector : null,
+        });
+        // A newly captured config has never been through P.correct — the core
+        // loop only re-runs on a DOM mutation or the load-time pass that
+        // already happened before this call existed. Without this, the first
+        // application of a mapping waited for an unrelated mutation to arrive
+        // before anything showed up, which reads exactly like "Apply did
+        // nothing" even though it is only "Apply hasn't been picked up yet".
+        P.schedule();
+      }
+      return orig.apply(this, arguments);
+    };
+    wrapped.__u1pWrapped = true;
+    u1.fix.accordion = wrapped;
+  };
+  var currentU1 = function () {
+    return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
+  };
+  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  else {
+    var tries = 0;
+    var poll = setInterval(function () {
+      var u1 = currentU1();
+      if ((u1 && u1.fix && (wrapOne(u1), true)) || ++tries > 40) clearInterval(poll);
+    }, 250);
+  }
+
+  var syncPair = function (header, content) {
+    if (!/^button$/i.test(header.tagName)) {
+      u.set(header, 'role', 'button');
+      u.setTabIndex(header, 0);
+    }
+    var headerId = header.id || (header.id = 'u1p-acc-h-' + Math.random().toString(36).slice(2, 9));
+    var contentId = content.id || (content.id = 'u1p-acc-c-' + Math.random().toString(36).slice(2, 9));
+    u.set(content, 'role', 'region');
+    u.set(content, 'aria-labelledby', headerId);
+    u.set(header, 'aria-controls', contentId);              // defect 1: missing when counts mismatched
+    u.set(header, 'aria-expanded', u.visible(content) ? 'true' : 'false'); // defect 2: re-derived every pass
+  };
+
+  P.correct(function () {
+    configs.forEach(function (cfg) {
+      var headers = u.qsa(cfg.header);
+      var content = u.qsa(cfg.content);
+      var n = Math.min(headers.length, content.length);
+      for (var i = 0; i < n; i++) syncPair(headers[i], content[i]);
+      for (var j = n; j < headers.length; j++) {
+        if (!/^button$/i.test(headers[j].tagName)) {
+          u.set(headers[j], 'role', 'button');
+          u.setTabIndex(headers[j], 0);
+        }
+      }
+      if (cfg.disabled) {
+        for (var k = 0; k < n; k++) {
+          try { if (headers[k].matches(cfg.disabled)) u.set(headers[k], 'aria-disabled', 'true'); } catch (e) {}
+        }
+      }
+    });
+  });
+
+  var headerSelectorList = function () {
+    return configs.map(function (c) { return c.header; }).filter(Boolean).join(',');
+  };
+  var kick = function () {
+    if (window.requestAnimationFrame) {
+      requestAnimationFrame(function () { requestAnimationFrame(P.schedule); });
+    } else setTimeout(P.schedule, 50);
+    setTimeout(P.schedule, 350);              // catches slideToggle-style animated collapses
+  };
+  document.addEventListener('keydown', function (e) {
+    if (!configs.length || (e.code !== 'Space' && e.code !== 'Enter')) return;
+    var header = u.closest(e.target, headerSelectorList());
+    if (!header || u.isNative(header)) return;
+    e.preventDefault();
+    header.click();
+    kick();
+  }, true);
+  document.addEventListener('click', function (e) {
+    if (!configs.length) return;
+    if (u.closest(e.target, headerSelectorList())) kick();
+  }, true);
+})();
 // FormFixer.fix() returns early when no errorMsg selector was configured — and
 // the label-to-field linking sits after that return. A form mapped without an
 // error selector therefore never gets its labels connected, which is a 1.3.1 and
 // 3.3.2 failure caused by an unrelated field being left blank.
+//
+// role="form" and handleRequiredFields() (aria-required) sit BEFORE that
+// return, so they are not this same bug — but fix() itself only ever runs once
+// FixerAbstract's wait-for-visible gate resolves (a ChangeDetection poll keyed
+// to props.selectors.form), and on some pages that gate never resolves at all,
+// same as accordion's fixer (see that region's comment). Wrapping u1.fix.form
+// captures the mapping's own form/requiredField selectors — exactly what
+// FormFixer.fix() reads off this.props.selectors — so role="form" and
+// aria-required apply independent of whether that gate ever fires.
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
+  var configs = [];
+
+  var already = function (form, required) {
+    return configs.some(function (c) { return c.form === form && c.required === required; });
+  };
+  var wrapOne = function (u1) {
+    if (!u1 || !u1.fix || typeof u1.fix.form !== 'function' || u1.fix.form.__u1pWrapped) return;
+    var orig = u1.fix.form;
+    var wrapped = function (selector, props) {
+      var sel = props && props.selectors;
+      var formSel = (sel && typeof sel.form === 'string' && sel.form) || (typeof selector === 'string' ? selector : null);
+      var reqSel = (sel && typeof sel.requiredField === 'string') ? sel.requiredField : null;
+      if (formSel && !already(formSel, reqSel)) {
+        configs.push({ form: formSel, required: reqSel });
+        P.schedule();          // see the matching comment in u1-patch:accordion
+      }
+      return orig.apply(this, arguments);
+    };
+    wrapped.__u1pWrapped = true;
+    u1.fix.form = wrapped;
+  };
+  var currentU1 = function () {
+    return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
+  };
+  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  else {
+    var tries = 0;
+    var poll = setInterval(function () {
+      var u1 = currentU1();
+      if ((u1 && u1.fix && (wrapOne(u1), true)) || ++tries > 40) clearInterval(poll);
+    }, 250);
+  }
 
   P.correct(function () {
+    configs.forEach(function (cfg) {
+      u.qsa(cfg.form).forEach(function (form) {
+        if (form.tagName !== 'FORM' && u.get(form, 'role') !== 'form') u.set(form, 'role', 'form');
+        if (cfg.required) u.qsa(cfg.required, form).forEach(function (el) { u.set(el, 'aria-required', 'true'); });
+      });
+    });
     u.qsa('form, [role="form"]').forEach(function (form) {
       u.qsa('input, select, textarea', form).forEach(function (field) {
         if (field.type === 'hidden' || field.disabled) return;
@@ -742,47 +915,301 @@ window.u1?.setConfiguration({
     t.focus();
   }, true);
 })();
-// Two problems. The library wires roles and the prev/next/picker clicks but has
-// no pause mechanism at all — no reference to pause, stop or autoplay anywhere
-// in the fixer — so a carousel that advances on its own leaves 2.2.2 unmet. And
-// initialProps assumes slide 0 is the active one instead of reading the page.
+// A listbox comes out of U1 decorated and inoperable, and the two facts are not
+// in tension: everything a static check reads is present, and nothing a keyboard
+// user does works. This region is about the second half.
+//
+// It is also, until now, the only interactive type with no region at all. The
+// one listbox line in the tree sat inside the combobox region, so an export
+// containing a listbox and no combobox shipped no listbox corrections whatever.
+//
+// Four gaps, in the order a person meets them:
+//
+//   1. OPENING LEAVES FOCUS BEHIND. The trigger opens the list and focus stays
+//      on the trigger. Sighted users see the list; a keyboard user has to guess
+//      that Tab now leads somewhere new — and on a popup positioned out of DOM
+//      order it does not. APG puts focus in the list on open. Nothing does.
+//   2. ARROWS. No arrow handling reaches a standalone listbox, and the default
+//      orientation for the role is vertical, so Up/Down are the keys that must
+//      work. (In a combobox the textbox owns the arrows and focus never enters
+//      an option; the roving below is inert there by construction.)
+//   3. ESCAPE DOES NOT CLOSE, AND FOCUS DOES NOT COME BACK. Escape inside an
+//      open list leaves it open, or closes it and strands focus on a detached
+//      option — after which Tab restarts from the top of the document.
+//   4. aria-expanded GOES STALE. U1 writes it once. When the SITE'S own script
+//      opens or closes the list — which is the ordinary case, since the site
+//      had a working dropdown before anyone accessibilised it — the attribute
+//      keeps its old value and a screen reader announces "collapsed" over an
+//      open list. This is the defect most likely to read as "it says it is
+//      accessible and it is lying".
+//
+// What this region deliberately does NOT do is activate an option on
+// Enter/Space. Whether the library already does is not readable from outside,
+// and a second synthetic click on a <li><a> navigates twice. The keyboard test
+// reports that gap instead of this file guessing at it.
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
 
-  var label = function (running) { return running ? 'Pause the carousel' : 'Resume the carousel'; };
+  var OPT = '[role="option"]';
+  var TRIGGER = '[aria-haspopup="listbox"],[u1st-trigger-element="true"]';
+  var ITEM = 'li,[role="option"],[role="menuitem"],a[href],button';
+
+  // ── The defect that leaves the list untouched entirely ─────────────────────
+  // ListboxFixer is handed the TRIGGER as its context and then resolves
+  // selectors.listbox and selectors.options against it — and the list is never
+  // inside the button that opens it. getElement finds nothing and throws, and
+  // the throw lands AFTER the trigger has been decorated and BEFORE anything
+  // else is. Photographed on a live site: the button carries role="button",
+  // aria-haspopup="listbox", aria-expanded and u1st-trigger-element, while the
+  // <ul> and every <li> carry nothing at all.
+  //
+  // It is the same shape as the TabsFixer defect above and it takes the same
+  // remedy: widen the context to the nearest ancestor holding both. Only when
+  // the list is genuinely unreachable from the trigger — a site where the
+  // current arrangement resolves is left exactly as it is.
+  P.contextRoot.listbox = function (root, props) {
+    var sel = props && props.selectors;
+    if (!sel || !sel.listbox) return null;
+    try {
+      if (root.matches && root.matches(sel.listbox)) return null;
+      if (root.querySelector(sel.listbox)) return null;
+    } catch (e) { return null; }
+
+    var node = root;
+    while ((node = node.parentElement)) {
+      try {
+        // The moment an ancestor sweeps in a second trigger it is the wrong
+        // root: the fixer would pair one component's button with another's
+        // list. Every ancestor above it is worse, so stop rather than widen.
+        if (sel.trigger && node.querySelectorAll(sel.trigger).length > 1) return false;
+        if (node.querySelector(sel.listbox)) return node;
+      } catch (e) { return null; }
+    }
+    return false;
+  };
+
+  /**
+   * The popup a trigger opens.
+   *
+   * Deliberately NOT keyed on role="listbox". The case worth fixing is the one
+   * where that role was never written — looking for it there finds nothing and
+   * every correction below silently does nothing, which is how the first
+   * version of this region managed to change absolutely nothing on the page it
+   * was written for.
+   */
+  var listFor = function (trigger) {
+    var id = u.get(trigger, 'aria-controls');
+    var byId = id && document.getElementById(id);
+    if (byId && !byId.contains(trigger)) return byId;
+
+    // A sibling that is a CONTAINER OF ITEMS. Two or more children, each of
+    // them an item or holding one — the same homogeneity test that separates a
+    // <ul> from the <nav> around it everywhere else in this tool.
+    var sib = trigger.nextElementSibling, seen = 0;
+    while (sib && seen++ < 4) {
+      if (u.get(sib, 'role') === 'listbox') return sib;
+      var kids = u.qsa(':scope > *', sib);
+      if (kids.length >= 2 && kids.every(function (k) {
+        return (k.matches && k.matches(ITEM)) || u.qsa(ITEM, k).length > 0;
+      })) return sib;
+      sib = sib.nextElementSibling;
+    }
+    // Up a few levels only. Walking to <body> finds some other component's
+    // list and pairs the two — worse than finding nothing.
+    var node = trigger.parentElement, hops = 0;
+    while (node && hops++ < 3) {
+      var lb = node.querySelector('[role="listbox"]');
+      if (lb && !lb.contains(trigger)) return lb;
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  var triggerFor = function (list) {
+    var found = null;
+    u.qsa(TRIGGER).some(function (t) {
+      if (listFor(t) === list) { found = t; return true; }
+      return false;
+    });
+    return found;
+  };
+
+  var options = function (list) { return u.qsa(OPT, list).filter(u.visible); };
+
+  /**
+   * Put focus in the list — but only if it is still on the trigger. Anything
+   * else has already decided where focus goes, and this must not overrule it.
+   */
+  var moveIn = function (trigger, list) {
+    if (document.activeElement !== trigger) return;
+    var opts = options(list);
+    if (!opts.length) return;
+    var chosen = opts.filter(function (o) { return u.get(o, 'aria-selected') === 'true'; })[0] || opts[0];
+    // One tab stop, so Tab leaves the list instead of walking every option.
+    // Native options (a link, a button) are left alone: taking a link out of
+    // the tab order to impose a roving pattern removes a stop that worked.
+    opts.forEach(function (o) { if (!u.isNative(o)) u.setTabIndex(o, o === chosen ? 0 : -1); });
+    try { chosen.focus(); } catch (e) {}
+  };
+
+  // Opening by keyboard. ArrowDown on a closed trigger is also an open command
+  // per APG, and no part of the library implements it.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+    var trigger = u.closest(e.target, TRIGGER);
+    if (!trigger) return;
+    var list = listFor(trigger);
+    if (!list) return;
+
+    if (e.key === 'ArrowDown' && !u.visible(list)) {
+      e.preventDefault();
+      trigger.click();
+    }
+    // Twice: once for a list that is already in the DOM, once for one the page
+    // builds or animates in. moveIn is idempotent and refuses to act after
+    // focus has left the trigger, so the second call costs nothing.
+    setTimeout(function () { if (u.visible(list)) moveIn(trigger, list); }, 60);
+    setTimeout(function () { if (u.visible(list)) moveIn(trigger, list); }, 260);
+  }, true);
+
+  /**
+   * Answer "is this open?" only once it has stopped moving.
+   *
+   * A dropdown that slides shut is still visible for the whole animation —
+   * mid-slide a jQuery slideUp reads height:5.08px, overflow:hidden — so any
+   * fixed delay is a coin toss on a slow machine and a wrong answer on a fast
+   * one. Poll until two consecutive measurements agree, then decide.
+   */
+  var whenSettled = function (el, cb) {
+    var last = -1, waited = 0;
+    var tick = function () {
+      var now = el.offsetHeight + ':' + el.offsetWidth;
+      if (now === last || waited >= 900) { cb(u.visible(el)); return; }
+      last = now;
+      waited += 80;
+      setTimeout(tick, 80);
+    };
+    setTimeout(tick, 80);
+  };
+
+  // Escape: put focus back, and close it if nobody else is going to.
+  //
+  // This used to wait a flat 90ms and then click the trigger if the list still
+  // looked visible. On a site that animates the dropdown, 90ms lands in the
+  // middle of the slide: the list reads as open, the click REOPENS it, the
+  // site closes it again, and the thing flickers three times before settling.
+  // Reported exactly that way.
+  //
+  // So: the focus return happens at once — it is ours and it conflicts with
+  // nothing — and the decision to close waits until the list has stopped
+  // moving. On a site that closes on Escape by itself, that decision is
+  // "already shut", and this touches nothing.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var list = u.closest(e.target, '[role="listbox"]');
+    if (!list) return;
+    var trigger = triggerFor(list);
+    if (!trigger) return;
+    try { trigger.focus(); } catch (err) {}
+    // A second Escape while the first is still settling would queue a second
+    // click, which is its own way of reopening what was just closed.
+    if (list.__u1pClosing) return;
+    list.__u1pClosing = true;
+    whenSettled(list, function (stillOpen) {
+      list.__u1pClosing = false;
+      if (stillOpen) trigger.click();
+      P.schedule();
+    });
+  }, true);
+
+  // The site opening or closing the list is not something the attribute
+  // observer sees — it happens by class or by inline style, and neither is in
+  // the filter. So the click that could have caused it schedules the pass.
+  document.addEventListener('click', function (e) {
+    var trigger = u.closest(e.target, TRIGGER);
+    if (!trigger && !u.closest(e.target, '[role="listbox"]')) return;
+    setTimeout(P.schedule, 0);
+    // And again once the list has finished moving, because aria-expanded read
+    // off a half-collapsed element is simply wrong.
+    var list = trigger && listFor(trigger);
+    if (list) whenSettled(list, function () { P.schedule(); });
+    else setTimeout(P.schedule, 250);
+  }, true);
 
   P.correct(function () {
-    u.qsa('[role="group"][aria-roledescription="carousel"], .u1st-carousel, [data-u1-carousel]')
-      .forEach(function (car) {
-        if (car.__u1pPause) return;
-        // Only carousels that actually move need a control. A static one would
-        // gain a button that does nothing, which is its own accessibility problem.
-        if (!car.querySelector('[aria-hidden="true"], [hidden]')) return;
-        car.__u1pPause = true;
+    u.qsa(TRIGGER).forEach(function (trigger) {
+      var list = listFor(trigger);
+      if (!list) return;
 
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'u1p-carousel-pause';
-        btn.textContent = '⏸';
-        btn.setAttribute('aria-label', label(true));
-        btn.style.cssText = 'position:relative;z-index:2';
+      // aria-expanded describes the list AS IT IS, not as it was when U1 ran.
+      u.set(trigger, 'aria-expanded', u.visible(list) ? 'true' : 'false');
 
-        var running = true;
-        btn.addEventListener('click', function () {
-          running = !running;
-          btn.textContent = running ? '⏸' : '▶';
-          btn.setAttribute('aria-label', label(running));
-          // The site owns the timer, so the honest lever is the one every
-          // carousel library already listens to.
-          car.dispatchEvent(new CustomEvent(running ? 'mouseleave' : 'mouseenter',
-            { bubbles: true }));
-          car.setAttribute('data-u1p-paused', String(!running));
+      // The trigger promises a listbox and the popup is not one.
+      //
+      // Where the popup carries NO role, writing it is repairing a broken
+      // promise and destroys nothing. Where the SITE wrote a role — a <ul
+      // role="menu"> is the common one — the decision to overwrite it belongs
+      // to the person mapping the site, is asked in Studio, and is carried out
+      // there by removing the attribute before u1.fix runs. If it is still
+      // here, the answer was no: leave the role, and leave the items alone too,
+      // because half-converting a menu into a listbox is worse than either.
+      var authored = u.get(list, 'role');
+      if (u.get(trigger, 'aria-haspopup') === 'listbox' && authored !== 'listbox') {
+        if (authored) return;
+        u.set(list, 'role', 'listbox');
+      }
+
+      // Rows that never got role="option", for the same reason.
+      if (u.get(list, 'role') === 'listbox' && !list.querySelector(OPT)) {
+        u.qsa(':scope > *', list).forEach(function (row) {
+          // The element a person ACTIVATES. role="option" on a wrapper holding
+          // a single link puts the focus on one element and the action on
+          // another; where the row is ambiguous, the row itself is the safer
+          // answer.
+          var hits = u.qsa('a[href],button', row);
+          var target = hits.length === 1 ? hits[0] : row;
+          if (!u.get(target, 'role')) u.set(target, 'role', 'option');
         });
-        car.insertBefore(btn, car.firstChild);
-      });
+      }
+
+      // Name the relationship so a screen reader can follow it, and so
+      // listFor's first branch answers next time instead of guessing.
+      if (!u.get(trigger, 'aria-controls')) {
+        if (!list.id) list.id = 'u1p-listbox-' + Math.random().toString(36).slice(2, 9);
+        u.set(trigger, 'aria-controls', list.id);
+      }
+
+      // An open list with no tab stop anywhere cannot be reached at all.
+      if (!u.visible(list)) return;
+      var opts = options(list);
+      if (!opts.length) return;
+      if (u.get(list, 'aria-activedescendant')) return;   // a different model, and a valid one
+      var reachable = opts.some(function (o) { return u.isNative(o) || o.tabIndex === 0; });
+      if (!reachable) {
+        var chosen = opts.filter(function (o) { return u.get(o, 'aria-selected') === 'true'; })[0] || opts[0];
+        u.setTabIndex(chosen, 0);
+      }
+    });
   });
+
+  // Vertical by default: that is the role's default orientation, and unlike a
+  // tablist a listbox that says nothing means Up/Down.
+  P.rove('[role="listbox"]', OPT, { arrows: true, vertical: 'auto', orientationDefault: 'vertical' });
+  // No `activate` — arrowing through a list of links must not follow them.
 })();
+// The library wires roles and the prev/next/picker clicks but has no pause
+// mechanism at all — no reference to pause, stop or autoplay anywhere in the
+// fixer — so a carousel that advances on its own leaves 2.2.2 unmet.
+//
+// This used to auto-inject a real <button> into the client's page to close
+// that gap. Pulled: a visible, interactively-behaved control is a bigger
+// intervention than the attribute-only fixes everywhere else in this file —
+// wrong placement, wrong styling, or fighting the site's own pause button (if
+// any) is a worse outcome on a real client site than leaving 2.2.2 flagged.
+// This is now a static-scan recommendation only (panel.js SCAN_RULES
+// 'carousel-nopause') — a human decides where and how a pause control belongs
+// on THIS site, U1 does not decide it for them.
 // LinkFixer activates on `evt.code === "Enter"`, so Enter on the numeric keypad
 // (NumpadEnter) does nothing on any element it turned into a link.
 (function () {
@@ -798,20 +1225,16 @@ window.u1?.setConfiguration({
 
 /* ---- 2. Component mappings ---- */
 function __u1ApplyMappings() {
-
-/* ---- m-acd510ed — carousel  .ticker ---- */
+/* ---- m-5aa2329f — carousel  .ticker__item--active ---- */
 window.u1?.fix.carousel(".ticker__item", {
   selectors: {
-    absoluteCarouselContainerLabel: ".ticker__label",
     activeSlides: ".ticker__item--active",
-    carouselContainer: ".ticker",
-    nextButton: "#tickerNext",
-    prevButton: "#tickerPrev",
+    carouselContainer: ".ticker__item--active",
     slide: ".ticker__item"
   }
 });
 
-/* ---- m-fc0428c6 — menu  #megaNav ---- */
+/* ---- m-e4da7ef6 — menu  #megaNav ---- */
 window.u1?.fix.menu("#megaNav", {
   menubar: false,
   selectors: {
@@ -823,108 +1246,399 @@ window.u1?.fix.menu("#megaNav", {
   }
 });
 
-/* ---- m-3e551d8e — carousel  .hero-carousel ---- */
+/* ---- m-6cf5368b — carousel  #heroTrack ---- */
 window.u1?.fix.carousel(".hero-slide", {
   selectors: {
-    absoluteCarouselContainerLabel: ".hero-carousel",
-    carouselContainer: ".hero-carousel",
-    nextButton: ".hero-carousel__arrow--next",
-    prevButton: ".hero-carousel__arrow--prev",
-    slide: ".hero-slide",
-    slidePickerButtons: ".hero-carousel__dot"
+    activeSlides: ".hero-slide--active",
+    carouselContainer: "#heroTrack",
+    slide: ".hero-slide"
   }
 });
 
-/* ---- m-a86d1d2a — tabs  .finder__tabs ---- */
-window.u1?.fix.tabs(".finder__tabs", {
-  isVertical: false,
-  selectors: { tab: ".finder__tab", tabList: ".finder__tabs", tabPanel: ".finder__panel" }
-});
-
-/* ---- m-1dcb021d — form  #finderSport>form ---- */
-window.u1?.fix.form("#finderSport>form", {
-  focusOnInvalidField: true,
-  selectors: {
-    form: "#finderSport>form",
-    inputField: ".finder__control,input,.finder__submit",
-    submitButton: ".finder__submit"
-  }
-});
-
-/* ---- m-12d3ec91 — link  nav[aria-label="Breadcrumb"] ---- */
-window.u1?.fix.link("nav[aria-label=\"Breadcrumb\"]", { selectors: { element: "nav[aria-label=\"Breadcrumb\"]" } });
-
-/* ---- m-272ffb13 — tabs  #dealTabs ---- */
-window.u1?.fix.tabs("#dealTabs", {
-  isVertical: false,
-  selectors: { tab: "#dealTabs>.tab-bar__btn", tabList: "#dealTabs", tabPanel: ".deal-grid" }
-});
-
-/* ---- m-255d310d — link  #dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a ---- */
-window.u1?.fix.link("#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a", {
-  selectors: { element: "#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a" }
-});
-
-/* ---- m-7ff0334e — link  #deals>div.section__head>a.btn ---- */
-window.u1?.fix.link("#deals>div.section__head>a.btn", { selectors: { element: "#deals>div.section__head>a.btn" } });
-
-/* ---- m-c26ae291 — link  #main-content>section.section>div.section__head>a.btn ---- */
-window.u1?.fix.link("#main-content>section.section>div.section__head>a.btn", { selectors: { element: "#main-content>section.section>div.section__head>a.btn" } });
-
-/* ---- m-1ae9ce0e — heading  h2.section__title ---- */
-window.u1?.fix.heading("h2.section__title", { level: "2", selectors: { heading: "h2.section__title" } });
-
-/* ---- m-9e80e36f — button  #bestsellerRail>article.product-card>button.product-card__wish ---- */
-window.u1?.fix.button("#bestsellerRail>article.product-card>button.product-card__wish", { selectors: { element: "#bestsellerRail>article.product-card>button.product-card__wish" } });
-
-/* ---- m-d45c97fa — link  #mosaic>a.mosaic__tile ---- */
-window.u1?.fix.link("#mosaic>a.mosaic__tile", { selectors: { element: "#mosaic>a.mosaic__tile" } });
-
-/* ---- m-bb8fb0b2 — button  #newRail>article.product-card>button.product-card__wish ---- */
-window.u1?.fix.button("#newRail>article.product-card>button.product-card__wish", { selectors: { element: "#newRail>article.product-card>button.product-card__wish" } });
-
-/* ---- m-3054bd44 — link  #newRail>article.product-card>a.product-card__media ---- */
-window.u1?.fix.link("#newRail>article.product-card>a.product-card__media", { selectors: { element: "#newRail>article.product-card>a.product-card__media" } });
-
-/* ---- m-516e0a27 — heading  .hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title ---- */
+/* ---- m-d7eb98ee — heading  .hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title ---- */
 window.u1?.fix.heading(".hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title", {
   level: "2",
   selectors: { heading: ".hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title" }
 });
 
-/* ---- m-9c54c7a2 — heading  #newRail>article.product-card>div.product-card__body>h3.product-card__name ---- */
-window.u1?.fix.heading("#newRail>article.product-card>div.product-card__body>h3.product-card__name", {
-  level: "3",
-  selectors: { heading: "#newRail>article.product-card>div.product-card__body>h3.product-card__name" }
+/* ---- m-d7ce82e2 — tabs  .finder__tabs ---- */
+window.u1?.fix.tabs(".finder__tabs", {
+  isVertical: false,
+  selectors: { tab: ".finder__tab", tabList: ".finder__tabs", tabPanel: ".finder__panel" }
 });
 
-/* ---- m-792ba452 — link  #saleRail>article.product-card>a.product-card__media ---- */
+/* ---- m-0204ab64 — tabs  #main-content>.finder>.finder__card>.finder__tabs>button.finder__tab ---- */
+window.u1?.fix.tabs("#main-content>.finder>.finder__card>.finder__tabs>button.finder__tab", {
+  isVertical: false,
+  selectors: {
+    tab: "#main-content>.finder>.finder__card>.finder__tabs>button.finder__tab",
+    tabList: "#main-content>.finder>.finder__card>.finder__tabs>button.finder__tab",
+    tabPanel: "#finderSport"
+  }
+});
+
+/* ---- m-ac2a5423 — button  #backToTop ---- */
+window.u1?.fix.button("#backToTop", { selectors: { element: "#backToTop" } });
+
+/* ---- m-c9854dd2 — button  #chatToggle ---- */
+window.u1?.fix.button("#chatToggle", { selectors: { element: "#chatToggle" } });
+
+/* ---- m-c7f48318 — heading  #main-content ---- */
+window.u1?.fix.heading("#main-content", { level: "2", selectors: { heading: "#main-content" } });
+
+/* ---- m-0e69cb97 — link  #deals>div.section__head>a.btn ---- */
+window.u1?.fix.link("#deals>div.section__head>a.btn", { selectors: { element: "#deals>div.section__head>a.btn" } });
+
+/* ---- m-b40c138f — link  #dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a ---- */
+window.u1?.fix.link("#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a", {
+  selectors: { element: "#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a" }
+});
+
+/* ---- m-25e1d43e — heading  #main-content>section.section>div.section__head>div>h2.section__title ---- */
+window.u1?.fix.heading("#main-content>section.section>div.section__head>div>h2.section__title", {
+  level: "2",
+  selectors: { heading: "#main-content>section.section>div.section__head>div>h2.section__title" }
+});
+
+/* ---- m-647683dc — link  #main-content>section.section>div.section__head>a.btn ---- */
+window.u1?.fix.link("#main-content>section.section>div.section__head>a.btn", { selectors: { element: "#main-content>section.section>div.section__head>a.btn" } });
+
+/* ---- m-9c8ca2cd — carousel  #bestsellerRail>article.product-card>a.product-card__media ---- */
+window.u1?.fix.carousel("#bestsellerRail>article.product-card", {
+  selectors: {
+    carouselContainer: "#bestsellerRail>article.product-card>a.product-card__media",
+    slide: "#bestsellerRail>article.product-card"
+  }
+});
+
+/* ---- m-882fedc6 — button  #bestsellerRail>article.product-card>button.product-card__wish ---- */
+window.u1?.fix.button("#bestsellerRail>article.product-card>button.product-card__wish", { selectors: { element: "#bestsellerRail>article.product-card>button.product-card__wish" } });
+
+/* ---- m-a1a158a6 — link  #bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name>a ---- */
+window.u1?.fix.link("#bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name>a", {
+  selectors: {
+    element: "#bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name>a"
+  }
+});
+
+/* ---- m-392e4e08 — button  #bestsellerRail>article.product-card>button.product-card__add ---- */
+window.u1?.fix.button("#bestsellerRail>article.product-card>button.product-card__add", { selectors: { element: "#bestsellerRail>article.product-card>button.product-card__add" } });
+
+/* ---- m-7916311c — link  .mosaic__tile--xl ---- */
+window.u1?.fix.link(".mosaic__tile--xl", { selectors: { element: ".mosaic__tile--xl" } });
+
+/* ---- m-31c43e28 — heading  #bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name ---- */
+window.u1?.fix.heading("#bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name", {
+  level: "2",
+  selectors: {
+    heading: "#bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name"
+  }
+});
+
+/* ---- m-cec17b49 — button  #newRail>article.product-card>button.product-card__wish ---- */
+window.u1?.fix.button("#newRail>article.product-card>button.product-card__wish", { selectors: { element: "#newRail>article.product-card>button.product-card__wish" } });
+
+/* ---- m-108ed583 — link  #newRail>article.product-card>a.product-card__media ---- */
+window.u1?.fix.link("#newRail>article.product-card>a.product-card__media", { selectors: { element: "#newRail>article.product-card>a.product-card__media" } });
+
+/* ---- m-78af8af0 — heading  body ---- */
+window.u1?.fix.heading("body", { level: "2", selectors: { heading: "body" } });
+
+/* ---- m-c2271b93 — menu  #brandStrip ---- */
+window.u1?.fix.menu("#brandStrip", {
+  menubar: true,
+  selectors: { horizontalMenu: "#brandStrip", items: ".brand-strip__item", menu: "#brandStrip" }
+});
+
+/* ---- m-e386d6f2 — carousel  #main-content>section.section>div.rail ---- */
+window.u1?.fix.carousel(".product-card", {
+  selectors: {
+    carouselContainer: "#main-content>section.section>div.rail",
+    nextButton: ".rail__btn--next",
+    prevButton: ".rail__btn--prev",
+    slide: ".product-card"
+  }
+});
+
+/* ---- m-0e4b7ea7 — link  #saleRail>article.product-card>a.product-card__media ---- */
 window.u1?.fix.link("#saleRail>article.product-card>a.product-card__media", { selectors: { element: "#saleRail>article.product-card>a.product-card__media" } });
 
-/* ---- m-8aa0bce1 — button  #saleRail>article.product-card>button.product-card__wish ---- */
+/* ---- m-7ecd4d5f — button  #saleRail>article.product-card>button.product-card__wish ---- */
 window.u1?.fix.button("#saleRail>article.product-card>button.product-card__wish", { selectors: { element: "#saleRail>article.product-card>button.product-card__wish" } });
 
-/* ---- m-28b2620d — button  #saleRail>article.product-card>button.product-card__add ---- */
+/* ---- m-7be17b1a — link  #saleRail>article.product-card>div.product-card__body>h3.product-card__name>a ---- */
+window.u1?.fix.link("#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a", {
+  selectors: {
+    element: "#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a"
+  }
+});
+
+/* ---- m-1c863bca — button  #saleRail>article.product-card>button.product-card__add ---- */
 window.u1?.fix.button("#saleRail>article.product-card>button.product-card__add", { selectors: { element: "#saleRail>article.product-card>button.product-card__add" } });
 
-/* ---- m-6c573362 — link  #saleRail>article.product-card>div.product-card__body>h3.product-card__name>a ---- */
-window.u1?.fix.link("#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a", {
-  selectors: { element: "#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a" }
+/* ---- m-be52d919 — link  #categoryGrid>a.category-tile ---- */
+window.u1?.fix.link("#categoryGrid>a.category-tile", { selectors: { element: "#categoryGrid>a.category-tile" } });
+
+/* ---- m-f49df5f2 — heading  #saleRail>article.product-card>div.product-card__body>h3.product-card__name ---- */
+window.u1?.fix.heading("#saleRail>article.product-card>div.product-card__body>h3.product-card__name", {
+  level: "2",
+  selectors: { heading: "#saleRail>article.product-card>div.product-card__body>h3.product-card__name" }
 });
 
-/* ---- m-57c1919a — link  #brandStrip>a.brand-strip__item ---- */
-window.u1?.fix.link("#brandStrip>a.brand-strip__item", { selectors: { element: "#brandStrip>a.brand-strip__item" } });
+/* ---- m-fdc0e3dc — link  #featuredGrid>article.product-card>a.product-card__media ---- */
+window.u1?.fix.link("#featuredGrid>article.product-card>a.product-card__media", { selectors: { element: "#featuredGrid>article.product-card>a.product-card__media" } });
 
-/* ---- m-2ffec022 — tabs  #dealTab-week ---- */
-window.u1?.fix.tabs("#dealTab-week", { isVertical: false, selectors: { tab: ".tab-bar__btn", tabList: "#dealTab-week" } });
+/* ---- m-980d8b87 — button  #featuredGrid>article.product-card>button.product-card__wish ---- */
+window.u1?.fix.button("#featuredGrid>article.product-card>button.product-card__wish", { selectors: { element: "#featuredGrid>article.product-card>button.product-card__wish" } });
 
-/* ---- m-5810d2ec — accordion  #faqPanel>div.accordion__item>h3>button.accordion__trigger ---- */
-window.u1?.fix.accordion("#faqPanel>div.accordion__item>h3>button.accordion__trigger", {
+/* ---- m-4d09f634 — link  #featuredGrid>article.product-card>div.product-card__body>h3.product-card__name>a ---- */
+window.u1?.fix.link("#featuredGrid>article.product-card>div.product-card__body>h3.product-card__name>a", {
+  selectors: {
+    element: "#featuredGrid>article.product-card>div.product-card__body>h3.product-card__name>a"
+  }
+});
+
+/* ---- m-106b236a — button  #featuredGrid>article.product-card>button.product-card__add ---- */
+window.u1?.fix.button("#featuredGrid>article.product-card>button.product-card__add", { selectors: { element: "#featuredGrid>article.product-card>button.product-card__add" } });
+
+/* ---- m-ffabc034 — heading  div>div.section__head>div>h2.section__title ---- */
+window.u1?.fix.heading("div>div.section__head>div>h2.section__title", { level: "2", selectors: { heading: "div>div.section__head>div>h2.section__title" } });
+
+/* ---- m-7ff969f1 — table  #club>div>div>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#club>div>div>div.table-wrap>table.data-table", {
+  selectors: {
+    cell: "td",
+    columnheader: "table.data-table>thead>tr>th",
+    row: "tr",
+    rowheader: "table.data-table>tbody>tr>th",
+    table: "#club>div>div>div.table-wrap>table.data-table"
+  }
+});
+
+/* ---- m-1435f8db — table  #club>div>div>div.table-wrap ---- */
+window.u1?.fix.table("#club>div>div>div.table-wrap", {
+  selectors: {
+    cell: "td",
+    columnheader: ".data-table>thead>tr>th",
+    row: "tr",
+    rowheader: ".data-table>tbody>tr>th",
+    table: "#club>div>div>div.table-wrap"
+  }
+});
+
+/* ---- m-f6398c38 — carousel  #topRatedRail ---- */
+window.u1?.fix.carousel("#topRatedRail>article.product-card", {
+  selectors: { carouselContainer: "#topRatedRail", slide: "#topRatedRail>article.product-card" }
+});
+
+/* ---- m-d6cd682f — carousel  #topRatedRail ---- */
+window.u1?.fix.carousel(".product-card", { selectors: { carouselContainer: "#topRatedRail", slide: ".product-card" } });
+
+/* ---- m-566b383a — button  #main-content>section.section>div.rail>button[aria-label="next slide"] ---- */
+window.u1?.fix.button("#main-content>section.section>div.rail>button[aria-label=\"next slide\"]", {
+  selectors: { element: "#main-content>section.section>div.rail>button[aria-label=\"next slide\"]" }
+});
+
+/* ---- m-9cb8e63b — button  #topRatedRail>article[aria-label="3 of 12"]>button.product-card__wish ---- */
+window.u1?.fix.button("#topRatedRail>article[aria-label=\"3 of 12\"]>button.product-card__wish", {
+  selectors: { element: "#topRatedRail>article[aria-label=\"3 of 12\"]>button.product-card__wish" }
+});
+
+/* ---- m-59d88983 — link  #topRatedRail>article[aria-label="3 of 12"]>a.product-card__media ---- */
+window.u1?.fix.link("#topRatedRail>article[aria-label=\"3 of 12\"]>a.product-card__media", {
+  selectors: { element: "#topRatedRail>article[aria-label=\"3 of 12\"]>a.product-card__media" }
+});
+
+/* ---- m-d0ab4a79 — carousel  #topRatedRail ---- */
+window.u1?.fix.carousel("#topRatedRail>article", { selectors: { carouselContainer: "#topRatedRail", slide: "#topRatedRail>article" } });
+
+/* ---- m-98ebed53 — table  #sizes>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#sizes>div.table-wrap>table.data-table", {
+  selectors: {
+    cell: "td",
+    columnheader: "table.data-table>thead>tr>th",
+    row: "tr",
+    rowheader: "table.data-table>tbody>tr>th",
+    table: "#sizes>div.table-wrap>table.data-table"
+  }
+});
+
+/* ---- m-a1287c63 — heading  #sizes>div.section__head>div>h2.section__title ---- */
+window.u1?.fix.heading("#sizes>div.section__head>div>h2.section__title", { level: "2", selectors: { heading: "#sizes>div.section__head>div>h2.section__title" } });
+
+/* ---- m-bb38c65a — table  #sizes>div.table-wrap ---- */
+window.u1?.fix.table("#sizes>div.table-wrap", {
+  selectors: {
+    cell: "td",
+    columnheader: "th[scope=col]",
+    row: "tr",
+    rowheader: "th[scope=row]",
+    table: "#sizes>div.table-wrap"
+  }
+});
+
+/* ---- m-51cfbda7 — table  #sizeTableBody ---- */
+window.u1?.fix.table("#sizeTableBody", {
+  selectors: {
+    cell: "#sizeTableBody>tr>td",
+    row: "#sizeTableBody>tr",
+    rowheader: "#sizeTableBody>tr>th",
+    table: "#sizeTableBody"
+  }
+});
+
+/* ---- m-f64b2907 — link  #sizeTableBody>tr>td>a ---- */
+window.u1?.fix.link("#sizeTableBody>tr>td>a", { selectors: { element: "#sizeTableBody>tr>td>a" } });
+
+/* ---- m-4df27330 — table  #main-content>section.section>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#main-content>section.section>div.table-wrap>table.data-table", {
+  selectors: {
+    cell: "td",
+    columnheader: "table.data-table>thead>tr>th[role=columnheader]",
+    row: "tr",
+    rowheader: "table.data-table>tbody>tr>th[role=rowheader]",
+    table: "#main-content>section.section>div.table-wrap>table.data-table"
+  }
+});
+
+/* ---- m-78181639 — table  #main-content>section.section>div.table-wrap ---- */
+window.u1?.fix.table("#main-content>section.section>div.table-wrap", {
+  selectors: {
+    cell: "td",
+    columnheader: "th[scope=col]",
+    row: "tr",
+    rowheader: "th[scope=row]",
+    table: "#main-content>section.section>div.table-wrap"
+  }
+});
+
+/* ---- m-d82fc667 — table  #compareTableBody>tr ---- */
+window.u1?.fix.table("#compareTableBody>tr", {
+  selectors: {
+    cell: "td",
+    row: "#compareTableBody>tr",
+    rowheader: "th[role=rowheader]",
+    table: "#compareTableBody>tr"
+  }
+});
+
+/* ---- m-6c9e14b5 — button  .video-band__play ---- */
+window.u1?.fix.button(".video-band__play", { selectors: { element: ".video-band__play" } });
+
+/* ---- m-2cc33e3f — heading  .video-band>div>h2 ---- */
+window.u1?.fix.heading(".video-band>div>h2", { level: "2", selectors: { heading: ".video-band>div>h2" } });
+
+/* ---- m-d6ff0c72 — heading  #reviews>div.section__head>div>h2.section__title ---- */
+window.u1?.fix.heading("#reviews>div.section__head>div>h2.section__title", { level: "2", selectors: { heading: "#reviews>div.section__head>div>h2.section__title" } });
+
+/* ---- m-fc9eef13 — link  #reviews>div.section__head>a.btn ---- */
+window.u1?.fix.link("#reviews>div.section__head>a.btn", { selectors: { element: "#reviews>div.section__head>a.btn" } });
+
+/* ---- m-a0648b39 — button  .btn--block ---- */
+window.u1?.fix.button(".btn--block", { selectors: { element: ".btn--block" } });
+
+/* ---- m-b6abe7be — button  button[aria-label="Scroll reviews right"] ---- */
+window.u1?.fix.button("button[aria-label=\"Scroll reviews right\"]", { selectors: { element: "button[aria-label=\"Scroll reviews right\"]" } });
+
+/* ---- m-49ca8813 — carousel  #articleRail ---- */
+window.u1?.fix.carousel("#articleRail>article.article-card", {
+  selectors: { carouselContainer: "#articleRail", slide: "#articleRail>article.article-card" }
+});
+
+/* ---- m-2caded08 — heading  #locator>div.section__head>div>h2.section__title ---- */
+window.u1?.fix.heading("#locator>div.section__head>div>h2.section__title", { level: "2", selectors: { heading: "#locator>div.section__head>div>h2.section__title" } });
+
+/* ---- m-27d1517d — listbox  #locatorList ---- */
+window.u1?.fix.listbox("#locatorFilter", {
+  closeOnSelect: true,
+  selectors: { listbox: "#locatorList", options: ".locator__item", trigger: "#locatorFilter" }
+});
+
+/* ---- m-352053e2 — heading  #locatorDetail>h3 ---- */
+window.u1?.fix.heading("#locatorDetail>h3", { level: "2", selectors: { heading: "#locatorDetail>h3" } });
+
+/* ---- m-1e886f09 — table  #locatorDetail>div.table-wrap>table.data-table ---- */
+window.u1?.fix.table("#locatorDetail>div.table-wrap>table.data-table", {
+  selectors: {
+    cell: "td",
+    row: "tr",
+    rowheader: "table.data-table>tbody>tr>th",
+    table: "#locatorDetail>div.table-wrap>table.data-table"
+  }
+});
+
+/* ---- m-6332f4c8 — link  #locatorDetail>div>a.btn ---- */
+window.u1?.fix.link("#locatorDetail>div>a.btn", { selectors: { element: "#locatorDetail>div>a.btn" } });
+
+/* ---- m-d8cd7ead — link  #igGrid>a.ig-tile ---- */
+window.u1?.fix.link("#igGrid>a.ig-tile", { selectors: { element: "#igGrid>a.ig-tile" } });
+
+/* ---- m-26d8c82f — heading  #faq>div.section__head>div>h2.section__title ---- */
+window.u1?.fix.heading("#faq>div.section__head>div>h2.section__title", { level: "2", selectors: { heading: "#faq>div.section__head>div>h2.section__title" } });
+
+/* ---- m-15b2f13f — tabs  #faqTabs ---- */
+window.u1?.fix.tabs("#faqTabs", {
+  isVertical: false,
+  selectors: { tab: "#faqTabs>.tab-bar__btn", tabList: "#faqTabs", tabPanel: "#faqPanel" }
+});
+
+/* ---- m-d33dbace — accordion  .accordion__trigger ---- */
+window.u1?.fix.accordion(".accordion__trigger", {
   collapsesOthers: false,
-  headingLevel: "3",
-  selectors: { headerSelector: "#faqPanel>div.accordion__item>h3>button.accordion__trigger" }
+  headingLevel: "2",
+  selectors: { contentSelector: ".accordion__panel", headerSelector: ".accordion__trigger" }
 });
 
+/* ---- m-e6ea8ff0 — link  #faq>div.section__head>a.btn ---- */
+window.u1?.fix.link("#faq>div.section__head>a.btn", { selectors: { element: "#faq>div.section__head>a.btn" } });
+
+/* ---- m-87fe0bdc — heading  #main-content>section.section>.seo-text>h3 ---- */
+window.u1?.fix.heading("#main-content>section.section>.seo-text>h3", { level: "2", selectors: { heading: "#main-content>section.section>.seo-text>h3" } });
+
+/* ---- m-12f612db — heading  #footerCols>div>h3.mega-footer__title ---- */
+window.u1?.fix.heading("#footerCols>div>h3.mega-footer__title", { level: "2", selectors: { heading: "#footerCols>div>h3.mega-footer__title" } });
+
+/* ---- m-7b93555f — link  a[aria-label="Instagram"] ---- */
+window.u1?.fix.link("a[aria-label=\"Instagram\"]", { selectors: { element: "a[aria-label=\"Instagram\"]" } });
+
+/* ---- m-251def01 — menu  #footerSeo ---- */
+window.u1?.fix.menu("#footerSeo", { menubar: true, selectors: { items: "#footerSeo>a", menu: "#footerSeo" } });
+
+/* ---- m-33f85bb9 — heading  .mega-footer__inner>div>h3.mega-footer__title ---- */
+window.u1?.fix.heading(".mega-footer__inner>div>h3.mega-footer__title", { level: "2", selectors: { heading: ".mega-footer__inner>div>h3.mega-footer__title" } });
+
+/* ---- m-3c55bc70 — heading  #footer>.mega-footer__inner>.mega-footer__row>div>h3.mega-footer__title ---- */
+window.u1?.fix.heading("#footer>.mega-footer__inner>.mega-footer__row>div>h3.mega-footer__title", {
+  level: "2",
+  selectors: { heading: "#footer>.mega-footer__inner>.mega-footer__row>div>h3.mega-footer__title" }
+});
+
+/* ---- m-e456a479 — link  #footer>.mega-footer__inner>.mega-footer__bottom>span>a ---- */
+window.u1?.fix.link("#footer>.mega-footer__inner>.mega-footer__bottom>span>a", { selectors: { element: "#footer>.mega-footer__inner>.mega-footer__bottom>span>a" } });
+
+/* ---- m-0696808e — link  a[aria-label="Facebook"] ---- */
+window.u1?.fix.link("a[aria-label=\"Facebook\"]", { selectors: { element: "a[aria-label=\"Facebook\"]" } });
+
+/* ---- m-16dcdfde — menu  #footerCols>div>ul.mega-footer__links ---- */
+window.u1?.fix.menu("#footerCols>div>ul.mega-footer__links", { menubar: true, selectors: { items: "a", menu: "#footerCols>div>ul.mega-footer__links" } });
+
+/* ---- m-964ab86a — heading  #footer ---- */
+window.u1?.fix.heading("#footer", { level: "2", selectors: { heading: "#footer" } });
+
+/* ---- m-05159ee7 — link  a[aria-label="TikTok"] ---- */
+window.u1?.fix.link("a[aria-label=\"TikTok\"]", { selectors: { element: "a[aria-label=\"TikTok\"]" } });
+
+/* ---- m-931ee287 — link  a[aria-label="YouTube"] ---- */
+window.u1?.fix.link("a[aria-label=\"YouTube\"]", { selectors: { element: "a[aria-label=\"YouTube\"]" } });
+
+/* ---- m-7df8b5ae — link  a[aria-label="X"] ---- */
+window.u1?.fix.link("a[aria-label=\"X\"]", { selectors: { element: "a[aria-label=\"X\"]" } });
+
+/* ---- m-3182b11b — heading  div[aria-label="1 of 5"]>div.hero-slide__inner>div>h2.hero-slide__title ---- */
+window.u1?.fix.heading("div[aria-label=\"1 of 5\"]>div.hero-slide__inner>div>h2.hero-slide__title", {
+  level: "2",
+  selectors: { heading: "div[aria-label=\"1 of 5\"]>div.hero-slide__inner>div>h2.hero-slide__title" }
+});
 }
 __u1ApplyMappings();
 
@@ -948,12 +1662,11 @@ __u1ApplyMappings();
   });
 })();
 
-
 /* ---- 5. Monitoring hook (only runs with ?u1qa=1) ---- */
 (function () {
   try {
     if (new URLSearchParams(location.search).get('u1qa') !== '1') return;
-    var CHECKS = [{"id":"m-acd510ed","type":"carousel","field":"carouselContainer","selector":".ticker","page":"/"},{"id":"m-fc0428c6","type":"menu","field":"menu","selector":"#megaNav","page":"/"},{"id":"m-3e551d8e","type":"carousel","field":"carouselContainer","selector":".hero-carousel","page":"/"},{"id":"m-a86d1d2a","type":"tabs","field":"tabList","selector":".finder__tabs","page":"/"},{"id":"m-1dcb021d","type":"form","field":"form","selector":"#finderSport>form","page":"/"},{"id":"m-12d3ec91","type":"link","field":"element","selector":"nav[aria-label=\"Breadcrumb\"]","page":"/"},{"id":"m-272ffb13","type":"tabs","field":"tabList","selector":"#dealTabs","page":"/"},{"id":"m-255d310d","type":"link","field":"element","selector":"#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a","page":"/"},{"id":"m-7ff0334e","type":"link","field":"element","selector":"#deals>div.section__head>a.btn","page":"/"},{"id":"m-c26ae291","type":"link","field":"element","selector":"#main-content>section.section>div.section__head>a.btn","page":"/"},{"id":"m-1ae9ce0e","type":"heading","field":"heading","selector":"h2.section__title","page":"/"},{"id":"m-9e80e36f","type":"button","field":"element","selector":"#bestsellerRail>article.product-card>button.product-card__wish","page":"/"},{"id":"m-d45c97fa","type":"link","field":"element","selector":"#mosaic>a.mosaic__tile","page":"/"},{"id":"m-bb8fb0b2","type":"button","field":"element","selector":"#newRail>article.product-card>button.product-card__wish","page":"/"},{"id":"m-3054bd44","type":"link","field":"element","selector":"#newRail>article.product-card>a.product-card__media","page":"/"},{"id":"m-516e0a27","type":"heading","field":"heading","selector":".hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title","page":"/"},{"id":"m-9c54c7a2","type":"heading","field":"heading","selector":"#newRail>article.product-card>div.product-card__body>h3.product-card__name","page":"/"},{"id":"m-792ba452","type":"link","field":"element","selector":"#saleRail>article.product-card>a.product-card__media","page":"/"},{"id":"m-8aa0bce1","type":"button","field":"element","selector":"#saleRail>article.product-card>button.product-card__wish","page":"/"},{"id":"m-28b2620d","type":"button","field":"element","selector":"#saleRail>article.product-card>button.product-card__add","page":"/"},{"id":"m-6c573362","type":"link","field":"element","selector":"#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a","page":"/"},{"id":"m-57c1919a","type":"link","field":"element","selector":"#brandStrip>a.brand-strip__item","page":"/"},{"id":"m-2ffec022","type":"tabs","field":"tabList","selector":"#dealTab-week","page":"/"},{"id":"m-5810d2ec","type":"accordion","field":"headerSelector","selector":"#faqPanel>div.accordion__item>h3>button.accordion__trigger","page":"/"}];
+    var CHECKS = [{"id":"m-5aa2329f","type":"carousel","field":"carouselContainer","selector":".ticker__item--active","page":"/"},{"id":"m-e4da7ef6","type":"menu","field":"menu","selector":"#megaNav","page":"/"},{"id":"m-6cf5368b","type":"carousel","field":"carouselContainer","selector":"#heroTrack","page":"/"},{"id":"m-d7eb98ee","type":"heading","field":"heading","selector":".hero-slide--active>div.hero-slide__inner>div>h2.hero-slide__title","page":"/"},{"id":"m-d7ce82e2","type":"tabs","field":"tabList","selector":".finder__tabs","page":"/"},{"id":"m-0204ab64","type":"tabs","field":"tabList","selector":"#main-content>.finder>.finder__card>.finder__tabs>button.finder__tab","page":"/"},{"id":"m-ac2a5423","type":"button","field":"element","selector":"#backToTop","page":"/"},{"id":"m-c9854dd2","type":"button","field":"element","selector":"#chatToggle","page":"/"},{"id":"m-c7f48318","type":"heading","field":"heading","selector":"#main-content","page":"/"},{"id":"m-0e69cb97","type":"link","field":"element","selector":"#deals>div.section__head>a.btn","page":"/"},{"id":"m-b40c138f","type":"link","field":"element","selector":"#dealGrid>article.deal-card>div.deal-card__body>h3.deal-card__name>a","page":"/"},{"id":"m-25e1d43e","type":"heading","field":"heading","selector":"#main-content>section.section>div.section__head>div>h2.section__title","page":"/"},{"id":"m-647683dc","type":"link","field":"element","selector":"#main-content>section.section>div.section__head>a.btn","page":"/"},{"id":"m-9c8ca2cd","type":"carousel","field":"carouselContainer","selector":"#bestsellerRail>article.product-card>a.product-card__media","page":"/"},{"id":"m-882fedc6","type":"button","field":"element","selector":"#bestsellerRail>article.product-card>button.product-card__wish","page":"/"},{"id":"m-a1a158a6","type":"link","field":"element","selector":"#bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name>a","page":"/"},{"id":"m-392e4e08","type":"button","field":"element","selector":"#bestsellerRail>article.product-card>button.product-card__add","page":"/"},{"id":"m-7916311c","type":"link","field":"element","selector":".mosaic__tile--xl","page":"/"},{"id":"m-31c43e28","type":"heading","field":"heading","selector":"#bestsellerRail>article.product-card>div.product-card__body>h3.product-card__name","page":"/"},{"id":"m-cec17b49","type":"button","field":"element","selector":"#newRail>article.product-card>button.product-card__wish","page":"/"},{"id":"m-108ed583","type":"link","field":"element","selector":"#newRail>article.product-card>a.product-card__media","page":"/"},{"id":"m-78af8af0","type":"heading","field":"heading","selector":"body","page":"/"},{"id":"m-c2271b93","type":"menu","field":"menu","selector":"#brandStrip","page":"/"},{"id":"m-e386d6f2","type":"carousel","field":"carouselContainer","selector":"#main-content>section.section>div.rail","page":"/"},{"id":"m-0e4b7ea7","type":"link","field":"element","selector":"#saleRail>article.product-card>a.product-card__media","page":"/"},{"id":"m-7ecd4d5f","type":"button","field":"element","selector":"#saleRail>article.product-card>button.product-card__wish","page":"/"},{"id":"m-7be17b1a","type":"link","field":"element","selector":"#saleRail>article.product-card>div.product-card__body>h3.product-card__name>a","page":"/"},{"id":"m-1c863bca","type":"button","field":"element","selector":"#saleRail>article.product-card>button.product-card__add","page":"/"},{"id":"m-be52d919","type":"link","field":"element","selector":"#categoryGrid>a.category-tile","page":"/"},{"id":"m-f49df5f2","type":"heading","field":"heading","selector":"#saleRail>article.product-card>div.product-card__body>h3.product-card__name","page":"/"},{"id":"m-fdc0e3dc","type":"link","field":"element","selector":"#featuredGrid>article.product-card>a.product-card__media","page":"/"},{"id":"m-980d8b87","type":"button","field":"element","selector":"#featuredGrid>article.product-card>button.product-card__wish","page":"/"},{"id":"m-4d09f634","type":"link","field":"element","selector":"#featuredGrid>article.product-card>div.product-card__body>h3.product-card__name>a","page":"/"},{"id":"m-106b236a","type":"button","field":"element","selector":"#featuredGrid>article.product-card>button.product-card__add","page":"/"},{"id":"m-ffabc034","type":"heading","field":"heading","selector":"div>div.section__head>div>h2.section__title","page":"/"},{"id":"m-7ff969f1","type":"table","field":"table","selector":"#club>div>div>div.table-wrap>table.data-table","page":"/"},{"id":"m-1435f8db","type":"table","field":"table","selector":"#club>div>div>div.table-wrap","page":"/"},{"id":"m-f6398c38","type":"carousel","field":"carouselContainer","selector":"#topRatedRail","page":"/"},{"id":"m-d6cd682f","type":"carousel","field":"carouselContainer","selector":"#topRatedRail","page":"/"},{"id":"m-566b383a","type":"button","field":"element","selector":"#main-content>section.section>div.rail>button[aria-label=\"next slide\"]","page":"/"},{"id":"m-9cb8e63b","type":"button","field":"element","selector":"#topRatedRail>article[aria-label=\"3 of 12\"]>button.product-card__wish","page":"/"},{"id":"m-59d88983","type":"link","field":"element","selector":"#topRatedRail>article[aria-label=\"3 of 12\"]>a.product-card__media","page":"/"},{"id":"m-d0ab4a79","type":"carousel","field":"carouselContainer","selector":"#topRatedRail","page":"/"},{"id":"m-98ebed53","type":"table","field":"table","selector":"#sizes>div.table-wrap>table.data-table","page":"/"},{"id":"m-a1287c63","type":"heading","field":"heading","selector":"#sizes>div.section__head>div>h2.section__title","page":"/"},{"id":"m-bb38c65a","type":"table","field":"table","selector":"#sizes>div.table-wrap","page":"/"},{"id":"m-51cfbda7","type":"table","field":"table","selector":"#sizeTableBody","page":"/"},{"id":"m-f64b2907","type":"link","field":"element","selector":"#sizeTableBody>tr>td>a","page":"/"},{"id":"m-4df27330","type":"table","field":"table","selector":"#main-content>section.section>div.table-wrap>table.data-table","page":"/"},{"id":"m-78181639","type":"table","field":"table","selector":"#main-content>section.section>div.table-wrap","page":"/"},{"id":"m-d82fc667","type":"table","field":"table","selector":"#compareTableBody>tr","page":"/"},{"id":"m-6c9e14b5","type":"button","field":"element","selector":".video-band__play","page":"/"},{"id":"m-2cc33e3f","type":"heading","field":"heading","selector":".video-band>div>h2","page":"/"},{"id":"m-d6ff0c72","type":"heading","field":"heading","selector":"#reviews>div.section__head>div>h2.section__title","page":"/"},{"id":"m-fc9eef13","type":"link","field":"element","selector":"#reviews>div.section__head>a.btn","page":"/"},{"id":"m-a0648b39","type":"button","field":"element","selector":".btn--block","page":"/"},{"id":"m-b6abe7be","type":"button","field":"element","selector":"button[aria-label=\"Scroll reviews right\"]","page":"/"},{"id":"m-49ca8813","type":"carousel","field":"carouselContainer","selector":"#articleRail","page":"/"},{"id":"m-2caded08","type":"heading","field":"heading","selector":"#locator>div.section__head>div>h2.section__title","page":"/"},{"id":"m-27d1517d","type":"listbox","field":"listbox","selector":"#locatorList","page":"/"},{"id":"m-352053e2","type":"heading","field":"heading","selector":"#locatorDetail>h3","page":"/"},{"id":"m-1e886f09","type":"table","field":"table","selector":"#locatorDetail>div.table-wrap>table.data-table","page":"/"},{"id":"m-6332f4c8","type":"link","field":"element","selector":"#locatorDetail>div>a.btn","page":"/"},{"id":"m-d8cd7ead","type":"link","field":"element","selector":"#igGrid>a.ig-tile","page":"/"},{"id":"m-26d8c82f","type":"heading","field":"heading","selector":"#faq>div.section__head>div>h2.section__title","page":"/"},{"id":"m-15b2f13f","type":"tabs","field":"tabList","selector":"#faqTabs","page":"/"},{"id":"m-d33dbace","type":"accordion","field":"headerSelector","selector":".accordion__trigger","page":"/"},{"id":"m-e6ea8ff0","type":"link","field":"element","selector":"#faq>div.section__head>a.btn","page":"/"},{"id":"m-87fe0bdc","type":"heading","field":"heading","selector":"#main-content>section.section>.seo-text>h3","page":"/"},{"id":"m-12f612db","type":"heading","field":"heading","selector":"#footerCols>div>h3.mega-footer__title","page":"/"},{"id":"m-7b93555f","type":"link","field":"element","selector":"a[aria-label=\"Instagram\"]","page":"/"},{"id":"m-251def01","type":"menu","field":"menu","selector":"#footerSeo","page":"/"},{"id":"m-33f85bb9","type":"heading","field":"heading","selector":".mega-footer__inner>div>h3.mega-footer__title","page":"/"},{"id":"m-3c55bc70","type":"heading","field":"heading","selector":"#footer>.mega-footer__inner>.mega-footer__row>div>h3.mega-footer__title","page":"/"},{"id":"m-e456a479","type":"link","field":"element","selector":"#footer>.mega-footer__inner>.mega-footer__bottom>span>a","page":"/"},{"id":"m-0696808e","type":"link","field":"element","selector":"a[aria-label=\"Facebook\"]","page":"/"},{"id":"m-16dcdfde","type":"menu","field":"menu","selector":"#footerCols>div>ul.mega-footer__links","page":"/"},{"id":"m-964ab86a","type":"heading","field":"heading","selector":"#footer","page":"/"},{"id":"m-05159ee7","type":"link","field":"element","selector":"a[aria-label=\"TikTok\"]","page":"/"},{"id":"m-931ee287","type":"link","field":"element","selector":"a[aria-label=\"YouTube\"]","page":"/"},{"id":"m-7df8b5ae","type":"link","field":"element","selector":"a[aria-label=\"X\"]","page":"/"},{"id":"m-3182b11b","type":"heading","field":"heading","selector":"div[aria-label=\"1 of 5\"]>div.hero-slide__inner>div>h2.hero-slide__title","page":"/"}];
     var here = (location.pathname || '/').replace(/\/+$/, '') || '/';
     function run() {
       CHECKS.forEach(function (c) {

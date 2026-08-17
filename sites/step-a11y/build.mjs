@@ -19,9 +19,13 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 
-// Only the regions these mappings need. Shipping listbox, datepicker and grid
+// Only the regions these mappings need. Shipping datepicker and grid
 // corrections to a site with none of them is dead code on every page load.
-const REGIONS = ['core', 'form', 'tabs', 'menu', 'carousel', 'link', 'button'];
+// accordion + listbox added with the 2026-08-17 mapping update — the mappings
+// already called fix.accordion (the .accordion__trigger FAQ) and now also
+// fix.listbox (the branch locator), but neither region was ever added here,
+// so the corrections for both silently never shipped to the deployed site.
+const REGIONS = ['core', 'form', 'tabs', 'menu', 'carousel', 'link', 'button', 'accordion', 'listbox'];
 
 // The SAME region regex the panel's own exporter uses (getPatchSource in
 // panel.js). Two different ways of slicing one file is two things to keep in
@@ -45,6 +49,7 @@ const mappings = readFileSync(join(HERE, 'mappings.js'), 'utf8');
 const FIELD = {
   carousel: 'carouselContainer', menu: 'menu', tabs: 'tabList', form: 'form',
   link: 'element', button: 'element', heading: 'heading', accordion: 'headerSelector',
+  table: 'table', listbox: 'listbox',
 };
 const checks = [];
 const re = /\/\* ---- (m-[0-9a-f]+) — (\w+)\s+(.*?) ---- \*\/\s*\nwindow\.u1\?\.fix\.\w+\(/g;
@@ -66,7 +71,7 @@ const out = `/* ============================================================
 
 /* ---- 0. Configuration ---- */
 window.u1?.setConfiguration({
-  visualFocus: { style: { color: "#762323", doubleBorder: true, secondaryColor: "#000000" } }
+  visualFocus: { style: { color: "#960808", doubleBorder: true, secondaryColor: "#000000" } }
 });
 
 /* ---- 1. Library corrections ---- */
