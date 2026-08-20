@@ -2416,6 +2416,56 @@ async function migrateFatalMenubar(host) {
   return fixed;
 }
 
+/**
+ * Dialogs saved with the dialog and the trigger the wrong way round.
+ *
+ * rowFromParts keyed its swap on `firstArgFrom:'trigger'`, which says only
+ * which selector becomes fix()'s first argument. Read as "the found element IS
+ * the trigger" it inverted every dialog that was given one, and what got saved
+ * was
+ *
+ *     fix.dialog("#the-modal", { dialog: "#the-opener", trigger: "#the-modal" })
+ *
+ * The opener filed as the dialog and the modal filed as its opener. U1 then
+ * tries to focus into a link that has no dialog inside it, which is the
+ * "Cannot read properties of undefined (reading 'focus')" thrown from
+ * u1_vanilla-js-a11y.js. Fixing rowFromParts stops NEW ones; this repairs the
+ * ones already stored, because a broken mapping does not fix itself and the
+ * page keeps throwing.
+ *
+ * Detected, not assumed. `dialog` is the schema's PRIMARY, so in any mapping
+ * built the right way round `selectors.dialog` and `primary` are the same
+ * string. When they disagree AND the trigger holds what primary should have,
+ * the two were swapped on the way in — nothing else produces that.
+ *
+ * Note it cannot key on firstArg: dialog is `firstArgFrom:'trigger'`, so a
+ * CORRECT dialog also has firstArg === selectors.trigger, and testing that
+ * would flip every healthy mapping on the site.
+ */
+async function migrateInvertedDialog(host) {
+  const key = storageKey('mappings', host);
+  const list = (await U1Store.get([key]))[key];
+  if (!Array.isArray(list) || !list.length) return 0;
+
+  let fixed = 0;
+  for (const m of list) {
+    if (!m || m.type !== 'dialog' || m.custom || !m.config || !m.config.selectors) continue;
+    const s = m.config.selectors;
+    if (!s.dialog || !s.trigger || !m.primary) continue;
+    if (s.dialog === m.primary) continue;      // already the right way round
+    if (s.trigger !== m.primary) continue;     // some other shape; leave it be
+    const opener = s.dialog;
+    s.dialog = s.trigger;
+    s.trigger = opener;
+    const rebuilt = buildTemplate('dialog', s.dialog, s, m.config);
+    if (rebuilt) { m.code = rebuilt.code; m.firstArg = rebuilt.firstArg; m.config = rebuilt.config; }
+    m.primary = s.dialog;
+    fixed++;
+  }
+  if (fixed) await U1Store.set({ [key]: list });
+  return fixed;
+}
+
 async function migrateWwwHostname(host) {
   if (!host || host === 'unknown' || host.startsWith('www.')) return;
   const suffix = '_www.' + host;
@@ -2487,6 +2537,14 @@ async function init() {
       showNotice(document.getElementById('applyAllStatus'),
         `Repaired ${repaired} menu mapping${repaired === 1 ? '' : 's'} that had menubar ON together with submenus — U1 throws on that pair and adds nothing. menubar is now off. Reload the page and press Apply All.`,
         'success', 12000);
+    }
+  } catch {}
+  try {
+    const flipped = await migrateInvertedDialog(currentHostname);
+    if (flipped) {
+      showNotice(document.getElementById('applyAllStatus'),
+        `Repaired ${flipped} dialog mapping${flipped === 1 ? '' : 's'} saved with the dialog and its trigger the wrong way round — that is what threw "Cannot read properties of undefined (reading 'focus')" on the page. Reload the page and press Apply All.`,
+        'success', 14000);
     }
   } catch {}
 
@@ -4291,12 +4349,17 @@ async function rememberLabel(entry) {
   } catch {}
 }
 
-document.getElementById('exportLabelsBtn')?.addEventListener('click', async () => {
+// Pulling this out of chrome.storage is a developer action, not a client
+// deliverable — it never belonged on the Whole-page results screen next to
+// what a client actually presses. Reachable from this panel's own DevTools
+// console (right-click the panel → Inspect, or "service worker" → panel's
+// document) by calling exportNamedLabels() there, rather than a button that
+// sat on screen for everyone else.
+async function exportNamedLabels() {
   const got = await U1Store.get([LABELS_KEY]);
   const list = got[LABELS_KEY] || [];
-  const status = document.getElementById('sweepPicksStatus');
   if (!list.length) {
-    showNotice(status, 'Nothing named yet. Turn on "let me say what things are" and name something.', 'info', 6000);
+    console.log('Nothing named yet. Turn on "let me say what things are" and name something.');
     return;
   }
   // The shape verify-detect reads, field for field.
@@ -4320,9 +4383,10 @@ document.getElementById('exportLabelsBtn')?.addEventListener('click', async () =
   a.href = URL.createObjectURL(blob);
   a.download = `${currentHostname || 'site'}.labels.json`;
   a.click();
-  showNotice(status, `${list.length} named component${list.length === 1 ? '' : 's'} exported. ` +
-    'Drop it in fixtures/ and verify-detect will score against it from then on.', 'success', 9000);
-});
+  console.log(`${list.length} named component${list.length === 1 ? '' : 's'} exported. ` +
+    'Drop it in fixtures/ and verify-detect will score against it from then on.');
+}
+window.exportNamedLabels = exportNamedLabels;
 
 /** Types worth offering. Everything the builder can actually create. */
 const LABEL_TYPES = () => Object.keys(COMPONENT_SCHEMAS);
@@ -4502,20 +4566,37 @@ function labelScreen(stop, collected, tab) {
              aria-label="Build ${escapeHtml(c.component)} on ${escapeHtml(c.selector || 'this')}">
       ${thumb(c)}
       <span class="lbl-body">
-        <span class="lbl-title">${typeSel(c)}</span>
+        <!-- Both controls are dark boxes on a dark ground, one above the
+             other, and neither said which was which — a dropdown of component
+             types and a free-text selector field read as two identical empty
+             bars. The captions are what tell them apart at a glance. -->
+        <span class="lbl-field">
+          <span class="lbl-cap">What it is</span>
+          <span class="lbl-title">${typeSel(c)}</span>
+        </span>
         <!-- The selector is editable. What the collector works out is a good
              guess and not a decision — it may be too wide (fourteen matches
              where one is meant), too narrow, or rooted one level off. Correcting
              it here is the difference between a mapping you can use and one you
              have to rebuild by hand in Mappings afterwards. -->
-        <input class="lbl-sel-edit" type="text" spellcheck="false"
-               value="${escapeHtml(c.selector || '')}"
-               placeholder="CSS selector for this component"
-               aria-label="Selector to build the ${escapeHtml(c.component)} on">
+        <span class="lbl-field">
+          <span class="lbl-cap">Selector</span>
+          <input class="lbl-sel-edit" type="text" spellcheck="false"
+                 value="${escapeHtml(c.selector || '')}"
+                 placeholder="CSS selector for this component"
+                 aria-label="Selector to build the ${escapeHtml(c.component)} on">
+        </span>
         <span class="lbl-meta lbl-meta-2">${escapeHtml(c.tag)}${
           c.maybe ? ' · guessed from its class name' : ' · stated by the markup'}${
           c.matches > 1 ? ` · selector hits ${c.matches} elements` : ''}</span>
       </span>
+      <!-- Not this, and never ask again. Unticking says "not this time";
+           .pageWrapper guessed as a form is wrong every time, and without a
+           way to say so it comes back on every scan of every page. Dismissals
+           are per-project and shared, and the cost dialog is where they can
+           be cleared. -->
+      <button type="button" class="lbl-dismiss" data-dismiss="${c.mark}"
+              title="Not a component — remove it and stop suggesting it on this site">✕</button>
     </label>`;
 
   const row = (c) => `
@@ -4710,6 +4791,26 @@ function labelScreen(stop, collected, tab) {
         return;
       }
       if (sweepLabel.busy) return;
+
+      // ✕ on a component row: this is not a component at all — a wrapper div
+      // guessed as a form, a cookie bar guessed as a dialog. Off the list now,
+      // and onto the site's dismissed list so no later scan suggests it again.
+      // Inside a <label>, so the default (toggling the row's checkbox) has to
+      // be suppressed before the row is removed.
+      const dis = e.target.closest('[data-dismiss]');
+      if (dis) {
+        e.preventDefault();
+        e.stopPropagation();
+        const rowEl = dis.closest('.lbl-row');
+        const c = components.find((x) => x.mark === Number(dis.dataset.dismiss));
+        if (c && c.selector) await rememberDismissed(c.selector);
+        rowEl?.remove();
+        showNotice(status, c && c.selector
+          ? `Removed. ${c.selector} is on this site's dismissed list now — scans will skip it. ` +
+            `Undo from the dismissed list on the cost dialog.`
+          : 'Removed from this list.', 'success', 7000);
+        return;
+      }
 
       // The one press this screen exists for: yes, these are what they say
       // they are — build them and carry on. Each row is built as the type ITS
@@ -4955,7 +5056,12 @@ async function confirmedToMapping(pick, stop, tab) {
   refreshExportInfo();
   return {
     warn,
-    found: { id: `s${stop.n}m${pick.mark}`, label: sel, type: pick.type, sel, done: true },
+    // mappingKey is what "undo this section" deletes on. Recorded here, at the
+    // moment of saving, because it is the only place that knows which stored
+    // row this component became — matching on the selector later would be a
+    // guess, and a wrong guess deletes a neighbouring section's work.
+    found: { id: `s${stop.n}m${pick.mark}`, label: sel, type: pick.type, sel, done: true,
+             mappingKey: mappingKey({ type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg }) },
   };
 }
 
@@ -5101,6 +5207,17 @@ function setStage(stage) {
 function renderStageTrail() {
   const host = document.getElementById('stageTrail');
   if (!host) return;
+  // Once every section has been read, "Pick sections" is not a stage you
+  // are moving through any more — it is finished, and the Completed row
+  // beside it already says so. A trail claiming a three-step journey next
+  // to a row that says the journey is over reads as the two contradicting
+  // each other.
+  if (mapMode === 'sweep' && currentStage === 'screens' && aiSweep.stops.length > 0 &&
+      aiSweep.stops.every((s) => !s.count || s.scanned)) {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    return;
+  }
   const trail = STAGE_TRAIL[mapMode === 'sweep' ? 'sweep' : 'auto'];
   const at = STAGE_STANDS_FOR[currentStage] || currentStage;
   const idx = trail.findIndex(([k]) => k === at);
@@ -5299,7 +5416,6 @@ let autoResult = null;
 const $modeManualBtn = document.getElementById('modeManualBtn');
 const $modeAutoBtn = document.getElementById('modeAutoBtn');
 const $modeSweepBtn = document.getElementById('modeSweepBtn');
-const $modeHint = document.getElementById('modeHint');
 
 let mapMode = 'manual';
 
@@ -5317,12 +5433,6 @@ function setMapMode(mode) {
                            [$modeSweepBtn, isSweep]]) {
     btn?.classList.toggle('active', on);
     btn?.setAttribute('aria-selected', String(on));
-  }
-  if ($modeHint) {
-    $modeHint.textContent =
-      isSweep ? 'It scrolls the page itself, one section at a time, and shows you everything it found before any of it is applied.'
-      : isAuto ? 'Enter the selector of the parent element only — the rest is worked out for you and shown for approval.'
-      : 'Fill each selector yourself.';
   }
   // Show one route at a time. In Automatic mode the type picker, the CSS
   // Selector field, the sub-selector form and the preview are all things you
@@ -5440,7 +5550,10 @@ async function refreshAiLocks() {
     // nothing about why — and this one has something to say and somewhere to
     // send you, which is the entire point of it.
     btn.setAttribute('aria-disabled', String(!aiUnlocked));
-    btn.title = aiUnlocked ? '' : 'Needs an Anthropic API key — press to go and add one';
+    // Unlocked, the title reverts to what the mode itself does (data-tip
+    // carries the same text) rather than going empty — this button still
+    // has an explanation, just not a lock notice any more.
+    btn.title = aiUnlocked ? (btn.dataset.tip || '') : 'Needs an Anthropic API key — press to go and add one';
   }
 }
 
@@ -5546,6 +5659,70 @@ function warnWrongSite(statusEl) {
     `Saving them here would file one site's components under the other. Scan this page instead.`,
     'error', 10000);
   resetAiWorkspace();
+}
+
+// One parked workspace — the site it belongs to, its state, and where it was
+// standing when its tab lost focus. null means the slot is empty.
+let parkedAi = null;
+
+// A single-element (Automatic) scan in flight, and the tab it was started on.
+// The sweep has aiSweep.running for this; the Automatic route had nothing, so
+// a tab change during the model call re-pointed the panel, cleared the
+// workspace under it, and the answer landed nowhere.
+let aiScanHold = null;
+
+/**
+ * Glancing at another tab must not destroy work in progress.
+ *
+ * Scan results, half-approved cards and a finished survey used to be RESET the
+ * moment a tab on another site came to the front. The reason given was
+ * cross-site safety, but every write path already refuses to save across
+ * sites (aiWorkspaceHost is checked and warnWrongSite fires). So the whole
+ * workspace is parked — state kept, view down — and coming back to its own
+ * site puts it back up where it stood. One slot: parking a second site's work
+ * replaces the first, which is still strictly better than the zero slots
+ * there were.
+ */
+function parkAiWorkspace() {
+  if (!aiWorkspaceHost) return;
+  parkedAi = {
+    host: aiWorkspaceHost, stage: currentStage, mode: mapMode,
+    sweep: aiSweep, found: aiFound, mapped: aiMapped,
+  };
+  // The live slots are handed to the next site EMPTY — its own stored survey
+  // must be able to restore, which restoreSweep refuses to do over non-empty
+  // stops. Views down; state safe in the slot above.
+  aiSweep = { running: false, abort: false, phase: 'screens', stops: [] };
+  aiFound = null;
+  aiMapped = [];
+  aiWorkspaceHost = null;
+  setStage('none');
+}
+
+function unparkAiWorkspaceFor(host) {
+  if (!parkedAi || parkedAi.host !== host) return false;
+  const p = parkedAi;
+  parkedAi = null;
+  aiSweep = p.sweep;
+  aiFound = p.found;
+  aiMapped = p.mapped;
+  aiWorkspaceHost = p.host;
+  if (p.mode && p.mode !== mapMode) setMapMode(p.mode);
+  // Rebuilt from STATE, never by re-showing whatever DOM happened to survive:
+  // scanning the other site while this one was parked would have overwritten
+  // the card track, and setStage would then have proudly revealed the other
+  // site's components under this site's name.
+  if ((aiSweep.stops || []).length) {
+    // A sweep redraws its own phase — its renderers know which of the two
+    // views the stops belong in.
+    if (aiSweep.phase === 'components') renderSweepPicks();
+    else renderSweepScreens();
+  } else if (aiFound) {
+    renderAiComponents(aiFound);
+  } else {
+    setStage(p.stage);
+  }
+  return true;
 }
 
 function resetAiWorkspace() {
@@ -5801,6 +5978,13 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
 
   const original = btn.textContent;
   btn.disabled = true;
+  // A scan in flight owns the panel, exactly as a sweep does. Without this,
+  // glancing at another tab while the model was answering re-pointed the
+  // panel, cleared the workspace under the call, and the answer landed
+  // nowhere — reported as "it started scanning, I changed tab, and that was
+  // that". Pinned to the tab it was started on, so the answer can only ever
+  // be filed against the page it was asked about.
+  aiScanHold = { tabId: tab.id, host: currentHostname };
   try {
     const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
     showAiBusy('Reading…', scopeSel ? `Looking inside ${scopeSel}.` : 'Looking at what is on screen.');
@@ -5887,6 +6071,32 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
       }
     }
 
+    // You named an element; the card must be about THAT element.
+    //
+    // Pointing at `#state-select-modal-find-doctor` came back as a card whose
+    // Element was `#state-select-modal-find-doctor>div.modal-dialog` — a
+    // generic inner wrapper of the thing asked about, which is the exact
+    // mistake the dialog advisor already warns against ("point it at the
+    // outer modal container with a unique id, not a generic inner wrapper").
+    // A typed selector is a decision, not a hint, so it is what the card is
+    // rooted on; the model's deeper pick is kept in view rather than dropped,
+    // because on a wrapper round a real widget it is sometimes the better
+    // answer and the field stays editable.
+    if (scopeSel && found.length === 1) {
+      const inner = found[0].containerSelector || '';
+      const isDescendant = inner && inner !== scopeSel && await inPage(tab.id, (scope, s) => {
+        const el = (x) => { try { return document.querySelector(x); } catch { return null; } };
+        const target = el(scope), node = el(s);
+        return !!(target && node && node !== target && target.contains(node));
+      }, [scopeSel, inner]);
+      if (isDescendant) {
+        found = [{ ...found[0], containerSelector: scopeSel,
+          why: `${found[0].why || ''} (You pointed at ${scopeSel}, so that is what this is ` +
+               `rooted on. The scan would have picked ${inner} — use that instead if the ` +
+               `component really is only that inner part.)`.trim() }];
+      }
+    }
+
     const out = { components: found, usage: part.usage,
                   skipped: collected.skipped, scope: scopeSel || '',
                   alsoInside: alsoInside.map((c) => c.label || c.containerSelector) };
@@ -5913,6 +6123,8 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   } catch (err) {
     showNotice($aiStatus, 'Failed: ' + err.message, 'error', 6000);
   } finally {
+    aiScanHold = null;
+    clearSweepHoldsPanel();
     clearAiBusy();
     btn.disabled = false;
     btn.textContent = original;
@@ -5922,6 +6134,10 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
       const t = await getTab();
       if (isInjectable(t)) await inPage(t.id, () => window.__u1SelectorIntel.clearMarks());
     } catch {}
+    // The panel was held on the scanned site while the call ran; whatever tab
+    // is in front now decides what it shows next.
+    const front = await getTab();
+    if (front) await onTabChanged(front);
   }
 });
 
@@ -6213,6 +6429,37 @@ function showSweepBusy(title, sub, pct, long) {
   paint();
 }
 
+/**
+ * Move the bar and reword the line WITHOUT restarting the step.
+ *
+ * showSweepBusy rebuilds the banner and resets the clock, which is right when
+ * a new step begins and wrong many times a second while one is running: the
+ * elapsed time would sit at 0:00 for the whole call, which is the one number
+ * that was telling the truth before any of this.
+ */
+function updateSweepBusy(pct, sub) {
+  const host = document.getElementById('sweepBusy');
+  if (!host) return;
+  const bar = host.querySelector('.ai-busy-bar');
+  const fill = bar && bar.firstElementChild;
+  const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+  if (fill) {
+    bar.classList.add('determinate');
+    fill.style.width = clamped + '%';
+  }
+  const title = host.querySelector('.ai-busy-title');
+  // The title carries "— 42%" after an em dash; replace only that tail.
+  if (title) title.textContent = title.textContent.replace(/\s+—\s+\d+%$/, '') + ` — ${clamped}%`;
+  // The clock is a child of the sub line and is repainted by its own interval,
+  // so the text is replaced around it rather than through innerHTML.
+  const subEl = host.querySelector('.ai-busy-sub');
+  if (subEl && typeof sub === 'string') {
+    const clock = subEl.querySelector('.ai-busy-clock');
+    subEl.textContent = sub + ' ';
+    if (clock) subEl.appendChild(clock);
+  }
+}
+
 function clearSweepBusy() {
   clearInterval(sweepBusyTimer);
   sweepBusyTimer = null;
@@ -6273,10 +6520,16 @@ function markScreenRead(stop) {
   // position of the list being watched. The one case that needs a redraw is the
   // first completion, when the two areas do not exist yet.
   const done = document.querySelector('#sweepPicksList .sweep-part-done');
-  if (row && done) {
+  const stops = aiSweep.stops || [];
+  // The run finishing is not just another completion: the ticking controls
+  // above give way to the two summary buttons, and the stage trail hides —
+  // both of which only a full render produces. Patching the drawer in place
+  // was fine for every completion before this one, where nothing else on
+  // screen needs to change.
+  const sweepDone = stops.length > 0 && stops.every((s) => !s.count || s.scanned);
+  if (row && done && !sweepDone) {
     done.appendChild(row);
     const left = document.querySelector('#sweepPicksList .sweep-part > h4');
-    const stops = aiSweep.stops || [];
     if (left) left.textContent = `Still to search · ${stops.filter(x => x.count && !x.scanned).length}`;
     const head = done.querySelector('summary');
     if (head) {
@@ -6285,7 +6538,8 @@ function markScreenRead(stop) {
       head.innerHTML = `Completed · ${readNow.length}` + (found
         ? ` · ${found} component${found === 1 ? '' : 's'} found` +
           `<button class="btn-outline btn-xs" data-build-found>Stop and build these</button>`
-        : '');
+        : '') +
+        `<button class="btn-outline btn-xs" data-sweep-clear>Clear</button>`;
     }
   } else if (row) {
     renderSweepScreens();
@@ -6300,6 +6554,10 @@ function markScreenRead(stop) {
 }
 
 let sweepReadingNow = null;
+
+// The finished-run summary, folded behind the "What was read" button — cached
+// here because it no longer sits in the DOM once collapsed.
+let sweepReadSummaryHtml = '';
 
 /**
  * A screen the run tried and could not finish.
@@ -6444,6 +6702,31 @@ function renderAiComponents(found) {
   syncAllTriggerFields();
   showCompSlide(0);
   paintAiRowStrength();
+
+  // The inventory is not the page. A dialog scanned while open through the
+  // container box carries classes no collected candidate has — so the
+  // invented check, which only knows the inventory, refused
+  // `.modal.state-select-modal.show` on the same card whose own 👁 reported
+  // "1 match — highlighted on the page". The page outranks the inventory:
+  // every refused-as-invented selector is retried against the live DOM, and
+  // one the page resolves is reprieved. A U1-INVALID refusal (spaces, a
+  // pseudo-class) is never reprieved — the page resolving it does not make
+  // the engine able to.
+  (async () => {
+    const cards = [...track.querySelectorAll('.ai-comp')]
+      .filter((c) => (c.querySelector('.ai-sel-bad')?.textContent || '').includes('invented'));
+    if (!cards.length) return;
+    const sels = cards.map((c) => c.querySelector('.ai-comp-sel').value.trim());
+    const counts = await countSelectors(sels);
+    cards.forEach((card, i) => {
+      if (!(typeof counts[i] === 'number' && counts[i] >= 1)) return;
+      // The field may have been edited while the count ran.
+      if (card.querySelector('.ai-comp-sel').value.trim() !== sels[i]) return;
+      card.querySelector('.ai-sel-bad')?.remove();
+      const go = card.querySelector('[data-mapone]');
+      if (go) go.disabled = false;
+    });
+  })();
 }
 
 const showCompSlide = (i) => slideTo('aiComp', i, '.ai-comp', () => paintAiRowStrength());
@@ -6520,6 +6803,24 @@ document.getElementById('aiApproved')?.addEventListener('click', async (e) => {
   refreshExportInfo();
   btn.textContent = 'Removed ✓';
   btn.disabled = true;
+  // Settled is settled: once the conflicting mapping is gone, the sentence
+  // describing the conflict and the button that resolved it are a solved
+  // problem still being reported. The ✓ gets a beat to be seen, then both
+  // come off — anything still wrong with the row (a failure of its own)
+  // stays, because removing the clash did not fix that.
+  const rowEl = btn.closest('.ai-approved-row');
+  setTimeout(() => {
+    const wrap = btn.closest('.ai-approved-why');
+    btn.remove();
+    if (wrap && !wrap.querySelector('[data-dropkey]')) wrap.remove();
+    const why = rowEl && rowEl.querySelector('.ai-approved-why');
+    if (why) {
+      // [\s\S]*?, not [^.]* — the clash names selectors like `.mainNav`,
+      // whose dot would stop a period-excluding match halfway through.
+      why.textContent = why.textContent
+        .replace(/\s*Also mapped by [\s\S]*?two on the same elements fight, and the second wins\./, '');
+    }
+  }, 1200);
 });
 
 // Keep the "Make these accessible" button honest about how many are ticked —
@@ -6626,12 +6927,22 @@ function rowFromCompCard(comp) {
  * required-field check had to stop living inside the DOM reader.
  */
 function rowFromParts({ type, found, container, label, compIndex }) {
-  // For a trigger-first type the found element is the TRIGGER, and the mapping
-  // is rooted on what it opens. Everything downstream expects `sel` to be that
-  // root, so swap them here rather than teaching each step about the exception.
-  // Any other type that accepts a trigger keeps the found element as the
-  // component and files what was entered as the trigger — no swap.
-  const swap = triggerFirstType(type) && !!container;
+  // For a type whose trigger is REQUIRED the found element is the TRIGGER, and
+  // the mapping is rooted on what it opens. Everything downstream expects
+  // `sel` to be that root, so swap them here rather than teaching each step
+  // about the exception. Any other type that accepts a trigger keeps the found
+  // element as the component and files what was entered as the trigger.
+  //
+  // Keyed on triggerRequired, NOT triggerFirstType. `firstArgFrom:'trigger'`
+  // says only which selector becomes fix()'s first argument — "the element to
+  // wait for" — and buildTemplate already handles that on its own. Reading it
+  // as "the found element is the trigger" inverted every dialog: pointing at
+  // the modal and naming its opener produced
+  //   fix.dialog({ dialog: "#HealthCareProfessionals>a", trigger: "#state-select-modal-find-doctor" })
+  // — the link filed as the dialog and the modal filed as the link that opens
+  // it, exactly backwards. datepicker and listbox require a trigger and do
+  // mean the found element is one; dialog's is optional and does not.
+  const swap = triggerRequired(type) && !!container;
   const row = {
     type,
     sel: swap ? container : found,
@@ -6675,7 +6986,9 @@ function syncTriggerField(comp) {
   }
   const hint = trig.querySelector('.ai-comp-cont-hint');
   if (hint) {
-    hint.textContent = triggerFirstType(type)
+    // Same test rowFromParts swaps on, or the hint promises one arrangement
+    // and the mapping is built with the other.
+    hint.textContent = required
       ? 'The element above becomes the trigger. Open it on the page first — a closed panel is not there to point at.'
       : 'The element above stays the component; this is what drives it.';
   }
@@ -6783,6 +7096,7 @@ document.getElementById('aiScopeBtn')?.addEventListener('click', () => {
 document.getElementById('aiScopeFindBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('aiScopeFindBtn');
   const input = document.getElementById('aiScopeInput');
+  const preview = document.getElementById('aiScopePreview');
   const sel = (input?.value || '').trim();
   if (!sel) { showNotice($aiStatus, 'Type a container selector first.', 'error', 3000); return; }
   btn.disabled = true;
@@ -6794,12 +7108,42 @@ document.getElementById('aiScopeFindBtn')?.addEventListener('click', async () =>
       : res.count === 1 ? `1 match — outlined on the page.`
       : `${res.count} matches — all outlined. Scan uses whichever this selector resolves to.`,
       res.count ? 'success' : 'error', 4000);
+    // The picture, under the input. The outline is drawn on the PAGE — behind
+    // the panel, and often scrolled somewhere else — so "1 match" was a claim
+    // that still had to be verified by going and looking. The crop shows the
+    // matched element right where the question was asked.
+    if (preview) {
+      if (res.count) {
+        preview.style.display = '';
+        preview.innerHTML = '<span class="ai-scope-preview-note">taking its picture…</span>';
+        const shot = await captureElementScreenshot(sel);
+        // The input may have been edited while the capture ran; a picture of
+        // the previous selector under the new text would be a lie.
+        if ((input?.value || '').trim() !== sel) return;
+        preview.innerHTML = shot
+          ? `<img src="${shot}" alt="The element ${escapeHtml(sel)} matches on the page">` +
+            `<span class="ai-scope-preview-note">this is what ${escapeHtml(sel)} points at${
+              res.count > 1 ? ` (first of ${res.count})` : ''}</span>`
+          : '';
+        if (!shot) preview.style.display = 'none';
+      } else {
+        preview.style.display = 'none';
+        preview.innerHTML = '';
+      }
+    }
   } finally {
     btn.disabled = false;
   }
 });
 document.getElementById('aiScopeInput')?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); document.getElementById('aiDiscoverBtn')?.click(); }
+});
+// A picture of the OLD selector under a NEW one reads as an answer to the
+// wrong question — edit the field and the preview stands down until 🔍 is
+// pressed again.
+document.getElementById('aiScopeInput')?.addEventListener('input', () => {
+  const preview = document.getElementById('aiScopePreview');
+  if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
 });
 
 document.addEventListener('click', async (e) => {
@@ -6983,6 +7327,18 @@ async function prepareOne(row, tab) {
     cbShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.comboboxShape(s), [row.sel]);
     if (cbShape) row.sel = cbShape.combobox;
   }
+
+  // A dialog's close control, read off the markup. closeBtn is optional in the
+  // schema, so the model treats it as optional in fact and the standing
+  // instruction "leave a field out rather than guess" makes omitting it the
+  // safe-looking answer every time — so dialog after dialog shipped with
+  // nothing bound to close it, which is the one thing a keyboard user most
+  // needs from a modal. An ✕, a Close/Cancel button, [aria-label*="close"] and
+  // .modal-close are all readable, so they are read, not asked about.
+  let dlgShape = null;
+  if (row.type === 'dialog') {
+    dlgShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.dialogShape(s), [row.sel]);
+  }
   const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
   if (!markup || markup.error || markup.notFound) {
     // Almost always the same cause: the scan was taken on one section and the
@@ -7128,6 +7484,22 @@ async function prepareOne(row, tab) {
       out.fields.push({ key: 'label', value: cbShape.label, why: 'The field\'s own label.' });
     }
     out.primary = cbShape.combobox;
+  }
+
+  // Measured beats omitted. Only fills what the model LEFT EMPTY — unlike the
+  // shapes above it does not overrule a real answer, because a close control
+  // the model found in the markup is the same kind of evidence this is.
+  if (dlgShape) {
+    for (const key of ['closeBtn', 'heading']) {
+      if (!dlgShape[key]) continue;
+      const had = (out.fields || []).find((f) => f.key === key && String(f.value || '').trim());
+      if (had) continue;
+      out.fields = (out.fields || []);
+      out.fields.push({ key, value: dlgShape[key],
+        why: key === 'closeBtn'
+          ? 'The dialog\'s own close control, read off the markup. Without it there is nothing for U1 to bind closing to.'
+          : 'The dialog\'s heading — this is what a screen reader announces it as.' });
+    }
   }
 
   const idx = aiMapped.length;
@@ -7775,6 +8147,27 @@ document.getElementById('sweepStartBtn')?.addEventListener('click', async () => 
   const tab = await getTab();
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
+  // A modal is open, and this route is about to scroll the page — which is
+  // what closes one. The survey would then read the page BEHIND it and report,
+  // truthfully and uselessly, that it found no dialog. Reported as: I opened a
+  // dialog so it would scan it, and it did not.
+  //
+  // Nothing can make this route scan an open modal; scrolling is what it does.
+  // But the conflict is visible before anything is spent, so it is said here
+  // and the route that CAN do it is named.
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+    const open = await inPage(tab.id, () => window.__u1SelectorIntel.openModalNow());
+    if (open) {
+      showNotice(status,
+        `A dialog is open (${open}). This route scrolls the page from the top, which will close it — ` +
+        `so it would survey the page behind it and find no dialog. Use Automatic (AI) instead: ` +
+        `paste ${open} into its container box and press Scan it. That route does not scroll.`,
+        'error', 16000);
+      return;
+    }
+  } catch {}
+
   // No API key check and no "are you sure" here any more. This press only
   // photographs the page and counts what is on it, in the panel — it makes no
   // request and costs nothing, so asking permission for it was friction in
@@ -7867,6 +8260,21 @@ async function runSweep(tab) {
         showSweepBusy(`Section ${n}`, 'Opening each component to see what it is.',
           pos && pos.height ? Math.min(100, ((pos.y + pos.view) / pos.height) * 100) : undefined);
         const probed = await probeScreen(tab);
+        // Pressing things can still take the page somewhere, however careful
+        // the probe is: it cancels link clicks and form submits, but a site
+        // whose own handler does `location.href = '/search'` navigates as its
+        // own work rather than as the click's default action, and nothing in
+        // the page can cancel that. Reported from elal.com — the survey pressed
+        // something, landed on עמוד חיפוש, and carried on measuring a page that
+        // was no longer the one being surveyed.
+        //
+        // So it is checked rather than assumed, and the way back is the way it
+        // came: back to the surveyed URL, and back to the scroll position this
+        // section was read at.
+        if (!(await sweepBackIfNavigated(tab, n))) {
+          sweepLog(n, 'the page navigated away and would not come back — stopping here so the rest of the survey is not about another page', 'err');
+          break;
+        }
         await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
         if (!probed) sweepLog(n, 'the probe could not run on this page', 'err');
         else if (!probed.pressed) {
@@ -8106,6 +8514,54 @@ function mergeComponents(readLine, observed) {
   return [...proven, ...leftover].slice(0, 5).join(' · ');
 }
 
+/**
+ * Did pressing things take the page somewhere? Then go back.
+ *
+ * The probe cancels link clicks, form submits, beforeunload, window.open, and
+ * (since the same report) location.assign/replace and history.pushState. What
+ * it cannot cancel is `location.href = '/search'`: that is a setter on a host
+ * object, it runs as the page's OWN handler rather than as the click's default
+ * action, and there is no hook that sees it.
+ *
+ * So navigation is treated as something that will occasionally happen and is
+ * recovered from, rather than something the net is trusted to have prevented.
+ * The way back is the way it came: the surveyed URL, then the scroll position
+ * the section was being read at — restored by the caller, which knows it.
+ *
+ * Returns true when the page is (still, or again) the one being surveyed.
+ */
+async function sweepBackIfNavigated(tab, n) {
+  const from = aiSweep.url;
+  if (!from) return true;
+  // Compared without the hash: an in-page anchor is a move, not a navigation,
+  // and the scroll restore below already puts that right.
+  const bare = (u) => String(u || '').split('#')[0];
+  const now = await chrome.tabs.get(tab.id).then((t) => t && t.url).catch(() => null);
+  if (!now || bare(now) === bare(from)) return true;
+
+  sweepLog(n, `the page went to ${bare(now)} — going back`, 'err');
+  showSweepBusy(`Section ${n}`, 'Something navigated the page. Going back to where the survey was.');
+  try {
+    await chrome.tabs.update(tab.id, { url: from });
+  } catch { return false; }
+
+  // Wait for it to actually be there. A fixed sleep is either too short on a
+  // slow site or wasted on a fast one, so it is polled — and capped, because a
+  // page that never comes back must not hold the run forever.
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    const t = await chrome.tabs.get(tab.id).catch(() => null);
+    if (t && t.status === 'complete' && bare(t.url) === bare(from)) {
+      // The page is new, so anything the run injected into the old one is gone.
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+      } catch {}
+      return true;
+    }
+  }
+  return false;
+}
+
 async function probeScreen(tab) {
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['probe.js'] });
@@ -8312,9 +8768,15 @@ function renderSweepScreens() {
   // become a record of a decision already acted on, so they fold away with
   // the rest of the finished run — a summary you can reopen, not a form you
   // have to look past.
-  summary.innerHTML = sweepDone
-    ? `<details class="sweep-part"><summary>What was read · ${stops.length} section${stops.length === 1 ? '' : 's'} · ${elements} element${elements === 1 ? '' : 's'}</summary>${summaryBody}</details>`
-    : summaryBody;
+  // Once the run is done this is a record, not a form — folded behind a
+  // button rather than a standing accordion, the same way the cost breakdown
+  // is. The content it opens is cached, since it no longer lives in the DOM
+  // until the dialog is opened.
+  sweepReadSummaryHtml = summaryBody;
+  // Done: the resting screen shows nothing here. The two record buttons
+  // (what it cost / what was read) belong to the finished run, so they live
+  // inside its Completed drawer below, not standing on the main screen.
+  summary.innerHTML = sweepDone ? '' : summaryBody;
 
   // Two areas, because a half-finished run is the ordinary state — you start
   // one, you stop it, you come back tomorrow. "Which of these have I paid for
@@ -8329,21 +8791,37 @@ function renderSweepScreens() {
   // has to finish before any of it can be used.
   const foundSoFar = read.reduce((a, x) => a + ((x.found || []).filter(f => !f.done).length), 0);
   const listHtml = read.length
-    ? (left.length
+    ? // Left empty rather than saying so: a done run already says so through
+      // the two buttons that replace this whole area once nothing is ticked.
+      (left.length
         ? `<div class="sweep-part"><h4>Still to search · ${left.filter(x => x.count).length}</h4>` +
           left.map(sweepScreenRowHtml).join('') + `</div>`
-        : `<div class="sweep-part sweep-part-empty">Every section is completed.</div>`) +
+        : '') +
       // Open while there is still a "still to search" list above it, for the
       // same reason a receipt stays visible mid-purchase. Once that list is
       // gone, this is the only thing left on screen — leaving it expanded
       // then is a scroll of finished rows between you and scanning again.
+      // Clear lives on this row now — the one place on the finished screen
+      // that is about the survey as a whole, rather than about one section
+      // or one press of Read.
       `<details class="sweep-part sweep-part-done"${sweepDone ? '' : ' open'}><summary>Completed · ${read.length}` +
       (foundSoFar
         ? ` · ${foundSoFar} component${foundSoFar === 1 ? '' : 's'} found` +
           `<button class="btn-outline btn-xs" data-build-found>${aiSweep.running
             ? 'Stop and build these' : 'Build fixes for these'}</button>`
         : '') +
+      `<button class="btn-outline btn-xs" data-sweep-clear>Clear</button>` +
       `</summary>` +
+      // The finished run's record, inside its own drawer: open Completed and
+      // the cost and the read summary are the first things in it. On the
+      // resting screen itself they are gone — that screen belongs to the
+      // scan button.
+      (sweepDone
+        ? `<div class="btn-row sweep-done-info">` +
+            `<button type="button" class="btn-outline btn-sm" id="sweepEstBtn">💰 What it costs</button>` +
+            `<button type="button" class="btn-outline btn-sm" id="sweepReadBtn">⚙️ What was read · ${stops.length} section${stops.length === 1 ? '' : 's'} · ${elements} element${elements === 1 ? '' : 's'}</button>` +
+          `</div>`
+        : '') +
       read.map(sweepScreenRowHtml).join('') + `</details>`
     : stops.map(sweepScreenRowHtml).join('');
   list.innerHTML = listHtml;
@@ -8353,6 +8831,11 @@ function renderSweepScreens() {
   list.classList.remove('lbl-focus');
   // Re-apply the "reading now" mark the redraw just threw away.
   if (aiSweep.running && sweepReadingNow != null) markScreenReading(sweepReadingNow);
+
+  // On a finished run the list (what was found) matters more than the two
+  // buttons above it (a record of what was read and what it cost) — so it
+  // moves ahead of them instead of sitting stranded below.
+  wrap.classList.toggle('is-sweep-done', sweepDone);
 
   setStage(mapMode === 'sweep' ? 'screens' : 'none');
   syncSweepMakeBtn();
@@ -8588,6 +9071,61 @@ function sweepEstimateHtml(sections, elements, calls) {
     </div>`;
 }
 
+// What a finished run actually spent — the same three-line shape as the
+// forecast above it, but reporting what happened rather than what would.
+// Shown once nothing is left ticked, when the forecast has nothing left to
+// price.
+function sweepSpentHtml() {
+  const read = (aiSweep.stops || []).filter(s => s.scanned);
+  const spent = read.reduce((a, x) => a + (x.cost || 0), 0);
+  const elements = read.reduce((a, x) => a + (x.count || 0), 0);
+  const found = read.reduce((a, x) => a + (x.found || []).length, 0);
+  const built = read.reduce((a, x) => a + (x.found || []).filter(f => f.done).length, 0);
+  return `
+    <div class="sweep-est">
+      <div class="block-title">What this cost</div>
+      <div class="sweep-est-head">Read: ${read.length} section${read.length === 1 ? '' : 's'} on 1 page · ${elements} element${elements === 1 ? '' : 's'}</div>
+      <div class="sweep-est-row">
+        <span>Find</span><span>done</span><span>$${spent.toFixed(2)}</span>
+      </div>
+      ${found ? `<div class="sweep-est-row"><span>Build</span><span>${built}/${found} built</span><span></span></div>` : ''}
+      <div class="sweep-est-note">What this run actually spent — a record, not a forecast.</div>
+    </div>`;
+}
+
+// The cost breakdown, folded behind a button instead of sitting open on
+// screen. Pulled out to a named function so it is one thing to call, both
+// from the click below and from a test. Forecasts what is ticked while
+// there is still something ticked to read; once a run is done and nothing
+// is left ticked, reports what it actually spent instead.
+function openSweepEstDialog() {
+  const picked = sweepPickedScreens();
+  const elements = aiSweep.stops.filter(s => picked.includes(s.n)).reduce((a, s) => a + s.count, 0);
+  const body = document.getElementById('sweepEstBody');
+  const dlg = document.getElementById('sweepEstDialog');
+  if (body) {
+    body.innerHTML = picked.length
+      ? sweepEstimateHtml(picked.length, elements, sweepCallsFor(picked))
+      : sweepSpentHtml();
+  }
+  if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
+}
+
+// Same treatment for the finished run's summary.
+function openSweepReadDialog() {
+  const body = document.getElementById('sweepReadBody');
+  const dlg = document.getElementById('sweepReadDialog');
+  if (body) body.innerHTML = sweepReadSummaryHtml;
+  if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#sweepEstBtn')) return openSweepEstDialog();
+  if (e.target.closest('#sweepEstCloseBtn')) return document.getElementById('sweepEstDialog')?.close();
+  if (e.target.closest('#sweepReadBtn')) return openSweepReadDialog();
+  if (e.target.closest('#sweepReadCloseBtn')) return document.getElementById('sweepReadDialog')?.close();
+});
+
 // ── What it found, to choose from ───────────────────────────────────────────
 // The sweep stops here on purpose. Everything above cost one call per SCREEN;
 // working out the selectors for a component costs a call per COMPONENT. Putting
@@ -8615,6 +9153,16 @@ function renderSweepPicks() {
   const doneCount = finished.reduce((s, x) => s + x.found.length, 0);
   const barrenCount = read.filter(s => s.scanned && !s.found.length).length;
   if (!total && !doneCount && !barrenCount) { setStage('none'); return; }
+  // Nothing left to choose — everything found is built (or there was nothing
+  // to find). "Choose fixes" with zero components across zero sections is a
+  // stage with no decision in it; the finished run's own view (Completed, and
+  // the two record buttons) is the honest answer, so go there instead of
+  // rendering an empty chooser.
+  if (!total) {
+    aiSweep.phase = 'screens';
+    renderSweepScreens();
+    return;
+  }
 
   // The way back. Stopping a run to build what it had found left you in the
   // components view with no route to the sections that were never searched —
@@ -8673,6 +9221,13 @@ function renderSweepPicks() {
             <span class="ai-approved-label">Section ${stop.n}</span>
             <div class="ai-approved-why">${stop.found.map(f => escapeHtml(f.label)).join(' · ')}</div>
           </div>
+          <!-- "Completed" was a one-way door: a section built by mistake, or
+               one you decided against after seeing it on the page, could only
+               be undone by finding each of its mappings in the list below and
+               deleting them one at a time. This takes the section's own
+               mappings back and returns it to the choosing list. -->
+          <button type="button" class="btn-outline btn-xs" data-undo-section="${stop.n}"
+                  title="Delete the mappings this section produced and put it back on the list">↶ Undo this section</button>
         </div>`).join('')}</div>`;
     list.appendChild(doneBox);
   }
@@ -8774,18 +9329,33 @@ function syncSweepMakeBtn() {
     // label flickered between two answers and the button invited a second run
     // on top of the one already going.
     if (!aiSweep.running) {
-      btn.disabled = !picked.length;
-      btn.textContent = picked.length
-        ? `🔎 Find components in ${picked.length} section${picked.length === 1 ? '' : 's'}`
-        : '🔎 No sections ticked';
+      // Once nothing is left to read, "No sections ticked" is not an offer
+      // any more — there is nothing to tick. The two buttons above already
+      // say the run is over; a disabled button repeating that is clutter,
+      // not information.
+      const sweepDone = aiSweep.stops.length > 0 && aiSweep.stops.every(s => !s.count || s.scanned);
+      if (!picked.length && sweepDone) {
+        btn.style.display = 'none';
+      } else {
+        btn.style.display = '';
+        btn.disabled = !picked.length;
+        btn.textContent = picked.length
+          ? `🔎 Find components in ${picked.length} section${picked.length === 1 ? '' : 's'}`
+          : '🔎 No sections ticked';
+      }
     }
     // The box under the button described the NEXT press while the button
     // described the current run — two different moments, stacked. While a run
     // is going the box is about the run.
+    // The full breakdown used to sit open on screen at all times. Folded behind
+    // a button it is still one press away, but it stops being fifteen lines
+    // between the ticks and the button that reads them.
     if (est) {
       est.innerHTML = aiSweep.running
         ? sweepRunningHtml()
-        : (picked.length ? sweepEstimateHtml(picked.length, elements, sweepCallsFor(picked)) : '');
+        : (picked.length
+            ? `<button type="button" class="btn-outline btn-sm" id="sweepEstBtn">💰 What it costs</button>`
+            : '');
     }
     return;
   }
@@ -9113,6 +9683,64 @@ async function sweepPreviewEnd() {
   } catch {}
 }
 
+/**
+ * Take a completed section back.
+ *
+ * "Completed" was a one-way door. A section built by mistake — or one you
+ * decided against once you saw what it did to the page — could only be undone
+ * by hunting each of its mappings down in the list below and deleting them one
+ * at a time, with nothing saying which of the twenty belonged to it.
+ *
+ * The section knows what it produced (`stop.found`), so it can hand exactly
+ * those back and return itself to the choosing list. The survey is not thrown
+ * away: it stays read and paid for, so putting the section back costs nothing
+ * and re-reading it is not required.
+ */
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-undo-section]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();                 // it lives inside a <details> row
+  const n = Number(btn.dataset.undoSection);
+  const stop = (aiSweep.stops || []).find((s) => s.n === n);
+  if (!stop) return;
+
+  const built = (stop.found || []).filter((f) => f.done);
+  btn.disabled = true;
+  btn.textContent = 'Undoing…';
+  const key = storageKey('mappings', currentHostname);
+  let removed = 0;
+  try {
+    const list = (await U1Store.get([key]))[key] || [];
+    // Matched on the mapping key the build recorded, not on the selector: two
+    // sections can legitimately produce mappings on related selectors, and
+    // deleting a neighbour's work would be far worse than leaving this one.
+    const drop = new Set(built.map((f) => f.mappingKey).filter(Boolean));
+    const next = drop.size ? list.filter((m) => !drop.has(mappingKey(m))) : list;
+    removed = list.length - next.length;
+    if (removed) await U1Store.set({ [key]: next });
+  } catch (err) {
+    showNotice(document.getElementById('sweepPicksStatus'),
+      'Could not remove them: ' + err.message, 'error', 8000);
+    btn.disabled = false;
+    btn.textContent = '↶ Undo this section';
+    return;
+  }
+  // Back on the list, still read: the survey and the search are paid for and
+  // stay that way, so putting it back costs nothing.
+  stop.found = (stop.found || []).map((f) => ({ ...f, done: false }));
+  await loadMappingsList();
+  refreshExportInfo();
+  saveSweep();
+  renderSweepPicks();
+  showNotice(document.getElementById('sweepPicksStatus'),
+    removed
+      ? `Section ${n} undone — ${removed} mapping${removed === 1 ? '' : 's'} removed and the section is back on the list. ` +
+        `Reload the page to see it without them.`
+      : `Section ${n} is back on the list. Nothing was in Mappings to remove.`,
+    'success', 10000);
+});
+
 document.getElementById('sweepPicksList')?.addEventListener('mouseover', (e) => {
   // Gated on the phase, this stopped working the moment one section had been
   // read — which is exactly when the rest of the list is most worth looking at,
@@ -9173,7 +9801,15 @@ document.getElementById('buildStopBtn')?.addEventListener('click', (e) => {
   b.textContent = 'Finishing this one…';
 });
 
-document.getElementById('sweepPicksClearBtn')?.addEventListener('click', async () => {
+// Lives on the Completed row now (data-sweep-clear), redrawn into the list
+// on every render — so, like the Build-fixes button beside it, it is found
+// by delegation rather than a fixed id, and stops the click reaching the
+// <summary> it sits inside so it does not also toggle the drawer.
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-sweep-clear]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
   // Clear is the ONLY thing that forgets a stored survey. Switching site or
   // closing the panel must not, or the durability is theatre.
   //
@@ -9194,6 +9830,7 @@ document.getElementById('sweepPicksClearBtn')?.addEventListener('click', async (
   document.getElementById('sweepPicksList').innerHTML = '';
   document.getElementById('sweepLog').style.display = 'none';
   document.getElementById('sweepLog').innerHTML = '';
+  document.getElementById('sweepPicks')?.classList.remove('is-sweep-done');
 });
 
 // ── The paid half ───────────────────────────────────────────────────────────
@@ -9300,6 +9937,17 @@ async function scanPickedScreens(numbers) {
         ((i) / stops.length) * 100);
       markScreenReading(stop.n);
 
+      // The paid read scrolls back to each section and photographs it. If the
+      // page has moved on since the survey — the probe pressed something that
+      // navigated, or you followed a link yourself between the two passes —
+      // that photograph is of the wrong page, and it is about to be sent to
+      // the model and charged for. Checked before the money is spent.
+      if (!(await sweepBackIfNavigated(tab, stop.n))) {
+        const why = 'the page navigated away and would not come back — nothing was charged for this section';
+        sweepLog(stop.n, why, 'err');
+        await markScreenFailed(stop, why);
+        continue;
+      }
       await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
       await new Promise(r => setTimeout(r, SWEEP_SETTLE_MS));
 
@@ -9413,18 +10061,25 @@ async function scanPickedScreens(numbers) {
       const parts = [];
       let died = null;
       for (let b = 0; b < batches.length; b++) {
-        showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
+        // Per BATCH, not per section. `i / stops.length` alone meant a
+        // two-section run sat at 0% for the whole of section 1 — a minute or
+        // two of a bar that has not moved and a clock that has, which reads
+        // as stuck rather than slow.
+        const pctAt = (frac) => ((i + Math.min(1, (b + frac) / batches.length)) / stops.length) * 100;
+        const head = `Section ${stop.n} — ${i + 1} of ${stops.length}`;
+        const part = (batches.length > 1 ? `Part ${b + 1}/${batches.length} · ` : '');
+        const long =
+          `Asking Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'} and a ` +
+          `picture of this section. A busy one takes a minute or two — it only gives up if ` +
+          `Claude goes quiet for a minute, so a long answer is never mistaken for a stuck one.`;
+        showSweepBusy(head,
           // Short enough for a banner pinned over the panel. The reassurance
           // that a slow answer is not a stuck one is on the tooltip: it is
           // worth saying once, not worth three lines of a fixed header on
           // every section of a thirty-section run.
-          (batches.length > 1 ? `Part ${b + 1}/${batches.length} · ` : '') +
-          `asking Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'}` +
+          part + `asking Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'}` +
           ` — a busy section takes a minute or two`,
-          ((i) / stops.length) * 100,
-          `Asking Claude about ${batches[b].length} element${batches[b].length === 1 ? '' : 's'} and a ` +
-          `picture of this section. A busy one takes a minute or two — it only gives up if ` +
-          `Claude goes quiet for a minute, so a long answer is never mistaken for a stuck one.`);
+          pctAt(0), long);
         const got = await U1AI.discover({
           screenshot: collected.shot,
           context: {
@@ -9432,6 +10087,17 @@ async function scanPickedScreens(numbers) {
             headings: collected.headings,
             title: collected.title,
             url: collected.url,
+          },
+          // The definitive answer to "is it stuck?": bytes of the actual
+          // answer, counted as they land. Silence is what the idle clock
+          // already catches; this is what makes a working call LOOK like one.
+          // The share of the batch is a guess from a typical answer length —
+          // it only has to move, and it is capped so it cannot claim to be
+          // finished before it is.
+          onProgress: (chars) => {
+            if (aiSweep.abort) return;
+            updateSweepBusy(pctAt(Math.min(0.9, chars / 4000)),
+              part + `Claude is answering — ${chars.toLocaleString()} characters so far`);
           },
         });
         if (got && got.err) { died = got.err; break; }
@@ -9527,7 +10193,14 @@ async function scanPickedScreens(numbers) {
             const made = await confirmedToMapping(
               { mark: null, type: todo[b].type, sel: todo[b].sel }, stop, tab);
             if (made.err) { todo[b].failed = made.err; sweepLog(stop.n, `${todo[b].type}: ${made.err}`, 'err'); }
-            else { todo[b].done = true; todo[b].failed = null; }
+            else {
+              todo[b].done = true;
+              todo[b].failed = null;
+              // Carried through so "undo this section" knows which stored row
+              // this became — the silent run builds through the same path but
+              // keeps its own object rather than the returned one.
+              if (made.found && made.found.mappingKey) todo[b].mappingKey = made.found.mappingKey;
+            }
           } catch (err) {
             todo[b].failed = err.message;
             sweepLog(stop.n, `${todo[b].type}: ${err.message}`, 'err');
@@ -14329,6 +15002,17 @@ function noteSweepHoldsPanel(tab) {
   // all be about a site you are no longer on, with no way out but waiting or
   // pressing Stop and knowing that is what Stop was for. This is the way out,
   // named after where it goes.
+  // A single-element scan is ONE model call — ten to thirty seconds, not
+  // twenty minutes — so it gets the same hold and no escape hatch: the way
+  // out is to wait for it, and offering "ends the scan" for something about
+  // to finish on its own would throw away a call already paid for. The
+  // leave button also drives aiSweep.abort, which this route does not read.
+  if (aiScanHold && !aiSweep.running) {
+    host.textContent =
+      `Scanning ${currentHostname} — the panel stays with it until the answer lands. ` +
+      `Nothing here is about ${here} yet.`;
+    return;
+  }
   host.innerHTML =
     `Still scanning <strong>${escapeHtml(currentHostname)}</strong> — this panel stays with ` +
     `the scan until it finishes. Nothing here is about ${escapeHtml(here)}.` +
@@ -14401,6 +15085,14 @@ async function onTabChanged(tab) {
     noteSweepHoldsPanel(tab);
     return;
   }
+  // The same rule for a single-element scan. It is one model call rather than
+  // a run of them, but everything below would still re-point the panel and
+  // clear the workspace the answer is about to land in.
+  if (aiScanHold) {
+    const alive = await chrome.tabs.get(aiScanHold.tabId).catch(() => null);
+    if (alive) { noteSweepHoldsPanel(tab); return; }
+    aiScanHold = null;
+  }
   clearSweepHoldsPanel();
 
   if (!tab || !isInjectable(tab)) { borrowedHost = true; renderHostWarning(); return; }
@@ -14422,13 +15114,20 @@ async function onTabChanged(tab) {
   if (hostnameChanged && !(await enforceLicence(currentHostname))) return;
 
   if (hostnameChanged) {
-    // Scan results are selectors from the site you just left; leaving them on
-    // screen invites approving one client's components into another client's
-    // file. But a sweep is pinned to the tab it started on, and if that tab is
-    // still open the results still belong to it — throwing away a survey
-    // because you glanced at another tab is the worse of the two failures, and
-    // every write path already refuses to save across sites.
-    if (!(await sweepIsPinnedAndAlive())) resetAiWorkspace();
+    // Scan results are selectors from the site you just left; ON SCREEN over
+    // another site they invite approving one client's components into another
+    // client's file — so the view comes down. But the STATE stays: throwing
+    // away a survey or a half-approved batch because you glanced at another
+    // tab is the worse of the two failures, and every write path already
+    // refuses to save across sites. Coming back to the workspace's own site
+    // puts it back where it stood.
+    // Park now — the cascade below (pull, restoreSweep, the config form) has
+    // to run against EMPTY live slots or the new site's own stored survey
+    // cannot restore over them. Unparking happens at the END of this block,
+    // once nothing is left that would paint over the restored view.
+    if (!(await sweepIsPinnedAndAlive()) && aiWorkspaceHost && aiWorkspaceHost !== newHostname) {
+      parkAiWorkspace();
+    }
     // And put the site you just left back the way you found it.
     await releaseCspBypassFor(previousHostname);
     const t = document.getElementById('cspBypassToggle');
@@ -14448,6 +15147,12 @@ async function onTabChanged(tab) {
     // The workspace was just cleared for the new site — so this is the new
     // site's own last survey coming back, not the previous one following you.
     if (!pulled.ok || !pulled.sweep) await restoreSweep();
+    // LAST. Coming back to the site whose workspace is parked puts it back on
+    // screen — and it has to happen after everything above, because
+    // restoreSweep and the panel repaints each set a stage of their own and
+    // would paint straight over a view restored before them. That is what
+    // made "I changed tab and it did not come back" survive the first fix.
+    unparkAiWorkspaceFor(newHostname);
   }
 
   // Run detection immediately and again after a short delay to catch async U1 init

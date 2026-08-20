@@ -290,17 +290,6 @@ const MEASURE = {
     return { primary: S.robustSelector(el), fields: f, roots: {} };
   },
 
-  form(el) {
-    const inputs = kids(el, 'input,select,textarea').filter((i) => i.type !== 'hidden');
-    const submit = el.querySelector('[type="submit"],button:not([type="button"])');
-    if (!inputs.length || !submit) return null;
-    return {
-      primary: S.robustSelector(el),
-      fields: { form: S.robustSelector(el), inputField: sub(el, inputs), submitButton: S.robustSelector(submit) },
-      roots: {},
-    };
-  },
-
   table(el) {
     const rows = kids(el, 'tr');
     const cells = kids(el, 'td');
@@ -321,16 +310,40 @@ const comps = found.candidates.filter((c) => c.component && !c.nested);
 const made = [];
 const skipped = [];
 
+// A tag that already IS what we would declare it to be.
+//
+// <a href> is a link and <button> is a button — the browser gives them the
+// role, the focus and the keyboard for free. Mapping them as link or button
+// adds an attribute the element already implies and changes nothing a person
+// can perceive, while filling the drawer and the export with work that was
+// never work.
+const NATIVE_ALREADY = (el, type) => {
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName.toLowerCase();
+  if (type === 'link') return tag === 'a' && el.hasAttribute('href');
+  if (type === 'button') return tag === 'button' || (tag === 'input' && /^(button|submit|reset)$/i.test(el.type || ''));
+  return false;
+};
+
 for (const c of comps) {
   const type = c.component;
   const schema = SCHEMAS[type];
   const measure = MEASURE[type];
+
+  // Forms are out entirely: U1 requires invalidField, that class only exists
+  // after a failed submit, and inventing one produces a mapping that looks
+  // complete and does nothing.
+  if (type === 'form') { skipped.push({ type, sel: c.selector, why: 'forms are not mapped — see component-rules.md' }); continue; }
   if (!schema) { skipped.push({ type, sel: c.selector, why: 'no u1.fix type for it' }); continue; }
   if (!measure) { skipped.push({ type, sel: c.selector, why: 'needs the browser — pressing it, or the model' }); continue; }
 
   let el;
   try { el = w.document.querySelector(c.selector); } catch { el = null; }
   if (!el) { skipped.push({ type, sel: c.selector, why: 'its selector no longer resolves' }); continue; }
+  if (NATIVE_ALREADY(el, type)) {
+    skipped.push({ type, sel: c.selector, why: `already a native <${el.tagName.toLowerCase()}> — nothing to add` });
+    continue;
+  }
 
   let m = null;
   try { m = measure(el); } catch (e) { skipped.push({ type, sel: c.selector, why: 'could not measure: ' + e.message }); continue; }

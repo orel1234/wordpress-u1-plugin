@@ -257,7 +257,14 @@
 
   function compound(node) {
     if (!node || node.nodeType !== 1) return '';
-    if (node.id && idOk(node.id)) return '#' + node.id;
+    // Only an id that is actually unique. Real pages duplicate ids — molina's
+    // homepage carries #state-select-modal, #MedicareAlert and
+    // #siteLeavingAlert TWICE each (a desktop and a mobile copy) — and U1
+    // resolves selectors through jQuery, where a duplicated #id matches only
+    // the first copy. A selector built on one can therefore never reach the
+    // second element, and pointed at the first it may be decorating the copy
+    // that is display:none at this breakpoint.
+    if (node.id && idOk(node.id) && countOf('#' + node.id) === 1) return '#' + node.id;
     const testId = node.getAttribute('data-testid') || node.getAttribute('data-test');
     if (testId) return `[data-testid="${testId}"]`;
     const tag = node.tagName.toLowerCase();
@@ -299,13 +306,17 @@
   // Build a unique, U1-valid selector (no spaces, no :nth) for `node`.
   function robustSelector(node) {
     if (!node || node.nodeType !== 1) return '';
+    // No '#'-shortcut past the uniqueness check anywhere here: compound only
+    // emits an #id when it verified the id is unique, so the checks below are
+    // redundant for ids — but keeping them uniform means nothing can slip a
+    // duplicated id through a path that assumed ids never duplicate.
     let c = compound(node);
-    if (c.charAt(0) === '#' || uniqueOnPage(c)) return c;
+    if (uniqueOnPage(c)) return c;
     let chain = c, cur = node.parentElement, guard = 0;
     while (cur && cur !== document.body && guard++ < 6) {
       const pc = compound(cur);
       chain = pc + '>' + chain;
-      if (pc.charAt(0) === '#' || uniqueOnPage(chain)) return chain;
+      if (uniqueOnPage(chain)) return chain;
       cur = cur.parentElement;
     }
     if (uniqueOnPage(chain)) return chain;
@@ -349,7 +360,7 @@
       const anchor = compound(parent);
       // An ancestor that identifies itself ends the walk — anchoring there is
       // both shorter and steadier than counting all the way to <body>.
-      if (anchor.charAt(0) === '#' || uniqueOnPage(anchor)) {
+      if (uniqueOnPage(anchor)) {
         const full = anchor + '>' + chain;
         return uniqueOnPage(full) ? full : '';
       }
@@ -1458,12 +1469,35 @@
         }
         hinted.set(el, hint.name);
       }
+
+      // A menu's root has to be the DIRECT PARENT of the items — u1.fix.menu
+      // reads the root's own children. The element that ANNOUNCES itself as a
+      // menu is almost never that: on molinahealthcare.com the collector
+      // reports `.navbar`, whose children are a brand link, a toggler button
+      // and one <ul> — a menu of three, two of which are not menu items —
+      // while `.mainNav` is the <ul> with the six real ones.
+      //
+      // prepareOne already descends, via this same menuItemsRoot, at the point
+      // of building. That is far too late to be the only place: the survey
+      // line, the labelling row, the card and the 👁 preview all name the
+      // wrapper, so what you are asked to confirm is not the element that gets
+      // mapped. Corrected here, once, where the candidate is made.
+      let usableSel = usable;
+      if (hint && hint.name === 'menu' && usableSel) {
+        try {
+          const inner = menuItemsRoot(usableSel);
+          // Only when it resolves to exactly one element and is still U1-valid
+          // — menuItemsRoot already checks both, and returns null otherwise.
+          if (inner) usableSel = inner;
+        } catch (e) {}
+      }
+
       out.push({
         mark,
         tag: el.tagName.toLowerCase(),
         role: el.getAttribute('role') || '',
         name: accName(el),
-        selector: usable,
+        selector: usableSel,
         // Which u1 component this element says it is, where it says so at all.
         // `component` is from a role or a tag and is reliable; `maybe` is from a
         // class name and is a suggestion — `.tab-content` is not a tab strip.
@@ -1493,7 +1527,7 @@
         // How many elements this selector actually hits. >1 is fine for a field
         // meant to match many (menu items), and wrong for one meant to match a
         // single element — u1.fix.* decorates only one of them.
-        matches: usable ? countOf(usable) : 0,
+        matches: usableSel ? countOf(usableSel) : 0,
         // The facts a reviewer needs and a screenshot cannot show.
         alt: el.hasAttribute('alt') ? el.getAttribute('alt') : null,
         ariaLabel: el.getAttribute('aria-label') || '',
@@ -2389,6 +2423,106 @@
   }
 
   /**
+   * Is a modal open on the page right now?
+   *
+   * "Scan the whole page" begins with window.scrollTo(0, 0) and then walks the
+   * page a screenful at a time. That is exactly what closes a modal — and on a
+   * page where one was open when the run started, the survey reads the page
+   * BEHIND it and reports, truthfully and uselessly, that it found no dialog.
+   * Reported as: I opened a dialog so it would scan it, and it did not.
+   *
+   * Nothing here can make that route work; scrolling is what it does. But the
+   * conflict is detectable before a penny is spent, and saying so is the whole
+   * difference between a wrong answer and a redirected one.
+   *
+   * Returns the modal's selector, or ''.
+   */
+  function openModalNow() {
+    var seen = [];
+    try {
+      seen = Array.prototype.slice.call(document.querySelectorAll(
+        'dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="true"],' +
+        '.modal.show,.modal.in,.modal--open,.is-modal-open'));
+    } catch (e) { return ''; }
+    for (var i = 0; i < seen.length; i++) {
+      var el = seen[i];
+      // Visible, and big enough to be the thing in front of the page rather
+      // than a hidden template of it — every site ships closed modals in the
+      // markup, and those are not what this is asking about.
+      var r;
+      try { r = el.getBoundingClientRect(); } catch (e) { continue; }
+      if (r.width < 80 || r.height < 60) continue;
+      try {
+        var st = getComputedStyle(el);
+        if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity) < 0.05) continue;
+      } catch (e) {}
+      return robustSelector(el);
+    }
+    return '';
+  }
+
+  /**
+   * A dialog's close control and heading, measured rather than asked for.
+   *
+   * u1.fix.dialog's closeBtn is optional in the schema, so the model treats it
+   * as optional in fact — and the general instruction "leave a field out
+   * rather than guess" makes leaving it out the safe-looking answer every
+   * time. The result was dialog after dialog shipped with no close control
+   * bound, which is the one thing a keyboard user most needs from a modal.
+   *
+   * It is not a guess: an ✕, a "Close" or "Cancel" button, an
+   * [aria-label*="close"], a .close/.modal-close class are all readable off
+   * the markup. So read them.
+   *
+   * Returns null when the dialog genuinely has no closing control — which is
+   * a real state, and then the caller leaves the field empty and says so.
+   */
+  function dialogShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+
+    var out = {};
+
+    // Ordered by how explicit the statement is. An aria-label naming "close"
+    // is the author saying it outright; a class called .close is convention;
+    // text content is the last resort because "Close" also appears in prose.
+    var BY_ATTR = '[aria-label*="close" i],[title*="close" i],[data-dismiss],[data-close],' +
+                  '[data-bs-dismiss="modal"],[aria-label*="dismiss" i]';
+    var BY_CLASS = '.close,.close-btn,.closeBtn,.modal-close,.btn-close,.ssm-close-btn,' +
+                   '[class*="close" i]';
+    var close = null;
+    try { close = root.querySelector(BY_ATTR) || root.querySelector(BY_CLASS); } catch (e) {}
+    if (!close) {
+      // Text, but only on something that is actually pressable, and only when
+      // the whole label is the word — "Close" alone, not "Close your account".
+      var CLICKY = 'button,a[href],[role="button"],input[type="button"],input[type="submit"]';
+      var list = [];
+      try { list = Array.prototype.slice.call(root.querySelectorAll(CLICKY)); } catch (e) {}
+      for (var i = 0; i < list.length; i++) {
+        var t = (list[i].textContent || '').trim().toLowerCase();
+        if (t === 'close' || t === 'cancel' || t === '×' || t === '✕' || t === 'x') {
+          close = list[i];
+          break;
+        }
+      }
+    }
+    // The dialog itself is not its own close button.
+    if (close && close !== root) out.closeBtn = robustSelector(close);
+
+    // While we are reading the markup: the heading is the accessible name, and
+    // it is just as readable and just as often left empty.
+    var head = null;
+    try {
+      head = root.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]') ||
+             root.querySelector('[class*="title" i],[class*="heading" i]');
+    } catch (e) {}
+    if (head && head !== root) out.heading = robustSelector(head);
+
+    return (out.closeBtn || out.heading) ? out : null;
+  }
+
+  /**
    * An autocomplete, measured from whatever was pointed at.
    *
    * u1.fix.combobox wants four things — the wrapper, the input, the list and
@@ -2982,7 +3116,7 @@
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
-    menuItemsRoot, tabPanelsFor, accordionShape, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
+    menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,

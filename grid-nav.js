@@ -617,13 +617,12 @@ window.__u1MakeClickable = function (opts) {
 //
 //  Standalone: DOM only, needs neither U1 nor the extension.
 // ─────────────────────────────────────────────────────────────────────────────
-// Anything that takes keyboard focus on its own. Used to decide whether a
-// tabpanel needs to be put into the tab sequence itself.
-const FOCUSABLE = 'a[href],button,input,select,textarea,summary,iframe,' +
-  'audio[controls],video[controls],[contenteditable]:not([contenteditable="false"]),' +
-  '[tabindex]:not([tabindex="-1"])';
-
 window.__u1InstallTabs = function (opts) {
+  // Anything that takes keyboard focus on its own. Used to decide whether a
+  // tabpanel needs to be put into the tab sequence itself.
+  const FOCUSABLE = 'a[href],button,input,select,textarea,summary,iframe,' +
+    'audio[controls],video[controls],[contenteditable]:not([contenteditable="false"]),' +
+    '[tabindex]:not([tabindex="-1"])';
   const listSel  = opts && opts.tabList;
   const tabSel   = opts && opts.tab;
   const panelSel = opts && opts.tabPanel;

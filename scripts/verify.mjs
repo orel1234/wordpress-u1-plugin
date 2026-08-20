@@ -268,7 +268,7 @@ console.log('\nThe library scripts run and define their globals:');
   const src = readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8');
   const calls = (src.match(/await fetch\(endpoint\(\)/g) || []).length;
   const aborts = /new AbortController\(\)/.test(src) && /signal: ctl \? ctl\.signal/.test(src);
-  const streams = /stream: true/.test(src) && /await readStream\(res, armIdle\)/.test(src);
+  const streams = /stream: true/.test(src) && /await readStream\(res, armIdle\b/.test(src);
   const idle = /const CALL_IDLE_MS = \d+/.test(src) && /clearTimeout\(idle\);/.test(src);
   const says = /AbortError/.test(src) && /sent nothing for/.test(src);
   if (calls && aborts && streams && idle && says) {

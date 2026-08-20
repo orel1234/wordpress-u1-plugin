@@ -1065,6 +1065,49 @@ button {
   color: var(--u1-text-muted);
 }
 
+/* The per-mode explanation used to sit as its own line under the switch,
+   permanently on screen and changing text under you as you clicked around.
+   Each button now carries its own explanation, marked by a small (i) inside
+   the button it belongs to — hover THAT option and its own tooltip comes up,
+   rather than one shared icon that only ever matched whichever mode happened
+   to be active. Purple rather than dimmed, so it reads as something to
+   interact with instead of disappearing into the button around it. */
+.map-mode-info-icon {
+  margin-inline-start: 3px;
+  font-size: 0.9em;
+  color: var(--u1-primary-text);
+}
+.map-mode-btn.active .map-mode-info-icon { color: #fff; opacity: 0.85; }
+
+/* A native title tooltip is slow and unstyled; this shows immediately and
+   matches the panel, the same pattern .mapping-actions button[data-tip] uses
+   — except these explanations are full sentences, so the box wraps instead
+   of a single nowrap line. */
+.map-mode-btn[data-tip] { position: relative; }
+.map-mode-btn[data-tip]:hover::after,
+.map-mode-btn[data-tip]:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 60;
+  width: max-content;
+  max-width: 200px;
+  white-space: normal;
+  text-align: start;
+  background: #1b1630;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--u1-border-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
+  pointer-events: none;
+}
+
 /* ── Auto-fill review rows ───────────────────────────────────────────────── */
 .auto-row {
   margin-bottom: 10px;
@@ -1198,6 +1241,14 @@ button {
 /* Findings list */
 .ai-results { margin-bottom: 14px; }
 
+/* On a finished sweep, what was found (the list) matters more than the two
+   buttons above it (a record of what was read and what it cost) — flex
+   order pulls the list ahead of them instead of moving the markup, so the
+   ticking-phase layout (summary controls above the list they tick) is
+   untouched. */
+#sweepPicks { display: flex; flex-direction: column; }
+#sweepPicks.is-sweep-done #sweepPicksList { order: -1; }
+
 .ai-summary {
   margin-bottom: 10px;
   padding: 9px 11px;
@@ -1207,6 +1258,10 @@ button {
   font-size: 12px;
   line-height: 1.5;
 }
+/* The box is chrome for its content. Emptied — a finished sweep clears
+   #sweepPicksSummary — it must take its padding, ground and purple bar with
+   it, not stand as a blank strip. */
+.ai-summary:empty { display: none; }
 
 .ai-meta {
   margin-top: 6px;
@@ -3212,6 +3267,27 @@ button.u1-readonly-off {
 
 /* The scan action matches: full width, and only ever in Automatic mode. */
 .ai-run { margin: 10px 0 0; }
+
+/* What 🔍 found, as a picture under the input it was asked in. */
+.ai-scope-preview {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ai-scope-preview img {
+  max-width: 100%;
+  max-height: 120px;
+  object-fit: contain;
+  object-position: left;
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 6px;
+  background: #fff;   /* a cropped white site on a dark panel needs its own ground */
+}
+.ai-scope-preview-note {
+  font-size: 10.5px;
+  color: var(--u1-text-dim);
+}
 .ai-run .btn-primary {
   width: 100%;
   padding: 10px 12px;
@@ -3340,6 +3416,40 @@ button.u1-readonly-off {
    also fold the drawer it is in. */
 .sweep-part > summary .btn-xs { margin-left: 8px; text-transform: none; letter-spacing: 0; }
 .sweep-part-done { opacity: 0.9; }
+/* Completed is a finished STAGE, in the same numbered-circle language the
+   stage trail above this screen uses — not a plain disclosure triangle on a
+   random foldable list. Same convention as #aiKeyDetails: native marker
+   hidden, a caret of our own trails the row and rotates open. */
+.sweep-part-done > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  color: var(--u1-primary-text);
+}
+.sweep-part-done > summary::-webkit-details-marker { display: none; }
+.sweep-part-done > summary::before {
+  content: "✓";
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 50%;
+  background: var(--u1-primary);
+  color: var(--u1-bg-base);
+}
+.sweep-part-done > summary::after {
+  content: "▸";
+  margin-inline-start: auto;
+  color: var(--u1-text-dim);
+  font-size: 10px;
+  transition: transform .15s;
+}
+.sweep-part-done[open] > summary::after { transform: rotate(90deg); }
 .sweep-part-empty {
   padding: 8px 10px;
   font-size: 12px;
@@ -4162,19 +4272,58 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   line-height: 1.5;
 }
 
-/* The countdown scan sits under the main action as a quieter alternative. */
+/* The countdown scan sits under the main action as a quieter alternative.
+   text-decoration: none overrides an underline .btn-ghost picks up from an
+   earlier, unrelated rule further up this file — this button was never
+   meant to read as a link. */
 .ai-delayed {
+  position: relative;
   width: 100%;
   margin-top: 12px;
   border: 1px dashed var(--u1-border);
   border-radius: var(--u1-radius-sm);
   color: var(--u1-text-muted);
+  text-decoration: none;
 }
 .ai-delayed:hover:not(:disabled) { border-color: var(--u1-primary-text); color: var(--u1-text); }
 .ai-delayed:disabled { border-style: solid; border-color: var(--u1-primary-text); color: var(--u1-text); opacity: 1; }
 /* Polling for the dialog to appear — stays clickable (a second click cancels
    it), so this can't reuse :disabled's styling; it needs its own. */
 .ai-delayed.is-polling { border-style: solid; border-color: var(--u1-primary-text); color: var(--u1-text); }
+
+/* The explanation moved off the button and into an (i), the same treatment
+   the mode switch above uses. Generated content rather than a child span —
+   this button rewrites its own textContent while polling, which would
+   otherwise blow the icon away. */
+.ai-delayed[data-tip]::after {
+  content: "ⓘ";
+  margin-inline-start: 5px;
+  color: var(--u1-primary-text);
+  font-size: 0.95em;
+}
+.ai-delayed[data-tip]:hover::before,
+.ai-delayed[data-tip]:focus-visible::before {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 60;
+  width: max-content;
+  max-width: 220px;
+  white-space: normal;
+  text-align: start;
+  background: #1b1630;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 6px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--u1-border-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .5);
+  pointer-events: none;
+}
 
 /* What the scan could not see. */
 .ai-hint-line {
@@ -4545,6 +4694,24 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
 
 /* A component row states what it is, in a control you can correct. */
 .lbl-row.is-comp { align-items: center; gap: 8px; }
+
+/* "Not a component at all" — takes the row off the list and the selector onto
+   the site's dismissed list. Quiet until hovered: it is the rare action on
+   this screen, and a row of red ✕s would read as a list of errors. */
+.lbl-dismiss {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  padding: 2px 5px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--u1-text-dim);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.lbl-dismiss:hover { color: var(--u1-danger, #f87171); background: var(--u1-surface-input); }
+
 .lbl-row-type {
   flex: 0 0 auto;
   font-size: 11px;
@@ -4563,7 +4730,13 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   color: var(--u1-text-dim);
 }
 
-/* What happened to this row when you pressed build. */
+/* What happened to this row when you pressed build.
+   flex-basis 100% only wraps to its own line when the row is ALLOWED to wrap
+   — .lbl-row is a no-wrap flexbox, so this used to demand a full row's width
+   INLINE, blow the row wider than the panel, and crush the two fields beside
+   it into vertical slivers behind a horizontal scrollbar. The wrap lives on
+   .lbl-row.is-comp below. */
+.lbl-row.is-comp { flex-wrap: wrap; }
 .lbl-why {
   flex: 1 0 100%;
   margin: 3px 0 0 84px;
@@ -4617,8 +4790,25 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
    is what made the labelling list read as a different tool from the picker. */
 .lbl-row.is-comp { align-items: center; gap: 10px; }
 .lbl-row.is-comp .lbl-thumb { width: 60px; height: 40px; }
-.lbl-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.lbl-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1 1 auto; }
 .lbl-title { display: flex; align-items: center; gap: 6px; }
+
+/* One captioned control. Two dark boxes stacked on a dark ground, with no
+   caption on either, read as two identical empty bars — there was nothing to
+   say which one took the component type and which took the selector. */
+.lbl-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lbl-cap {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--u1-text-dim);
+}
+/* The type dropdown was sized to its content, so a short name left a box a
+   third the width of the selector under it and the pair looked misaligned
+   rather than like two fields of one row. */
+.lbl-row.is-comp .lbl-title { display: block; }
+.lbl-row.is-comp .lbl-row-type { width: 100%; }
 .lbl-meta {
   font-size: 11px;
   color: var(--u1-text-muted);

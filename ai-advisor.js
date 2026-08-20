@@ -149,12 +149,13 @@ RULES
     } catch { return ''; }
   }
 
-  async function discover({ screenshot, context, scope }) {
+  async function discover({ screenshot, context, scope, onProgress }) {
     const extra = await scanRules();
     return callClaude({
       system: DISCOVER_PROMPT + (extra ? '\n\n---\n\n' + extra : ''),
       schema: DISCOVER_SCHEMA,
       screenshot,
+      onProgress,
       text:
         `Page: ${context.title || '(untitled)'}\nURL: ${context.url || ''}\n` +
         (scope
@@ -229,6 +230,7 @@ COMPONENT RULES
 - menu + submenus REQUIRES {"key":"menubar","value":"false"} in options — with menubar true u1 throws "Submenu must have a trigger element". Only a flat command bar with no drop-downs uses menubar true.
 - Know what menubar:false actually produces, and say so in "notes": the triggers get role="button" plus aria-haspopup/aria-expanded, and the submenus containers get role="menu". The ITEMS stay ordinary links and do NOT get role="menuitem" — that role belongs to menubar:true alone. So if triggers and submenus are left empty, a menubar:false mapping adds almost nothing visible and looks like a failure; filling them is what produces the semantics. Never promise role="menuitem" from menubar:false.
 - listbox: "options" must be the individual option items, never the list container, or arrow keys and Escape do nothing.
+- dialog: nearly every real dialog HAS a close control — an ✕, a "Close" or "Cancel" button, [aria-label*="close"], a class like .close/.modal-close. Search the markup for it and fill closeBtn: without it u1 has nothing to bind Escape-equivalent closing to, and the mapping ships half-done. Leave closeBtn empty ONLY when the markup genuinely contains no closing control, and say exactly that in "notes".
 - Leave a field out entirely rather than filling it with a guess. Say so in "notes" and set confidence accordingly.`;
 
   // `instruction` is the specialist correcting the result in their own words —
@@ -449,8 +451,11 @@ WHAT "changed nothing" USUALLY MEANS
    * `onByte` is the idle clock being rearmed. It is called for every event,
    * including the ping events that exist for exactly this purpose, so a model
    * thinking hard between tokens still counts as alive.
+   *
+   * `onProgress` is optional and is for the human: it reports how much answer
+   * has arrived, so a caller can show that a slow call is a live one.
    */
-  async function readStream(res, onByte) {
+  async function readStream(res, onByte, onProgress) {
     const reader = res.body && res.body.getReader ? res.body.getReader() : null;
     if (!reader) return { err: 'This browser cannot read a streamed response.' };
     const dec = new TextDecoder();
@@ -488,6 +493,13 @@ WHAT "changed nothing" USUALLY MEANS
           // with the rest of the thinking block below.
           if (typeof ev.delta.text === 'string') b.text += ev.delta.text;
           else if (typeof ev.delta.partial_json === 'string') b.text += ev.delta.partial_json;
+          // Answer text only — the thinking block is dropped downstream and
+          // counting it would report progress on something never shown.
+          if (onProgress && b.type !== 'thinking') {
+            let n = 0;
+            for (const blk of blocks) if (blk && blk.type !== 'thinking') n += blk.text.length;
+            try { onProgress(n); } catch (e) {}
+          }
         } else if (ev.type === 'message_delta') {
           if (ev.delta) {
             out.stop_reason = ev.delta.stop_reason || out.stop_reason;
@@ -511,7 +523,12 @@ WHAT "changed nothing" USUALLY MEANS
   // One request path for every stage: same auth, same structured-output setup,
   // same error handling. `screenshot` is optional (stage 2 sends markup only).
   // `messages` carries a whole conversation; `text` is the single-turn form.
-  async function callClaude({ system, schema, text, screenshot, messages }) {
+  // `onProgress` is called with the number of answer characters received so
+  // far, every time more arrive. The caller uses it to show that a long call
+  // is a working one — a bar that only moves when a whole section finishes
+  // sits at 0% for the minute or two a busy section takes, which is
+  // indistinguishable from stuck.
+  async function callClaude({ system, schema, text, screenshot, messages, onProgress }) {
     const key = await getKey();
     if (!key) return { err: 'No API key saved. Paste your Anthropic API key first.' };
 
@@ -579,7 +596,7 @@ WHAT "changed nothing" USUALLY MEANS
 
     let data;
     try {
-      data = await readStream(res, armIdle);
+      data = await readStream(res, armIdle, onProgress);
     } catch (e) {
       if (e && e.name === 'AbortError') {
         return { err: quiet

@@ -65,6 +65,24 @@ The PRIMARY is the tab, not the strip.
 - `tab` — the individual tabs, all of them
 - `tabPanel` — the panels, which usually live OUTSIDE the strip
 
+**One panel or many.** A strip whose tabs each reveal a DIFFERENT panel is the
+ordinary case and the one that works. A strip where every tab points at the
+SAME panel — six tabs, one region that gets re-rendered — is a different shape,
+and on the shop page it is the two strips that do not work:
+
+    .finder__tabs   5 tabs → 5 panels   works
+    #dealTabs       6 tabs → 1 panel    does not
+    #faqTabs        5 tabs → 1 panel    does not
+
+Both are legal ARIA. If a mapping of a shared-panel strip does nothing, that is
+the reason, and it is not a selector to correct.
+
+**A component inside a tab panel is rebuilt when the tab changes.** The FAQ
+accordion IS the FAQ tab panel's content, and switching topic re-creates every
+trigger. u1 processes an element once per page load, so the new ones arrive
+undecorated — see [[u1-dynamic-element-waiting]]. Re-applying after the tab
+changes is the only thing that helps.
+
 The commonest failure is all three being the strip's selector. If the panels
 are not inside the strip, `tabPanel` must be rooted somewhere that reaches
 them. A site that wires its tabs with `data-*` instead of `aria-controls` is
@@ -149,6 +167,29 @@ The fix:
 
 Telling the two apart: if the list is visible before anyone types, it is this.
 If typing makes a list appear that was not there, it is a combobox.
+
+## Never map a tag that already is what you would declare
+
+`<a href>` IS a link. `<button>` IS a button. The browser gives them the role,
+the focus and the keyboard for nothing. Mapping one as `link` or `button` adds
+an attribute the element already implies, changes nothing anyone can perceive,
+and fills the drawer, the export and the client's report with work that was
+never work.
+
+Map these only when the element is NOT already one — a `<div>` with a click
+handler, a `<span>` with `tabindex`. Those are real, and they are what
+`u1.fix.button` and `u1.fix.link` exist for.
+
+## form — not mapped
+
+`u1.fix.form` requires `invalidField`: the class the page puts on a field it
+has rejected. That class does not exist until somebody submits a bad form, so
+it cannot be read from the markup, and inventing a plausible one
+(`.is-invalid`, `.error`) produces a mapping that looks complete and does
+nothing.
+
+So forms are left alone here and reported as such. If a site's invalid class is
+known, a form can still be mapped by hand in the builder.
 
 ## form
 

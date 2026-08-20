@@ -450,6 +450,42 @@ const after = store.mappings_x[0];
 const migrated = repaired === 1 && after.config.menubar === false && !/menubar: true/.test(after.code);
 const leftAlone = store.mappings_x[1].type === 'link' && !('menubar' in store.mappings_x[1].config);
 
+// ── Dialogs already saved with the dialog and trigger swapped ───────────────
+// Verbatim off molinahealthcare.com's console: the modal filed as its own
+// opener and a LINK filed as the dialog. U1 then tries to focus into the link,
+// which is the "Cannot read properties of undefined (reading 'focus')" thrown
+// from u1_vanilla-js-a11y.js on every page load.
+let dlgFlipped = false, dlgLeftAlone = false, dlgSaneUntouched = false;
+{
+  const inverted = {
+    type: 'dialog',
+    primary: '#state-select-modal-find-doctor',
+    firstArg: '#state-select-modal-find-doctor',
+    config: { selectors: { dialog: '#HealthCareProfessionals>a', trigger: '#state-select-modal-find-doctor' } },
+    code: 'stale',
+  };
+  // A dialog the right way round must be left exactly as it is.
+  const sane = {
+    type: 'dialog', primary: '#modal', firstArg: '#opener',
+    config: { selectors: { dialog: '#modal', trigger: '#opener' } }, code: 'good',
+  };
+  const s2 = { mappings_x: [structuredClone(inverted), { type: 'link', primary: 'a', config: {} }, structuredClone(sane)] };
+  globalThis.U1Store = { get: async () => ({ mappings_x: s2.mappings_x }), set: async (o) => Object.assign(s2, o) };
+  const mSrc = panelSrc.slice(panelSrc.indexOf('async function migrateInvertedDialog'),
+                              panelSrc.indexOf('async function migrateWwwHostname'));
+  const flip = new Function(mSrc + '; return migrateInvertedDialog;')();
+  const n = await flip('x');
+  const got = s2.mappings_x[0];
+  dlgFlipped = n === 1 &&
+    got.config.selectors.dialog === '#state-select-modal-find-doctor' &&
+    got.config.selectors.trigger === '#HealthCareProfessionals>a' &&
+    got.primary === '#state-select-modal-find-doctor' &&
+    got.code !== 'stale';                       // the emitted code is rebuilt, not left stale
+  dlgLeftAlone = s2.mappings_x[1].type === 'link' && !s2.mappings_x[1].config.selectors;
+  dlgSaneUntouched = s2.mappings_x[2].code === 'good' &&
+    s2.mappings_x[2].config.selectors.dialog === '#modal';
+}
+
 // ── The Shoe Store failure: a nav rebuilt after U1 has finished with it ─────
 // The page ships <nav id="mainNav"> EMPTY and fills it on DOMContentLoaded via
 // innerHTML. U1 runs first, decorates the empty container, marks it handled and
@@ -607,6 +643,40 @@ let selReal = false, selNear = false, selNoGuess = false, selTokens = false;
   selNear = !typo.ok && (typo.suggest || []).includes('.tab-bar');
   selNoGuess = !check('.totally-made-up', ctxPage).ok &&
                !(check('.totally-made-up', ctxPage).suggest || []).length;
+}
+
+// ── A duplicated id must not be trusted as a selector ───────────────────────
+//
+// molinahealthcare.com's homepage carries #state-select-modal, #MedicareAlert
+// and #siteLeavingAlert TWICE each — a desktop and a mobile copy. U1 resolves
+// selectors through jQuery, where a duplicated #id matches only the FIRST
+// copy, so a selector built on the id can never reach the second element —
+// and pointed at the first, it may be decorating the copy that is
+// display:none at this breakpoint. robustSelector used to short-circuit on
+// any '#' selector without ever counting it.
+let dupIdDistinct = false, dupIdResolves = false, uniqueIdKept = false;
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const dom = new JSDOM(`<!doctype html><body>
+    <header><div><div id="alertBox" class="modal">desktop copy</div></div></header>
+    <footer><div><div id="alertBox" class="modal">mobile copy</div></div></footer>
+    <div id="onlyOne" class="modal">unique</div></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  const w = dom.window;
+  w.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  w.eval(INTEL);
+  const S = w.__u1SelectorIntel;
+  const els = [...w.document.querySelectorAll('[id="alertBox"]')];
+  const sa = S.robustSelector(els[0]), sb = S.robustSelector(els[1]);
+  dupIdDistinct = els.length === 2 && sa && sb && sa !== sb &&
+                  sa !== '#alertBox' && sb !== '#alertBox';
+  const hit = (s) => { try { return [...w.document.querySelectorAll(s)]; } catch { return []; } };
+  dupIdResolves = hit(sa).length === 1 && hit(sa)[0] === els[0] &&
+                  hit(sb).length === 1 && hit(sb)[0] === els[1];
+  // The ordinary page must be untouched: a genuinely unique id is still the
+  // best selector there is.
+  uniqueIdKept = S.robustSelector(w.document.getElementById('onlyOne')) === '#onlyOne';
 }
 
 // ── The accordion: detection has to hand the mapping the right inputs ───────
@@ -770,7 +840,19 @@ let rulesEveryType = [], rulesUnknownFields = [], rulesShipped = false, rulesUse
   // Sections that describe a PATTERN rather than a u1.fix.* type. They are
   // named here so a new one cannot be added without a decision — a section
   // matching no schema is otherwise checked by nothing.
-  const PATTERNS = new Set(['filter with live results — NOT a combobox']);
+  const PATTERNS = new Set([
+    'filter with live results — NOT a combobox',
+    // Policy, not a type: when NOT to map something. A native <a>/<button>
+    // already carries the role, so declaring it adds nothing perceivable and
+    // fills the drawer and the client's report with work that was never work.
+    'Never map a tag that already is what you would declare',
+    // Also policy. u1.fix.form requires `invalidField`, the class the page puts
+    // on a rejected field — which does not exist until somebody submits a bad
+    // form, so it cannot be read from markup, and inventing a plausible one
+    // ships a mapping that looks complete and does nothing. There IS a `form`
+    // section below this one carrying the real field rules.
+    'form — not mapped',
+  ]);
   for (const name of Object.keys(sections)) {
     if (PATTERNS.has(name) || schemas[name]) continue;
     if (!/^The rules that hold/.test(name)) rulesUnknownFields.push(`section "${name}" matches no component`);
@@ -839,6 +921,127 @@ console.log(`  ${selNear ? '✅' : '❌'} …a typo is refused AND told the real
 if (!selNear) failed++;
 console.log(`  ${selNoGuess ? '✅' : '❌'} …and a name near nothing is refused without a made-up suggestion`);
 if (!selNoGuess) failed++;
+// The inventory is not the page: a dialog scanned while open carries classes
+// no collected candidate has, and "invented" fired on the same card whose own
+// 👁 said "1 match — highlighted on the page".
+const selReprieve = (() => {
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const pass = /includes\('invented'\)[\s\S]{0,700}countSelectors\(sels\)[\s\S]{0,500}go\.disabled = false;/.test(src);
+  const notForInvalid = /never reprieved/.test(src) &&
+    /\.textContent \|\| ''\)\.includes\('invented'\)/.test(src);
+  return pass && notForInvalid;
+})();
+console.log(`  ${selReprieve ? '✅' : '❌'} …but a selector the PAGE resolves is reprieved — the page outranks the inventory`);
+if (!selReprieve) failed++;
+
+// ── A dialog is not its own trigger ─────────────────────────────────────────
+// `firstArgFrom:'trigger'` says only which selector becomes fix()'s FIRST
+// ARGUMENT — "the element to wait for". Reading it as "the found element IS
+// the trigger" inverted every dialog: point at the modal, name its opener, and
+// out came fix.dialog({ dialog: <the opener>, trigger: <the modal> }).
+const dialogNotInverted = (() => {
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const fn = /function rowFromParts\(\{[\s\S]*?\n\}/.exec(src)[0];
+  // The swap must key on whether the trigger is REQUIRED, not on firstArgFrom.
+  const keyedRight = /const swap = triggerRequired\(type\) && !!container;/.test(fn) &&
+                     !/const swap = triggerFirstType\(type\)/.test(fn);
+  // datepicker and listbox require one and do mean the found element is it;
+  // dialog's is optional and does not.
+  const schemas = /const COMPONENT_SCHEMAS = \{[\s\S]*?\n\};/.exec(src)[0];
+  const dlg = /\n  dialog: \{[\s\S]*?\n  \},/.exec(schemas)[0];
+  const dialogTriggerOptional = /req:\['dialog'\]/.test(dlg);
+  // The hint under the field has to promise the same arrangement the swap
+  // actually builds, or it describes the opposite mapping.
+  const hintAgrees = /hint\.textContent = required/.test(src);
+  return keyedRight && dialogTriggerOptional && hintAgrees;
+})();
+console.log(`  ${dialogNotInverted ? '✅' : '❌'} a dialog is rooted on the dialog, never swapped with its trigger`);
+if (!dialogNotInverted) failed++;
+
+// ── A dialog ships with something bound to close it ─────────────────────────
+// closeBtn is optional in the schema, so the model treated it as optional in
+// fact — and "leave a field out rather than guess" made omitting it the
+// safe-looking answer every time.
+let dlgClose = false, dlgCloseFills = false, dlgCloseNoOverrule = false;
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const dom = new JSDOM(`<!doctype html><body>
+    <div id="modal" class="modal">
+      <h2 class="modal-title">Choose a State</h2>
+      <button class="btn-close" aria-label="Close this dialog">×</button>
+      <a href="/x">Not the close button</a>
+    </div></body>`, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  const w = dom.window;
+  w.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  w.eval(INTEL);
+  const shape = w.__u1SelectorIntel.dialogShape('#modal');
+  dlgClose = !!shape && !!shape.closeBtn && !!shape.heading &&
+             w.document.querySelector(shape.closeBtn) === w.document.querySelector('.btn-close') &&
+             w.document.querySelector(shape.heading) === w.document.querySelector('.modal-title');
+  // A dialog with genuinely nothing to close it is a real state, and must not
+  // be given a made-up selector.
+  const bare = new JSDOM(`<!doctype html><body><div id="m"><p>no controls here</p></div></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  bare.window.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  bare.window.eval(INTEL);
+  dlgCloseNoOverrule = bare.window.__u1SelectorIntel.dialogShape('#m') === null;
+
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  dlgCloseFills = /dlgShape = await inPage\(tab\.id, \(s\) => window\.__u1SelectorIntel\.dialogShape\(s\)/.test(src) &&
+    // Fills only what was left empty — a close control the model DID find is
+    // the same kind of evidence, so it is not overruled.
+    /const had = \(out\.fields \|\| \[\]\)\.find\(\(f\) => f\.key === key && String\(f\.value \|\| ''\)\.trim\(\)\);\s*\n\s*if \(had\) continue;/.test(src);
+}
+console.log(`  ${dlgClose ? '✅' : '❌'} a dialog's close button and heading are measured off the markup, not asked for`);
+if (!dlgClose) failed++;
+console.log(`  ${dlgCloseNoOverrule ? '✅' : '❌'} …and a dialog with no closing control is left alone, not given one`);
+if (!dlgCloseNoOverrule) failed++;
+console.log(`  ${dlgCloseFills ? '✅' : '❌'} …filling only what the model left empty, never overruling a real answer`);
+if (!dlgCloseFills) failed++;
+
+// ── Opening a dialog and pressing "Scan the whole page" ─────────────────────
+// That route begins with window.scrollTo(0,0) and walks the page a screenful
+// at a time — which is exactly what closes a modal. It then surveys the page
+// BEHIND it and reports, truthfully and uselessly, that there was no dialog.
+let modalSeen = false, modalClosedIgnored = false, modalWarns = false;
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const mk = (html) => {
+    const d = new JSDOM(`<!doctype html><body>${html}</body>`,
+      { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+    d.window.HTMLElement.prototype.getBoundingClientRect = function () {
+      return this.hasAttribute('data-hidden')
+        ? { width: 0, height: 0, top: 0, left: 0, bottom: 0, right: 0 }
+        : { width: 400, height: 300, top: 20, left: 10, bottom: 320, right: 410 };
+    };
+    d.window.eval(INTEL);
+    return d.window;
+  };
+  modalSeen = mk('<div id="picker" role="dialog" aria-modal="true">Choose a State</div>')
+    .__u1SelectorIntel.openModalNow() === '#picker';
+  // Every site ships closed modals in its markup; those are not what this asks.
+  modalClosedIgnored =
+    mk('<div id="shut" role="dialog" data-hidden>closed</div>').__u1SelectorIntel.openModalNow() === '';
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  modalWarns = /window\.__u1SelectorIntel\.openModalNow\(\)/.test(src) &&
+    /This route scrolls the page from the top, which will close it/.test(src) &&
+    // Named the route that CAN do it, rather than only refusing.
+    /Use Automatic \(AI\) instead/.test(src);
+}
+console.log(`  ${modalSeen ? '✅' : '❌'} an open modal is detected before a whole-page scan scrolls it shut`);
+if (!modalSeen) failed++;
+console.log(`  ${modalClosedIgnored ? '✅' : '❌'} …while the closed modals every site ships are ignored`);
+if (!modalClosedIgnored) failed++;
+console.log(`  ${modalWarns ? '✅' : '❌'} …and the run stops and names the route that can scan it instead`);
+if (!modalWarns) failed++;
+console.log(`  ${dupIdDistinct ? '✅' : '❌'} a duplicated id is never used as a selector (jQuery reaches only the first copy)`);
+if (!dupIdDistinct) failed++;
+console.log(`  ${dupIdResolves ? '✅' : '❌'} …each copy gets its own selector that resolves to exactly that element`);
+if (!dupIdResolves) failed++;
+console.log(`  ${uniqueIdKept ? '✅' : '❌'} …while a genuinely unique id is still preferred over everything else`);
+if (!uniqueIdKept) failed++;
 console.log(`  ${accHeader ? '✅' : '❌'} an accordion is rooted on its HEADER, not the container it was found by`);
 if (!accHeader) failed++;
 console.log(`  ${accContent ? '✅' : '❌'} …and the required contentSelector is read from what the header controls`);
@@ -925,6 +1128,12 @@ console.log(`  ${migrated ? '✅' : '❌'} a menu ALREADY SAVED with the fatal p
 if (!migrated) failed++;
 console.log(`  ${leftAlone ? '✅' : '❌'} …and other mappings are left untouched`);
 if (!leftAlone) failed++;
+console.log(`  ${dlgFlipped ? '✅' : '❌'} a dialog ALREADY SAVED inverted is put back the right way round and rebuilt`);
+if (!dlgFlipped) failed++;
+console.log(`  ${dlgSaneUntouched ? '✅' : '❌'} …while a dialog that was already correct is not touched`);
+if (!dlgSaneUntouched) failed++;
+console.log(`  ${dlgLeftAlone ? '✅' : '❌'} …nor is anything that is not a dialog`);
+if (!dlgLeftAlone) failed++;
 console.log(`  ${rebuiltDetected ? '✅' : '❌'} a nav rebuilt by the site AFTER U1 finished is DETECTED (not blamed on selectors)`);
 if (!rebuiltDetected) failed++;
 console.log(`  ${controlLeftAlone ? '✅' : '❌'} …and a nav that was NOT rebuilt is not re-applied`);
@@ -940,6 +1149,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 57;
+const total = results.length + 71;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

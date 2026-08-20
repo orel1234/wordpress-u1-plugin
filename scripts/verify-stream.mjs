@@ -163,8 +163,14 @@ console.log('\nthe deadline is silence, not duration');
   check('there is an idle limit, and it is a minute',
     /const CALL_IDLE_MS = 60000/.test(SRC));
   check('…rearmed by every chunk that arrives',
-    /data = await readStream\(res, armIdle\)/.test(SRC) &&
+    /data = await readStream\(res, armIdle\b/.test(SRC) &&
     /clearTimeout\(idle\);\s*\n\s*idle = setTimeout/.test(SRC));
+  // The human-facing counterpart, and deliberately a SECOND callback: the idle
+  // clock must keep being rearmed by ping events that carry no answer at all,
+  // so the two cannot be collapsed into one.
+  check('…and progress is reported separately, so a live call looks live',
+    /async function readStream\(res, onByte, onProgress\)/.test(SRC) &&
+    /if \(onProgress && b\.type !== 'thinking'\)/.test(SRC));
   // The old behaviour, which must not come back: a healthy call that takes
   // three minutes was killed at 150 seconds.
   check('a long healthy answer is no longer killed on elapsed time alone',

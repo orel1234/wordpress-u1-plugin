@@ -414,7 +414,7 @@ console.log('\nwhy a section yielded nothing');
 // all of it with no question at all.
 {
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
-  const handler = /getElementById\('sweepPicksClearBtn'\)[\s\S]{0,600}/.exec(src)[0];
+  const handler = /closest\('\[data-sweep-clear\]'\)[\s\S]{0,600}/.exec(src)[0];
   check('Clear always asks, not only when something was paid for',
     /await confirmSweepClear\(\)/.test(handler) && !/some\(s => s\.scanned\)/.test(handler));
   const dlg = /function confirmSweepClear[\s\S]*?\n}/.exec(src)[0];
@@ -438,6 +438,12 @@ console.log('\nwhy a section yielded nothing');
     /data-back-to-sections/.test(src) && /aiSweep\.phase = 'screens';\n  renderSweepScreens\(\);/.test(src));
   check('…and offers nothing when there is nothing left to search',
     /unsearched\n?\s*\?/.test(picks) || /\(unsearched$/m.test(picks) || /unsearched$/m.test(picks));
+  // "Choose fixes" with zero components across zero sections is a stage with
+  // no decision in it. Once everything found is built, the components view
+  // hands over to the finished run's own view instead of rendering an empty
+  // chooser beside a green "sections completed" box.
+  check('an empty chooser hands over to the finished view instead of rendering',
+    /if \(!total\) \{\s*\n\s*aiSweep\.phase = 'screens';\s*\n\s*renderSweepScreens\(\);\s*\n\s*return;/.test(picks));
 }
 
 // ── One stage at a time ─────────────────────────────────────────────────────
@@ -457,7 +463,10 @@ console.log('\none stage at a time');
     </body>`);
   const ctx = { window: d.window, document: d.window.document, mapMode: 'sweep',
                 currentStage: 'none', escapeHtml: sandbox.escapeHtml,
-                aiSweep: { stops: [{ n: 1, found: [{ id: 'a' }] }] } };
+                // count: 5, unscanned — an ordinary in-progress stop, so the
+                // trail's general behaviour is what is under test here, not
+                // the sweep-finished case (covered separately below).
+                aiSweep: { stops: [{ n: 1, count: 5, found: [{ id: 'a' }] }] } };
   ctx.globalThis = ctx;
   const src = [lift('setStage'), lift('renderStageTrail'), lift('stageHasContent')].join('\n') +
     '\nconst STAGE_PANELS = ' + /const STAGE_PANELS = (\{[\s\S]*?\n\});/.exec(panelSrc)[1] + ';' +
@@ -561,6 +570,36 @@ console.log('\none stage at a time');
   // The permanent record is elsewhere, which is why resetting loses nothing.
   check('…while the Mappings list, the real record, is untouched',
     !/clearApproved[\s\S]{0,200}mappingsList/.test(src));
+
+  // "Completed" was a one-way door: a section built by mistake could only be
+  // undone by finding each of its mappings in a list of twenty and deleting
+  // them one at a time, with nothing saying which belonged to it.
+  const undo = /closest\('\[data-undo-section\]'\)[\s\S]{0,2200}/.exec(src)[0];
+  check('a completed section can be taken back',
+    /data-undo-section="\$\{stop\.n\}"/.test(src) && /↶ Undo this section/.test(src));
+  check('…deleting exactly the mappings that section produced',
+    /const drop = new Set\(built\.map\(\(f\) => f\.mappingKey\)\.filter\(Boolean\)\);/.test(undo) &&
+    /list\.filter\(\(m\) => !drop\.has\(mappingKey\(m\)\)\)/.test(undo));
+  // Matching on the selector instead would be a guess, and a wrong guess
+  // deletes a neighbouring section's work.
+  check('…identified by the key recorded when it was saved, not guessed later',
+    /mappingKey: mappingKey\(\{ type: tpl\.type, primary: tpl\.primary, firstArg: tpl\.firstArg \}\)/.test(src) &&
+    /if \(made\.found && made\.found\.mappingKey\) todo\[b\]\.mappingKey = made\.found\.mappingKey;/.test(src));
+  check('…and the section goes back on the list still read, so it costs nothing to redo',
+    /stop\.found = \(stop\.found \|\| \[\]\)\.map\(\(f\) => \(\{ \.\.\.f, done: false \}\)\);/.test(undo) &&
+    !/stop\.scanned = false/.test(undo));
+
+  // Settled is settled. Pressing "Remove u1.fix.menu on .mainNav" resolves
+  // the clash, and the sentence describing it plus the button that fixed it
+  // used to stand on screen for the rest of the batch — a solved problem
+  // still being reported as one.
+  const drop = /closest\('\[data-dropkey\]'\)[\s\S]{0,1600}/.exec(src)[0];
+  check('a resolved clash comes off the screen instead of staying reported',
+    /btn\.remove\(\);/.test(drop) &&
+    /two on the same elements fight, and the second wins\\\./.test(drop));
+  check('…after the ✓ has had a moment to be seen', /setTimeout\(/.test(drop));
+  check('…without touching whatever else is still wrong with the row',
+    /\[\\s\\S\]\*\?/.test(drop));
 }
 
 // ── Nothing else may write display on those six ─────────────────────────────
@@ -1010,6 +1049,22 @@ console.log('\nholding after each section');
     /root = rootOverride;/.test(src));
   check('…and a corrected selector is checked against the page before it is used',
     /That selector is not valid CSS/.test(src) && /That selector matches nothing on this page/.test(src));
+  // A wrapper div guessed as a form is wrong every time, and unticking only
+  // says "not this time" — without a way to say "never", it comes back on
+  // every scan of every page.
+  check('a wrong guess can be dismissed from the row, for good',
+    /class="lbl-dismiss" data-dismiss="\$\{c\.mark\}"/.test(src) &&
+    /await rememberDismissed\(c\.selector\);/.test(src));
+  check('…which suppresses the default of a button inside a <label>',
+    /closest\('\[data-dismiss\]'\)/.test(src) &&
+    /\[data-dismiss\]'\);?\s*\n\s*if \(dis\) \{\s*\n\s*e\.preventDefault\(\);/.test(src));
+  check('…and says where the undo lives',
+    /Undo from the dismissed list on the cost dialog/.test(src));
+  // .lbl-why is flex-basis 100%, which only wraps onto its own line if the row
+  // may wrap at all — on a no-wrap row it demanded a full row's width INLINE
+  // and crushed the two fields beside it into slivers behind a scrollbar.
+  check('the build outcome wraps under the row instead of blowing it sideways',
+    /\.lbl-row\.is-comp \{ flex-wrap: wrap; \}/.test(readFileSync(join(ROOT, 'styles.css'), 'utf8')));
   check('…and there is one press to stop being asked at all',
     /id="sweepSilentTick"/.test(src) && /if \(answer\.auto\)/.test(src) &&
     /sweepLabel\.on = false;/.test(src) && /sweepPause\.on = false;/.test(src));
@@ -1026,7 +1081,9 @@ console.log('\nholding after each section');
   // verify-detect scores against, and its own header insists it be written by
   // reading the page rather than by blessing the tool's output — which is
   // exactly what a hand-typed label is.
-  const exp = /getElementById\('exportLabelsBtn'\)[\s\S]*?\n\}\);/.exec(src)[0];
+  const exp = /async function exportNamedLabels\(\)[\s\S]*?\n\}/.exec(src)[0];
+  check('reachable from this panel\'s own DevTools console, not a button on screen',
+    /window\.exportNamedLabels = exportNamedLabels;/.test(src) && !/id="exportLabelsBtn"/.test(src));
   check('what you named is kept as ground truth',
     /rememberLabel\(\{/.test(src) && /LABELS_KEY/.test(src));
   check('…privately, so it never travels in a project export',
@@ -1080,8 +1137,11 @@ console.log('\nswitching tabs mid-run');
 console.log('\nchoosing screens');
 {
   const d2 = new JSDOM(`<!doctype html><body>
+    <div id="sweepOnly"><div class="ai-run-line"><button id="sweepStartBtn"></button></div></div>
     <div id="sweepPicks"><div id="sweepPicksSummary"></div><div id="sweepPicksList"></div>
     <div id="sweepEstimate"></div><button id="sweepMakeBtn"></button></div>
+    <dialog id="sweepEstDialog"><div id="sweepEstBody"></div></dialog>
+    <dialog id="sweepReadDialog"><div id="sweepReadBody"></div></dialog>
     <div id="sweepBusy"></div>
     <nav id="stageTrail"></nav>
     <div id="aiResults"></div><div id="aiMappings"></div>
@@ -1124,9 +1184,11 @@ console.log('\nchoosing screens');
   box.globalThis = box;
   const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
+                lift('updateSweepBusy'),
                 lift('markScreenReading'), lift('markScreenRead'),
                 lift('sweepRunningHtml'), lift('markScreenFailed'), lift('sweepSettledHtml'),
                 lift('setPlayButtons'), lift('sweepSecsFor'), lift('sweepCallsFor'),
+                lift('openSweepEstDialog'), lift('openSweepReadDialog'), lift('sweepSpentHtml'),
                 // The real stage owner, so these tests exercise the thing that
                 // ships rather than a stand-in that cannot drift with it.
                 lift('setStage'), lift('renderStageTrail'), lift('resumeStage'),
@@ -1139,15 +1201,18 @@ console.log('\nchoosing screens');
     '\nconst sweepPickedScreens = ' + /const sweepPickedScreens = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepAvgCall = ' + /const sweepAvgCall =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
     '\nconst sweepTimesMeasured = ' + /const sweepTimesMeasured =([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
-    '\nconst mins = ' + /const mins = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';';
+    '\nconst mins = ' + /const mins = ([\s\S]*?);\n/.exec(panelSrc)[1] + ';' +
+    '\nlet sweepReadSummaryHtml = \'\';';
   new w2.Function('ctx', `with (ctx) { ${src2}
     ctx.renderSweepScreens = renderSweepScreens; ctx.sweepPickedScreens = sweepPickedScreens;
     ctx.syncSweepMakeBtn = syncSweepMakeBtn; ctx.showSweepBusy = showSweepBusy;
-    ctx.clearSweepBusy = clearSweepBusy; ctx.markScreenReading = markScreenReading;
+    ctx.clearSweepBusy = clearSweepBusy; ctx.updateSweepBusy = updateSweepBusy;
+    ctx.markScreenReading = markScreenReading;
     ctx.markScreenRead = markScreenRead; ctx.markScreenFailed = markScreenFailed;
     ctx.sweepRunningHtml = sweepRunningHtml; ctx.setStage = setStage;
     ctx.resumeStage = resumeStage; ctx.setPlayButtons = setPlayButtons;
-    ctx.sweepScreenRowHtml = sweepScreenRowHtml; ctx.sweepSecsFor = sweepSecsFor; }`)(box);
+    ctx.sweepScreenRowHtml = sweepScreenRowHtml; ctx.sweepSecsFor = sweepSecsFor;
+    ctx.openSweepEstDialog = openSweepEstDialog; ctx.openSweepReadDialog = openSweepReadDialog; }`)(box);
 
   box.renderSweepScreens();
   const l2 = w2.document.getElementById('sweepPicksList');
@@ -1231,16 +1296,23 @@ console.log('\nchoosing screens');
 
   const btn2 = w2.document.getElementById('sweepMakeBtn');
   const est = w2.document.getElementById('sweepEstimate');
+  const estBody = w2.document.getElementById('sweepEstBody');
   check('the button says what it will DO, not just that it will read',
     /Find components in 2 sections/.test(btn2.textContent), btn2.textContent);
+  // The breakdown folds behind a button now, rather than sitting open — so the
+  // box under the button carries only the trigger, and the numbers only exist
+  // once that trigger has been pressed.
+  check('the box under the button is just the trigger, not the breakdown',
+    /What it costs/.test(est.textContent) && !/74 elements/.test(est.textContent), est.textContent);
+  box.openSweepEstDialog();
   check('the estimate counts the ticked elements, not all of them',
-    /74 elements/.test(est.textContent), est.textContent.replace(/\s+/g, ' '));
+    /74 elements/.test(estBody.textContent), estBody.textContent.replace(/\s+/g, ' '));
   check('it prices the scan from the number of screens',
-    est.textContent.includes('$0.26'), est.textContent.replace(/\s+/g, ' '));
+    estBody.textContent.includes('$0.26'), estBody.textContent.replace(/\s+/g, ' '));
   // "26 screens" read as twenty-six pages. They are sections of one page, and
   // the line has to say which is which.
   check('the estimate counts SCREENS of one page, not pages',
-    /Ticked: 2 sections on 1 page/.test(est.textContent), est.textContent.replace(/\s+/g, ' ').slice(0, 60));
+    /Ticked: 2 sections on 1 page/.test(estBody.textContent), estBody.textContent.replace(/\s+/g, ' ').slice(0, 60));
   // One press starts the run; there is no invisible arming step that relabels
   // the button and writes the cost below the fold.
   check('reading is one press behind a visible dialog, not two presses',
@@ -1262,27 +1334,57 @@ console.log('\nchoosing screens');
     check('and the row being read is marked in the list', !!row && row.classList.contains('is-reading'));
     check('progress counts sections done, not the screen number',
       /Section 4 of 26/.test(host.textContent), host.textContent.replace(/\s+/g, ' ').slice(0, 50));
+
+    // A bar that only moves when a whole SECTION finishes sits at 0% for the
+    // minute or two a busy section takes — reported, correctly, as "nothing
+    // seems to be progressing" on a two-section run where section 1 is 0%
+    // start to finish. Answer arriving IS the progress.
+    {
+      const clockBefore = w2.document.getElementById('sweepBusyClock');
+      const fill = host.querySelector('.ai-busy-bar').firstElementChild;
+      box.updateSweepBusy(37, 'Claude is answering — 1,200 characters so far');
+      check('the bar moves while one section is still being read',
+        fill.style.width === '37%', fill.style.width);
+      check('…and says the answer is arriving, which is what "not stuck" looks like',
+        /1,200 characters so far/.test(host.textContent), host.textContent.replace(/\s+/g, ' '));
+      check('…without restarting the elapsed clock that step has been running',
+        w2.document.getElementById('sweepBusyClock') === clockBefore);
+      // The percentage is written into the title; updating it must replace the
+      // old one rather than appending a second.
+      check('…and the title carries one percentage, not a growing trail of them',
+        (host.querySelector('.ai-busy-title').textContent.match(/%/g) || []).length === 1,
+        host.querySelector('.ai-busy-title').textContent);
+    }
+
+    // The sweep passes a per-batch fraction, so two batches in a section are
+    // two visible steps rather than one long stall.
+    check('the run advances the bar per batch, not only per section',
+      /const pctAt = \(frac\) => \(\(i \+ Math\.min\(1, \(b \+ frac\) \/ batches\.length\)\) \/ stops\.length\) \* 100/.test(panelSrc));
+    check('…and feeds the streamed answer into it',
+      /onProgress: \(chars\) => \{/.test(panelSrc) && /updateSweepBusy\(pctAt\(/.test(panelSrc));
+
     box.clearSweepBusy();
     check('both come off when the run ends',
       !host.classList.contains('pinned') &&
       !w2.document.querySelector('#sweepPicksList .sweep-screen.is-reading'));
   }
   check('the build row is marked as conditional, not a forecast',
-    /costs only for the components you then tick/.test(est.textContent));
+    /costs only for the components you then tick/.test(estBody.textContent));
   // Three stages, each saying whether it costs anything. With the free one left
   // off, the two paid rows looked like the whole of the work.
   check('the free stage is listed beside the two that cost',
-    /Survey/.test(est.textContent) && /free/.test(est.textContent),
-    est.textContent.replace(/\s+/g, ' ').slice(0, 80));
+    /Survey/.test(estBody.textContent) && /free/.test(estBody.textContent),
+    estBody.textContent.replace(/\s+/g, ' ').slice(0, 80));
   check('with nothing measured yet it says the numbers are estimates',
-    /tighten once the first section has been read/.test(est.textContent),
-    est.textContent.replace(/\\s+/g, " ").slice(-90));
+    /tighten once the first section has been read/.test(estBody.textContent),
+    estBody.textContent.replace(/\\s+/g, " ").slice(-90));
 
   rows[2].querySelector('.sweep-screen-tick').checked = false;
   box.syncSweepMakeBtn();
+  box.openSweepEstDialog();
   check('unticking a screen takes its elements out of the estimate',
-    /14 elements/.test(est.textContent) && est.textContent.includes('$0.13'),
-    est.textContent.replace(/\s+/g, ' '));
+    /14 elements/.test(estBody.textContent) && estBody.textContent.includes('$0.13'),
+    estBody.textContent.replace(/\s+/g, ' '));
   check('and off the button', /Find components in 1 section\b/.test(btn2.textContent), btn2.textContent);
 
   rows[0].querySelector('.sweep-screen-tick').checked = false;
@@ -1290,6 +1392,54 @@ console.log('\nchoosing screens');
   check('with none ticked the button refuses and the estimate clears',
     btn2.disabled && /No sections ticked/.test(btn2.textContent) && est.innerHTML === '',
     btn2.textContent);
+
+  // A finished run: nothing left ticked, so "What it costs" has nothing to
+  // forecast — and "What was read" is no longer the only button, the two
+  // fold side by side rather than one replacing the other.
+  {
+    const finished = { phase: 'screens', stops: box.aiSweep.stops.map((x) => ({ ...x, scanned: true, cost: 0.13 })) };
+    const was = box.aiSweep;
+    box.aiSweep = finished;
+    box.renderSweepScreens();
+    // The record buttons live INSIDE the Completed drawer, not on the
+    // resting screen — that screen belongs to the scan button.
+    const row = w2.document.querySelector('#sweepPicksList .sweep-part-done .sweep-done-info');
+    const readBtn = w2.document.getElementById('sweepReadBtn');
+    const costBtn = w2.document.getElementById('sweepEstBtn');
+    check('a finished run keeps its two record buttons inside the Completed drawer',
+      !!row && row.contains(readBtn) && row.contains(costBtn) && readBtn !== costBtn,
+      row ? row.innerHTML : '(no .sweep-done-info in the drawer)');
+    check('…cost first, then what was read',
+      row && row.firstElementChild === costBtn && row.lastElementChild === readBtn,
+      row ? row.innerHTML : '(no .sweep-done-info)');
+    check('…and the resting screen above the list is empty of them',
+      w2.document.getElementById('sweepPicksSummary').innerHTML === '',
+      w2.document.getElementById('sweepPicksSummary').innerHTML);
+    // "① Pick sections › ② Choose fixes › ③ Applied" beside a row that says
+    // Completed claims a journey that is already over — so once nothing is
+    // left to read, the trail is not shown at all, not just repainted.
+    const trail = w2.document.getElementById('stageTrail');
+    check('a finished run hides the stage trail rather than showing it beside Completed',
+      trail.style.display === 'none' && trail.innerHTML === '', trail.outerHTML);
+    // The scan button never leaves: it is the resting screen's one action,
+    // there before, during and after a run.
+    const scanRow = w2.document.querySelector('#sweepOnly .ai-run-line');
+    check('…while "Scan the whole page" stays where it always was',
+      scanRow.style.display !== 'none', scanRow.outerHTML);
+    box.openSweepEstDialog();
+    check('…and the cost button reports what was actually spent, not a forecast',
+      /\$0\.39/.test(estBody.textContent) && /actually spent/.test(estBody.textContent),
+      estBody.textContent.replace(/\s+/g, ' '));
+    // With nothing left ticked and nothing left to tick, "No sections ticked"
+    // has nothing left to offer — the two buttons above already say it is
+    // over, so a disabled button repeating that is gone rather than shown.
+    check('…and the Find-components button, with nothing left to find, is gone rather than disabled',
+      btn2.style.display === 'none', btn2.style.display);
+    box.aiSweep = was;
+    box.renderSweepScreens();
+    check('…and comes back once the run is not finished any more',
+      btn2.style.display !== 'none', btn2.style.display);
+  }
 
   // Already paid for. It used to come back ticked, so pressing Read again to
   // pick up the ones that failed quietly re-charged for every section.
@@ -1390,6 +1540,22 @@ console.log('\nchoosing screens');
       /Still to search · 0/.test(w2.document.querySelector('#sweepPicksList .sweep-part > h4').textContent),
       w2.document.querySelector('.sweep-part-done summary').textContent + ' | ' +
       w2.document.querySelector('#sweepPicksList .sweep-part > h4').textContent);
+    // This exact completion (st[1] is empty, so st[0] and st[2] finishing IS
+    // the whole run finishing) used to reach the reader by the same in-place
+    // patch as every other completion — which never touches the ticking
+    // controls above or the stage trail, so both were stuck showing what
+    // they said one section ago. The run finishing is not just another
+    // completion: it changes what the rest of the screen shows, so it needs
+    // the full render the in-place patch was written to avoid.
+    const row = w2.document.querySelector('#sweepPicksList .sweep-part-done .sweep-done-info');
+    check('the run finishing through the fast per-section path still lands the record buttons in the drawer',
+      !!row && !!w2.document.getElementById('sweepEstBtn') && !!w2.document.getElementById('sweepReadBtn'),
+      row ? row.innerHTML : '(no .sweep-done-info — still the in-place patch)');
+    const trail = w2.document.getElementById('stageTrail');
+    check('…and hides the stage trail rather than leaving it stuck on "Pick sections"',
+      trail.style.display === 'none', trail.outerHTML);
+    check('…and the Completed row still carries Clear, not overwritten by the in-place patch',
+      !!w2.document.querySelector('.sweep-part-done summary [data-sweep-clear]'));
     st[0].scanned = false; st[2].scanned = false; delete st[2].outcome;
     box.renderSweepScreens();
   }
@@ -1466,8 +1632,9 @@ console.log('\nchoosing screens');
     box.aiSweep.progress = null;
     st[0].scanned = false; st[0].cost = 0; st[0].found = [];
     box.renderSweepScreens();
+    box.openSweepEstDialog();
     check('and when nothing is running it is back to what the next press costs',
-      /Ticked:/.test(w2.document.getElementById('sweepEstimate').textContent));
+      /Ticked:/.test(w2.document.getElementById('sweepEstBody').textContent));
   }
 
   // Attempted and failed is not the same as never tried, and it looked
@@ -2075,10 +2242,81 @@ console.log('\na running scan owns the panel');
     `hold at ${hold}, reassignment at ${otc.indexOf('currentHostname = newHostname')}`);
   check('…before the licence is re-checked for the other site',
     hold > 0 && hold < otc.indexOf('enforceLicence(currentHostname)'));
-  check('…before anything can reset the workspace',
-    hold > 0 && hold < otc.indexOf('resetAiWorkspace()'));
+  // A tab change no longer resets the workspace at all — it parks it (state
+  // kept, view down) and unparks it on return. The hold still has to come
+  // ahead of that, or a pinned running scan would be parked out from under
+  // its own run.
+  check('…before anything can park or swap the workspace',
+    hold > 0 && hold < otc.indexOf('parkAiWorkspace()') &&
+    hold < otc.indexOf('unparkAiWorkspaceFor(newHostname)'));
+  check('…and a glance at another tab parks work instead of destroying it',
+    !/resetAiWorkspace\(\)/.test(otc) &&
+    /function parkAiWorkspace\(\)/.test(panelSrc) &&
+    /function unparkAiWorkspaceFor\(host\)/.test(panelSrc));
+  check('…parking hands the next site EMPTY live slots, so its own survey can restore',
+    /aiSweep = \{ running: false, abort: false, phase: 'screens', stops: \[\] \};[\s\S]{0,200}aiWorkspaceHost = null;/.test(
+      /function parkAiWorkspace\(\)[\s\S]*?\n\}/.exec(panelSrc)[0]));
+  check('…and unparking only answers to the workspace\'s own site',
+    /if \(!parkedAi \|\| parkedAi\.host !== host\) return false;/.test(panelSrc));
+  // Restoring EARLY did not survive: restoreSweep and the panel repaints below
+  // it each set a stage of their own and painted straight over the restored
+  // view. Reported as "I changed tab and it did not come back" — after the fix
+  // that was supposed to bring it back.
+  check('…and the restore is the LAST thing the tab change does',
+    otc.indexOf('unparkAiWorkspaceFor(newHostname)') > otc.indexOf('await restoreSweep()') &&
+    otc.indexOf('unparkAiWorkspaceFor(newHostname)') > otc.indexOf('await loadMappingsList()'));
+  // Re-showing surviving DOM would reveal the OTHER site's cards under this
+  // site's name, if that site was scanned while this one was parked.
+  check('…rebuilding the view from state rather than re-showing stale DOM',
+    /\} else if \(aiFound\) \{\s*\n\s*renderAiComponents\(aiFound\);/.test(panelSrc));
+
+  // A single-element scan is one model call rather than a run of them, but a
+  // tab change during it re-pointed the panel and cleared the workspace the
+  // answer was about to land in. Reported as: it started scanning, I changed
+  // tab, and that was that.
+  const singleHold = otc.indexOf('if (aiScanHold) {');
+  check('a single-element scan holds the panel too, not only a sweep',
+    singleHold > 0 && /aiScanHold = \{ tabId: tab\.id, host: currentHostname \};/.test(panelSrc));
+  check('…ahead of the re-point, like the sweep hold',
+    singleHold > 0 && singleHold < otc.indexOf('currentHostname = newHostname'));
+  check('…released whatever happens, and the panel then follows the front tab',
+    /aiScanHold = null;\s*\n\s*clearSweepHoldsPanel\(\);/.test(panelSrc) &&
+    /const front = await getTab\(\);\s*\n\s*if \(front\) await onTabChanged\(front\);/.test(panelSrc));
+  // The leave button drives aiSweep.abort, which this route never reads — so
+  // offering it would be a button that does nothing, on a call about to end.
+  check('…and is not offered an escape hatch that could not work',
+    /if \(aiScanHold && !aiSweep\.running\) \{[\s\S]{0,400}?return;/.test(panelSrc));
   check('…and before the other site\'s survey is pulled over the top',
     hold > 0 && hold < otc.indexOf('restoreSweep()'));
+  // ── Pressing things can still navigate the page ──────────────────────────
+  // The probe cancels link clicks, submits, beforeunload and window.open, but
+  // `location.href = '/search'` runs as the page's OWN handler rather than as
+  // the click's default action, and nothing can cancel it. Reported from
+  // elal.com: the survey pressed something, landed on עמוד חיפוש, and carried
+  // on measuring a page that was no longer the one being surveyed.
+  {
+    const probeSrc = readFileSync(join(ROOT, 'probe.js'), 'utf8');
+    check('the net also blocks the scripted routes out, not just link clicks',
+      /loc\.assign = function/.test(probeSrc) && /loc\.replace = function/.test(probeSrc) &&
+      /hist\.pushState = function/.test(probeSrc) && /hist\.replaceState = function/.test(probeSrc));
+    check('…and puts every one of them back afterwards',
+      /if \(assignWas\) loc\.assign = assignWas;/.test(probeSrc) &&
+      /if \(pushWas\) hist\.pushState = pushWas;/.test(probeSrc));
+    const back = /async function sweepBackIfNavigated\(tab, n\)[\s\S]*?\n\}/.exec(panelSrc)[0];
+    check('a survey that navigated anyway goes back where it came from',
+      /chrome\.tabs\.update\(tab\.id, \{ url: from \}\)/.test(back));
+    check('…comparing without the hash, since an anchor is a move and not a navigation',
+      /const bare = \(u\) => String\(u \|\| ''\)\.split\('#'\)\[0\];/.test(back));
+    check('…waiting for the page to actually be back rather than sleeping a guess',
+      /t\.status === 'complete' && bare\(t\.url\) === bare\(from\)/.test(back));
+    check('…re-injecting what the old page had, because the new one has none of it',
+      /files: \['selector-intel\.js'\] \}\);[\s\S]{0,120}return true;/.test(back));
+    check('…and it is checked on the PAID read too, before anything is charged',
+      /if \(!\(await sweepBackIfNavigated\(tab, stop\.n\)\)\) \{[\s\S]{0,400}nothing was charged for this section/.test(panelSrc));
+    check('…and on the free survey, which stops rather than surveying another page',
+      /if \(!\(await sweepBackIfNavigated\(tab, n\)\)\) \{[\s\S]{0,300}break;/.test(panelSrc));
+  }
+
   // A scan not running, or pinned to a tab that has been closed, must still let
   // the panel follow you — otherwise the panel is stuck on a dead site.
   check('the hold needs BOTH a running scan and a tab still alive',

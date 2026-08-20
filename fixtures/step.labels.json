@@ -17,8 +17,8 @@
   "components": [
     {
       "type": "menu",
-      "root": ".mega-nav",
-      "why": "Seven top-level triggers, each opening a panel of links. One menu, not seven.",
+      "root": "#megaNav",
+      "why": "Seven top-level triggers, each opening a panel of links. One menu, not seven. Rooted on ul.mega-nav__list (id megaNav), NOT on the .mega-nav <nav> that wraps it: u1.fix.menu reads the root's OWN CHILDREN, and the nav has exactly one child — this list. Rooted on the wrapper it is a menu of one item. That is the engine's contract, not a preference, so the wrapper was simply the wrong label.",
       "fields": {
         "items": ".mega-nav__trigger,.mega-panel__links>li>a",
         "triggers": ".mega-nav__trigger",

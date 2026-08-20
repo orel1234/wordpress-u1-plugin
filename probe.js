@@ -132,12 +132,43 @@
     var openWas = root.open;
     try { root.open = function () { return null; }; } catch (e) {}
 
+    // Cancelling the click's default action stops a LINK from navigating. It
+    // does nothing about a page whose own handler navigates in script —
+    // `location.href = '/search'`, `location.assign(...)`, or an SPA router
+    // calling history.pushState. Those run as the handler's own work, not as
+    // the click's default, so preventDefault never sees them.
+    //
+    // Reported from elal.com: pressing things during the survey landed on
+    // עמוד חיפוש, and the walk carried on measuring a page that was no longer
+    // the one being surveyed.
+    //
+    // These are functions, so they can be replaced for the duration and put
+    // back afterwards. `location.href = …` is a setter on a host object and
+    // cannot be, which is why the panel ALSO watches the URL and recovers —
+    // this layer narrows the hole rather than closing it.
+    var loc = root.location, hist = root.history;
+    var assignWas = loc && loc.assign, replaceWas = loc && loc.replace;
+    var pushWas = hist && hist.pushState, replStateWas = hist && hist.replaceState;
+    var blocked = [];
+    var note = function (where, url) { blocked.push(where + ' ' + String(url || '')); };
+    try { loc.assign = function (u) { note('location.assign', u); }; } catch (e) {}
+    try { loc.replace = function (u) { note('location.replace', u); }; } catch (e) {}
+    try { hist.pushState = function (s, t, u) { note('history.pushState', u); }; } catch (e) {}
+    try { hist.replaceState = function (s, t, u) { note('history.replaceState', u); }; } catch (e) {}
+
     net = {
+      // What was stopped, so a survey can say "this page tried to navigate
+      // seven times" rather than leaving it invisible.
+      blocked: blocked,
       disarm: function () {
         doc.removeEventListener('click', onClick, true);
         doc.removeEventListener('submit', onSubmit, true);
         root.removeEventListener('beforeunload', onLeave, true);
         try { root.open = openWas; } catch (e) {}
+        try { if (assignWas) loc.assign = assignWas; } catch (e) {}
+        try { if (replaceWas) loc.replace = replaceWas; } catch (e) {}
+        try { if (pushWas) hist.pushState = pushWas; } catch (e) {}
+        try { if (replStateWas) hist.replaceState = replStateWas; } catch (e) {}
         net = null;
       },
     };

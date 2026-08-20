@@ -136,6 +136,23 @@
     </div>
   </dialog>
 
+  <!-- Both fold what used to sit permanently on screen — the running estimate
+       and the finished run's summary — behind a button, opened on demand. -->
+  <dialog id="sweepEstDialog" class="u1-dialog">
+    <div id="sweepEstBody"></div>
+    <div class="btn-row">
+      <button class="btn-outline" id="sweepEstCloseBtn">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="sweepReadDialog" class="u1-dialog">
+    <div class="dialog-title">What was read</div>
+    <div id="sweepReadBody"></div>
+    <div class="btn-row">
+      <button class="btn-outline" id="sweepReadCloseBtn">Close</button>
+    </div>
+  </dialog>
+
   <div class="tabs">
     <button class="tab-btn active" data-tab="setup">Setup</button>
     <button class="tab-btn" data-tab="config">Config</button>
@@ -410,12 +427,19 @@
        tab — Selectors and Preview appear or disappear with it — so presenting it
        as one field inside Element understated what pressing it does. Only the
        Element section's contents swap; Mappings below is common to all three. -->
+  <!-- Each button carries its own explanation, marked by a small (i) inside
+       it. data-tip is the fast custom tooltip (the same pattern the mapping
+       row icons use); title is kept alongside it as the accessible fallback. -->
   <div class="map-mode wide" role="tablist" aria-label="Mapping mode">
-    <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true">Manual</button>
-    <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false">Automatic (AI)</button>
-    <button class="map-mode-btn" id="modeSweepBtn" role="tab" aria-selected="false">Whole page (AI)</button>
+    <button class="map-mode-btn active" id="modeManualBtn" role="tab" aria-selected="true"
+            data-tip="Fill each selector yourself." title="Fill each selector yourself.">Manual <span class="map-mode-info-icon" aria-hidden="true">ⓘ</span></button>
+    <button class="map-mode-btn" id="modeAutoBtn" role="tab" aria-selected="false"
+            data-tip="Enter the selector of the parent element only — the rest is worked out for you and shown for approval."
+            title="Enter the selector of the parent element only — the rest is worked out for you and shown for approval.">Automatic (AI) <span class="map-mode-info-icon" aria-hidden="true">ⓘ</span></button>
+    <button class="map-mode-btn" id="modeSweepBtn" role="tab" aria-selected="false"
+            data-tip="It scrolls the page itself, one section at a time, and shows you everything it found before any of it is applied."
+            title="It scrolls the page itself, one section at a time, and shows you everything it found before any of it is applied.">Whole page (AI) <span class="map-mode-info-icon" aria-hidden="true">ⓘ</span></button>
   </div>
-  <div class="map-mode-hint" id="modeHint">Fill each selector yourself.</div>
 
   <!-- Element selection -->
   <div class="section">
@@ -443,15 +467,36 @@
                 title="Highlight this on the page first, so you know it is the right element before scanning">🔍</button>
         <button class="btn-primary btn-sm" id="aiScopeBtn">Scan it</button>
       </div>
-      <div class="ai-run-line">
+      <!-- What 🔍 found, as a picture under the input. The outline it draws
+           lives on the PAGE — behind the panel, often scrolled elsewhere — so
+           "1 match" was a claim you had to go and verify. The crop is the
+           element itself, where the question was asked. -->
+      <div id="aiScopePreview" class="ai-scope-preview" style="display:none;"></div>
+      <!-- Both hidden rather than deleted: "Scan it" already does exactly
+           this when the container field is empty (collectRegion reads the
+           same empty selector as "look at what is on screen"), so a second
+           button for it was a literal duplicate, not a different action —
+           and aiScopeBtn/aiDelayedBtn still trigger aiDiscoverBtn's own
+           click handler under the hood, so it has to stay in the DOM. The
+           key button is dead by construction: reaching this row at all
+           means the AI-mode door already let you through, which only
+           happens once a key is saved (setMapMode locks Automatic/Whole
+           page on the tab itself otherwise) — so there is no state in which
+           pressing it would find anything to unlock. -->
+      <div class="ai-run-line" style="display:none;">
         <button class="btn-outline" id="aiDiscoverBtn">🔎 Scan what's on screen</button>
         <button class="btn-outline" id="aiSettingsBtn" title="Change the API key">🔑</button>
       </div>
       <!-- Clicking in the panel takes focus off the page, and a great many
            dropdowns and dialogs close on focus-out. This gives you the seconds
            you need to open one and leave it open. -->
+      <!-- The (i) is a CSS ::after, not a child element — aiDelayedBtn's own
+           handler rewrites textContent while polling ("Looking… (12s)…"), and
+           a real child span would be destroyed by that write and come back
+           as a stray "ⓘ" of plain text instead of a styled icon. -->
       <button class="btn-ghost btn-sm ai-delayed" id="aiDelayedBtn"
-              title="Press, open a dialog or menu on the page, and it captures while it is open">⏱ Scan in 5s — time to open a dialog</button>
+              data-tip="Press, open a dialog or menu on the page, and it captures while it is open."
+              title="Press, open a dialog or menu on the page, and it captures while it is open.">⏱ Scan in 5s</button>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
     </div>
 
@@ -460,9 +505,13 @@
          asked each time. It scrolls the page itself, so the estimate is shown
          and a second press is required before anything is charged. -->
     <div class="ai-run" id="sweepOnly" style="display:none;">
+      <!-- The key button is hidden for the same reason Automatic's is:
+           reaching this mode at all means a key is already saved, so there
+           is no state in which it would find anything to unlock. Kept in
+           the DOM because its click handler is shared wiring. -->
       <div class="ai-run-line">
         <button class="btn-outline" id="sweepStartBtn">🪄 Scan the whole page</button>
-        <button class="btn-outline" id="sweepSettingsBtn" title="Change the API key">🔑</button>
+        <button class="btn-outline" id="sweepSettingsBtn" title="Change the API key" style="display:none;">🔑</button>
       </div>
       <!-- Reading a page finds nothing on one that carries no roles, no
            semantic tags and no meaningful class names — measured, not assumed.
@@ -476,27 +525,17 @@
            call and no money, and a section named in full is a section that
            never gets charged for — there was no version of "off" worth
            offering. It is on always; what it does still has to be said. -->
-      <!-- Both of these are things you need to read ONCE. Standing open above
-           the run, they are two paragraphs between you and the button, on every
-           visit forever. Folded, they are still there for the visit where the
-           question actually comes up — "is it going to press Pay?" is worth a
-           clear answer, just not worth asking again every time. -->
-      <details class="input-note">
-        <summary>What the pause on each section is for</summary>
-        <div class="input-hint">
-          The scan pauses on each section with every candidate numbered on the page.
-          What you name is built by measuring the markup — no model call, nothing
-          charged. Name everything in a section and that section is free.
-        </div>
-      </details>
-      <details class="input-note">
-        <summary>What gets pressed, and what never does</summary>
-        <div class="input-hint">
-          Each component is opened to see what it is: menus, tabs and accordions are
-          pressed and watched, then closed again. Never a link, a submit, or anything
-          labelled pay, delete or send — and navigation is blocked while it runs.
-        </div>
-      </details>
+      <!-- The two "why" accordions that used to sit here are gone — asked to
+           reduce the load on this screen, and two paragraphs you read once,
+           standing open above the button forever, were the load. What they
+           said, so removing the control does not remove what it explained:
+           The scan pauses on each section with every candidate numbered on
+           the page. What you name is built by measuring the markup — no
+           model call, nothing charged. Name everything in a section and
+           that section is free. Each component is opened to see what it is:
+           menus, tabs and accordions are pressed and watched, then closed
+           again. Never a link, a submit, or anything labelled pay, delete
+           or send — and navigation is blocked while it runs. -->
       <!-- Named per stop, so a run that visits fourteen screenfuls can be read
            as it happens instead of only at the end. -->
       <!-- The sweep's own progress. It used to borrow Automatic mode's results
@@ -552,14 +591,14 @@
       <div id="sweepEstimate"></div>
       <div class="ai-summary" id="sweepPicksSummary"></div>
       <div id="sweepPicksList"></div>
+      <!-- Clear used to live here too. It now sits on the Completed row
+           itself (data-sweep-clear, wired in panel.js) — the one place on a
+           finished screen that is about the survey as a whole. -->
       <div class="ai-found-actions">
         <button class="btn-primary" id="sweepMakeBtn">✨ Make the ticked ones accessible</button>
         <!-- A build is a model call per component, so twenty of them is
              minutes. Stopping keeps everything already saved. -->
         <button class="btn-outline" id="buildStopBtn" style="display:none;">■ Stop building</button>
-        <button class="btn-ghost btn-sm" id="exportLabelsBtn"
-                title="Everything you named by hand, in the format the detection score reads. Drop it in fixtures/ and it is measured from then on.">Export what I named</button>
-        <button class="btn-ghost btn-sm" id="sweepPicksClearBtn">Clear</button>
       </div>
       <div class="map-mode-hint" id="sweepPicksStatus" style="margin:4px 0 0;"></div>
     </div>
@@ -605,9 +644,11 @@
         <button class="btn-ghost btn-xs" data-slide="aiSlide:prev" title="Previous">‹</button>
         <span id="aiSlideCount" class="ai-slide-count"></span>
         <button class="btn-ghost btn-xs" data-slide="aiSlide:next" title="Next">›</button>
-        <!-- The found-list is hidden while these are on screen, so the way back
-             has to live here. -->
-        <button class="btn-ghost btn-xs" id="aiBackBtn" style="margin-left:auto;">↩ Back to the list</button>
+        <!-- "↩ Back to the list" stood here and was wired to nothing — no
+             handler anywhere, so pressing it did exactly nothing. The way back
+             is the stage trail above (① FOUND › ② REVIEW › ③ APPLIED), whose
+             crumbs are real controls whenever the stage they name has
+             something in it. -->
       </div>
       <div id="aiSlideTrack"></div>
     </div>

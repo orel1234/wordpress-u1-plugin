@@ -1,6 +1,6 @@
 /* ============================================================
  * U1 accessibility mappings — step-shoe-store-clean-production.up.railway.app
- * Measured from the live page by scripts/map-site.mjs on 2026-08-13T20:47:39.887Z
+ * Measured from the live page by scripts/map-site.mjs on 2026-08-13T22:12:29.205Z
  * 10 components mapped, 11 left out (see the report).
  *
  * Every mapping here was read off the markup, not guessed: required fields
