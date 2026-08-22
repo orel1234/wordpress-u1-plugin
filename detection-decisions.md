@@ -423,13 +423,45 @@ NO, and anything that cannot be ruled out stays a table. A real data table
 skipped is a defect nobody is told about; a layout table that slips through is
 one row somebody deletes.
 
-## datepicker
+## datepicker — decided
 
-- **Read:** datepicker or calendar, or a library fingerprint.
-- **Root:** the calendar that APPEARS, with the control that opens it as the
-  trigger. Both required.
-- **The day cells are the point.** Without them there is nothing for the arrow
-  keys to move between, and the mapping does nothing.
+**A popup OR sitting in the page.** It does not have to open from a field. An
+inline calendar has no trigger to press and no popup to watch, so neither layer
+had anything to go on and it was found by nothing.
+
+**Recognised by counting a month.** It was found by the words "datepicker" and
+"calendar" and by nothing else, which leaves unfound both the inline case and
+anything a framework named its own way. A month is unmistakable when counted:
+twenty-eight to thirty-one boxes whose entire text is a number from 1 to 31,
+sharing one parent, with the numbers running up. Nothing else on a page looks
+like that — a pagination strip is a dozen at most, and a price list does not
+start at 1 and climb by one.
+
+This is checked BEFORE the table rule, because a calendar is very often a
+`<table>` and "table" for a month of days is a mapping that decorates a grid of
+records nobody is reading.
+
+**The day cells are the point.** Without them there is nothing for the arrow
+keys to move between and the mapping does nothing.
+
+### The mapping is filled in by PICKING A DAY
+
+Same idea as the empty form submit: what the mapping needs is written on the
+page the moment a day is chosen and nowhere before it. `days.selected` is a
+class the page toggles, and there is no way to know which one without watching
+it happen — the alternative is a person in devtools comparing two screenshots.
+
+What one press learns: the class marking the CHOSEN day · the days that cannot
+be chosen · whether choosing writes into a field, and which field.
+
+A day is a safe thing to press — it chooses a date, it does not buy anything —
+and the net is armed around it, so a page that fetches prices on a date change
+gets a rejected promise rather than a request.
+
+**What it leaves behind:** a date chosen, when nothing was chosen before. When
+there WAS a date — the common case on a booking form — the previous one is put
+back. When there was none, that is reported rather than faked, because clearing
+it would mean guessing at the page's own idea of empty.
 
 ## checkbox and radio
 

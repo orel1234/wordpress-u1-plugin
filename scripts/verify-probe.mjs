@@ -761,6 +761,60 @@ console.log('\ntyping tells a filter from an autocomplete');
   check('a password field is never typed into', r.skipped === true, JSON.stringify(r));
 }
 
+// ── Picking a day is how a datepicker mapping gets filled in ───────────────
+//
+// The same idea as submitting an empty form: what the mapping needs is written
+// on the page the moment a day is chosen and nowhere before it. `days.selected`
+// is a class the page toggles, and there is no way to know which one without
+// watching it happen — the alternative is a person in devtools comparing two
+// screenshots.
+console.log('\npicking a day fills in the mapping');
+{
+  const calendar = (opts) => {
+    const cells = Array.from({ length: 31 }, (_, i) => {
+      const n = i + 1;
+      const cls = opts.preselected === n ? 'day day--selected'
+        : (opts.disabledUpTo && n <= opts.disabledUpTo) ? 'day day--muted' : 'day';
+      const dis = (opts.disabledUpTo && n <= opts.disabledUpTo) ? ' aria-disabled="true"' : '';
+      return `<td class="${cls}"${dis} data-day="${n}">${n}</td>`;
+    }).join('');
+    const w = page(`<div id="w"><input id="date" readonly>
+      <table id="cal"><tr>${cells}</tr></table></div>`);
+    const d = w.document;
+    d.getElementById('cal').addEventListener('click', (e) => {
+      const td = e.target.closest('td');
+      if (!td || td.getAttribute('aria-disabled') === 'true') return;
+      [...d.querySelectorAll('td')].forEach((x) => x.classList.remove('day--selected'));
+      td.classList.add('day--selected');
+      if (opts.writesField) d.getElementById('date').value = '2026-08-' + td.dataset.day;
+    });
+    return { w, d };
+  };
+  const ask = (c) => c.w.__u1Probe.probeCalendar(c.d.getElementById('cal'),
+    { scope: c.d.getElementById('w'), settle: 20 });
+
+  const fresh = calendar({ disabledUpTo: 3, writesField: true });
+  let r = await ask(fresh);
+  check('the class that marks the chosen day is read off the page',
+    r.selectedClass === 'day--selected', String(r.selectedClass));
+  check('the days that cannot be chosen are found too', r.disabled.length === 3,
+    String(r.disabled.length));
+  check('and the field the date lands in is named',
+    r.wroteInto && r.wroteInto.id === 'date' && /2026-08-/.test(r.wroteValue),
+    (r.wroteInto && r.wroteInto.id) + '=' + r.wroteValue);
+  check('when nothing was chosen before, it says it left a date chosen',
+    r.leftADateChosen === true);
+
+  // The common case on a booking form: a date is already picked, and the probe
+  // must hand it back exactly as it found it.
+  const booked = calendar({ preselected: 5 });
+  r = await ask(booked);
+  check('a date that was already chosen is put back',
+    r.restored === true &&
+    [...booked.d.querySelectorAll('.day--selected')].map((x) => x.textContent).join() === '5',
+    [...booked.d.querySelectorAll('.day--selected')].map((x) => x.textContent).join());
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`

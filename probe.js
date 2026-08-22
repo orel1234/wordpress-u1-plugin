@@ -1179,6 +1179,118 @@
     };
   }
 
+  /**
+   * Pick a day, and read the mapping off what changes.
+   *
+   * The same idea as submitting an empty form: the answers a datepicker mapping
+   * needs are written on the page the moment a day is chosen, and nowhere
+   * before it. `days.selected` is a class the page toggles and there is no way
+   * to know which one without watching it happen — the alternative is a person
+   * opening devtools and comparing two screenshots.
+   *
+   * What it learns:
+   *   · the class that marks the CHOSEN day
+   *   · the class on days that cannot be chosen, which are the ones that did
+   *     not respond
+   *   · whether choosing writes into a field, and which field
+   *
+   * A day is a safe thing to press — it chooses a date, it does not buy
+   * anything — and the net is armed around it, so a page that fetches prices on
+   * a date change gets a rejected promise rather than a request.
+   *
+   * WHAT IT LEAVES BEHIND: a date chosen, when nothing was chosen before. The
+   * previously selected day is put back when there WAS one, which is the common
+   * case on a booking form; when there was none, that is reported rather than
+   * faked, because clearing it would mean guessing at the page's own idea of
+   * empty.
+   */
+  async function probeCalendar(grid, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 200 : opts.settle;
+    var days = [];
+    try {
+      days = Array.prototype.slice.call(grid.querySelectorAll('td,li,button,a,div,span'))
+        .filter(function (el) {
+          return /^([1-9]|[12][0-9]|3[01])$/.test((el.textContent || '').trim()) &&
+                 !el.querySelector('*');
+        });
+    } catch (e) {}
+    if (days.length < 20) return null;
+
+    var wasSelected = days.filter(function (el) {
+      return /select|active|chosen|current|today/i.test(el.className || '') ||
+             el.getAttribute('aria-selected') === 'true';
+    });
+
+    // Somewhere in the middle: the first of the month is often greyed out as
+    // part of the previous one, and the last few belong to the next.
+    var pick = null;
+    for (var i = Math.floor(days.length / 2); i < days.length; i++) {
+      if (wasSelected.indexOf(days[i]) !== -1) continue;
+      if (days[i].disabled || days[i].getAttribute('aria-disabled') === 'true') continue;
+      pick = days[i];
+      break;
+    }
+    if (!pick) return null;
+
+    var scope = opts.scope || grid;
+    var els = watched(scope, opts.limit);
+    var classBefore = classesOf(els);
+    var fieldsBefore = fieldValues(scope);
+
+    try { pick.click(); } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var classAfter = classesOf(els);
+    var delta = classDelta(classBefore, classAfter, pick);
+    var selectedClass = delta && delta.added.length ? delta.added[0] : null;
+
+    // Which field the date landed in, if any.
+    var wroteInto = null, wroteValue = null;
+    fieldValues(scope).forEach(function (now, el) {
+      if (wroteInto) return;
+      if (fieldsBefore.get(el) !== now && now) { wroteInto = el; wroteValue = now; }
+    });
+
+    // The days that could not be chosen, named the way the page names them.
+    var disabled = days.filter(function (el) {
+      return el.disabled || el.getAttribute('aria-disabled') === 'true' ||
+             /disabled|muted|other-month|outside/i.test(el.className || '');
+    });
+
+    // Put the previous choice back when there was one.
+    var restored = false;
+    if (wasSelected.length) {
+      try { wasSelected[0].click(); } catch (e) {}
+      await raf();
+      if (settle) await wait(settle);
+      restored = true;
+    }
+
+    return {
+      day: pick,
+      selectedClass: selectedClass,
+      selectedWas: wasSelected.length ? wasSelected[0] : null,
+      disabled: disabled,
+      wroteInto: wroteInto,
+      wroteValue: wroteValue,
+      restored: restored,
+      leftADateChosen: !restored,
+    };
+  }
+
+  /** What every field in a scope currently holds. */
+  function fieldValues(scope) {
+    var out = new Map();
+    var fields;
+    try { fields = scope.querySelectorAll('input,select,textarea'); } catch (e) { return out; }
+    for (var i = 0; i < fields.length && i < 60; i++) {
+      out.set(fields[i], fields[i].value == null ? '' : String(fields[i].value));
+    }
+    return out;
+  }
+
   /** How many children each list-shaped element is showing right now. */
   function listCounts(scope) {
     var out = new Map();
@@ -1333,6 +1445,7 @@
     classify: classify,
     probeForm: probeForm,
     probeTyping: probeTyping,
+    probeCalendar: probeCalendar,
     armNet: armNet,
     DANGER: DANGER,
   };

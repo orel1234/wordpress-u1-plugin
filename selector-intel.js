@@ -1203,6 +1203,50 @@
     } catch (e) { return false; }
   }
 
+  /**
+   * A month of days, recognised by its shape rather than by its name.
+   *
+   * A datepicker was found by the words "datepicker" or "calendar" and by
+   * nothing else, which leaves two whole cases unfound: one written in a
+   * framework nobody named, and one that sits IN the page rather than opening
+   * from a field — an inline calendar has no trigger to press and no popup to
+   * watch, so neither the reader nor the behavioural layer had anything to go
+   * on.
+   *
+   * A month is unmistakable when counted: twenty-eight to thirty-one boxes
+   * whose entire text is a number between 1 and 31, sharing one parent, with
+   * the numbers running up. Nothing else on a page looks like that — a
+   * pagination strip is a dozen at most, and a price list does not start at 1
+   * and climb by one.
+   */
+  function looksLikeCalendar(el) {
+    try {
+      var kids = el.querySelectorAll('td,th,li,button,span,div,a');
+      var byParent = new Map();
+      for (var i = 0; i < kids.length; i++) {
+        var t = (kids[i].textContent || '').trim();
+        if (!/^([1-9]|[12][0-9]|3[01])$/.test(t)) continue;
+        var p = kids[i].parentElement;
+        if (!p) continue;
+        // The days of a month are usually a row of a table or a cell of a grid,
+        // so climb one level when the parent is plainly a row wrapper.
+        var key = /^(TR|LI)$/.test(p.tagName) && p.parentElement ? p.parentElement : p;
+        if (!byParent.has(key)) byParent.set(key, []);
+        byParent.get(key).push(Number(t));
+      }
+      var hit = false;
+      byParent.forEach(function (nums) {
+        if (hit || nums.length < 28 || nums.length > 62) return;   // 62: two months shown
+        // Running upwards, allowing the leading and trailing days of the
+        // neighbouring months that every calendar shows.
+        var rising = 0;
+        for (var j = 1; j < nums.length; j++) if (nums[j] === nums[j - 1] + 1) rising++;
+        if (rising >= nums.length * 0.7) hit = true;
+      });
+      return hit;
+    } catch (e) { return false; }
+  }
+
   function componentHint(el) {
     // A menu is a menu by WHERE IT SITS, not only by what it is called — the
     // rule agreed for this component. Five columns of links in the footer are
@@ -1237,6 +1281,11 @@
         /crumb/i.test(el.getAttribute('aria-label') || '')) {
       return { name: 'breadcrumb', sure: true };
     }
+
+    // Ahead of the table rule and ahead of the class words: a calendar is very
+    // often a <table>, and answering "table" for a month of days is a mapping
+    // that decorates a grid of records nobody is reading.
+    if (looksLikeCalendar(el)) return { name: 'datepicker', sure: true };
 
     if (el.tagName === 'TABLE') {
       if (looksLikeLayoutTable(el)) return null;
