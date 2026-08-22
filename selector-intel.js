@@ -1109,7 +1109,73 @@
     } catch (e) { return false; }
   }
 
+  // Where a thing SITS, which detection had no notion of until now: it asked
+  // only what an element was CALLED. Both of these are structural first —
+  // jsdom has no layout, and neither does a page still painting — with the
+  // geometric answer as a fallback rather than the basis.
+  const HEADERISH = /(^|[^a-z])(header|masthead|topbar|top-bar)([^a-z]|$)/i;
+  const FOOTERISH = /(^|[^a-z])(footer|colophon|site-info)([^a-z]|$)/i;
+
+  function inRegion(el, tag, role, re) {
+    for (var p = el; p; p = p.parentElement) {
+      if (p.tagName === tag) return true;
+      var r = (p.getAttribute && p.getAttribute('role') || '').toLowerCase();
+      if (r === role) return true;
+      if (re.test(typeof p.className === 'string' ? p.className : '')) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The bar across the top of the page.
+   *
+   * Structural only — a <header>, role="banner", or a name that says so. A
+   * geometric test was written first and taken back out: "within 200px of the
+   * top of the document" is true of a footer on a short page, and it would have
+   * rescued exactly the elements the footer rule below exists to demote. A top
+   * bar that says nothing in its tag, its role OR its class is rare enough not
+   * to be worth a rule that fires on the wrong thing.
+   */
+  function inPageHeader(el) {
+    try { return inRegion(el, 'HEADER', 'banner', HEADERISH); } catch (e) { return false; }
+  }
+
+  function inPageFooter(el) {
+    try { return inRegion(el, 'FOOTER', 'contentinfo', FOOTERISH); } catch (e) { return false; }
+  }
+
+  /** Would anything below have called this a menu? Asked before location. */
+  function menuish(el) {
+    try {
+      var role = (el.getAttribute('role') || '').toLowerCase();
+      if (role === 'menu' || role === 'menubar' || role === 'navigation' || role === 'tablist') return true;
+      if (el.tagName === 'NAV') return true;
+      var cls = typeof el.className === 'string' ? el.className : '';
+      if (!cls) return false;
+      for (var i = 0; i < COMPONENT_BY_CLASS.length; i++) {
+        var rule = COMPONENT_BY_CLASS[i];
+        if (rule[0].test(cls) || rule[0].test(classWords(cls))) return rule[1] === 'menu';
+      }
+      return false;
+    } catch (e) { return false; }
+  }
+
   function componentHint(el) {
+    // A menu is a menu by WHERE IT SITS, not only by what it is called — the
+    // rule agreed for this component. Five columns of links in the footer are
+    // ordinary links: they are already links, already in the tab order, and a
+    // menu mapping on them adds arrow-key navigation nobody is looking for and
+    // a role that says this is the site's navigation when it is not.
+    //
+    // Demoted rather than renamed: what a footer nav IS depends on where its
+    // links go, and that is the link/button rule's question, not this one's.
+    // Answering `menu` here was the only wrong answer available.
+    //
+    // The footer is the one place this fires. A menu in the header, a menu a
+    // hamburger opens and a vertical side menu are all menus, and between them
+    // that is everywhere else a menu is found.
+    if (menuish(el) && inPageFooter(el) && !inPageHeader(el)) return null;
+
     const role = (el.getAttribute('role') || '').toLowerCase();
     if (role && Object.prototype.hasOwnProperty.call(COMPONENT_BY_ROLE, role)) {
       return COMPONENT_BY_ROLE[role] ? { name: COMPONENT_BY_ROLE[role], sure: true } : null;

@@ -788,6 +788,36 @@ console.log('\nfingerprints a framework left behind');
 {
   const named = (body, sel) => collectIn(body).name(sel);
 
+  // ── Where a menu SITS is part of what makes it one ────────────────────────
+  //
+  // Detection had no notion of location at all: it asked what an element was
+  // CALLED and never where it sat, so five columns of links in the footer came
+  // back as a menu exactly like the nav bar at the top. They are ordinary
+  // links — already links, already in the tab order — and a menu mapping on
+  // them adds arrow-key navigation nobody is looking for and a role claiming
+  // this is the site's navigation.
+  check('a nav in the HEADER is a menu',
+    named('<header><nav id="x" class="main-nav"><a href="/a">A</a><a href="/b">B</a></nav></header>', '#x') === 'menu',
+    named('<header><nav id="x" class="main-nav"><a href="/a">A</a><a href="/b">B</a></nav></header>', '#x'));
+  check('…the same nav in the FOOTER is not',
+    named('<footer><nav id="x" class="foot-nav"><a href="/a">A</a><a href="/b">B</a></nav></footer>', '#x') !== 'menu',
+    named('<footer><nav id="x" class="foot-nav"><a href="/a">A</a><a href="/b">B</a></nav></footer>', '#x'));
+  check('…nor are footer link columns, whatever the class says',
+    named('<div class="site-footer"><div id="x" class="menu"><a href="/a">A</a><a href="/b">B</a></div></div>', '#x') !== 'menu',
+    named('<div class="site-footer"><div id="x" class="menu"><a href="/a">A</a><a href="/b">B</a></div></div>', '#x'));
+  // The exceptions agreed alongside the rule: both are menus wherever they sit.
+  check('a vertical side menu is still a menu',
+    named('<aside class="sidebar"><nav id="x" class="side-menu"><a href="/a">A</a></nav></aside>', '#x') === 'menu',
+    named('<aside class="sidebar"><nav id="x" class="side-menu"><a href="/a">A</a></nav></aside>', '#x'));
+  check('a hamburger panel is still a menu, outside the header though it is',
+    named('<div id="x" class="mobile-menu"><a href="/a">A</a><a href="/b">B</a></div>', '#x') === 'menu',
+    named('<div id="x" class="mobile-menu"><a href="/a">A</a><a href="/b">B</a></div>', '#x'));
+  // Only MENUS are placed. A carousel in the footer is still a carousel — the
+  // rule is about what a row of links means, not about the footer being inert.
+  check('a carousel in the footer is untouched by the rule',
+    named('<footer><div id="x" class="carousel"><div class="slide">s</div></div></footer>', '#x') === 'carousel',
+    named('<footer><div id="x" class="carousel"><div class="slide">s</div></div></footer>', '#x'));
+
   check('a Material datepicker is a datepicker',
     named('<div id="x" class="mat-datepicker-content"><input></div>', '#x') === 'datepicker',
     named('<div id="x" class="mat-datepicker-content"><input></div>', '#x'));

@@ -56,15 +56,23 @@ tabs, 1 tab strip". That counts elements the page itself declares, one by one,
 and `tab` is still the ARIA name of a part whatever we call the whole. Renaming
 it there would turn a count into a claim.
 
-**Not yet in the code:** there is no notion of "inside the page header" anywhere
-in detection today. The reader asks only what an element is CALLED, never where
-it SITS. The one existing piece of header logic — `travelsWithViewport` — is
-about not counting a sticky header fifteen times in a page-wide scan, and is not
-this.
+**Location is in the code now.** It was not before — detection asked what an
+element was CALLED and never where it SAT, so five columns of links in the
+footer came back as a menu exactly like the bar at the top.
 
-Proposed test for "the page header", any one sufficient: a `<header>` element ·
-`role="banner"` · a name containing header / masthead / topbar · a bar at the
-top of the page that sticks on scroll.
+The header is recognised structurally: a `<header>`, `role="banner"`, or a name
+containing header / masthead / topbar. A geometric test was written first and
+taken back out — "within 200px of the top of the document" is also true of a
+footer on a short page, and it would have rescued exactly what the rule exists
+to demote.
+
+What fires is the FOOTER case, which is the one that was named explicitly: a
+menu inside a `<footer>`, `role="contentinfo"`, or a footer-ish name is demoted
+to nothing. Demoted rather than renamed, because what a footer nav IS depends on
+where its links go — that is the link/button rule's question. `menu` was simply
+the only wrong answer available.
+
+Only menus are placed. A carousel in the footer is still a carousel.
 
 ---
 
@@ -136,15 +144,151 @@ come back unanswered rather than pressed.
 
 ---
 
+---
+
+# The rest, distilled — PROPOSED, not yet approved
+
+Everything below is written from what the code already does plus the three rules
+already agreed, and is waiting on a yes / no / correction each. The format is
+the same throughout: what it is · how it is recognised · what it is confused
+with · when NOT to report it.
+
+## accordion
+
+Headers that expand and collapse panels of content.
+
+- **Read:** a name containing accordion, collapsible or faq.
+- **Pressed:** a control that reveals a region and hides it again when pressed a
+  second time — and whose panel does NOT hold two or more links, which would
+  make it a menu.
+- **Root:** the HEADER BUTTON, not the container. The content selector is
+  required; without it U1 has nothing to open.
+- **Confused with:** a menu (its panel holds links) and a strip (pressing one
+  closes another — accordions usually do not, and `collapsesOthers` is the
+  field that says when they do).
+- **Not:** a single header on its own. One disclosure is not an accordion.
+
+## carousel
+
+A strip of items showing one at a time, with a way to move between them.
+
+- **Read:** carousel, slideshow, gallery, slider, ticker, marquee, or a library
+  fingerprint (swiper, slick, glide, embla).
+- **Also this:** a ticker, a marquee and an announcement rail. Anything with
+  previous/next that swaps what is visible.
+- **Not:** a row that merely scrolls. Something must CHANGE which item is shown.
+
+## dialog
+
+Something that opens over the page and takes it over until dismissed.
+
+- **Read:** modal, lightbox, drawer, offcanvas, or the dialog role.
+- **Pressed:** the strongest signal, and the one that needs no name — what
+  opened covers most of the screen and is positioned over it.
+- **Also this:** a drawer and an off-canvas panel. A drawer is a modal by
+  behaviour: it covers the page and traps focus.
+- **Root:** the thing that APPEARS, never what opens it. The trigger is its own
+  field, and a dialog with no trigger is still a real mapping.
+- **Not:** a panel that pushes the page down rather than covering it — that is
+  an accordion.
+
+## listbox and combobox
+
+The pair that gets swapped most often. The rule is mechanical: **if the options
+are not inside what you chose, you chose wrong.**
+
+- **listbox** — one button opens one list. The LIST is the root; the button is
+  the trigger. Never the wrapper, never the button.
+- **combobox** — typing filters a list of suggestions. An autocomplete is this,
+  and usually carries no roles at all: recognise it by shape, an input with a
+  list beside it under one parent.
+- **The distinction:** typing filters → combobox. A button opens a fixed list →
+  listbox. No single trigger, it just stands there → menu.
+- **NOT a combobox:** a field that filters a list already visible on the page — a
+  branch locator, "filter by city". There is no popup, so those roles describe a
+  control that does not exist. What is missing there is a status message saying
+  how many results are showing.
+
+## form
+
+- **Read:** a real `<form>` is a form and needs no heuristic — that was a bug
+  once, because the guard against naming every div inside a form also caught the
+  form itself.
+- **Shape:** three or more fields under one element, where nothing tighter
+  already holds them all, and there are no more links than fields.
+- **One submit is one form.** Several means this is the wrapper around several,
+  and the tighter answer was right — a filter panel of five selects, five
+  checkboxes and one button is ONE form, not two rows.
+
+## table and grid
+
+- **table** — a data table you read. Needs headers to be worth mapping.
+- **grid** — a table you move around with the arrow keys. That is the whole
+  difference: focus moves between cells.
+- **Not:** a layout table. One row, or one column, or no headers anywhere, is
+  not a data table and must not be mapped as one.
+
+## datepicker
+
+- **Read:** datepicker or calendar, or a library fingerprint.
+- **Root:** the calendar that APPEARS, with the control that opens it as the
+  trigger. Both required.
+- **The day cells are the point.** Without them there is nothing for the arrow
+  keys to move between, and the mapping does nothing.
+
+## checkbox and radio
+
+- **checkbox** — an on/off choice. A SWITCH is mapped as a checkbox; there is no
+  switch type.
+- **radio** — one of a set, only one chosen at a time.
+- **The state classes are the point.** These are the classes the page already
+  toggles to say on/off — read off the markup, never invented. Without them the
+  library has no way to know which state the control is in and announces the
+  wrong one.
+- **Not:** a native checkbox or radio with a real label. Already accessible.
+
+## pagination
+
+Numbered controls that move through pages of one result list.
+
+- **Read:** pagination or pager.
+- **Against menu:** pagination leads to the same content in pages; a menu leads
+  to different places.
+- The current page is usually a class, not an attribute.
+
+## tooltip
+
+Extra text shown beside a control.
+
+- **Read:** tooltip or popover.
+- A tooltip nothing opens is half a mapping — the trigger matters.
+
+## loading
+
+An indicator that must be announced rather than silently appearing.
+
+- Recognised by name; there is no shape to read, and nothing to press.
+
+## heading
+
+- **Report only when the outline is BROKEN**: a level skipped going down (h1 then
+  h3), or no top-level heading at all on the page.
+- Going back up any distance is normal and correct.
+- **Never renumber a page's headings to make them tidy.** Say so in notes.
+
+## tabs — the type, not the name
+
+Detection no longer suggests this: a strip reads as a menu. The type stays in the
+builder for a specialist who decides a real tab pattern is what a widget needs.
+
+---
+
 ## Open questions
 
-- **breadcrumb, both-conditions rule** — should separators alone, or small text
-  alone, be enough? Currently both are required.
+- **breadcrumb, both-conditions rule** — DECIDED: leave it. Both a separator and
+  small text are required.
 - **toolbar, media player, radio group** — three more names the reader can
   produce that no type can build. Breadcrumb was the fourth and is now fixed;
   these are still dead ends.
-
-## Not yet reviewed
-
-accordion · carousel · datepicker · dialog · listbox · combobox · checkbox ·
-radio · form · table · grid · pagination · loading · tooltip · heading
+- **everything under "The rest, distilled"** — proposed, awaiting a yes, a no or
+  a correction each.
