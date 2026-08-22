@@ -463,16 +463,43 @@ there WAS a date — the common case on a booking form — the previous one is p
 back. When there was none, that is reported rather than faked, because clearing
 it would mean guessing at the page's own idea of empty.
 
-## checkbox and radio
+## checkbox and radio — decided
 
 - **checkbox** — an on/off choice. A SWITCH is mapped as a checkbox; there is no
   switch type.
 - **radio** — one of a set, only one chosen at a time.
-- **The state classes are the point.** These are the classes the page already
-  toggles to say on/off — read off the markup, never invented. Without them the
-  library has no way to know which state the control is in and announces the
-  wrong one.
 - **Not:** a native checkbox or radio with a real label. Already accessible.
+
+**Both states, because the mapping needs both.** `checkedState` AND
+`uncheckedState` are required for a checkbox, and U1 will not maintain the
+announced state without them. They are classes the page swaps, so one press
+hands over both: what was ADDED is the state it went to, what was REMOVED is
+the state it came from.
+
+**Read from the STATE, not from the press.** A control that is already ticked
+gives the two lists the other way round, and "added means checked" gets it
+backwards — which is silent and specific: the control then announces the
+opposite of what it is, every time. The same control tested from both starting
+positions must give the same answer, and there is a test for exactly that.
+
+**A radio is put back by pressing the option that WAS chosen**, since it cannot
+untick itself.
+
+**Never ticked on somebody's behalf** when the label reads as an action — a
+newsletter sign-up, a consent box. The blocklist already covers it.
+
+**And the finding that matters more than it looks:** a page can say "off" by NOT
+having the class — `class="opt"` becomes `class="opt opt--on"` — which is very
+common. There is **no U1-valid selector for the absence of a class**: `:not()`
+is a pseudo-class and the engine rejects it. So this is reported as its own
+fact rather than as an empty field. Empty reads as "nobody filled this in";
+this is "there is nothing to fill it in WITH", which is a different
+conversation, and one somebody has to have with the site's developers.
+
+**Name fixed:** the reader called `role="radiogroup"` a "radio group" while the
+builder's type is `radio`, so the label matched no type and led nowhere. It was
+one of the four names that could be produced and not built. `toolbar` and
+`media player` are the last two.
 
 ## pagination
 

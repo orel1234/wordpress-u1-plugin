@@ -964,8 +964,15 @@
     tablist: 'menu', menu: 'menu', menubar: 'menu', navigation: 'menu',
     dialog: 'dialog', alertdialog: 'dialog', listbox: 'listbox',
     combobox: 'combobox', grid: 'grid', table: 'table', tree: 'menu',
-    radiogroup: 'radio group', toolbar: 'toolbar', search: 'form',
-    tabpanel: '', tab: '', option: '', menuitem: '',   // parts, not components
+    // `radio`, not "radio group". The builder's type is called `radio`, so the
+    // longer name matched no type at all and the label led nowhere — one of the
+    // four names the reader could produce that nothing could build.
+    radiogroup: 'radio', toolbar: 'toolbar', search: 'form',
+    // Parts, not components. `checkbox` and `radio` are named here explicitly
+    // rather than left to fall through: without them a `<div role="checkbox">`
+    // carrying a class like "switch-nav" was read by the class rules instead,
+    // and a checkbox came back as a menu.
+    tabpanel: '', tab: '', option: '', menuitem: '', checkbox: '', radio: '',
   };
   const COMPONENT_BY_TAG = {
     nav: 'menu', form: 'form', table: 'table', dialog: 'dialog',

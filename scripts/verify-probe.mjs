@@ -815,6 +815,87 @@ console.log('\npicking a day fills in the mapping');
     [...booked.d.querySelectorAll('.day--selected')].map((x) => x.textContent).join());
 }
 
+// ── Both states, because a mapping needs both ──────────────────────────────
+//
+// A checkbox mapping REQUIRES checkedState and uncheckedState, and U1 will not
+// maintain the announced state without both. They are classes the page swaps,
+// and one press hands over both: what was ADDED is the state it went to, what
+// was REMOVED is the state it came from.
+//
+// Getting them backwards is silent and specific — the control then announces
+// the opposite of what it is, every single time.
+console.log('\nticking it reads both states');
+{
+  const box = (startOn) => {
+    const w = page(`<div id="c" role="checkbox" class="tick ${startOn ? 'tick--on' : 'tick--off'}"
+      aria-checked="${startOn}">Gift wrap</div>`);
+    const d = w.document;
+    d.getElementById('c').addEventListener('click', () => {
+      const el = d.getElementById('c');
+      const on = el.getAttribute('aria-checked') === 'true';
+      el.setAttribute('aria-checked', String(!on));
+      el.className = !on ? 'tick tick--on' : 'tick tick--off';
+    });
+    return { w, d };
+  };
+
+  const off = box(false);
+  let r = await off.w.__u1Probe.probeToggle(off.d.getElementById('c'), { settle: 10 });
+  check('a box that starts UNTICKED gives both classes the right way round',
+    r.checkedClass === 'tick--on' && r.uncheckedClass === 'tick--off',
+    r.checkedClass + ' / ' + r.uncheckedClass);
+  check('…and it is put back unticked', off.d.getElementById('c').className === 'tick tick--off');
+
+  // The same control the other way up. Assuming "added means checked" gets this
+  // one backwards, which is why the answer is read from the STATE and not from
+  // the press.
+  const on = box(true);
+  r = await on.w.__u1Probe.probeToggle(on.d.getElementById('c'), { settle: 10 });
+  check('a box that starts TICKED gives the SAME answer, not the reverse',
+    r.checkedClass === 'tick--on' && r.uncheckedClass === 'tick--off',
+    r.checkedClass + ' / ' + r.uncheckedClass);
+  check('…and it is put back ticked', on.d.getElementById('c').className === 'tick tick--on');
+}
+{
+  // A radio cannot untick itself, so the one that WAS chosen is pressed back.
+  const w = page(`<div id="g">
+    <div id="r1" role="radio" class="opt opt--on" aria-checked="true">Standard</div>
+    <div id="r2" role="radio" class="opt" aria-checked="false">Express</div></div>`);
+  const d = w.document;
+  ['r1', 'r2'].forEach((id) => d.getElementById(id).addEventListener('click', () => {
+    ['r1', 'r2'].forEach((x) => {
+      const el = d.getElementById(x), isIt = x === id;
+      el.setAttribute('aria-checked', String(isIt));
+      el.className = isIt ? 'opt opt--on' : 'opt';
+    });
+  }));
+  const r = await w.__u1Probe.probeToggle(d.getElementById('r2'), { scope: d.getElementById('g'), settle: 10 });
+  check('a radio reports the chosen class', r.checkedClass === 'opt--on', String(r.checkedClass));
+  check('…and the option that WAS chosen is put back',
+    r.restored === true && d.getElementById('r1').getAttribute('aria-checked') === 'true');
+
+  // The finding that matters more than it looks: this page says "off" by NOT
+  // having the class. There is no U1-valid selector for the absence of a class
+  // — :not() is a pseudo-class and the engine rejects it — so this is reported
+  // as its own fact rather than as an empty field. Empty reads as "nobody
+  // filled this in"; this is "there is nothing to fill it in with".
+  check('a page that says OFF by absence says so out loud',
+    r.saysOffByAbsence === true && r.uncheckedClass === null,
+    JSON.stringify({ off: r.uncheckedClass, byAbsence: r.saysOffByAbsence }));
+}
+{
+  const w = page(`<label id="c" class="sw"><input type="checkbox" hidden><span>On</span></label>`);
+  const r = await w.__u1Probe.probeToggle(w.document.getElementById('c'), { settle: 10 });
+  check('the real control hiding inside a styled one is found',
+    r.hiddenInput && r.hiddenInput.type === 'checkbox', String(r.hiddenInput));
+}
+{
+  const w = page(`<div id="c" role="checkbox">Subscribe to our newsletter</div>`);
+  const r = await w.__u1Probe.probeToggle(w.document.getElementById('c'), { settle: 0 });
+  check('a consent box is never ticked on somebody else\'s behalf',
+    r.skipped === true, JSON.stringify(r));
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`

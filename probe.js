@@ -1280,6 +1280,112 @@
     };
   }
 
+  /**
+   * Tick it, read BOTH states, untick it.
+   *
+   * A checkbox mapping requires `checkedState` AND `uncheckedState` — two
+   * selectors, and U1 will not maintain the announced state without both. They
+   * are classes the page swaps, and one press hands over both at once: what was
+   * ADDED is the state it went to, what was REMOVED is the state it came from.
+   *
+   * Without this a person opens devtools, ticks the box, and compares two class
+   * attributes by eye. Getting it backwards is silent and specific: the control
+   * then announces the opposite of what it is, every time.
+   *
+   * A radio cannot untick itself, so the one that WAS chosen is pressed back,
+   * the same way the calendar puts a date back.
+   */
+  async function probeToggle(el, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 120 : opts.settle;
+    if (!el || el.nodeType !== 1) return null;
+
+    var safe = safeToClick(el);
+    if (!safe.ok) return { skipped: true, why: safe.why };
+
+    var wasOn = isOn(el);
+    var scope = opts.scope || el.parentElement || doc.body;
+
+    // A radio's group, so the previous choice can be put back.
+    var groupWas = null;
+    try {
+      var group = Array.prototype.slice.call(scope.querySelectorAll('[role="radio"],input[type="radio"]'));
+      if (group.indexOf(el) !== -1) {
+        for (var i = 0; i < group.length; i++) if (group[i] !== el && isOn(group[i])) groupWas = group[i];
+      }
+    } catch (e) {}
+
+    var els = [el];
+    var classBefore = classesOf(els);
+
+    try { el.click(); } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var nowOn = isOn(el);
+    var delta = classDelta(classBefore, classesOf(els), el);
+    var added = (delta && delta.added) || [];
+    var removed = (delta && delta.removed) || [];
+
+    // Which way it went decides which list is which. Read from the state rather
+    // than assumed from the press: a page that was already ticked gives the
+    // lists the other way round, and assuming "added means checked" is exactly
+    // the mistake that makes a control announce backwards.
+    var checkedClasses = nowOn ? added : removed;
+    var uncheckedClasses = nowOn ? removed : added;
+
+    // Put it back.
+    var restored = false;
+    try {
+      if (groupWas) { groupWas.click(); restored = true; }
+      else if (nowOn !== wasOn) { el.click(); restored = isOn(el) === wasOn; }
+      else restored = true;
+    } catch (e) {}
+    await raf();
+    if (settle) await wait(settle);
+
+    // The real control hiding inside a styled one — `exclude` exists so it does
+    // not take focus of its own beside the thing standing in for it.
+    var hidden = null;
+    try {
+      var inner = el.querySelector('input[type="checkbox"],input[type="radio"]');
+      if (inner && !shown(inner)) hidden = inner;
+    } catch (e) {}
+
+    // A page can say "off" by having a class, or by NOT having one. The second
+    // is very common — `class="opt"` becomes `class="opt opt--on"` — and it
+    // matters more than it looks: U1 wants a selector for each state, and there
+    // is no U1-valid selector for the absence of a class. `:not()` is a
+    // pseudo-class and the engine rejects it.
+    //
+    // So this is reported as its own fact rather than as an empty field. An
+    // empty field reads as "nobody filled this in"; this is "there is nothing
+    // to fill it in WITH", which is a different conversation and one somebody
+    // has to have with the site's developers.
+    var byAbsence = !!checkedClasses.length && !uncheckedClasses.length;
+
+    return {
+      skipped: false,
+      wasOn: wasOn,
+      toggled: nowOn !== wasOn,
+      checkedClass: checkedClasses[0] || null,
+      uncheckedClass: uncheckedClasses[0] || null,
+      saysOffByAbsence: byAbsence,
+      hiddenInput: hidden,
+      restored: restored,
+    };
+  }
+
+  /** Is this control currently on, however the page says so? */
+  function isOn(el) {
+    try {
+      if (typeof el.checked === 'boolean') return el.checked;
+      var a = el.getAttribute('aria-checked');
+      if (a != null) return a === 'true';
+      return /(^|[^a-z])(checked|selected|active|on)([^a-z]|$)/i.test(el.className || '');
+    } catch (e) { return false; }
+  }
+
   /** What every field in a scope currently holds. */
   function fieldValues(scope) {
     var out = new Map();
@@ -1446,6 +1552,7 @@
     probeForm: probeForm,
     probeTyping: probeTyping,
     probeCalendar: probeCalendar,
+    probeToggle: probeToggle,
     armNet: armNet,
     DANGER: DANGER,
   };
