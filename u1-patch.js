@@ -1555,11 +1555,22 @@
 //     that is a tooltip that cannot be read at all: the text runs off the
 //     viewport and reaching for it makes it vanish.
 //
-//     The previous version recorded the pointer being over the tooltip in a
-//     data attribute and then did nothing with it. Recording a state nothing
-//     reads is the same as not fixing it — this now actually holds the tooltip
-//     open, by swallowing the dismissing events in the capture phase while the
-//     pointer is on it.
+//     This took two attempts and the first one is worth recording, because it
+//     looked right and did nothing. It recorded the pointer being over the
+//     tooltip in a data attribute; that was replaced with a check of the same
+//     thing at dismiss time — and the check always answers NO, because the
+//     order of events is
+//
+//         pointer leaves trigger → mouseout → dismissed
+//         pointer arrives at tooltip        → nothing there
+//
+//     The dismissal always precedes the arrival, and there is usually a gap of
+//     a few pixels to cross as well. A fix conditioned on having already
+//     arrived is inert in precisely the case it exists for.
+//
+//     What works is a GRACE PERIOD: hold the dismissal long enough to walk
+//     there. Landing on the tooltip cancels it; leaving the tooltip sends it at
+//     once; never arriving lets it through on its own.
 //
 //  Everything checks the current state first, so a library that ships its own
 //  fix and a page that was already correct are both left alone.
@@ -1567,6 +1578,11 @@
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
+
+  // Long enough to cross the gap between a control and the bubble beside it,
+  // short enough that a tooltip left behind does not follow you around the
+  // page. The same figure the common tooltip libraries settle on.
+  var HOVER_GRACE_MS = 300;
 
   P.correct(function () {
     u.qsa('[role="tooltip"]').forEach(function (tip) {
@@ -1597,32 +1613,62 @@
         }
       }
 
-      // ── 2. Hoverable: hold it open while the pointer is on it ─────────────
+      // ── 2. Hoverable: a GRACE PERIOD, not a check ─────────────────────────
+      //
+      // The first version of this swallowed the dismiss only while the pointer
+      // was already ON the tooltip, and that is the one moment it cannot help:
+      // measured, the real sequence is
+      //
+      //   pointer leaves trigger  → mouseout fires → tooltip dismissed
+      //   pointer arrives at tooltip                → nothing there
+      //
+      // The dismissal happens BEFORE the arrival, always — and there is usually
+      // a gap of a few pixels to cross as well. Asking "is the pointer on the
+      // tooltip yet" at that instant always answers no, so the fix was inert in
+      // exactly the case it was written for.
+      //
+      // What actually works is holding the dismissal for long enough to walk
+      // there. The event is swallowed and re-sent after a pause; landing on the
+      // tooltip inside that pause cancels it, and leaving the tooltip sends it
+      // immediately. Nothing else about dismissal changes: Escape, focusout and
+      // every other path reach the library untouched.
       if (!tip.__u1pHover) {
         tip.__u1pHover = true;
-        var hovering = false;
+        var hovering = false, pending = null, passing = false;
 
-        tip.addEventListener('mouseenter', function () { hovering = true; });
+        var dismissNow = function () {
+          if (pending) { clearTimeout(pending); pending = null; }
+          if (!trigger) return;
+          try {
+            passing = true;    // so the re-sent event is not swallowed again
+            trigger.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+          } catch (e) {} finally { passing = false; }
+        };
+
+        tip.addEventListener('mouseenter', function () {
+          hovering = true;
+          if (pending) { clearTimeout(pending); pending = null; }   // made it
+        });
         tip.addEventListener('mouseleave', function () {
           hovering = false;
           // Leaving the tooltip itself dismisses it, which is what a person
-          // expects and what "persistent until the trigger is removed" means.
-          if (trigger) {
-            try {
-              trigger.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
-            } catch (e) {}
-          }
+          // expects and what "persistent until the trigger is left" means.
+          dismissNow();
         });
 
-        // The swallow. Capture phase on the trigger, so it runs before the
-        // library's own handler and can stop it reaching one.
         if (trigger && !trigger.__u1pHold) {
           trigger.__u1pHold = true;
+          // Capture phase, so this runs before the library's own handler and
+          // can stop the event reaching it.
           ['mouseout', 'mouseleave'].forEach(function (name) {
             trigger.addEventListener(name, function (e) {
-              // Only while the pointer is genuinely ON the tooltip. Everything
-              // else about dismissal is left exactly as it was.
-              if (hovering) e.stopImmediatePropagation();
+              if (passing) return;                 // our own re-sent event
+              if (pending) { e.stopImmediatePropagation(); return; }
+              e.stopImmediatePropagation();
+              pending = setTimeout(function () {
+                pending = null;
+                if (!hovering) dismissNow();       // never got there — let it go
+              }, HOVER_GRACE_MS);
             }, true);
           });
         }

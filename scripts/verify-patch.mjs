@@ -637,20 +637,43 @@ console.log('\ntooltips');
   //    the moment the pointer leaves the trigger — including when it is moving
   //    ONTO the tooltip to read it. For somebody magnifying the screen that is
   //    a tooltip which cannot be read at all.
+  // THE ORDER OF EVENTS IS THE WHOLE PROBLEM, and a first attempt at this
+  // check missed it by testing the arrival first. The real journey is:
+  //
+  //     pointer leaves trigger → mouseout → dismissed
+  //     pointer arrives at tooltip        → nothing there
+  //
+  // The dismissal always precedes the arrival. Any fix conditioned on having
+  // already arrived is inert in exactly the case it exists for — which is what
+  // the first one was, and it passed a test that dispatched them the other way
+  // round. Dispatched in the real order here.
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   let dismissed = 0;
   trig.addEventListener('mouseout', () => { dismissed++; });
 
-  tip.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: true }));
   trig.dispatchEvent(new dom.window.MouseEvent('mouseout', { bubbles: true }));
-  check('while the pointer is ON the tooltip, the dismiss is swallowed',
+  check('leaving the trigger does not dismiss it instantly', dismissed === 0, String(dismissed));
+
+  await wait(120);                                   // walking there
+  tip.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: true }));
+  await wait(400);                                   // longer than the grace
+  check('…the pointer reaches the tooltip and it is still there, readable',
     dismissed === 0, String(dismissed));
 
   // …and everything else about dismissal is left exactly as it was.
   tip.dispatchEvent(new dom.window.MouseEvent('mouseleave', { bubbles: true }));
-  const before = dismissed;
-  trig.dispatchEvent(new dom.window.MouseEvent('mouseout', { bubbles: true }));
-  check('once the pointer leaves it, dismissing works again',
-    dismissed > before, `${before} -> ${dismissed}`);
+  await wait(20);
+  check('leaving the tooltip closes it', dismissed > 0, String(dismissed));
+
+  // A tooltip nobody walks to must not stay on screen following you around.
+  const lone = boot(`<span id="t2">?</span><div id="tip2" role="tooltip">x</div>`, ['tooltip']);
+  await settle(lone);
+  let gone = 0;
+  const t2 = lone.window.document.getElementById('t2');
+  t2.addEventListener('mouseout', () => { gone++; });
+  t2.dispatchEvent(new lone.window.MouseEvent('mouseout', { bubbles: true }));
+  await wait(400);
+  check('a tooltip nobody walks to closes on its own', gone > 0, String(gone));
 
   // A page that already did it right is left alone.
   const ok = boot(`<button id="b" aria-describedby="t2">?</button><div id="t2" role="tooltip">x</div>`,

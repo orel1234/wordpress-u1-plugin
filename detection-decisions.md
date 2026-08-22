@@ -580,11 +580,27 @@ time a trigger takes focus there is nothing connecting them and the control is
 announced with no description. The sentence the tooltip adds is the entire
 reason it exists.
 
-Both are corrected now. The previous version of the hoverable fix RECORDED the
-pointer being over the tooltip in a data attribute and then did nothing with it
-— a state nothing reads is the same as no fix at all. It holds the tooltip open
-now, by swallowing the dismissing event in the capture phase while the pointer
-is genuinely on it, and everything else about dismissal is untouched.
+Both are corrected now, and the hoverable one took **three** attempts. All three
+are worth keeping, because the first two looked right:
+
+1. it RECORDED the pointer being over the tooltip in a data attribute, and
+   nothing read the attribute. A state nothing reads is not a fix.
+2. it CHECKED the same thing at dismiss time — and the check always answers no.
+   The order of events is `pointer leaves trigger → mouseout → dismissed`, and
+   only then `pointer arrives at tooltip`. The dismissal always precedes the
+   arrival, and there is usually a gap of a few pixels to cross as well. A fix
+   conditioned on having already arrived is inert in precisely the case it
+   exists for. It passed a test — because the test dispatched the arrival
+   first, which is not how a pointer moves.
+3. a GRACE PERIOD, which is what actually works: hold the dismissal for 300ms.
+   Landing on the tooltip cancels it, leaving the tooltip sends it at once, and
+   never arriving lets it through on its own so a tooltip nobody walks to does
+   not follow you around the page.
+
+Escape, focusout and every other path to dismissal reach the library untouched.
+
+The lesson is in the test, not the code: dispatching events in a plausible
+order rather than the real one produced a passing suite over an inert fix.
 
 ## loading
 
