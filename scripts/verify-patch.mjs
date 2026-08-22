@@ -610,6 +610,52 @@ console.log('\nstatic corrections');
     w.document.getElementById('a').getAttribute('tabindex') === '0');
 }
 
+// ── Loading indicators ─────────────────────────────────────────────────────
+//
+// Fixing the role alone left it announced as "progress bar" and nothing else:
+// correct role, correct value, NO NAME. Two of 4.1.2's three parts in place and
+// the third — most of the information a spinner exists to carry — missing.
+console.log('\nloading');
+{
+  const spin = async (html, lang) => {
+    const dom = new JSDOM(`<!doctype html><html lang="${lang || 'en'}"><body>${html}</body></html>`,
+      { runScripts: 'outside-only', pretendToBeVisual: true });
+    const proto = dom.window.HTMLElement.prototype;
+    Object.defineProperty(proto, 'offsetWidth', { get() { return 40; }, configurable: true });
+    dom.window.eval(slice(['loading']));
+    await settle(dom);
+    return dom.window.document.getElementById('s');
+  };
+
+  let el = await spin(`<div id="s" role="meter"></div>`);
+  check('role="meter" becomes progressbar — meter without a value is invalid',
+    el.getAttribute('role') === 'progressbar', String(el.getAttribute('role')));
+  check('…and it is given a name, instead of announcing as an unnamed bar',
+    el.getAttribute('aria-label') === 'Loading', String(el.getAttribute('aria-label')));
+  check('…and an indeterminate one is announced when it appears',
+    el.getAttribute('aria-live') === 'polite', String(el.getAttribute('aria-live')));
+
+  el = await spin(`<div id="s" role="meter">Loading results…</div>`);
+  check('the page\'s own words always beat ours',
+    !el.hasAttribute('aria-label'), String(el.getAttribute('aria-label')));
+
+  el = await spin(`<div id="s" role="meter" aria-label="Uploading"></div>`);
+  check('a name the page already set is not replaced',
+    el.getAttribute('aria-label') === 'Uploading', String(el.getAttribute('aria-label')));
+
+  // With a value, aria-live would read out every tick — a download becomes a
+  // stream of interruptions, which is worse than silence.
+  el = await spin(`<div id="s" role="progressbar" aria-valuenow="40"></div>`);
+  check('a DETERMINATE bar is not made live', el.getAttribute('aria-live') === null,
+    String(el.getAttribute('aria-live')));
+
+  // A Hebrew page announcing "Loading" in English is a worse answer than the
+  // one it replaces.
+  el = await spin(`<div id="s" role="meter"></div>`, 'he');
+  check('the name is in the page\'s own language', el.getAttribute('aria-label') === 'טוען',
+    String(el.getAttribute('aria-label')));
+}
+
 // ── Tooltips, and WCAG 1.4.13 ──────────────────────────────────────────────
 //
 // Two defects were written into the tooltip region as prose and one and a half

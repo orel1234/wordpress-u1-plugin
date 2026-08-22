@@ -3301,6 +3301,136 @@
     return { role: have, willWrite: want };
   }
 
+  /**
+   * Every heading on the page, in reading order, with what is wrong beside it.
+   *
+   * For the review a person actually does: walk the outline, see each heading
+   * for what it is, and leave alone the ones that are right. Nothing here
+   * changes anything — it reports, and a level is only rewritten when somebody
+   * asks for one.
+   *
+   * `should` is the level the outline implies, and it is a SUGGESTION, never an
+   * action: a page's own author knows things about their structure that reading
+   * order does not show. The rules have always said not to renumber a page's
+   * headings to make them tidy, and this is the shape that keeps that true —
+   * the tool proposes, the specialist decides, and approving costs nothing
+   * because approving writes nothing.
+   */
+  function headingOutline() {
+    var out = [], prev = 0, seenH1 = false;
+    var nodes;
+    try {
+      nodes = qsaDeep(document, 'h1,h2,h3,h4,h5,h6,[role="heading"]');
+    } catch (e) { return out; }
+
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!visibleInViewport && !visible(el)) continue;
+      var tag = /^H([1-6])$/.exec(el.tagName);
+      var lvl = tag ? Number(tag[1])
+              : Number(el.getAttribute('aria-level')) || 0;
+      var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+
+      var problem = null, should = lvl;
+      if (!text) problem = 'empty';
+      else if (lvl === 1 && seenH1) problem = 'second h1';
+      else if (!lvl) { problem = 'no level'; should = prev ? prev + 1 : 2; }
+      else if (prev && lvl > prev + 1) { problem = 'skips ' + (lvl - prev - 1); should = prev + 1; }
+
+      if (lvl === 1) seenH1 = true;
+      if (lvl) prev = lvl;
+
+      out.push({
+        selector: robustSelector(el),
+        level: lvl || null,
+        text: text.slice(0, 80),
+        problem: problem,
+        should: problem && should !== lvl ? should : null,
+      });
+    }
+    // A page with no top-level heading at all is a fact about the OUTLINE
+    // rather than about any one heading, so it rides along rather than being
+    // pinned on whichever heading happens to be first.
+    out.noH1 = out.length > 0 && !seenH1;
+    return out;
+  }
+
+  // What a link says when it says nothing: the text that is identical on every
+  // card and describes none of them.
+  const VAGUE = /^(read|learn|find out|see|view|discover)\s*(more|all)?$|^(more|details|continue|go|here|click here)$|^(קרא|קראו)\s*עוד$|^(עוד|פרטים|המשך|לחצו כאן|לפרטים)$/i;
+
+  /**
+   * Cards: a heading, a picture, some text, and a link that says "Read more".
+   *
+   * Every one of those links is announced identically, so a screen reader's
+   * list of links on a news page reads "Read more, Read more, Read more" —
+   * twelve times, describing nothing. It is the commonest defect on any site
+   * with a grid of articles, and no scan rule finds it, because nothing is
+   * malformed: the markup is correct and the words are useless.
+   *
+   * The fix already exists in the builder — a name built from the link's own
+   * text plus the heading in its card. What was missing was finding them.
+   */
+  function cardDescriptions() {
+    var out = [];
+    var links;
+    try { links = qsaDeep(document, 'a[href],button'); } catch (e) { return out; }
+
+    var vague = links.filter(function (el) {
+      var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      return t && VAGUE.test(t);
+    });
+    // One "read more" on a page is a link somebody should rename by hand. A
+    // repeated one is a pattern, and a pattern is what a mapping is for.
+    if (vague.length < 2) return out;
+
+    // Group by the shape of the card each one sits in, so a page with articles
+    // AND products produces one row per KIND rather than one per card.
+    var groups = new Map();
+    vague.forEach(function (el) {
+      var card = null, heading = null;
+      for (var p = el.parentElement, up = 0; p && up < 5; p = p.parentElement, up++) {
+        var h = p.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+        if (h && (h.textContent || '').trim()) { card = p; heading = h; break; }
+      }
+      if (!card || !heading) return;
+      var key = (card.className || card.tagName) + '|' + heading.tagName;
+      if (!groups.has(key)) groups.set(key, { cards: [], links: [], headings: [] });
+      var g = groups.get(key);
+      g.cards.push(card); g.links.push(el); g.headings.push(heading);
+    });
+
+    groups.forEach(function (g) {
+      if (g.links.length < 2) return;
+      var linkSel = commonSelectorFor(document.body, g.links, null);
+      // Across ALL the headings, not the first card's.
+      //
+      // Taking it from one card produced `div>article:nth-child(1)>h3`, which
+      // is pinned to that card — and the code that applies this walks up from
+      // each link looking for the heading selector, falls back to the FIRST
+      // match in the document when it finds none, and would therefore have
+      // named every card on the page after the first one. Twelve links reading
+      // "Read more Winter boots" is worse than twelve reading "Read more",
+      // because it is confidently wrong instead of merely useless.
+      var headSel = commonSelectorFor(document.body, g.headings, null);
+      if (!linkSel || !linkSel.selector || !headSel || !headSel.selector) return;
+      if (!isU1Valid(linkSel.selector) || !isU1Valid(headSel.selector)) return;
+      // It has to reach every card's heading, or it is the same bug in a
+      // different shape.
+      var reaches = 0;
+      try { reaches = document.querySelectorAll(headSel.selector).length; } catch (e) { return; }
+      if (reaches < g.headings.length) return;
+      out.push({
+        target: linkSel.selector,
+        heading: headSel.selector,
+        count: g.links.length,
+        says: (g.links[0].textContent || '').replace(/\s+/g, ' ').trim(),
+        example: (g.headings[0].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+      });
+    });
+    return out;
+  }
+
   const api = {
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
@@ -3314,6 +3444,8 @@
     highlightSelector,
     // a human's answer, without a model
     describeComponent, elementForMark, elementsForMarks, commonAncestor, ITEM_FIELD,
+    // the headings review, and the "Read more" cards beside it
+    headingOutline, cardDescriptions,
   };
 
   root.__u1SelectorIntel = api;

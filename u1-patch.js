@@ -1477,14 +1477,38 @@
 //#endregion
 
 //#region u1-patch:loading
-// role="meter" is wrong twice over. The spec requires aria-valuenow on it and
-// the library sets none, so the role is invalid as written. And meter describes
-// a static measurement within a known range — a progress indicator is
-// role="progressbar", which is also allowed to carry no value while
-// indeterminate.
+// ─────────────────────────────────────────────────────────────────────────────
+//  Loading indicators.
+//
+//  role="meter" is wrong twice over. The spec requires aria-valuenow on it and
+//  the library sets none, so the role is invalid as written. And meter
+//  describes a static measurement within a known range — a progress indicator
+//  is role="progressbar", which is also allowed to carry no value while it is
+//  indeterminate.
+//
+//  Fixing the role alone left it announced as "progress bar" and nothing else:
+//  correct role, correct value, NO NAME. Measured, not assumed. A person hears
+//  that something is in progress and never learns what — which is most of the
+//  information a spinner exists to carry, and is a plain 4.1.2 failure with
+//  two of its three parts already in place.
+//
+//  And a spinner that APPEARS says nothing at all unless something announces
+//  it. That is added only for the indeterminate kind: a progressbar with a
+//  value re-announces on every change of that value, which turns a download
+//  into a stream of interruptions and is worse than silence.
+// ─────────────────────────────────────────────────────────────────────────────
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
+
+  // The site's own language, because a Hebrew page announcing "Loading" in
+  // English is a worse answer than the one it replaces.
+  var loadingWord = function () {
+    var lang = (document.documentElement.getAttribute('lang') || '').toLowerCase();
+    if (lang.indexOf('he') === 0) return 'טוען';
+    if (lang.indexOf('ar') === 0) return 'جارٍ التحميل';
+    return 'Loading';
+  };
 
   P.correct(function () {
     u.qsa('[role="meter"]').forEach(function (el) {
@@ -1494,6 +1518,32 @@
       var now = u.get(el, 'aria-valuenow');
       if (now === null && el.hasAttribute('value')) {
         u.set(el, 'aria-valuenow', el.getAttribute('value'));
+      }
+    });
+
+    u.qsa('[role="progressbar"]').forEach(function (el) {
+      // ── A name ────────────────────────────────────────────────────────────
+      // Whatever the page already offers first: its own words always beat ours.
+      if (!u.named(el)) {
+        var own = (el.textContent || '').replace(/\s+/g, ' ').trim() ||
+                  (u.get(el, 'title') || '').trim();
+        if (!own) {
+          var img = el.querySelector('img[alt],svg title');
+          own = img ? ((img.getAttribute && img.getAttribute('alt')) || img.textContent || '').trim() : '';
+        }
+        u.set(el, 'aria-label', own || loadingWord());
+      }
+
+      // ── Announced when it appears ─────────────────────────────────────────
+      // Indeterminate only. With a value, every tick would be read out.
+      var hasValue = u.get(el, 'aria-valuenow') !== null;
+      if (!hasValue && u.get(el, 'aria-live') === null && !u.closest(el, '[aria-live]')) {
+        u.set(el, 'aria-live', 'polite');
+      }
+      // A determinate bar that was given a live region by an earlier pass — or
+      // by the page — is taken back out of it, for the same reason.
+      if (hasValue && u.get(el, 'aria-live') === 'polite' && el.hasAttribute('aria-label')) {
+        el.removeAttribute('aria-live');
       }
     });
   });

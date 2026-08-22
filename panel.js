@@ -11687,6 +11687,168 @@ async function applyStaticFixesToPage() {
 // The filter-and-results pattern: find it, then make it announce itself.
 let filterShape = null;
 
+/* ── Static fixes: the headings review, and the "Read more" cards ──────────
+ *
+ * Neither is a scan finding, because nothing about either is malformed: the
+ * markup is correct and the result is unusable anyway. They sit together
+ * because they are the two things on a page that only a person can settle.
+ *
+ * The headings box is a REVIEW and approving writes NOTHING. That is not a
+ * detail of the interface, it is the rule: a page's own author knows things
+ * about their structure that reading order cannot show, and the rules have
+ * always said not to renumber a page's headings to make them tidy. A level is
+ * rewritten only where somebody asks for one.
+ */
+async function readHeadingOutline() {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return null;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+    return await inPage(tab.id, () => {
+      const S = window.__u1SelectorIntel;
+      if (!S || !S.headingOutline) return null;
+      const list = S.headingOutline();
+      return { rows: list.slice(), noH1: !!list.noH1 };
+    });
+  } catch { return null; }
+}
+
+function headingRowHtml(h, i) {
+  const lvl = h.level ? 'H' + h.level : 'no level';
+  const note = h.problem
+    ? `<span class="head-problem">${escapeHtml(h.problem)}</span>` : '';
+  // The suggestion is offered, never pre-selected. A row nobody touches leaves
+  // the page exactly as it is.
+  const choices = [1, 2, 3, 4, 5, 6].map((n) =>
+    `<option value="${n}"${n === h.level ? ' selected' : ''}>H${n}</option>`).join('');
+  return `<div class="head-row" data-i="${i}">
+    <span class="head-lvl">${escapeHtml(lvl)}</span>
+    <span class="head-text">${escapeHtml(h.text || '(empty)')}</span>
+    ${note}
+    <code class="head-sel">${escapeHtml(h.selector)}</code>
+    <span class="head-actions">
+      ${h.should ? `<span class="head-suggest">outline implies H${h.should}</span>` : ''}
+      <select class="head-level" aria-label="Level for ${escapeHtml(h.text || 'this heading')}">${choices}</select>
+      <button class="btn-outline btn-xs head-change" data-i="${i}">Change it</button>
+    </span>
+  </div>`;
+}
+
+let headingRows = [];
+
+document.getElementById('headingReview')?.addEventListener('click', async () => {
+  const status = document.getElementById('headingStatus');
+  const list = document.getElementById('headingList');
+  list.innerHTML = '';
+  showNotice(status, '', 'info', 1);
+
+  const got = await readHeadingOutline();
+  if (!got || !got.rows.length) {
+    list.innerHTML = '<div class="map-mode-hint">No headings on this page at all — which is its own finding, and the scan reports it.</div>';
+    return;
+  }
+  headingRows = got.rows;
+  const broken = got.rows.filter((h) => h.problem).length;
+  list.innerHTML =
+    (got.noH1 ? '<div class="head-note">This page has no H1. That is a fact about the outline rather than about any one heading below.</div>' : '') +
+    `<div class="head-note">${got.rows.length} heading${got.rows.length === 1 ? '' : 's'}, ` +
+    `${broken || 'none'} with something to look at. Leaving a row alone changes nothing.</div>` +
+    got.rows.map(headingRowHtml).join('');
+});
+
+document.getElementById('headingList')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.head-change');
+  if (!btn) return;
+  const status = document.getElementById('headingStatus');
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — new work is paused.', 'error', 6000);
+    return;
+  }
+  const row = btn.closest('.head-row');
+  const h = headingRows[Number(btn.dataset.i)];
+  const level = Number(row.querySelector('.head-level').value) || 2;
+  if (!h) return;
+  if (h.level === level) {
+    showNotice(status, 'That is the level it already has — nothing to change.', 'info', 5000);
+    return;
+  }
+  try {
+    const tpl = buildTemplate('heading', h.selector, {}, { level });
+    await saveMappingEntry(tpl, { refreshUi: false });
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(status,
+      `"${h.text || h.selector}" is mapped as H${level}. The rest are untouched.`, 'success', 8000);
+  } catch (err) {
+    showNotice(status, 'Could not save it: ' + err.message, 'error', 9000);
+  }
+});
+
+let cardShapes = [];
+
+document.getElementById('descFind')?.addEventListener('click', async () => {
+  const found = document.getElementById('descFound');
+  const status = document.getElementById('descStatus');
+  showNotice(status, '', 'info', 1);
+  found.innerHTML = '';
+
+  const tab = await getTab();
+  if (!isInjectable(tab)) { found.textContent = 'Cannot read this page.'; return; }
+  let shapes = null;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+    shapes = await inPage(tab.id, () => {
+      const S = window.__u1SelectorIntel;
+      return S && S.cardDescriptions ? S.cardDescriptions() : null;
+    });
+  } catch { shapes = null; }
+
+  cardShapes = shapes || [];
+  if (!cardShapes.length) {
+    found.innerHTML = 'Nothing on this page repeats a link that says the same thing beside its own heading. ' +
+      'A single vague link is a rename by hand, not a pattern — this looks for the repeated kind.';
+    return;
+  }
+  found.innerHTML = cardShapes.map((c, i) => `
+    <div class="desc-row">
+      <div><strong>${c.count}</strong> links that all say “${escapeHtml(c.says)}”</div>
+      <div>each beside <code>${escapeHtml(c.heading)}</code></div>
+      <div class="head-suggest">e.g. “${escapeHtml(c.says)} about ${escapeHtml(c.example)}”</div>
+      <button class="btn-primary btn-xs desc-add" data-i="${i}">Name them after their headings</button>
+    </div>`).join('');
+});
+
+document.getElementById('descFound')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.desc-add');
+  if (!btn) return;
+  const status = document.getElementById('descStatus');
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — new work is paused.', 'error', 6000);
+    return;
+  }
+  const c = cardShapes[Number(btn.dataset.i)];
+  if (!c) return;
+  try {
+    // The mapping that already existed for this and had no way of being found:
+    // the link's own text, then "about", then the heading in its card.
+    const tpl = buildTemplate('aria-label', c.target, {},
+      { middleText: 'about', headingSelector: c.heading });
+    await saveMappingEntry(tpl, { refreshUi: false });
+    // Everything, not only the one just made. U1 decorates once per page load,
+    // so a mapping made earlier may never have met what has re-rendered since —
+    // which is the same reason the sweep applies the whole set, and there is a
+    // check that forbids narrowing it.
+    await applyAllMappings({ silent: true });
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(status,
+      `Done. Those ${c.count} links now read “${c.says} about …” with each card's own heading.`,
+      'success', 9000);
+  } catch (err) {
+    showNotice(status, 'Could not save it: ' + err.message, 'error', 9000);
+  }
+});
+
 document.getElementById('filterFind')?.addEventListener('click', async () => {
   const found = document.getElementById('filterFound');
   const add = document.getElementById('filterAdd');

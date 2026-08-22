@@ -602,18 +602,72 @@ Escape, focusout and every other path to dismissal reach the library untouched.
 The lesson is in the test, not the code: dispatching events in a plausible
 order rather than the real one produced a passing suite over an inert fix.
 
-## loading
+## loading — decided
 
 An indicator that must be announced rather than silently appearing.
 
 - Recognised by name; there is no shape to read, and nothing to press.
 
-## heading
+**What it was getting, measured rather than assumed:** the right role and
+nothing else. `role="meter"` corrected to `role="progressbar"` — meter requires
+`aria-valuenow` and the library sets none, so the role was invalid as written —
+and then announced as "progress bar", full stop. **No name.** Two of 4.1.2's
+three parts in place and the third missing, which is most of the information a
+spinner exists to carry: a person hears that something is in progress and never
+learns what.
 
-- **Report only when the outline is BROKEN**: a level skipped going down (h1 then
-  h3), or no top-level heading at all on the page.
+Now named, from the page's own words first — its text, its title, an image's alt
+— and only failing all of those from a default, **in the page's own language**.
+A Hebrew page announcing "Loading" in English is a worse answer than the one it
+replaces.
+
+And a spinner that appears says nothing unless something announces it, so an
+INDETERMINATE one is made polite-live. Only indeterminate: a progressbar with a
+value re-announces on every change, which turns a download into a stream of
+interruptions and is worse than silence.
+
+## heading — decided
+
+- **Report only when the outline is BROKEN**: a level skipped going down, or no
+  top-level heading at all.
 - Going back up any distance is normal and correct.
-- **Never renumber a page's headings to make them tidy.** Say so in notes.
+
+**And it is a REVIEW, not a fix.** The headings box lists every heading in
+reading order — level, text, what is wrong with it if anything, and the level
+the outline implies. **Approving writes nothing at all**: no mapping is made and
+nothing is applied. A level is rewritten only where somebody asks for one.
+
+That is not an interface detail, it is the rule made structural. A page's own
+author knows things about their structure that reading order cannot show, and
+the rules have always said not to renumber a page's headings to make them tidy.
+A suggestion that costs a click to accept and nothing to ignore is the only
+shape that keeps that true.
+
+## descriptions — decided, and it sits with the headings
+
+A grid of cards, each with a heading and a link that says the same thing. A
+screen reader's list of links reads "Read more, Read more, Read more" —
+describing none of them.
+
+**No scan rule finds this, because nothing is malformed.** The markup is correct
+and the words are useless, which is why it needed finding by shape rather than
+by fault.
+
+The mapping already existed — a name built from the link's own text, then
+"about", then the heading in its card — and had no way of being reached except
+by someone typing three selectors by hand. Now found: two or more links whose
+text is vague, each with a heading in its card, grouped by the shape of card so
+a page with articles AND products gives one row per kind.
+
+**One vague link is not this.** It is a rename by hand; a repeated one is a
+pattern, and a pattern is what a mapping is for.
+
+**The heading selector has to span EVERY card.** Taken from the first card it
+came out positional — pinned to that one — and the code that applies this falls
+back to the first match in the document when it finds none in a card, so every
+link on the page would have been named after the first article. Twelve links
+reading "Read more Winter boots" is worse than twelve reading "Read more",
+because it is confidently wrong rather than merely useless.
 
 ## tabs — the type, not the name
 
