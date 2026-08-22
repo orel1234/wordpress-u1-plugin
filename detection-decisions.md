@@ -392,13 +392,36 @@ pointed at one list:
   `change` and nothing else, so a select-driven bar would have announced nothing
   at all — the fix applied, and silent.
 
-## table and grid
+## table and grid — decided
 
-- **table** — a data table you read. Needs headers to be worth mapping.
+- **table** — a data table you read.
 - **grid** — a table you move around with the arrow keys. That is the whole
   difference: focus moves between cells.
-- **Not:** a layout table. One row, or one column, or no headers anywhere, is
-  not a data table and must not be mapped as one.
+
+**A table used for LAYOUT is not a table.** On an old site this is most of them:
+`<table>` as a positioning tool, a logo in one cell, the nav in another, the
+sidebar in a third. Mapping one as a data table tells a screen reader there is a
+grid of records here and invites its user to read across rows that mean nothing.
+
+The rules had always said so — **and said it only to the model.** The code named
+every `<table>` a table and named it SURE, so a page with forty layout tables
+produced forty rows for a specialist to dismiss one by one. That is precisely
+the failure `a11y-rules.md` rule 5 exists to prevent.
+
+Four reasons to say it is layout, any one enough: **one row** · **one column** ·
+**a cell holding a whole other part of the page** (a nested table, a nav, a
+form) · **rows that disagree how many cells they have**. That last one tolerates
+a single ragged row, because a totals row spanning the width is ordinary.
+
+**Missing headers is the DEFECT, not a reason to skip it.** Rows and columns of
+values with nothing naming them are still a data table and still worth
+reporting — marked as a guess, since that is the one shape a layout table can
+still wear.
+
+Deliberately conservative throughout: everything in the test is a reason to say
+NO, and anything that cannot be ruled out stays a table. A real data table
+skipped is a defect nobody is told about; a layout table that slips through is
+one row somebody deletes.
 
 ## datepicker
 

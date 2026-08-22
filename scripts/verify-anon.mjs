@@ -825,6 +825,40 @@ console.log('\nfingerprints a framework left behind');
     named('<footer><div id="x" class="carousel"><div class="slide">s</div></div></footer>', '#x') === 'carousel',
     named('<footer><div id="x" class="carousel"><div class="slide">s</div></div></footer>', '#x'));
 
+  // ── A table used for LAYOUT is not a table ────────────────────────────────
+  //
+  // On an old site this is most of them: <table> as a positioning tool, a logo
+  // in one cell, the nav in another. Mapping one as a data table tells a screen
+  // reader there is a grid of records here and invites its user to read across
+  // rows that mean nothing. The rules have said so all along — and said it only
+  // to the model, while the code named every <table> a table and named it SURE.
+  // A page with forty layout tables produced forty rows to dismiss one by one.
+  const tbl = (inner) => named(`<table id="x">${inner}</table>`, '#x');
+
+  check('a data table with headers is a table',
+    tbl(`<thead><tr><th>Product</th><th>Price</th></tr></thead>
+         <tbody><tr><td>Runner</td><td>320</td></tr><tr><td>Trainer</td><td>410</td></tr></tbody>`) === 'table');
+  // Missing headers is the DEFECT, not a reason to skip it.
+  check('rows and columns with no headers are still a table',
+    tbl(`<tr><td>Runner</td><td>320</td></tr><tr><td>Trainer</td><td>410</td></tr>
+         <tr><td>Walker</td><td>280</td></tr>`) === 'table',
+    tbl(`<tr><td>Runner</td><td>320</td></tr><tr><td>Trainer</td><td>410</td></tr><tr><td>Walker</td><td>280</td></tr>`));
+
+  check('one row of a logo, a nav and a form is layout, not a table',
+    tbl(`<tr><td><img alt="logo"></td><td><nav><a href="/a">Shop</a></nav></td>
+         <td><form><input><button>Go</button></form></td></tr>`) !== 'table');
+  check('a table holding another table is layout',
+    tbl(`<tr><td><table><tr><td><a href="/x">One</a></td></tr></table></td></tr><tr><td>x</td></tr>`) !== 'table');
+  check('a single column is layout — nothing to read across',
+    tbl(`<tr><td>A</td></tr><tr><td>B</td></tr><tr><td>C</td></tr>`) !== 'table');
+  check('rows that disagree how many cells they have are layout',
+    tbl(`<tr><td>a</td><td>b</td><td>c</td></tr><tr><td>d</td></tr><tr><td>e</td></tr><tr><td>f</td></tr>`) !== 'table');
+  // …but ONE ragged row is ordinary. A totals row spanning the width is not a
+  // reason to throw a real table away.
+  check('a single colspan totals row does not make it layout',
+    tbl(`<tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr>
+         <tr><td colspan="2">total</td></tr>`) === 'table');
+
   check('a Material datepicker is a datepicker',
     named('<div id="x" class="mat-datepicker-content"><input></div>', '#x') === 'datepicker',
     named('<div id="x" class="mat-datepicker-content"><input></div>', '#x'));

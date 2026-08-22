@@ -1710,7 +1710,8 @@ console.log('\nthe annotated survey picture');
     <nav class="mega-nav"><a href="#a">One</a></nav>
     <section class="hero-carousel"><div>slide</div></section>
     <div class="finder__tabs" role="tablist"><button role="tab">By sport</button></div>
-    <table class="deals"><tr><td>x</td></tr></table>
+    <table class="deals"><tr><th>Shoe</th><th>Price</th></tr>
+      <tr><td>Runner</td><td>320</td></tr><tr><td>Trainer</td><td>410</td></tr></table>
   </body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
   const w = d3.window;
   w.getComputedStyle = () => ({ position: 'static', visibility: 'visible', display: 'block', opacity: '1' });

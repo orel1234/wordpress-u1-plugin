@@ -1160,6 +1160,49 @@
     } catch (e) { return false; }
   }
 
+  /**
+   * A table used for LAYOUT, which is not a table at all.
+   *
+   * On an old site this is most of them: `<table>` as a positioning tool, with
+   * a logo in one cell, the nav in another and the sidebar in a third. Mapping
+   * one as a data table tells a screen reader there is a grid of records here
+   * and invites its user to read across rows that mean nothing — worse than
+   * leaving it alone, and the rules have said so all along. They said it only
+   * to the model: the code named every `<table>` a table, and named it SURE, so
+   * a page with forty layout tables produced forty rows to dismiss one by one.
+   *
+   * Deliberately conservative. Everything here is a reason to say NO — anything
+   * that cannot be ruled out stays a table, because a real data table that is
+   * skipped is a defect nobody is told about, while a layout table that slips
+   * through is one row somebody deletes.
+   */
+  function looksLikeLayoutTable(el) {
+    try {
+      var rows = el.querySelectorAll('tr');
+      // One row, or one column, is a strip. Nothing to read across or down.
+      if (rows.length < 2) return true;
+
+      var counts = [];
+      for (var i = 0; i < rows.length; i++) {
+        counts.push(rows[i].querySelectorAll('td,th').length);
+      }
+      var max = Math.max.apply(null, counts);
+      if (max < 2) return true;
+
+      // A cell holding a whole other part of the page. A data cell holds a
+      // value; a layout cell holds the navigation.
+      if (el.querySelector('table,nav,form,header,footer,aside')) return true;
+
+      // Rows that do not agree how many cells they have are a layout, or a
+      // table so broken that mapping it would be guesswork either way. One
+      // ragged row is ordinary (a colspan footer); half of them is not.
+      var ragged = counts.filter(function (n) { return n !== max; }).length;
+      if (ragged > counts.length / 2) return true;
+
+      return false;
+    } catch (e) { return false; }
+  }
+
   function componentHint(el) {
     // A menu is a menu by WHERE IT SITS, not only by what it is called — the
     // rule agreed for this component. Five columns of links in the footer are
@@ -1193,6 +1236,17 @@
     if (/crumb/i.test(el.className || '') ||
         /crumb/i.test(el.getAttribute('aria-label') || '')) {
       return { name: 'breadcrumb', sure: true };
+    }
+
+    if (el.tagName === 'TABLE') {
+      if (looksLikeLayoutTable(el)) return null;
+      // A data table with no header cells anywhere is still a data table, and
+      // the missing headers are the defect worth reporting rather than a reason
+      // to skip it. Marked as a guess, because "rows and columns of values with
+      // nothing naming them" is the one shape a layout table can still wear.
+      var headed = false;
+      try { headed = !!el.querySelector('th'); } catch (e) {}
+      return { name: 'table', sure: headed };
     }
 
     const tag = el.tagName.toLowerCase();
