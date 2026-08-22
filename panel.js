@@ -340,6 +340,33 @@ const COMPONENT_SCHEMAS = {
     desc:{ heading:'Selector of the element to mark as a heading.' },
   },
 
+  // Custom (NOT a u1.fix call) — U1 has no breadcrumb component, and a
+  // breadcrumb needs no keyboard work: its links are links and are already in
+  // the tab order. What it is missing is structure — a named navigation
+  // landmark, an ordered list, a marked current page, and silent separators.
+  // See the engine's own region in grid-nav.js for why each of the four.
+  breadcrumb: {
+    custom:'breadcrumb',
+    selectors:{container:'PRIMARY', item:'', current:'', separator:''},
+    fields:['item','current','separator'],
+    rootFields:{label:'Breadcrumb'},
+    req:['container'],
+    labels:{
+      container:'The whole trail',
+      item:'Each link in the trail (empty = every link inside)',
+      current:'The current page (empty = the last one)',
+      separator:'The / or › between them (empty = found by its text)',
+      label:'What the landmark is called',
+    },
+    desc:{
+      container:'The element wrapping the whole trail. It becomes a navigation landmark with its own name, so it is distinguishable from the main menu in a screen reader’s landmark list.',
+      item:'(Optional) Each link in the trail. Left empty, every link inside the container is used, which is right for almost every trail.',
+      current:'(Optional) The item for the page you are on — it gets aria-current="page". Left empty the LAST item is used, which is what a breadcrumb means. Give a selector only when the trail ends in something that is not the current page.',
+      separator:'(Optional) The / › or → drawn between the links, when it is written in the markup rather than in CSS. It is hidden from screen readers so the trail does not read "shop slash shoes slash running". Left empty, elements whose whole text is a separator character are found and hidden.',
+      label:'The name of the navigation landmark. Defaults to "Breadcrumb". A label the site already wrote is never replaced.',
+    },
+  },
+
   // Custom (NOT a u1.fix call) — give ambiguous buttons/links an accessible name
   // built from nearby context. E.g. every ".read-more" → aria-label
   // "Read more about " + the text of the card's heading.
@@ -679,6 +706,17 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
     return { type, primary: target, firstArg: target, config, code, custom: 'keyboardClickable' };
   }
 
+  // Custom: extension-provided breadcrumb structure (no U1).
+  if (schema.custom === 'breadcrumb') {
+    const container = normalizeU1Selector(primary.trim());
+    const g = (k) => normalizeU1Selector((fieldValues[k] || '').trim());
+    const selectors = { container, item: g('item'), current: g('current'), separator: g('separator') };
+    const label = ((rootValues && rootValues.label) || 'Breadcrumb').trim() || 'Breadcrumb';
+    const config = { selectors, label };
+    const code = buildBreadcrumbCode(selectors, label);
+    return { type, primary: container, firstArg: container, config, code, custom: 'breadcrumb' };
+  }
+
   // Custom: extension-provided tab strip, full ARIA pattern (no U1).
   if (schema.custom === 'keyboardTabs') {
     const tabList = primary.trim();
@@ -937,6 +975,7 @@ async function applyAriaLabel(target, config) {
 // to reach the page before the fix does.
 async function applyOne(type, primary, config, custom, owner) {
   if (custom === 'ariaLabel') return applyAriaLabel(primary, config);
+  if (custom === 'breadcrumb') return applyBreadcrumb(primary, config);
   if (custom === 'keyboardGrid') return applyKeyboardGrid(primary, config);
   if (custom === 'keyboardClickable') return applyKeyboardClickable(primary, config);
   if (custom === 'keyboardTabs') return applyKeyboardTabs(primary, config);
@@ -953,6 +992,17 @@ function buildKeyboardTabsCode(tabList, tab, tabPanel, isVertical) {
          `   ${isVertical ? 'Up/Down' : 'Left/Right'}/Home/End, and aria-selected kept in step with the page.\n` +
          `   Needs the tabs engine (included at the top of the exported bundle). */\n` +
          `window.__u1InstallTabsFromMapping(${JSON.stringify(tabList)}, ${formatJsObject(config)});`;
+}
+
+// The RUNNABLE install call for a breadcrumb mapping — same call the export
+// emits, so "Copy" on a single template gives code that runs as it stands.
+function buildBreadcrumbCode(selectors, label) {
+  const config = { selectors, label };
+  return `/* Accessible breadcrumb — navigation landmark with a name, ordered-list\n` +
+         `   structure, aria-current="page" on the current item, and the visual\n` +
+         `   separators hidden from screen readers (WAI-ARIA breadcrumb pattern,\n` +
+         `   WCAG G65). Needs the breadcrumb engine (included in the export). */\n` +
+         `window.__u1InstallBreadcrumbFromMapping(${JSON.stringify(selectors.container || '')}, ${formatJsObject(config)});`;
 }
 
 function buildKeyboardGridCode(s, columns, direction) {
@@ -987,6 +1037,26 @@ async function applyKeyboardTabs(primary, config) {
       target: { tabId: tab.id },
       func: (a) => (window.__u1InstallTabs ? window.__u1InstallTabs(a) : { ok: false, err: 'grid-nav.js not loaded' }),
       args: [opts],
+    });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
+// Installs breadcrumb structure on the page (no U1). Same shared engine file
+// the exported bundle ships, so what is tested here is what the client gets.
+async function applyBreadcrumb(primary, config) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['grid-nav.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (sel, cfg) => (window.__u1InstallBreadcrumbFromMapping
+        ? window.__u1InstallBreadcrumbFromMapping(sel, cfg)
+        : { ok: false, err: 'grid-nav.js not loaded' }),
+      args: [primary, config],
     });
     return res?.[0]?.result || { ok: false, err: 'No result' };
   } catch (err) {
@@ -1804,6 +1874,10 @@ function mappingToCode(m) {
   if (m.custom === 'keyboardTabs') {
     return `/* Accessible tab strip — uses the engine included above. */\n` +
            `window.__u1InstallTabsFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
+  }
+  if (m.custom === 'breadcrumb') {
+    return `/* Accessible breadcrumb — uses the engine included above. */\n` +
+           `window.__u1InstallBreadcrumbFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
   if (m.custom === 'staticFix') {
     // The rule name and its options only. The correctors themselves ship in the
@@ -3502,6 +3576,12 @@ const FIELD_HOW = {
   link: {
     element: 'The <a> itself, not its wrapper. If it has no href it is a button, not a link.',
   },
+  breadcrumb: {
+    container: 'The element wrapping the WHOLE trail — it becomes the navigation landmark. The <nav>, or the div standing in for one. Not the <ol> inside it, and not one crumb.',
+    item: 'Each link in the trail. Almost always left empty: every link inside the container is used, which is what a trail is. Fill it only when the container also holds a link that is not part of the trail.',
+    current: 'The crumb for the page you are ON. Left empty, the LAST one is used — which is the definition of a breadcrumb, so leaving it empty is normally right. Fill it only when the trail ends in something that is not the current page.',
+    separator: 'The / › or → drawn between the crumbs, when it is written in the MARKUP. A separator drawn in CSS is already silent to a screen reader and needs nothing here. Left empty, elements whose entire text is a separator character are found and hidden.',
+  },
   menu: {
     menu: 'The element whose OWN CHILDREN are the menu items — the <ul>, not the <nav> around it. A wrapper that also holds a logo or a search box is one level too high: U1 walks the root\'s children looking for items and finds furniture.',
     items: 'Everything the arrow keys move between, top level AND inside drop-downs. The element a person activates: if a row is <li><a>, it is the <a>. One class rarely covers both levels — use a comma group.',
@@ -3674,6 +3754,13 @@ const TYPE_GUIDE = {
       ['A standing nav bar with no single trigger', 'That is a menu, not a listbox.'],
       ['The site already put role="menu" on the list', 'Believe it — map it as a menu. Writing role="listbox" over an author\'s role leaves the two disagreeing, and the list ends up decorated by neither.'],
       ['There is a text field that filters the list', 'That is a combobox.'],
+    ] },
+  breadcrumb: { what:'The "you are here" trail — Home › Shoes › Running.', keys:'Nothing to add: its links are already links and already in the tab order. What is missing is structure, not keyboard.', wcag:[['2.4.8','Location'],['1.3.1','Info and Relationships']], apg:'breadcrumb',
+    variants:[
+      ['Links with a / › or → between them, in smaller text', 'This. Named landmark, ordered list, aria-current="page" on the last one, separators silenced.'],
+      ['The same row of links in the page header, no separators', 'That is a menu.'],
+      ['Columns of links in the footer', 'Ordinary links. Nothing to map.'],
+      ['The trail ends in plain text, not a link', 'Still this. aria-current="page" is what marks the current page, whether or not it is a link.'],
     ] },
   combobox:   { what:'A text field with a popup list of suggestions.', keys:'Type to filter · Arrows into the list · Enter selects · Esc closes.', wcag:[['4.1.2','Name, Role, Value'],['4.1.3','Status Messages']], apg:'combobox',
     variants:[
@@ -13242,7 +13329,7 @@ function qaCheckFor(m) {
 // Builds the full, self-contained script the implementer pastes into the site
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
-  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [], statics = [];
+  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [], crumbs = [], statics = [];
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
@@ -13266,6 +13353,8 @@ async function buildDeployableCode(list, hostname) {
     // Must sit in an engine-carrying bucket, not with the plain customs: its
     // call is meaningless without the engine source shipped alongside it.
     else if (m.custom === 'keyboardTabs') tabStrips.push(m);
+    // Same reason: the breadcrumb call needs its engine shipped beside it.
+    else if (m.custom === 'breadcrumb') crumbs.push(m);
     // Declarations, not calls: a static fix switches on a corrector that lives
     // in the patch, so it has to be emitted BEFORE the patch runs.
     else if (m.custom === 'staticFix') { const c = mappingToCode(m); if (c) statics.push(header(m) + '\n' + c); }
@@ -13329,12 +13418,13 @@ async function buildDeployableCode(list, hostname) {
     fixesParts.push(`/* ---- Accessible names ---- */\n` +
       `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1ApplyNames();`);
   }
-  if (grids.length || clickables.length || tabStrips.length) {
+  if (grids.length || clickables.length || tabStrips.length || crumbs.length) {
     // Only the engines these mappings actually call.
     const kinds = [];
     if (grids.length) kinds.push('grid');
     if (clickables.length) kinds.push('clickable');
     if (tabStrips.length) kinds.push('tabs');
+    if (crumbs.length) kinds.push('breadcrumb');
     // A hosted engine turns ~26KB of pasted code into one <script src> line,
     // and lets an engine fix reach every client without anyone re-pasting it.
     // Empty field → inline, exactly as before, so a client who will not load a
@@ -13346,9 +13436,11 @@ async function buildDeployableCode(list, hostname) {
       header(c) + `\nwindow.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' }, null, 2)});`
     )).concat(tabStrips.map(t =>
       header(t) + `\nwindow.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${JSON.stringify(t.config, null, 2)});`
+    )).concat(crumbs.map(b =>
+      header(b) + `\nwindow.__u1InstallBreadcrumbFromMapping(${JSON.stringify(b.primary)}, ${JSON.stringify(b.config, null, 2)});`
     )).join('\n\n');
     fixesParts.push(
-      `/* ---- Keyboard engines (grid / clickable / tab strip) ----\n` +
+      `/* ---- Engines (grid / clickable / tab strip / breadcrumb) ----\n` +
       ` * Adds the ARIA roles, names and states each pattern needs, roving\n` +
       ` * tabindex, arrow/Home/End/Enter/Space, a visible focus ring, and\n` +
       ` * re-applies itself on every re-render and each time a widget opens. */\n` +

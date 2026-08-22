@@ -150,6 +150,33 @@ The fix:
 Telling the two apart: if the list is visible before anyone types, it is this.
 If typing makes a list appear that was not there, it is a combobox.
 
+## breadcrumb
+
+The "you are here" trail. Not a u1.fix component — the extension ships its own
+engine — but it is mapped from the builder like any other type.
+
+Recognise it by TWO things together, never one alone: a separator between each
+pair of links (`/ › » → ·` or a small icon), and text noticeably smaller than the
+page's body text. A row of links with no separator is not a breadcrumb; in the
+header it is a menu, and anywhere else it is ordinary links.
+
+- `container` — the element wrapping the whole trail. It becomes the navigation
+  landmark, so it must be the wrapper, not the list inside it
+- `item` — each link. Leave empty and every link inside the container is used,
+  which is right for almost every trail
+- `current` — the item for the page you are on. Leave empty and the LAST item is
+  used, which is what a breadcrumb means. Fill it only when the trail ends in
+  something that is not the current page
+- `separator` — the `/` or `›` when it is written in the markup rather than
+  drawn in CSS. Leave empty and elements whose entire text is a separator
+  character are found and hidden
+
+`label` names the landmark and defaults to "Breadcrumb". A page that already
+labelled the trail in its own language keeps its label — do not overwrite it.
+
+The current item does NOT have to stop being a link. `aria-current="page"` is
+what marks it either way.
+
 ## form
 
 - `form` — the form element

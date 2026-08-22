@@ -85,20 +85,24 @@
       "type": "dialog",
       "root": ".search-panel",
       "why": "role=dialog aria-modal=true, opened from the Search button.",
-      "fields": { "trigger": "#searchToggle" },
+      "fields": {
+        "trigger": "#searchToggle"
+      },
       "hidden": true
     },
     {
       "type": "dialog",
       "root": ".cart-drawer",
       "why": "A drawer is a modal by behaviour: it covers the page and traps focus.",
-      "fields": { "trigger": "#cartToggle" },
+      "fields": {
+        "trigger": "#cartToggle"
+      },
       "hidden": true
     },
     {
-      "type": "menu",
+      "type": "breadcrumb",
       "root": "nav[aria-label=\"Breadcrumb\"]",
-      "why": "A landmark nav. Not a drop-down menu, but it is navigation and U1 treats it as one.",
+      "why": "A trail: links with a separator between each pair, in text smaller than the body. Labelled `menu` until the rule was decided — it is navigation, but it is not a menu, and it now has a type of its own.",
       "fields": {}
     }
   ],
@@ -110,6 +114,8 @@
       "If the tool names them carousels that is not wrong; if it stays silent that is",
       "not wrong either."
     ],
-    "roots": [".rail"]
+    "roots": [
+      ".rail"
+    ]
   }
 }

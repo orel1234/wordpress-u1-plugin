@@ -819,3 +819,159 @@ window.__u1InstallTabsFromMapping = function (primary, config) {
   });
 };
 //#endregion
+
+//#region u1-engine:breadcrumb
+// ─────────────────────────────────────────────────────────────────────────────
+//  Breadcrumb: give a "you are here" trail the structure a screen reader needs.
+//
+//  There is no u1.fix.breadcrumb — the library has no such component — so this
+//  is the extension's own, and it is deliberately the smallest engine here:
+//  a breadcrumb needs no keyboard behaviour at all. Its links are already links
+//  and already in the tab order. What it is missing is structure and a name.
+//
+//  Four corrections, each from the WAI-ARIA breadcrumb pattern / WCAG G65:
+//
+//    1. the trail becomes a NAVIGATION LANDMARK with its own name. A page has
+//       several navigation landmarks and a screen reader lists them together;
+//       an unnamed one is indistinguishable from the main menu.
+//    2. the items become an ORDERED list. The order carries meaning here —
+//       shop → shoes → running is not the same trail read backwards — which is
+//       why the pattern asks for an ordered list rather than a plain one.
+//    3. the last item gets aria-current="page". This is the whole point of a
+//       breadcrumb and it is the part sites leave out: without it the trail
+//       announces as an ordinary row of links and nothing says which one you
+//       are standing on.
+//    4. the separators are SILENCED. A trail written with "/" between the links
+//       reads as "shop slash shoes slash running", and the slashes are drawn
+//       decoration — the structure is already saying what they say.
+//
+//  Nothing here fights a page that is already correct: every write checks the
+//  current value first, so running it twice changes nothing the second time,
+//  and a trail that already carries these attributes is left alone.
+// ─────────────────────────────────────────────────────────────────────────────
+window.__u1Breadcrumb = function (opts) {
+  const sel = opts && opts.container;
+  if (!sel) return { ok: false, err: 'container is required' };
+
+  const itemSel = (opts.item || '').trim();
+  const currentSel = (opts.current || '').trim();
+  const sepSel = (opts.separator || '').trim();
+  const label = (opts.label || 'Breadcrumb').trim() || 'Breadcrumb';
+
+  const qsa = (root, s) => {
+    if (!s) return [];
+    try { return Array.from(root.querySelectorAll(s)); } catch (e) { return []; }
+  };
+  const set = (el, n, v) => { if (el && el.getAttribute(n) !== String(v)) el.setAttribute(n, String(v)); };
+
+  // A native tag already carries the semantics; writing a role on top of it is
+  // noise at best and, on <nav>, a redundant role a validator will flag.
+  const roleFor = (el, want) => {
+    const tag = el.tagName;
+    if (want === 'navigation' && tag === 'NAV') return;
+    if (want === 'list' && (tag === 'OL' || tag === 'UL')) return;
+    if (want === 'listitem' && tag === 'LI') return;
+    set(el, 'role', want);
+  };
+
+  function apply() {
+    const roots = qsa(document, sel);
+    if (!roots.length) return { ok: false, err: 'No element matches ' + sel };
+
+    let items = 0, currents = 0, seps = 0;
+
+    for (const root of roots) {
+      roleFor(root, 'navigation');
+      // Only if the page has not named it itself. A site that wrote
+      // aria-label="You are here" said something deliberate in its own
+      // language, and replacing it with our English default is a downgrade.
+      if (!(root.getAttribute('aria-label') || '').trim() &&
+          !(root.getAttribute('aria-labelledby') || '').trim()) {
+        set(root, 'aria-label', label);
+      }
+
+      const links = itemSel ? qsa(root, itemSel) : qsa(root, 'a[href]');
+      if (!links.length) continue;
+
+      // The list wrapper: whatever actually holds the items. Usually an <ol> or
+      // <ul> the page already wrote; when the trail is bare divs, the items'
+      // common parent stands in for one.
+      const holder = links[0].closest('ol,ul') ||
+                     (links[0].parentElement === root ? root : links[0].parentElement);
+      if (holder && holder !== root) roleFor(holder, 'list');
+
+      for (const link of links) {
+        items++;
+        // The item wrapper, not the link — role="listitem" belongs on the child
+        // of the list, and on most trails that is the <li> around the <a>.
+        const li = link.closest('li');
+        if (li && holder && holder.contains(li)) roleFor(li, 'listitem');
+        else if (link.parentElement === holder) roleFor(link, 'listitem');
+      }
+
+      // Which one is the current page. An explicit selector wins; otherwise it
+      // is the last item, which is what a breadcrumb means by definition.
+      const explicit = currentSel ? qsa(root, currentSel) : [];
+      const current = explicit.length ? explicit : [links[links.length - 1]];
+      for (const el of current) {
+        set(el, 'aria-current', 'page');
+        currents++;
+      }
+      // Anything previously marked current that no longer is — a client-side
+      // router moves the trail without reloading, and a stale aria-current
+      // would leave two "current" pages announced at once.
+      for (const stale of qsa(root, '[aria-current="page"]')) {
+        if (current.indexOf(stale) === -1) stale.removeAttribute('aria-current');
+      }
+
+      // The separators. Named ones are hidden outright; unnamed trails are
+      // scanned for the text-node case — "Home / Shoes" with the slash written
+      // in the markup between the links.
+      const named = sepSel ? qsa(root, sepSel) : [];
+      for (const s of named) { set(s, 'aria-hidden', 'true'); seps++; }
+      if (!named.length) {
+        for (const el of qsa(root, '*')) {
+          if (el.children.length || el.matches('a,button')) continue;
+          if (/^[\s>/\\|·•‹›»«→⟩⟨\-–—]+$/.test(el.textContent || '') && (el.textContent || '').trim()) {
+            set(el, 'aria-hidden', 'true');
+            seps++;
+          }
+        }
+      }
+    }
+
+    return { ok: true, trails: roots.length, items, current: currents, separators: seps };
+  }
+
+  const first = apply();
+
+  // A trail that a router rewrites loses every attribute written above. Watched
+  // once per selector, so re-applying a mapping does not stack observers.
+  window.__u1BreadcrumbWatchers = window.__u1BreadcrumbWatchers || {};
+  if (first.ok && !window.__u1BreadcrumbWatchers[sel]) {
+    let scheduled = false;
+    const mo = new MutationObserver(() => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => { scheduled = false; apply(); });
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    window.__u1BreadcrumbWatchers[sel] = mo;
+  }
+
+  return first;
+};
+
+// Rebuild the engine options from a stored mapping, so background.js can
+// re-apply on every page load. Mirrors the grid and tabs wrappers.
+window.__u1InstallBreadcrumbFromMapping = function (primary, config) {
+  const s = (config && config.selectors) || {};
+  return window.__u1Breadcrumb({
+    container: s.container || primary,
+    item: s.item || '',
+    current: s.current || '',
+    separator: s.separator || '',
+    label: (config && config.label) || 'Breadcrumb',
+  });
+};
+//#endregion

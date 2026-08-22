@@ -1036,11 +1036,89 @@
 
   const FIELD = 'input:not([type="hidden"]),select,textarea';
 
+  // What a page draws between the steps of a trail. Kept to characters that
+  // mean "and then" — a comma or a bullet separates a LIST, which a row of tags
+  // or a byline is, and neither is a breadcrumb.
+  const SEPARATOR_RE = /^[\s>/\\|›»«‹→⟩›»\-–—]+$/;
+
+  /**
+   * A "you are here" trail, recognised by shape rather than by name.
+   *
+   * Two conditions, and BOTH are required:
+   *   1. something separates each pair of links
+   *   2. the text is smaller than the page's own body text
+   *
+   * Either alone matches far too much. Small text is everywhere, and a single
+   * "·" between two links is how a byline is written. Together they are close
+   * to specific: a short chain of links, in small type, with arrows in it.
+   *
+   * Cheap-first, because this runs on every collected element: the link count
+   * and the length gate are free, the separator scan is one shallow pass, and
+   * the computed style — the only expensive call — happens last and only for
+   * the handful of elements that got that far.
+   */
+  function looksLikeBreadcrumb(el) {
+    try {
+      var links = el.querySelectorAll('a[href]');
+      // Two is a real trail (Home › Shoes). More than eight is a nav, not a
+      // trail — nobody is nine levels deep and rendering all of it.
+      if (links.length < 2 || links.length > 8) return false;
+
+      // The links must be the element's own content, not something it happens
+      // to contain. Without this every wrapper up to <body> holds a trail.
+      var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text.length > 160) return false;
+
+      // A separator between the links: either an element whose entire text is
+      // one, or the text left over between two links once the links themselves
+      // are removed.
+      var separated = false;
+      for (var i = 0; i < el.children.length && !separated; i++) {
+        var kid = el.children[i];
+        if (kid.children.length || kid.matches('a,button')) continue;
+        var t = (kid.textContent || '').trim();
+        if (t && SEPARATOR_RE.test(t)) separated = true;
+      }
+      if (!separated) {
+        // The bare-text case: <a>Home</a> / <a>Shoes</a>, with the slash as a
+        // text node rather than an element of its own.
+        var between = text;
+        for (var j = 0; j < links.length; j++) {
+          between = between.replace((links[j].textContent || '').trim(), ' ');
+        }
+        var gaps = between.split(' ').filter(function (g) { return g.trim(); });
+        separated = gaps.length >= 1 && gaps.every(function (g) { return SEPARATOR_RE.test(g); });
+      }
+      if (!separated) return false;
+
+      // …and smaller than the page's body text. Read last, because this is the
+      // only call here that costs anything.
+      var size = parseFloat((getComputedStyle(el) || {}).fontSize) || 0;
+      var base = parseFloat((getComputedStyle(document.body) || {}).fontSize) || 16;
+      return !!size && size < base;
+    } catch (e) { return false; }
+  }
+
   function componentHint(el) {
     const role = (el.getAttribute('role') || '').toLowerCase();
     if (role && Object.prototype.hasOwnProperty.call(COMPONENT_BY_ROLE, role)) {
       return COMPONENT_BY_ROLE[role] ? { name: COMPONENT_BY_ROLE[role], sure: true } : null;
     }
+    // Ahead of the tag rule, and only for this one case.
+    //
+    // A breadcrumb is written `<nav aria-label="Breadcrumb">` — that IS the
+    // recommended markup — and `<nav>` means menu, decided and sure, before any
+    // class or label is read. So the one trail on the page that followed the
+    // pattern exactly was the one certain to be misnamed. Measured: a
+    // `<nav class="breadcrumb">` came back as `menu`.
+    //
+    // Kept to unambiguous evidence. "crumb" appears in no other component's
+    // vocabulary, so there is nothing for this to steal.
+    if (/crumb/i.test(el.className || '') ||
+        /crumb/i.test(el.getAttribute('aria-label') || '')) {
+      return { name: 'breadcrumb', sure: true };
+    }
+
     const tag = el.tagName.toLowerCase();
     if (COMPONENT_BY_TAG[tag]) return { name: COMPONENT_BY_TAG[tag], sure: true };
 
@@ -1076,6 +1154,19 @@
         if (re.test(cls) || re.test(flat)) return { name, sure: false };
       }
     }
+
+    // A trail of links with something drawn between them, in small type, is a
+    // breadcrumb — whatever it is called.
+    //
+    // The class patterns above already catch a trail whose author wrote
+    // "breadcrumb" somewhere. This is for the ones that did not, and it is a
+    // SHAPE test rather than a name test for the same reason the probe exists:
+    // a name can be absent, a shape cannot.
+    //
+    // Two conditions, both required, per the rule agreed for this component.
+    // Either alone is far too loose — every row of links has small text
+    // somewhere, and a "·" between two links is also how a byline is written.
+    if (looksLikeBreadcrumb(el)) return { name: 'breadcrumb', sure: false };
 
     // Three or more fields gathered under one element is a form, whatever the
     // tag says. The newsletter sign-up — name, email, phone, date, size, eight
@@ -1203,9 +1294,19 @@
     '[role]', '[tabindex]', '[onclick]', '[contenteditable="true"]',
     'nav', 'form', 'table', 'dialog', 'iframe', 'video', 'audio',
     'img', 'svg[aria-label]', 'h1', 'h2', 'h3',
-    ...CLASS_HINTS.map(t => `[class*="${t}"]`),
-    // ` i` — case-insensitive. Without it MuiAccordion and ReactModal are
-    // collected by nothing, which is the whole reason these are a separate list.
+    // ` i` — case-insensitive, on BOTH lists.
+    //
+    // It used to be on the library list only, and that left half of the
+    // camelCase fix undone. `classWords` below teaches the NAMING stage to read
+    // `dealTabs` as "deal Tabs" — but naming never runs on an element this
+    // stage did not collect, and a CSS substring match is case-sensitive, so
+    // `[class*="tab"]` does not match `dealTabs`. The rule existed and could
+    // never fire, which is exactly the failure the two lists are supposed to be
+    // kept in step to prevent. Measured: `<div class="dealTabs">` was named
+    // nothing at all, while `<div class="tab-bar">` was named tabs.
+    ...CLASS_HINTS.map(t => `[class*="${t}" i]`),
+    // Without it MuiAccordion and ReactModal are collected by nothing, which is
+    // the whole reason these are a separate list.
     ...LIB_HINTS.map(t => `[class*="${t}" i]`),
     // Reach UI names its tabs with a data- attribute and no class at all, so a
     // class hint cannot see it however it is spelled.
@@ -1324,6 +1425,33 @@
     return out;
   }
 
+  /**
+   * Trails that hold a chain of links and announce nothing.
+   *
+   * The same gap `fieldClusters` fills for forms, for the same reason: the
+   * naming stage has a breadcrumb rule and it can never run, because a
+   * `<div class="crumbs">` matches no tag, no role and no class hint, so it is
+   * never collected. Measured before this existed — the rule was written, the
+   * test passed on paper, and every trail came back unnamed.
+   *
+   * Deliberately narrow: only elements whose OWN children are the links, so
+   * one trail yields one element rather than every wrapper above it.
+   */
+  function trailCandidates(scope) {
+    const out = [];
+    let links;
+    try { links = qsaDeep(scope, 'a[href]'); } catch (e) { return out; }
+    if (links.length < 2) return out;
+    const seen = new Set();
+    for (const a of links) {
+      const p = a.parentElement;
+      if (!p || seen.has(p) || p === document.body || p === document.documentElement) continue;
+      seen.add(p);
+      if (looksLikeBreadcrumb(p)) out.push(p);
+    }
+    return out;
+  }
+
   function candidateElements(scope) {
     const rec = root.__u1EventMap;
     let recorded = null;
@@ -1333,7 +1461,7 @@
     // merged in DOCUMENT ORDER below rather than appended — the collector's
     // "a component inside a component of the same kind is the same component"
     // rule reads the outermost first and depends on that order.
-    const clusters = fieldClusters(scope);
+    const clusters = fieldClusters(scope).concat(trailCandidates(scope));
     const merge = (base) => {
       if (!clusters.length) return base;
       const set = new Set(base);
