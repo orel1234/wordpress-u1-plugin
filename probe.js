@@ -1051,6 +1051,117 @@
   }
 
   /**
+   * Type one letter into a field and watch what the list does.
+   *
+   * This settles an argument that cannot be settled by looking. A garage finder
+   * and an autocomplete are the same markup — a text field with a list of
+   * results beside it — and the two need OPPOSITE fixes:
+   *
+   *   · the list was already there and typing NARROWS it → a filter. What it
+   *     needs is a status message saying how many are left. Giving it combobox
+   *     roles describes a popup that does not exist and leaves a screen reader
+   *     waiting for one that never opens.
+   *   · the list was not there and typing REVEALED it → a combobox. It does not
+   *     have to float: a results container that goes from empty to populated is
+   *     a popup in every sense ARIA cares about.
+   *
+   * Nothing in the code told these apart. `comboboxShape` and `filterListShape`
+   * both match the same markup and whichever is asked first wins, while the
+   * real distinction lived only as prose in the rules file.
+   *
+   * Safer than pressing a submit — it is one character into a text box — and
+   * bounded the same way: never a password, never a field somebody has already
+   * typed in, and the value is put back with the events the page needs to see
+   * to undo its own work.
+   */
+  async function probeTyping(input, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 200 : opts.settle;
+    if (!input || input.nodeType !== 1) return null;
+
+    var type = (input.getAttribute('type') || '').toLowerCase();
+    if (type === 'password') return { skipped: true, why: 'a password field' };
+    if (input.disabled || input.readOnly) return { skipped: true, why: 'not editable' };
+    if (typeof input.value === 'string' && input.value.trim()) {
+      return { skipped: true, why: 'somebody has typed in it' };
+    }
+
+    var scope = opts.scope || input.closest('form,section,div') || doc.body;
+    var els = watched(scope, opts.limit);
+    var before = fingerprint(els);
+    var countBefore = listCounts(scope);
+
+    var fire = function (el) {
+      ['input', 'keyup', 'change'].forEach(function (name) {
+        try { el.dispatchEvent(new root.Event(name, { bubbles: true })); } catch (e) {}
+      });
+    };
+
+    try {
+      input.value = opts.text || 'a';
+      fire(input);
+    } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var d = diff(before, fingerprint(els));
+    var countAfter = listCounts(scope);
+
+    // Put the letter back before anything else. A field left with a stray
+    // character in it is the most visible thing this whole file could do.
+    try {
+      input.value = '';
+      fire(input);
+    } catch (e) {}
+    await raf();
+    if (settle) await wait(settle);
+
+    var revealed = outermost(d.appeared);
+    var narrowed = [], filled = [];
+    countBefore.forEach(function (was, el) {
+      var now = countAfter.get(el);
+      if (now == null) return;
+      // The container was ALREADY THERE and EMPTY, and typing put results in
+      // it. That is the commonest autocomplete on the web and the first version
+      // of this missed all of them: the <ul> never appeared — it was visible
+      // the whole time — so "did anything appear" answered no while the page
+      // was visibly filling with matches.
+      if (was === 0 && now > 0) filled.push({ list: el, now: now });
+      else if (was > 0 && now < was) narrowed.push({ list: el, was: was, now: now });
+    });
+
+    return {
+      skipped: false,
+      revealed: revealed,
+      filled: filled,
+      narrowed: narrowed,
+      // The whole point, in one word.
+      //
+      // Revealing beats narrowing when both happen: a page that hides its old
+      // results and builds new ones is doing the autocomplete thing, and the
+      // narrowing is a side effect of the same keystroke.
+      kind: (revealed.length || filled.length) ? 'combobox'
+          : (narrowed.length ? 'filter' : null),
+    };
+  }
+
+  /** How many children each list-shaped element is showing right now. */
+  function listCounts(scope) {
+    var out = new Map();
+    var lists;
+    try {
+      lists = scope.querySelectorAll('ul,ol,tbody,[role="listbox"],[class*="result" i],[class*="list" i]');
+    } catch (e) { return out; }
+    for (var i = 0; i < lists.length && i < 60; i++) {
+      var kids = Array.prototype.slice.call(lists[i].children).filter(function (c) {
+        return c.nodeType === 1 && shown(c);
+      });
+      out.set(lists[i], kids.length);
+    }
+    return out;
+  }
+
+  /**
    * Press everything worth pressing inside `scope`, and say what is there.
    *
    * The net is armed for the whole run and disarmed in `finally`, so an
@@ -1187,6 +1298,7 @@
     pressable: pressable,
     classify: classify,
     probeForm: probeForm,
+    probeTyping: probeTyping,
     armNet: armNet,
     DANGER: DANGER,
   };

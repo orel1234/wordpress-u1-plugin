@@ -291,6 +291,32 @@ are not inside what you chose, you chose wrong.**
   control that does not exist. What is missing there is a status message saying
   how many results are showing.
 
+**The distinction is NOT whether it floats.** That framing was wrong and was
+corrected in review: a garage finder where you type and matching results appear
+inline, in the page, is an autocomplete — a container that goes from empty to
+populated is a popup in every sense ARIA cares about.
+
+The question is whether the list was there BEFORE anyone typed:
+
+- already showing results, typing makes it SHORTER → filter, needs a status
+  message
+- absent or empty, typing PUTS RESULTS IN IT → combobox
+
+**Neither can be told from the markup**, because both are a text field with a
+list beside it — and nothing in the code told them apart. `comboboxShape` and
+`filterListShape` both match the same page and whichever is asked first wins;
+the real distinction lived only as prose in the rules file. So it is measured
+now: type one letter and watch which of the two happens.
+
+Bounded like the form probe — never a password, never a field somebody has
+already typed in, and the letter is taken back out with the events the page
+needs to see to undo its own work.
+
+An empty container that FILLS was missed by the first version of this, and it is
+the commonest autocomplete on the web: the list never *appeared*, it was visible
+the whole time, so "did anything appear" answered no while the page filled with
+matches in front of it.
+
 ## form — decided
 
 **A real `<form>`, or an element with more than one field AND a way to send

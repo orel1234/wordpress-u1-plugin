@@ -667,6 +667,73 @@ console.log('\nasking a form to validate itself');
   check('the reset button is never the one pressed', pressed === 'submit', String(pressed));
 }
 
+// ── Typing settles an argument that looking cannot ─────────────────────────
+//
+// A garage finder and an autocomplete are the SAME MARKUP — a text field with a
+// list of results beside it — and they need opposite fixes. Nothing in the code
+// told them apart: comboboxShape and filterListShape both match it and
+// whichever is asked first wins, while the real distinction lived only as prose
+// in the rules file.
+//
+// And the distinction is not "does it float". A results container that goes
+// from empty to populated is a popup in every sense ARIA cares about. What
+// matters is whether the list was there BEFORE anyone typed.
+console.log('\ntyping tells a filter from an autocomplete');
+{
+  const G = ['Auto Tel Aviv', 'Auto Haifa', 'Bosch Eilat', 'Bosch Ramla'];
+  const finder = (mode) => {
+    const w = page(`<div id="w"><input type="search" id="q">
+      <ul id="list">${mode === 'filter' ? G.map((g) => `<li>${g}</li>`).join('') : ''}</ul></div>`);
+    const d = w.document;
+    const q = d.getElementById('q'), list = d.getElementById('list');
+    q.addEventListener('input', () => {
+      const v = q.value.toLowerCase();
+      if (mode === 'filter') {
+        // Everything is already on the page; typing hides what does not match.
+        [...list.children].forEach((li) => {
+          li.hidden = !!v && !li.textContent.toLowerCase().includes(v);
+        });
+      } else if (mode === 'popup') {
+        // Nothing was there; typing builds the matches.
+        list.innerHTML = v ? G.filter((g) => g.toLowerCase().includes(v)).map((g) => `<li>${g}</li>`).join('') : '';
+      }
+    });
+    return { w, d };
+  };
+  const ask = (f) => f.w.__u1Probe.probeTyping(f.d.getElementById('q'),
+    { scope: f.d.getElementById('w'), settle: 20, text: 'bosch' });
+
+  const a = finder('filter');
+  let r = await ask(a);
+  check('a list that was already there and got shorter is a FILTER',
+    r.kind === 'filter' && r.narrowed.length === 1, r.kind + ' ' + JSON.stringify(r.narrowed.map((n) => n.was + '->' + n.now)));
+  check('…and the field is put back empty', a.d.getElementById('q').value === '');
+  check('…and its list is back to all four', a.d.getElementById('list').children.length === 4);
+
+  // The commonest autocomplete on the web, and the first version of this missed
+  // every one: the <ul> never APPEARED — it was visible the whole time, empty —
+  // so "did anything appear" answered no while the page filled with matches.
+  const b = finder('popup');
+  r = await ask(b);
+  check('an empty container that FILLED is a combobox, floating or not',
+    r.kind === 'combobox' && r.filled.length === 1, r.kind + ' filled:' + r.filled.length);
+  check('…and that field is put back too', b.d.getElementById('q').value === '');
+
+  const c = finder('inert');
+  r = await ask(c);
+  check('a field where nothing happens is neither', r.kind === null, String(r.kind));
+}
+{
+  const w = page(`<div id="w"><input type="search" id="q" value="haifa"><ul id="l"><li>x</li></ul></div>`);
+  const r = await w.__u1Probe.probeTyping(w.document.getElementById('q'), { settle: 0 });
+  check('a field somebody is using is left alone', r.skipped === true, JSON.stringify(r));
+}
+{
+  const w = page(`<div id="w"><input type="password" id="p"></div>`);
+  const r = await w.__u1Probe.probeTyping(w.document.getElementById('p'), { settle: 0 });
+  check('a password field is never typed into', r.skipped === true, JSON.stringify(r));
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`

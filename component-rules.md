@@ -147,8 +147,17 @@ The fix:
 3. never `aria-live` on the list itself — that re-reads every result on every
    keystroke, which is worse than silence
 
-Telling the two apart: if the list is visible before anyone types, it is this.
-If typing makes a list appear that was not there, it is a combobox.
+Telling the two apart — and it is NOT whether the list floats. A results
+container that goes from empty to populated is a popup in every sense ARIA cares
+about, even though it sits inline in the page and never overlays anything.
+
+The question is whether the list was there BEFORE anyone typed:
+
+- it was already showing results and typing made it SHORTER → this, a filter
+- it was absent or empty and typing PUT RESULTS IN IT → a combobox
+
+Neither can be told from the markup, because both are a text field with a list
+beside it. Type one letter into the field and watch which of the two happens.
 
 ## breadcrumb
 
