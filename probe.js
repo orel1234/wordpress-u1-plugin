@@ -479,6 +479,84 @@
     } catch (e) { return true; }
   };
 
+  /**
+   * The run of siblings a set of revealed elements belongs to.
+   *
+   * A carousel and a tab strip are the same observation up to here — press a
+   * control, something is shown and something else is hidden — and they were
+   * not being told apart at all: a hero carousel with prev/next arrows came
+   * back as a strip of two controls "each revealing the same region", which is
+   * a menu. Measured, not supposed.
+   *
+   * What separates them is COUNTING. A tab strip has as many panels as it has
+   * tabs, because each tab owns one. A carousel has two arrows and five slides:
+   * the controls cycle a set that is bigger than they are. So: find the run of
+   * siblings the revealed elements sit in, and compare its size to the number
+   * of controls.
+   */
+  var siblingRun = function (els, controls, touched) {
+    if (!els.length) return null;
+    var parent = els[0].parentElement;
+    if (!parent) return null;
+    for (var i = 1; i < els.length; i++) if (els[i].parentElement !== parent) return null;
+    var kids = Array.prototype.slice.call(parent.children);
+    // Only the ones that look like peers of what was revealed — a track with
+    // five slides and a stray caption should count five, not six.
+    var tag = els[0].tagName;
+    var peers = kids.filter(function (k) { return k.tagName === tag; });
+    var items = peers.length >= els.length ? peers : kids;
+
+    // Anything holding a CONTROL is not a slide.
+    //
+    // Slides are inert: a track holds pictures and text, and the arrows live
+    // outside it. So a peer that is, or contains, something this run pressed is
+    // another component's container and must not be counted.
+    //
+    // Excluding only the strip's own controls was not enough, and the case that
+    // proved it is worth keeping: on a page written flat — tab panels as direct
+    // children of the page, beside the nav and the accordion — the run came
+    // back as five, the strip had three controls, and an ordinary tab strip was
+    // reported as a carousel. It then stopped being pressed back afterwards,
+    // because only a strip gets pressed back, so the page was left on the wrong
+    // panel. A misread that also breaks the promise to put the page back is the
+    // expensive kind.
+    if (controls && controls.length) {
+      items = items.filter(function (k) {
+        for (var c = 0; c < controls.length; c++) {
+          if (k === controls[c] || k.contains(controls[c])) return false;
+        }
+        return true;
+      });
+    }
+    // Slides take TURNS. Whatever is showing and was never shown or hidden by
+    // anything this run did is not one of them — it is the caption beside the
+    // track, or the paragraph below it.
+    //
+    // The case that needed this: a two-control strip whose panels sat flat
+    // beside a paragraph of prose. The prose counted as a third item, three
+    // beat two controls, and the strip was called a carousel. A slide that has
+    // never once been hidden is not a slide.
+    //
+    // Slides not yet reached are kept — they are hidden, not showing, which is
+    // exactly what an untouched slide looks like. That is what lets two arrows
+    // over five slides still read as five.
+    if (touched && touched.length) {
+      items = items.filter(function (k) {
+        return !shown(k) || touched.indexOf(k) !== -1;
+      });
+    }
+    return items.length ? { parent: parent, items: items } : null;
+  };
+
+  /** Prev / next, when the control says so on its face. */
+  var arrowRole = function (el) {
+    var face = faceOf(el).toLowerCase() + ' ' +
+               ((el.getAttribute && el.getAttribute('class')) || '').toLowerCase();
+    if (/prev|back|◄|‹|«|←|הקודם|אחורה/.test(face)) return 'prevButton';
+    if (/next|forward|►|›|»|→|הבא|קדימה/.test(face)) return 'nextButton';
+    return null;
+  };
+
   var isOverlay = function (el) {
     try {
       var pos = root.getComputedStyle(el).position;
@@ -535,6 +613,34 @@
       var panels = [];
       group.forEach(function (r) { r.opened.forEach(function (el) { if (panels.indexOf(el) === -1) panels.push(el); }); });
       if (!panels.length) return;
+      // A CAROUSEL, if the controls are cycling a set bigger than themselves.
+      var revealed = [];
+      group.forEach(function (r) { r.opened.forEach(function (el) {
+        if (revealed.indexOf(el) === -1) revealed.push(el); }); });
+      var swapped = [];
+      group.forEach(function (r) {
+        r.opened.forEach(function (el) { if (swapped.indexOf(el) === -1) swapped.push(el); });
+        (r.closed || []).forEach(function (el) { if (swapped.indexOf(el) === -1) swapped.push(el); });
+      });
+      var run = siblingRun(revealed, pressed.concat(siblings), swapped);
+      if (run && run.items.length > siblings.length) {
+        group.forEach(function (r) { used.add(r.trigger); });
+        siblings.forEach(function (el) { used.add(el); });
+        var parts = { slide: run.items };
+        siblings.forEach(function (el) {
+          var role = arrowRole(el);
+          if (role && !parts[role]) parts[role] = [el];
+        });
+        comps.push({
+          type: 'carousel',
+          root: commonAncestor(siblings.concat(run.items)),
+          parts: parts,
+          why: siblings.length + ' controls cycling ' + run.items.length +
+               ' items — more items than controls, so they are not tabs',
+        });
+        return;
+      }
+
       group.forEach(function (r) { used.add(r.trigger); });
       // The tab that was ALREADY selected reveals nothing when pressed, so it
       // never appears in `results` — and a three-tab strip was reported as two
@@ -601,6 +707,40 @@
   }
 
   /**
+   * What the page does when nobody touches it.
+   *
+   * Everything else here presses something and watches. This watches while
+   * pressing NOTHING, and it answers two questions at once:
+   *
+   *   · a carousel that advances on its own is a carousel even when it has no
+   *     arrows to press — a swipe-only gallery announces itself no other way.
+   *   · a thing that moves by itself and cannot be stopped is a WCAG 2.2.2
+   *     failure in its own right, and it is the kind nobody reports because
+   *     nothing on the page looks broken.
+   *
+   * It costs real time — a slide sits for seconds — so the window is a
+   * parameter and the whole thing is skipped when it is zero.
+   */
+  async function watchIdle(scope, ms, limit) {
+    if (!ms) return null;
+    var els = watched(scope, limit);
+    var before = fingerprint(els);
+    // SAMPLED, not just start-and-end. A carousel of three slides on a cycle
+    // that divides the window lands back where it started and a two-point
+    // comparison sees nothing at all — found by a test whose timing happened
+    // to do exactly that, and reported as "no carousel here" with complete
+    // confidence. Any sample differing from the start is movement.
+    var step = Math.max(250, Math.round(ms / 4));
+    for (var waited = 0; waited < ms; waited += step) {
+      await wait(Math.min(step, ms - waited));
+      var d = diff(before, fingerprint(els));
+      var moved = outermost(d.appeared);
+      if (moved.length) return { moved: moved, gone: outermost(d.vanished), ms: waited + step };
+    }
+    return null;
+  }
+
+  /**
    * Press everything worth pressing inside `scope`, and say what is there.
    *
    * The net is armed for the whole run and disarmed in `finally`, so an
@@ -641,6 +781,38 @@
       // which is the exact opposite of restoring. Classify first, then press
       // back only the thing that cannot undo itself.
       comps = classify(results, pressed);
+
+      // What moves on its own. Done AFTER pressing, so a panel this run opened
+      // is closed again and cannot be mistaken for something that moved by
+      // itself — and so the cost is only paid on a section worth reading.
+      var idle = await watchIdle(scope, opts.idle == null ? 2000 : opts.idle, opts.limit);
+      if (idle) {
+        var run = siblingRun(idle.moved, pressed, idle.moved.concat(idle.gone || []));
+        if (run) {
+          var already = comps.some(function (c) {
+            return c.parts && c.parts.slide && c.parts.slide.indexOf(run.items[0]) !== -1;
+          });
+          if (already) {
+            // A carousel already found by its arrows. Say that it also moves on
+            // its own, which is the part with a WCAG requirement attached.
+            comps.forEach(function (c) {
+              if (c.type !== 'carousel') return;
+              c.autoAdvances = true;
+              c.why += ', and it advances on its own';
+            });
+          } else {
+            comps.push({
+              type: 'carousel',
+              root: run.parent.parentElement || run.parent,
+              parts: { slide: run.items },
+              autoAdvances: true,
+              why: 'it changed which of ' + run.items.length +
+                   ' items is showing with nobody touching it',
+            });
+          }
+        }
+      }
+
       if (!same(start, fingerprint(wholeScope))) {
         for (var g = 0; g < comps.length; g++) {
           if (comps[g].shape !== 'strip') continue;

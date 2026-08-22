@@ -183,15 +183,41 @@ explicit reference, then any data-attribute naming a real element, then the
 next sibling; and takes the sibling of the wrapping HEADING rather than of the
 button, when the button is wrapped in one.
 
-## carousel
+## carousel — decided
 
 A strip of items showing one at a time, with a way to move between them.
 
 - **Read:** carousel, slideshow, gallery, slider, ticker, marquee, or a library
-  fingerprint (swiper, slick, glide, embla).
-- **Also this:** a ticker, a marquee and an announcement rail. Anything with
-  previous/next that swaps what is visible.
+  fingerprint. A ticker, a marquee and an announcement rail are all this.
+- **Pressed:** controls that cycle a set BIGGER THAN THEMSELVES. This is the
+  whole discriminator against a tab strip, which has as many panels as tabs
+  because each tab owns one. A carousel has two arrows and five slides.
+  Measured first: a hero carousel with prev/next was coming back as a strip of
+  two controls "each revealing the same region" — a menu.
+- **A swipe-only gallery with no arrows is still a carousel.** It has nothing to
+  press, so the only way to find it is to watch it move.
+- **It advances on its own:** watched with nothing pressed. Reported as its own
+  fact, because a thing that moves and cannot be stopped is WCAG 2.2.2 in its
+  own right — the kind nobody reports, since nothing on the page looks broken.
 - **Not:** a row that merely scrolls. Something must CHANGE which item is shown.
+
+Three things had to be got right for the counting rule not to swallow tab
+strips, each found by a test rather than by reasoning:
+
+- anything holding a CONTROL is not a slide — slides are inert, the arrows live
+  outside the track. On a page written flat, a strip's own panels sat beside the
+  nav and the accordion and the run counted five against three controls.
+- anything that never once took its turn is not a slide either. A paragraph of
+  prose beside a two-control strip counted as a third item and made it a
+  carousel.
+- but a slide nobody reached IS one. Untouched slides are hidden, which is what
+  an unreached slide looks like, so two arrows over five slides still counts
+  five.
+
+And the idle watch SAMPLES rather than comparing start to end: a cycle that
+divides the window lands back on the first slide and a two-point comparison
+sees nothing. Found by a test whose timing did exactly that and then reported
+"no carousel here" with complete confidence.
 
 ## dialog
 

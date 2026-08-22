@@ -236,6 +236,126 @@ console.log('\na panel with links in it is judged on what ELSE is in it');
     out.components.map(c => c.type).join());
 }
 
+// ── A carousel is not a tab strip, and counting is what says so ────────────
+//
+// Both are "press a control, something is shown and something else hidden", and
+// they were not being told apart at all: a hero carousel with prev/next came
+// back as a strip of two controls "each revealing the same region" — a menu.
+// Measured before this was written, not supposed.
+//
+// A tab strip has as many panels as tabs, because each tab owns one. A carousel
+// has two arrows and five slides.
+console.log('\na carousel is told from a tab strip by counting');
+{
+  const w = page(`
+    <div id="hero">
+      <div class="track"><div id="s1">One</div><div id="s2" hidden>Two</div><div id="s3" hidden>Three</div></div>
+      <button id="prev">Prev</button><button id="next">Next</button>
+    </div>`);
+  const d = w.document;
+  let at = 0;
+  const show = () => ['s1', 's2', 's3'].forEach((id, i) => { d.getElementById(id).hidden = i !== at; });
+  d.getElementById('next').addEventListener('click', () => { at = (at + 1) % 3; show(); });
+  d.getElementById('prev').addEventListener('click', () => { at = (at + 2) % 3; show(); });
+
+  const out = await w.__u1Probe.probeAll(d.getElementById('hero'), { settle: 0, idle: 0 });
+  const c = out.components[0] || {};
+  check('two arrows cycling three slides is a carousel', c.type === 'carousel',
+    out.components.map(x => x.type).join());
+  check('…and the page is still put back afterwards', out.restored === true);
+  check('…with every slide, not only the ones that were shown',
+    c.parts && c.parts.slide && c.parts.slide.length === 3,
+    c.parts && c.parts.slide && c.parts.slide.map(e => e.id).join());
+  check('…and prev/next named from what the control says on its face',
+    c.parts && c.parts.prevButton && c.parts.prevButton[0].id === 'prev' &&
+    c.parts.nextButton && c.parts.nextButton[0].id === 'next');
+}
+{
+  // Same observation, equal counts: still a strip. This is the check that stops
+  // the carousel rule swallowing tab strips.
+  const w = page(`
+    <div id="w">
+      <div class="strip"><button id="t1">A</button><button id="t2">B</button><button id="t3">C</button></div>
+      <div class="panels"><div id="p1">a</div><div id="p2" hidden>b</div><div id="p3" hidden>c</div></div>
+    </div>`);
+  const d = w.document;
+  ['t1', 't2', 't3'].forEach((id, i) => d.getElementById(id).addEventListener('click', () => {
+    ['p1', 'p2', 'p3'].forEach((p, j) => { d.getElementById(p).hidden = i !== j; });
+  }));
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  check('three controls over three panels is still a strip, not a carousel',
+    out.components.length === 1 && out.components[0].type === 'menu' &&
+    out.components[0].shape === 'strip',
+    out.components.map(c => c.type + (c.shape ? ':' + c.shape : '')).join());
+}
+
+{
+  // Five slides, two arrows, and only two slides ever seen. The three nobody
+  // reached are hidden — which is exactly what an untouched slide looks like —
+  // so they must still be counted. This is the check that stops the
+  // "only what took turns is a slide" rule from shrinking a real carousel.
+  const w = page(`
+    <div id="h5"><div class="track">
+      ${[1, 2, 3, 4, 5].map(n => `<div id="f${n}"${n > 1 ? ' hidden' : ''}>Slide ${n}</div>`).join('')}
+    </div><button id="fp">Prev</button><button id="fn">Next</button></div>`);
+  const d = w.document;
+  let at = 0;
+  const show = () => [1, 2, 3, 4, 5].forEach((n, i) => { d.getElementById('f' + n).hidden = i !== at; });
+  d.getElementById('fn').addEventListener('click', () => { at = (at + 1) % 5; show(); });
+  d.getElementById('fp').addEventListener('click', () => { at = (at + 4) % 5; show(); });
+  const out = await w.__u1Probe.probeAll(d.getElementById('h5'), { settle: 0, idle: 0 });
+  const c = out.components[0] || {};
+  check('five slides behind two arrows are all counted',
+    c.type === 'carousel' && c.parts.slide.length === 5,
+    c.type + ':' + (c.parts && c.parts.slide ? c.parts.slide.length : '?'));
+}
+
+// ── What the page does when nobody touches it ──────────────────────────────
+//
+// A gallery you swipe has no arrows to press and announces itself no other way.
+// It is also the WCAG 2.2.2 case — something that moves on its own and cannot
+// be stopped — which nobody reports, because nothing on the page looks broken.
+console.log('\nwhat moves with nobody touching it');
+{
+  const rail = `<div id="g"><div class="rail">
+      <div id="g1">P1</div><div id="g2" hidden>P2</div><div id="g3" hidden>P3</div></div></div>`;
+  const spin = (w, ms) => {
+    const d = w.document;
+    let at = 0;
+    return setInterval(() => {
+      at = (at + 1) % 3;
+      ['g1', 'g2', 'g3'].forEach((id, i) => { d.getElementById(id).hidden = i !== at; });
+    }, ms);
+  };
+
+  const w = page(rail);
+  const t = spin(w, 120);
+  const out = await w.__u1Probe.probeAll(w.document.getElementById('g'), { settle: 0, idle: 400 });
+  clearInterval(t);
+  const c = out.components[0] || {};
+  check('a gallery with no controls at all is found because it moves',
+    c.type === 'carousel' && c.autoAdvances === true,
+    out.components.map(x => x.type).join());
+
+  // The miss this nearly shipped with: a cycle that divides the window lands
+  // back on the first slide, and a start-and-end comparison sees NOTHING. Found
+  // by a test whose timing happened to do exactly that, which then reported "no
+  // carousel here" with complete confidence. The watch samples for this reason.
+  const w2 = page(rail);
+  const t2 = spin(w2, 200);                     // three slides × 200ms = 600ms
+  const out2 = await w2.__u1Probe.probeAll(w2.document.getElementById('g'), { settle: 0, idle: 600 });
+  clearInterval(t2);
+  check('…even when a full lap lands it back where it started',
+    (out2.components[0] || {}).type === 'carousel',
+    out2.components.map(x => x.type).join() || '(missed)');
+
+  // And a page that simply sits there is not a carousel.
+  const w3 = page(`<div id="q"><div class="rail"><div id="q1">P1</div><div id="q2" hidden>P2</div></div></div>`);
+  const out3 = await w3.__u1Probe.probeAll(w3.document.getElementById('q'), { settle: 0, idle: 300 });
+  check('a still page is not called a carousel', out3.components.length === 0,
+    out3.components.map(x => x.type).join());
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`

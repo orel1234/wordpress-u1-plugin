@@ -8201,8 +8201,18 @@ async function probeScreen(tab) {
     return await inPage(tab.id, async () => {
       const P = window.__u1Probe, S = window.__u1SelectorIntel;
       if (!P || !S) return null;
+      // `idle` buys the two findings a press cannot make: a gallery you swipe,
+      // which has no control to press and announces itself no other way, and a
+      // thing that moves on its own and cannot be stopped, which is a WCAG
+      // 2.2.2 failure nobody reports because nothing looks broken.
+      //
+      // It costs its own window per section, on top of the pressing, and a
+      // sweep visits a lot of sections — so it is stated here rather than
+      // defaulted into silently. Two seconds is under the shortest auto-advance
+      // worth calling one (a slide nobody could read faster than that), and the
+      // watch samples inside the window rather than only at its ends.
       const out = await P.probeAll(document.body,
-        { inViewport: true, settle: 80, max: 12, limit: 2500 });
+        { inViewport: true, settle: 80, max: 12, limit: 2500, idle: 2000 });
       // Selectors are worked out HERE, where the elements are. The panel never
       // handles a node — only a selector produced by the same code that
       // produces every other selector in the tool.
@@ -8217,7 +8227,13 @@ async function probeScreen(tab) {
         components: out.components.map((c) => {
           const parts = {};
           for (const k of Object.keys(c.parts)) parts[k] = nameFor(c.root, c.parts[k]);
-          return { type: c.type, root: c.root ? S.robustSelector(c.root) : '', why: c.why, parts };
+          const out = { type: c.type, root: c.root ? S.robustSelector(c.root) : '', why: c.why, parts };
+          // Both of these were being dropped on the floor here, which is the
+          // quietest way to lose a finding: observed correctly, reported
+          // correctly, and then not carried across the boundary.
+          if (c.autoAdvances) out.autoAdvances = true;      // WCAG 2.2.2
+          if (c.stateClass) out.stateClass = c.stateClass;  // how the page says "open"
+          return out;
         }),
       };
     });
