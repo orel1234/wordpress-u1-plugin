@@ -310,6 +310,133 @@ console.log('\na carousel is told from a tab strip by counting');
     c.type + ':' + (c.parts && c.parts.slide ? c.parts.slide.length : '?'));
 }
 
+// ── A rail that only SCROLLS hides nothing ─────────────────────────────────
+//
+// This is how swipe galleries and product shelves are actually built: every
+// item keeps its box and what moves is the window onto them. The visibility
+// comparison can never see it, so the whole behavioural layer found nothing at
+// all — measured both ways round, the same gallery written with `hidden` came
+// back as a carousel and written as a scroller came back as an empty page.
+//
+// Decided: any horizontal rail that moves is a carousel. A shelf of twenty
+// products with two arrows and no "current item" is one.
+console.log('\na rail that moves without hiding anything');
+{
+  const slider = (withArrows) => {
+    const w = page(`<div id="rail">
+      <div class="strip">${[1, 2, 3, 4].map(n => `<img id="i${n}">`).join('')}</div>
+      ${withArrows ? '<button id="next">Next</button><button id="prev">Prev</button>' : ''}
+    </div>`);
+    const d = w.document;
+    let scroll = 0;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      const n = /^i(\d)$/.exec(this.id);
+      const x = n ? (Number(n[1]) - 1) * 300 - scroll : 0;
+      return { top: 10, left: x, right: x + 300, bottom: 210, width: 300, height: 200 };
+    };
+    if (withArrows) {
+      d.getElementById('next').addEventListener('click', () => { scroll += 300; });
+      d.getElementById('prev').addEventListener('click', () => { scroll -= 300; });
+    }
+    return { w, d, tick: () => { scroll += 300; } };
+  };
+
+  const a = slider(true);
+  let out = await a.w.__u1Probe.probeAll(a.d.getElementById('rail'), { settle: 0, idle: 0 });
+  let c = out.components[0] || {};
+  check('a shelf whose arrows scroll it is a carousel', c.type === 'carousel',
+    out.components.map(x => x.type).join() || '(nothing)');
+  check('…with all four items and both arrows named',
+    c.parts && c.parts.slide.length === 4 &&
+    c.parts.nextButton && c.parts.prevButton);
+
+  const b = slider(false);
+  const t = setInterval(b.tick, 100);
+  out = await b.w.__u1Probe.probeAll(b.d.getElementById('rail'), { settle: 0, idle: 400 });
+  clearInterval(t);
+  check('a ticker that scrolls itself, with no controls at all, is found',
+    (out.components[0] || {}).type === 'carousel' && out.components[0].autoAdvances === true,
+    out.components.map(x => x.type).join() || '(nothing)');
+
+  const still = slider(false);
+  out = await still.w.__u1Probe.probeAll(still.d.getElementById('rail'), { settle: 0, idle: 300 });
+  check('…and a rail that just sits there is not', out.components.length === 0,
+    out.components.map(x => x.type).join());
+}
+{
+  // The false positive this rule could easily have: opening an accordion pushes
+  // everything below it DOWN. Counting that as movement would make every
+  // accordion on the page a carousel, which is why a shift only counts when it
+  // is sideways and more sideways than it is vertical.
+  const w = page(`<div id="w">
+    <button id="b">Shipping?</button><div id="p" hidden>Two days.</div>
+    <div id="below">Something underneath</div></div>`);
+  const d = w.document;
+  let pushed = 0;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    const down = this.id === 'below' ? pushed : 0;
+    return { top: 10 + down, left: 10, right: 210, bottom: 50 + down, width: 200, height: 40 };
+  };
+  d.getElementById('b').addEventListener('click', () => {
+    const p = d.getElementById('p');
+    p.hidden = !p.hidden;
+    pushed = p.hidden ? 0 : 120;
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  check('an accordion pushing content down is not a carousel',
+    out.components.length === 1 && out.components[0].type === 'accordion',
+    out.components.map(c => c.type).join() || '(nothing)');
+}
+
+// ── A dialog is a dialog whether or not it behaves ─────────────────────────
+//
+// Most sites do not move focus into what they open. That is the entire reason
+// the accessibility layer exists — so requiring correct focus behaviour before
+// agreeing something IS a dialog would mean the broken ones, the only ones
+// worth mapping, are the ones we decline to find.
+//
+// Recorded as a finding instead: does this one already need the fix.
+console.log('\nfocus behaviour is a finding, never a condition');
+{
+  const overlay = (moveFocus) => {
+    const w = page(`<div id="w"><button id="open">Open</button>
+      <div id="modal" hidden><button id="close">Close</button></div></div>`);
+    const d = w.document;
+    // Big enough to read as a layer over the page.
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      if (this.id === 'modal') return { top: 0, left: 0, right: 1024, bottom: 768, width: 1024, height: 768 };
+      return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+    };
+    w.getComputedStyle = (el) => ({
+      position: el && el.id === 'modal' ? 'fixed' : 'static',
+      visibility: 'visible', display: 'block', opacity: '1',
+    });
+    d.getElementById('open').addEventListener('click', () => {
+      const m = d.getElementById('modal');
+      m.hidden = !m.hidden;
+      if (moveFocus && !m.hidden) d.getElementById('close').focus();
+    });
+    return { w, d };
+  };
+
+  const bad = overlay(false);
+  let out = await bad.w.__u1Probe.probeAll(bad.d.getElementById('w'), { settle: 0, idle: 0 });
+  let c = out.components[0] || {};
+  check('a modal that never moves focus is STILL found as a dialog',
+    c.type === 'dialog', out.components.map(x => x.type).join() || '(nothing)');
+  check('…and the missing focus is reported as the work it needs',
+    c.focusEntered === false && /focus stayed outside/i.test(c.why || ''), c.why);
+
+  const good = overlay(true);
+  out = await good.w.__u1Probe.probeAll(good.d.getElementById('w'), { settle: 0, idle: 0 });
+  c = out.components[0] || {};
+  check('one that does move focus is the same dialog, without the complaint',
+    c.type === 'dialog' && c.focusEntered === true && !/focus stayed outside/i.test(c.why || ''),
+    c.type + ' / ' + c.focusEntered);
+}
+
 // ── What the page does when nobody touches it ──────────────────────────────
 //
 // A gallery you swipe has no arrows to press and announces itself no other way.

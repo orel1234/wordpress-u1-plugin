@@ -8233,6 +8233,10 @@ async function probeScreen(tab) {
           // correctly, and then not carried across the boundary.
           if (c.autoAdvances) out.autoAdvances = true;      // WCAG 2.2.2
           if (c.stateClass) out.stateClass = c.stateClass;  // how the page says "open"
+          // Whether focus followed what opened. A finding, not a condition —
+          // a panel that covers the page is a dialog either way, and the ones
+          // that get this wrong are the ones worth mapping.
+          if (c.focusEntered != null) out.focusEntered = c.focusEntered;
           return out;
         }),
       };

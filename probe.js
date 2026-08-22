@@ -186,6 +186,50 @@
     return (added.length || removed.length) ? { added: added, removed: removed } : null;
   }
 
+  /**
+   * Where things ARE, which is the half the visibility fingerprint cannot see.
+   *
+   * A rail that only scrolls hides nothing: every item keeps its box, and what
+   * moves is the window onto them. So the whole behavioural layer found
+   * NOTHING on a swipe gallery built the way swipe galleries are actually
+   * built — measured, both ways round: the same gallery written with hidden
+   * came back as a carousel and written as a scroller came back as an empty
+   * page.
+   *
+   * Kept out of `fingerprint` for the same reason `class` is: the restore check
+   * compares fingerprints, and a page that scrolls a pixel on its own would
+   * start reporting itself as never restored.
+   */
+  function geometry(all) {
+    var out = new Map();
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i], r = null;
+      try { r = el.getBoundingClientRect(); } catch (e) {}
+      out.set(el, r ? (Math.round(r.left) + '|' + Math.round(r.top)) : '');
+    }
+    return out;
+  }
+
+  /**
+   * What slid sideways.
+   *
+   * HORIZONTAL on purpose. Opening an accordion pushes everything below it
+   * down, and counting that as movement would make every accordion on the page
+   * a carousel — so a shift only counts when it is sideways and more sideways
+   * than it is vertical.
+   */
+  function shifted(before, after) {
+    var out = [];
+    after.forEach(function (now, el) {
+      var was = before.get(el);
+      if (!was || !now || was === now) return;
+      var a = was.split('|'), b = now.split('|');
+      var dx = Math.abs(Number(b[0]) - Number(a[0])), dy = Math.abs(Number(b[1]) - Number(a[1]));
+      if (dx > 8 && dx > dy) out.push(el);
+    });
+    return out;
+  }
+
   function shown(el) {
     if (el.hasAttribute('hidden')) return false;
     var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
@@ -313,15 +357,55 @@
     var els = watched(scope, opts.limit);
     var before = fingerprint(els);
     var classBefore = classesOf(els);
+    var whereBefore = geometry(els);
+    var focusBefore = doc.activeElement;
     try { el.click(); } catch (e) { return { skipped: true, why: 'could not be pressed' }; }
     await raf();
     if (settle) await wait(settle);
     var after = fingerprint(els);
     var classAfter = classesOf(els);
     var d = diff(before, after);
+    var slid = outermost(shifted(whereBefore, geometry(els)));
+
+    // Is what opened a LAYER OVER THE PAGE? Measured HERE, while it is open.
+    //
+    // This used to be asked in classify(), which runs after every press has
+    // been undone — so it measured a CLOSED panel, and a panel closed with
+    // `hidden` has no box at all. The test read `width >= 60% of the viewport`
+    // against a width of zero and answered no, every time. A modal was
+    // therefore reported as an accordion: "it revealed and hid a region", which
+    // is true, and useless.
+    //
+    // It only ever appeared to work on drawers that stay laid out while closed
+    // — translated off-screen rather than hidden — which is why it survived.
+    var panel = panelOf(d);
+    var isLayer = panel ? isOverlay(panel) : false;
+
+    // Did focus follow what opened?
+    //
+    // Recorded as a FINDING, never as a condition for recognising anything. A
+    // panel that covers the page is a dialog whether or not the site moved
+    // focus into it — and most sites do not, which is the entire reason the
+    // accessibility layer exists. Requiring correct focus behaviour before
+    // agreeing something is a dialog would mean the broken ones, the only ones
+    // worth mapping, are the ones we decline to find.
+    //
+    // So this answers "does this one already need the fix", which is the
+    // specialist's next question anyway.
+    var focusEntered = null;
+    if (panel) {
+      var landed = doc.activeElement;
+      focusEntered = !!(landed && landed !== focusBefore && panel.contains(landed));
+    }
+
 
     // Put it back before reporting, so a caller that stops reading here still
     // leaves the page as it found it.
+    //
+    // EVERYTHING about the OPEN state has to be measured above this line. Both
+    // things that ask "what was it like while it was open" — is it a layer over
+    // the page, did focus go into it — were written below it first, and both
+    // answered no every single time, because by then it was shut.
     var restored = false;
     try {
       el.click();
@@ -340,8 +424,8 @@
     // either one and about as often on both.
     var stateClass = null;
     var onTrigger = classDelta(classBefore, classAfter, el);
-    var panel = outermost(d.appeared)[0] || d.changed[0] || null;
-    var onPanel = panel ? classDelta(classBefore, classAfter, panel) : null;
+    var marked = panel || d.changed[0] || null;
+    var onPanel = marked ? classDelta(classBefore, classAfter, marked) : null;
     if (onTrigger || onPanel) {
       stateClass = { trigger: onTrigger, panel: onPanel };
     }
@@ -350,10 +434,19 @@
       skipped: false,
       opened: outermost(d.appeared),
       closed: outermost(d.vanished),
+      moved: slid,
       touched: d.changed.length,
+      focusEntered: focusEntered,
+      overlay: isLayer,
       stateClass: stateClass,
       restored: restored,
     };
+  }
+
+  /** The thing a press revealed, if it revealed one. */
+  function panelOf(d) {
+    var opened = outermost(d.appeared);
+    return opened.length ? opened[0] : null;
   }
 
   function same(a, b) {
@@ -599,7 +692,9 @@
 
     byParent.forEach(function (siblings) {
       if (siblings.length < 2) return;
-      var group = results.filter(function (r) { return siblings.indexOf(r.trigger) !== -1; });
+      var group = results.filter(function (r) {
+        return siblings.indexOf(r.trigger) !== -1 && r.opened.length;
+      });
       if (!group.length) return;
       // Siblings that each reveal something are not automatically a tab strip.
       // A header toolbar is exactly that shape — Search, Wishlist and Cart each
@@ -678,10 +773,38 @@
       });
     });
 
+    // A rail that SLIDES. No counting needed and no hiding involved: if
+    // pressing a control moved a run of siblings sideways, that is a carousel,
+    // however many controls it has. A shelf of twenty products with two arrows
+    // is one; so is a swipe gallery with no arrows at all, found below by
+    // watching it move on its own.
+    results.forEach(function (r) {
+      if (used.has(r.trigger) || !r.moved || !r.moved.length) return;
+      var run = siblingRun(r.moved, pressed, r.moved);
+      if (!run || run.items.length < 2) return;
+      used.add(r.trigger);
+      var parts = { slide: run.items };
+      var role = arrowRole(r.trigger);
+      if (role) parts[role] = [r.trigger];
+      // The other arrow, when there is one: its sibling that was also pressed.
+      pressed.forEach(function (el) {
+        if (el === r.trigger || el.parentElement !== r.trigger.parentElement) return;
+        var other = arrowRole(el);
+        if (other && !parts[other]) { parts[other] = [el]; used.add(el); }
+      });
+      comps.push({
+        type: 'carousel',
+        root: commonAncestor([r.trigger].concat(run.items)),
+        parts: parts,
+        why: 'pressing it slid a rail of ' + run.items.length + ' items sideways',
+      });
+    });
+
     results.forEach(function (r) {
       if (used.has(r.trigger) || !r.opened.length) return;
       var panel = r.opened[0];
-      var type = isOverlay(panel) ? 'dialog'
+      // `r.overlay` was measured while the panel was open. See probeOne.
+      var type = r.overlay ? 'dialog'
         : (mostlyLinks(panel) ? 'menu' : 'accordion');
       var why = type === 'dialog' ? 'it opened a layer over the page'
         : type === 'menu' ? 'it revealed a panel of links and nothing else'
@@ -694,11 +817,17 @@
                     (r.stateClass.trigger && r.stateClass.trigger.added) || [];
         if (added.length) why += ', and marks it open with .' + added[0];
       }
+      // The work this one needs, said plainly. Not a reason to doubt it is a
+      // dialog — the reason to map it.
+      if (type === 'dialog' && r.focusEntered === false) {
+        why += '. Focus stayed outside it when it opened';
+      }
       comps.push({
         type: type,
         root: type === 'dialog' ? panel : commonAncestor([r.trigger, panel]),
         parts: { trigger: [r.trigger], panel: [panel] },
         stateClass: r.stateClass || null,
+        focusEntered: r.focusEntered,
         why: why,
       });
     });
@@ -725,6 +854,7 @@
     if (!ms) return null;
     var els = watched(scope, limit);
     var before = fingerprint(els);
+    var whereBefore = geometry(els);
     // SAMPLED, not just start-and-end. A carousel of three slides on a cycle
     // that divides the window lands back where it started and a two-point
     // comparison sees nothing at all — found by a test whose timing happened
@@ -736,6 +866,10 @@
       var d = diff(before, fingerprint(els));
       var moved = outermost(d.appeared);
       if (moved.length) return { moved: moved, gone: outermost(d.vanished), ms: waited + step };
+      // A ticker that scrolls itself hides nothing at all, so the visibility
+      // comparison above will never see it however long it watches.
+      var slid = outermost(shifted(whereBefore, geometry(els)));
+      if (slid.length) return { moved: slid, gone: [], slid: true, ms: waited + step };
     }
     return null;
   }
@@ -768,8 +902,10 @@
         if (r.skipped) { skipped++; continue; }
         everPressed.add(list[i]);
         pressed.push(list[i]);
-        if (r.opened.length) {
-          results.push({ trigger: list[i], opened: r.opened, closed: r.closed, stateClass: r.stateClass });
+        if (r.opened.length || r.moved.length) {
+          results.push({ trigger: list[i], opened: r.opened, closed: r.closed,
+                         moved: r.moved, stateClass: r.stateClass,
+                         focusEntered: r.focusEntered, overlay: r.overlay });
         }
       }
 

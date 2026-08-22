@@ -199,7 +199,17 @@ A strip of items showing one at a time, with a way to move between them.
 - **It advances on its own:** watched with nothing pressed. Reported as its own
   fact, because a thing that moves and cannot be stopped is WCAG 2.2.2 in its
   own right — the kind nobody reports, since nothing on the page looks broken.
-- **Not:** a row that merely scrolls. Something must CHANGE which item is shown.
+- **Any horizontal rail that moves is a carousel.** A shelf of twenty products
+  with two arrows and no "current item" is one. So is a swipe gallery.
+
+"A row that merely scrolls is not a carousel" was written here first and was
+never a rule — it was a LIMIT OF THE CODE presented as a decision. Measured
+both ways round: the same gallery written with `hidden` came back as a
+carousel, and written as a scroller came back as an empty page. Movement is
+watched now, not only appearing and disappearing.
+
+Only SIDEWAYS movement counts. Opening an accordion pushes everything below it
+down, and counting that would make every accordion on the page a carousel.
 
 Three things had to be got right for the counting rule not to swallow tab
 strips, each found by a test rather than by reasoning:
@@ -219,19 +229,36 @@ divides the window lands back on the first slide and a two-point comparison
 sees nothing. Found by a test whose timing did exactly that and then reported
 "no carousel here" with complete confidence.
 
-## dialog
+## dialog — decided
 
 Something that opens over the page and takes it over until dismissed.
 
 - **Read:** modal, lightbox, drawer, offcanvas, or the dialog role.
-- **Pressed:** the strongest signal, and the one that needs no name — what
-  opened covers most of the screen and is positioned over it.
-- **Also this:** a drawer and an off-canvas panel. A drawer is a modal by
-  behaviour: it covers the page and traps focus.
-- **Root:** the thing that APPEARS, never what opens it. The trigger is its own
-  field, and a dialog with no trigger is still a real mapping.
-- **Not:** a panel that pushes the page down rather than covering it — that is
-  an accordion.
+- **Pressed:** what opened covers most of the screen and sits in a layer over
+  it. Needs no name at all.
+- **Also this:** a drawer and an off-canvas panel.
+- **Root:** the thing that APPEARS, never what opens it. A dialog with no
+  trigger is still a real mapping.
+- **Not:** a panel that pushes the page down rather than covering it.
+
+**Focus behaviour is a FINDING, never a condition.** A first draft of this file
+proposed checking that focus is really trapped and returned. That is backwards:
+a site's developer often does not build that, focus often is not trapped, and
+that is the whole reason the accessibility layer exists. Requiring correct focus
+behaviour before agreeing something IS a dialog would mean the broken ones — the
+only ones worth mapping — are the ones detection declines to find.
+
+So it is recorded instead: did focus follow what opened. A dialog that leaves
+focus outside says so in its own line, as the work it needs.
+
+**A bug this uncovered, older than any of these decisions:** "does it cover the
+page" was being asked AFTER every press had been undone, so it measured a
+CLOSED panel. A panel closed with `hidden` has no box, the test compared a width
+of zero against 60% of the viewport, and answered no — every time. Modals were
+being reported as accordions: "it revealed and hid a region", true and useless.
+It only ever appeared to work on drawers that stay laid out while closed, which
+is why it survived. Everything about the open state is now measured while it is
+open, and there is a line in the code saying so.
 
 ## listbox and combobox
 
