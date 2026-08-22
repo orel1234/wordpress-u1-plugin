@@ -1097,6 +1097,30 @@
       });
     };
 
+    // FIRST: touch it without typing.
+    //
+    // A popup does not have to open empty. Most of them open showing every
+    // option, and typing then narrows what is already in front of you — which
+    // from the typing alone is indistinguishable from a page filter, and was
+    // being called one. The difference is a step earlier: the page filter's
+    // list is part of the page and was on screen before anybody touched
+    // anything, and the popup's list was not there until the field was.
+    try { input.focus(); input.click(); } catch (e) {}
+    await raf();
+    if (settle) await wait(settle);
+    var onTouch = diff(before, fingerprint(els));
+    var countTouched = listCounts(scope);
+    var openedOnTouch = outermost(onTouch.appeared);
+    countBefore.forEach(function (was, el) {
+      var now = countTouched.get(el);
+      if (was === 0 && now > 0 && openedOnTouch.indexOf(el) === -1) openedOnTouch.push(el);
+    });
+
+    // The baseline for the typing step is the page as it stands NOW, with the
+    // popup open — otherwise the opening itself reads as the typing's doing.
+    var beforeTyping = fingerprint(els);
+    var countBeforeTyping = countTouched;
+
     try {
       input.value = opts.text || 'a';
       fire(input);
@@ -1104,7 +1128,7 @@
     await raf();
     if (settle) await wait(settle);
 
-    var d = diff(before, fingerprint(els));
+    var d = diff(beforeTyping, fingerprint(els));
     var countAfter = listCounts(scope);
 
     // Put the letter back before anything else. A field left with a stray
@@ -1112,13 +1136,18 @@
     try {
       input.value = '';
       fire(input);
+      // …and shut whatever the touch opened, the way a person would.
+      if (openedOnTouch.length) {
+        input.blur();
+        doc.dispatchEvent(new root.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
     } catch (e) {}
     await raf();
     if (settle) await wait(settle);
 
     var revealed = outermost(d.appeared);
     var narrowed = [], filled = [];
-    countBefore.forEach(function (was, el) {
+    countBeforeTyping.forEach(function (was, el) {
       var now = countAfter.get(el);
       if (now == null) return;
       // The container was ALREADY THERE and EMPTY, and typing put results in
@@ -1132,6 +1161,7 @@
 
     return {
       skipped: false,
+      openedOnTouch: openedOnTouch,
       revealed: revealed,
       filled: filled,
       narrowed: narrowed,
@@ -1140,7 +1170,11 @@
       // Revealing beats narrowing when both happen: a page that hides its old
       // results and builds new ones is doing the autocomplete thing, and the
       // narrowing is a side effect of the same keystroke.
-      kind: (revealed.length || filled.length) ? 'combobox'
+      // Opening on touch settles it before the typing is even read: a list that
+      // was not on the page until the field was touched is a popup, however
+      // full it opens and whatever typing then does to it.
+      kind: openedOnTouch.length ? 'combobox'
+          : (revealed.length || filled.length) ? 'combobox'
           : (narrowed.length ? 'filter' : null),
     };
   }

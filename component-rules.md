@@ -125,6 +125,11 @@ beside it under a common parent. `.search-suggestions`, `.autocomplete__list`,
 A field that narrows a list which is **already on the page**: a branch locator,
 a "filter by city" box, a search that rewrites the results below it as you type.
 
+**The field does not have to be a text box.** A filter bar of five dropdowns, or
+a column of checkboxes, narrows the same list and needs the same thing. Somebody
+picks "Haifa", four branches become one, and nothing says so. `field` may be a
+selector matching every control that narrows the list.
+
 **Do not map this as a combobox, and do not give it `role="combobox"` or
 `aria-expanded`.** An ARIA combobox has a popup that opens and closes. This list
 is always there. Those roles describe a control that does not exist and leave a
@@ -151,13 +156,17 @@ Telling the two apart — and it is NOT whether the list floats. A results
 container that goes from empty to populated is a popup in every sense ARIA cares
 about, even though it sits inline in the page and never overlays anything.
 
-The question is whether the list was there BEFORE anyone typed:
+The question is whether the list was on the page before anybody TOUCHED the
+field — which is a step earlier than typing, and that step is what decides:
 
-- it was already showing results and typing made it SHORTER → this, a filter
-- it was absent or empty and typing PUT RESULTS IN IT → a combobox
+1. touch the field without typing. If a list appears that was not there, it is a
+   **combobox** — however full it opens, and whatever typing then does to it. A
+   popup showing every option, narrowing as you type, is still a popup.
+2. only if nothing appeared does the typing decide: the list gets SHORTER →
+   **filter**; an empty container FILLS → **combobox**.
 
 Neither can be told from the markup, because both are a text field with a list
-beside it. Type one letter into the field and watch which of the two happens.
+beside it. This is measured, not read.
 
 ## breadcrumb
 

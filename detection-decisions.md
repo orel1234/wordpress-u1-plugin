@@ -296,11 +296,15 @@ corrected in review: a garage finder where you type and matching results appear
 inline, in the page, is an autocomplete — a container that goes from empty to
 populated is a popup in every sense ARIA cares about.
 
-The question is whether the list was there BEFORE anyone typed:
+The question is whether the list was on the page before anybody TOUCHED the
+field — a step earlier than typing, and that step is what decides:
 
-- already showing results, typing makes it SHORTER → filter, needs a status
-  message
-- absent or empty, typing PUTS RESULTS IN IT → combobox
+1. **touch it without typing.** A list that was not there and now is → combobox,
+   **however full it opens**. Most popups open showing every option and narrow
+   as you type, which from the typing alone is indistinguishable from a page
+   filter and was being called one.
+2. only if nothing appeared does typing decide: it gets SHORTER → filter; an
+   empty container FILLS → combobox.
 
 **Neither can be told from the markup**, because both are a text field with a
 list beside it — and nothing in the code told them apart. `comboboxShape` and
@@ -365,12 +369,28 @@ wins now, in either language; when none does, the candidates are all reported
 and none is chosen, because a field left for a person is honest and a wrong one
 filled in confidently is not.
 
-**A consequence to be aware of:** with a submit required, a filter bar that
-applies on change is no longer a form. It is not a combobox either (decided
-earlier — no popup, so those roles describe a control that does not exist). What
-it needs is a status message saying how many results are showing. That pattern
-is described in `component-rules.md` and has no type of its own, so such a bar
-is currently detected as nothing at all.
+**A consequence, and what was done about it:** with a submit required, a filter
+bar that applies on change is no longer a form, and it is not a combobox either.
+What it needs is a status message saying how many results are showing — and
+there was already a working home for exactly that: a dedicated find-and-apply
+in the panel that measures the field, the list and the item, asks what one
+result IS ("branch", "flight"), and applies `aria-controls` plus a hidden status
+region beside the list.
+
+It only accepted a TEXT field. A bar of five dropdowns — which is most of the
+filter bars there are — matched nothing and fell between every rule in the tool.
+Extended rather than given a new type: the need is identical whichever control
+does the narrowing, and only the event differs.
+
+Two things that broke on the way, both invisible until more than one field ever
+pointed at one list:
+
+- the status region was keyed on the FIELD, so five selects inserted five hidden
+  status regions beside one list and a screen reader heard the count five times.
+  Keyed on the list now.
+- the corrector listened for `input` only. A dropdown and a checkbox fire
+  `change` and nothing else, so a select-driven bar would have announced nothing
+  at all — the fix applied, and silent.
 
 ## table and grid
 

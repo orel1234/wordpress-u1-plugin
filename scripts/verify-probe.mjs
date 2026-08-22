@@ -722,6 +722,33 @@ console.log('\ntyping tells a filter from an autocomplete');
   const c = finder('inert');
   r = await ask(c);
   check('a field where nothing happens is neither', r.kind === null, String(r.kind));
+
+  // The case that made the typing test alone insufficient: a popup that opens
+  // ALREADY FULL. From the typing it is indistinguishable from a page filter —
+  // a list in front of you that gets shorter — and it was being called one. The
+  // difference is a step earlier: this list was not on the page until the field
+  // was touched.
+  const popupFull = (() => {
+    const w = page(`<div id="w"><input type="search" id="q">
+      <ul id="list" hidden>${G.map((g) => `<li>${g}</li>`).join('')}</ul></div>`);
+    const d = w.document;
+    const q = d.getElementById('q'), list = d.getElementById('list');
+    q.addEventListener('click', () => { list.hidden = false; });
+    q.addEventListener('input', () => {
+      const v = q.value.toLowerCase();
+      [...list.children].forEach((li) => {
+        li.hidden = !!v && !li.textContent.toLowerCase().includes(v);
+      });
+    });
+    return { w, d };
+  })();
+  r = await ask(popupFull);
+  check('a popup that opens ALREADY FULL is a combobox, not a filter',
+    r.kind === 'combobox' && r.openedOnTouch.length === 1,
+    r.kind + ' openedOnTouch:' + r.openedOnTouch.length);
+  check('…and touching the field is what settled it, before any typing',
+    r.narrowed.length > 0,
+    'it did narrow on typing too: ' + JSON.stringify(r.narrowed.map((n) => n.was + '->' + n.now)));
 }
 {
   const w = page(`<div id="w"><input type="search" id="q" value="haifa"><ul id="l"><li>x</li></ul></div>`);

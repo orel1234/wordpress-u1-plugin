@@ -1774,7 +1774,13 @@
       // The status lives BESIDE the list, not on it. Making the list itself a
       // live region re-announces every result on every keystroke, which is
       // worse than silence — a count is the useful sentence.
-      var say = field.__u1pSay;
+      // Keyed on the LIST, not on the field. With one text box those are the
+      // same thing; with a filter bar of five selects, keying it on the field
+      // inserts five hidden status regions beside one list and every one of
+      // them announces on every change — so a screen reader hears the count
+      // five times. Found by extending this to selects, which is the first
+      // time more than one field ever pointed at the same list.
+      var say = list.__u1pSay;
       if (!say) {
         say = document.createElement('div');
         say.className = 'u1p-filter-status';
@@ -1784,7 +1790,7 @@
           'position:absolute;width:1px;height:1px;overflow:hidden;' +
           'clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap';
         list.parentNode.insertBefore(say, list);
-        field.__u1pSay = say;
+        list.__u1pSay = say;
       }
 
       var visible = function () {
@@ -1807,11 +1813,18 @@
 
       if (!field.__u1pFilter) {
         field.__u1pFilter = true;
-        // The page does its own filtering on input; this runs after it, so the
+        // The page does its own filtering first; this runs after it, so the
         // count is of what is left rather than what was there.
-        field.addEventListener('input', function () {
+        //
+        // BOTH events. `input` is what a text box fires and was all this
+        // listened for. A dropdown and a checkbox fire `change` and nothing
+        // else, so a filter bar built out of selects — which is most of the
+        // filter bars there are — announced nothing at all.
+        var after = function () {
           (W.requestAnimationFrame || setTimeout)(function () { report(); }, 0);
-        });
+        };
+        field.addEventListener('input', after);
+        field.addEventListener('change', after);
       }
       report();
     });

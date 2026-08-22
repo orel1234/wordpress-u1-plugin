@@ -2695,7 +2695,18 @@
     try { el = document.querySelector(rootSel); } catch (e) { return null; }
     if (!el) return null;
 
-    var TEXTY = 'input[type="search"],input[type="text"],input:not([type])';
+    // A FIELD, not only a text box.
+    //
+    // This required a text input, so a filter bar built out of five dropdowns —
+    // which is most of the filter bars there are — matched nothing and fell
+    // between every rule in the tool: not a form (no submit), not a combobox
+    // (no popup), and not this. Somebody picks "Haifa", four branches become
+    // one, and nothing says so.
+    //
+    // The need is identical whichever control does the narrowing; only the
+    // event differs, and the corrector listens for both now.
+    var TEXTY = 'input[type="search"],input[type="text"],input:not([type]),' +
+                'select,input[type="checkbox"],input[type="radio"]';
     var input = null, list = null, wrap = el;
 
     for (var up = 0; up < 5 && wrap; up++) {
@@ -2726,8 +2737,21 @@
 
     var items2 = Array.prototype.slice.call(list.children).filter(function (x) { return x.nodeType === 1; });
     var itemSel = commonSelectorFor(list, items2, robustSelector(list));
+    // Every control that narrows the list, not just the first one found. Five
+    // selects need five listeners; a selector matching one of them announces
+    // for one of them and stays silent for the other four.
+    var fieldSel = robustSelector(input);
+    try {
+      var siblings = Array.prototype.slice.call(wrap.querySelectorAll(TEXTY))
+        .filter(function (f) { return !list.contains(f); });
+      if (siblings.length > 1) {
+        var common = commonSelectorFor(wrap, siblings, robustSelector(wrap));
+        if (common && common.selector && isU1Valid(common.selector)) fieldSel = common.selector;
+      }
+    } catch (e) {}
+
     var sels = {
-      field: robustSelector(input),
+      field: fieldSel,
       results: robustSelector(list),
       item: (itemSel && itemSel.selector) || '',
     };
