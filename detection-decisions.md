@@ -153,20 +153,35 @@ already agreed, and is waiting on a yes / no / correction each. The format is
 the same throughout: what it is · how it is recognised · what it is confused
 with · when NOT to report it.
 
-## accordion
+## accordion — decided
 
-Headers that expand and collapse panels of content.
+A heading or a piece of text that, pressed, opens a panel inside the page, and
+closes it again when pressed a second time. **Two or more** — one is a
+disclosure, not an accordion.
 
-- **Read:** a name containing accordion, collapsible or faq.
-- **Pressed:** a control that reveals a region and hides it again when pressed a
-  second time — and whose panel does NOT hold two or more links, which would
-  make it a menu.
-- **Root:** the HEADER BUTTON, not the container. The content selector is
-  required; without it U1 has nothing to open.
-- **Confused with:** a menu (its panel holds links) and a strip (pressing one
-  closes another — accordions usually do not, and `collapsesOthers` is the
-  field that says when they do).
-- **Not:** a single header on its own. One disclosure is not an accordion.
+- **Root:** the HEADER BUTTON, not the container. Counter-intuitive and worth
+  repeating, because the class named "accordion" usually sits on the container
+  and that is the wrong answer. The content selector is required.
+- **A class must be seen to change.** This is how a page actually says open —
+  `.is-open`, `.active`, `.expanded` — and it is also the state selector a
+  mapping needs. Now observed on both the trigger and the panel, since sites use
+  either and about as often both.
+- **A link in the panel does not make it a menu.** What decides is what is there
+  BESIDES the links: an FAQ answer with a "read more" in it is prose that
+  contains a link. Measured by subtracting the links' own text and weighing what
+  is left — under about a sentence means the panel is links and whitespace, and
+  that is a menu.
+- **"FAQ" is an assumption, and assumptions are not made.** A name may raise it
+  to the level of a guess — never to a finding. It stays marked with a `?` and
+  must be confirmed by pressing it, which is what the `?` has always meant.
+- **Confused with:** a dialog (covers the page rather than pushing it down) and
+  a strip (pressing one closes another).
+
+Already in the code before this: the shape logic climbs up to four levels from
+a single trigger to find what holds its siblings; finds each panel by an
+explicit reference, then any data-attribute naming a real element, then the
+next sibling; and takes the sibling of the wrapping HEADING rather than of the
+button, when the button is wrapped in one.
 
 ## carousel
 

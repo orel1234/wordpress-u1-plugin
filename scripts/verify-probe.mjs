@@ -156,6 +156,86 @@ console.log('\nwhat pressing it reveals');
   check('it closed again', res.restored === true);
 }
 
+// ── An accordion says "open" with a CLASS, which nothing used to watch ──────
+//
+// The state fingerprint watches `hidden` and the aria-* attributes. Most sites
+// say open with a class instead — `.is-open`, `.active`, `.expanded` — and a
+// panel that changed nothing else was invisible to the whole behavioural layer.
+// It is also the answer U1 needs for a state selector, so finding it here saves
+// a person going to look for it.
+console.log('\nhow the page says "open"');
+{
+  const w = page(`
+    <div id="faq">
+      <button id="q1" class="q">What is your returns policy?</button>
+      <div id="a1" class="answer" hidden>Thirty days, unworn, in the original box.</div>
+    </div>`);
+  const d = w.document;
+  d.getElementById('q1').addEventListener('click', () => {
+    const a = d.getElementById('a1'), q = d.getElementById('q1');
+    a.hidden = !a.hidden;
+    a.className = a.hidden ? 'answer' : 'answer is-open';
+    q.className = a.hidden ? 'q' : 'q q--active';
+  });
+  const res = await w.__u1Probe.probeOne(d.getElementById('q1'),
+    { scope: d.getElementById('faq'), settle: 0 });
+
+  check('the class the page adds to the panel is reported',
+    res.stateClass && res.stateClass.panel && res.stateClass.panel.added.includes('is-open'),
+    JSON.stringify(res.stateClass));
+  check('…and the one it adds to the trigger, which is as common',
+    res.stateClass && res.stateClass.trigger && res.stateClass.trigger.added.includes('q--active'),
+    JSON.stringify(res.stateClass));
+  check('the page is still put back afterwards', res.restored === true);
+}
+
+// A page that adds a transition class on its own must not break the restore
+// check — which is exactly why `class` was kept OUT of the fingerprint.
+{
+  const w = page(`<div id="w"><button id="b">Go</button><div id="p" hidden>x</div></div>`);
+  const d = w.document;
+  d.getElementById('b').addEventListener('click', () => {
+    const p = d.getElementById('p');
+    p.hidden = !p.hidden;
+    // Left behind on purpose, the way an animation class is.
+    d.getElementById('w').className = 'animating';
+  });
+  const res = await w.__u1Probe.probeOne(d.getElementById('b'),
+    { scope: d.getElementById('w'), settle: 0 });
+  check('a leftover animation class does not count as "not restored"',
+    res.restored === true, JSON.stringify({ restored: res.restored }));
+}
+
+// ── A panel with a link in it is still a panel ──────────────────────────────
+//
+// The rule was "two or more links makes it a menu". An FAQ answer with a
+// "read more" and a "contact us" in it is mostly prose and was being called a
+// menu on the strength of the links.
+console.log('\na panel with links in it is judged on what ELSE is in it');
+{
+  const mk = (inner) => {
+    const w = page(`<div id="w"><button id="b">More</button><div id="p" hidden>${inner}</div></div>`);
+    const d = w.document;
+    d.getElementById('b').addEventListener('click', () => {
+      const p = d.getElementById('p'); p.hidden = !p.hidden;
+    });
+    return w;
+  };
+
+  const prose = mk(`Returns are accepted within thirty days provided the shoes are unworn.
+    See our <a href="/policy">full policy</a> or <a href="/contact">contact us</a>.`);
+  let out = await prose.__u1Probe.probeAll(prose.document.getElementById('w'), { settle: 0 });
+  check('prose with two links in it is an accordion, not a menu',
+    out.components.length === 1 && out.components[0].type === 'accordion',
+    out.components.map(c => c.type).join());
+
+  const links = mk(`<a href="/a">Men</a><a href="/b">Women</a><a href="/c">Kids</a>`);
+  out = await links.__u1Probe.probeAll(links.document.getElementById('w'), { settle: 0 });
+  check('…while links and nothing else is still a menu',
+    out.components.length === 1 && out.components[0].type === 'menu',
+    out.components.map(c => c.type).join());
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`

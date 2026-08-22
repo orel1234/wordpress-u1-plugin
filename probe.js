@@ -153,6 +153,39 @@
   var STATE_ATTRS = ['hidden', 'aria-expanded', 'aria-selected', 'aria-hidden',
                      'aria-current', 'open', 'checked'];
 
+  /**
+   * The classes on a set of elements, read separately from `fingerprint`.
+   *
+   * A class toggle is how most sites actually say open/closed — `.is-open`,
+   * `.active`, `.expanded` — and the state fingerprint above does not watch
+   * `class` at all, so a panel that changes nothing but its class was invisible
+   * to the whole behavioural layer.
+   *
+   * Kept OUT of the fingerprint on purpose rather than added to it. The
+   * fingerprint is what the run-wide restore check compares, and pages add and
+   * drop transition classes on their own — folding class into it would make
+   * "the page is back where it started" fail on animation, which stops probing
+   * and, worse, teaches us to distrust a check that exists for the client's
+   * sake.
+   */
+  function classesOf(all) {
+    var out = new Map();
+    for (var i = 0; i < all.length; i++) {
+      var c = all[i].className;
+      out.set(all[i], typeof c === 'string' ? c : '');
+    }
+    return out;
+  }
+
+  /** Which classes appeared on an element, and which went away. */
+  function classDelta(before, after, el) {
+    var was = (before.get(el) || '').split(/\s+/).filter(Boolean);
+    var now = (after.get(el) || '').split(/\s+/).filter(Boolean);
+    var added = now.filter(function (c) { return was.indexOf(c) === -1; });
+    var removed = was.filter(function (c) { return now.indexOf(c) === -1; });
+    return (added.length || removed.length) ? { added: added, removed: removed } : null;
+  }
+
   function shown(el) {
     if (el.hasAttribute('hidden')) return false;
     var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
@@ -279,10 +312,13 @@
 
     var els = watched(scope, opts.limit);
     var before = fingerprint(els);
+    var classBefore = classesOf(els);
     try { el.click(); } catch (e) { return { skipped: true, why: 'could not be pressed' }; }
     await raf();
     if (settle) await wait(settle);
-    var d = diff(before, fingerprint(els));
+    var after = fingerprint(els);
+    var classAfter = classesOf(els);
+    var d = diff(before, after);
 
     // Put it back before reporting, so a caller that stops reading here still
     // leaves the page as it found it.
@@ -299,11 +335,23 @@
       }
     } catch (e) { restored = false; }
 
+    // The state class, which is the answer to "how does this page SAY open".
+    // Read off the trigger and off whatever it opened, because sites put it on
+    // either one and about as often on both.
+    var stateClass = null;
+    var onTrigger = classDelta(classBefore, classAfter, el);
+    var panel = outermost(d.appeared)[0] || d.changed[0] || null;
+    var onPanel = panel ? classDelta(classBefore, classAfter, panel) : null;
+    if (onTrigger || onPanel) {
+      stateClass = { trigger: onTrigger, panel: onPanel };
+    }
+
     return {
       skipped: false,
       opened: outermost(d.appeared),
       closed: outermost(d.vanished),
       touched: d.changed.length,
+      stateClass: stateClass,
       restored: restored,
     };
   }
@@ -404,6 +452,33 @@
     return a;
   };
 
+  /**
+   * Is this panel nothing but links?
+   *
+   * The rule was "two or more links makes it a menu", and that is too crude:
+   * an FAQ answer with a "read more" link in it, or a product panel with a
+   * link at the bottom, was called a menu on the strength of the links while
+   * being mostly prose.
+   *
+   * What separates them is what is there BESIDES the links. A menu panel is
+   * links and whitespace. An accordion panel is text that happens to contain
+   * some. So the links' own text is subtracted and what is left is weighed.
+   */
+  var mostlyLinks = function (el) {
+    try {
+      var links = el.querySelectorAll('a[href]');
+      if (links.length < 2) return false;
+      var all = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      var inLinks = 0;
+      for (var i = 0; i < links.length; i++) {
+        inLinks += (links[i].textContent || '').replace(/\s+/g, ' ').trim().length;
+      }
+      // Forty characters is about a sentence. Below that, whatever is around
+      // the links is a heading or a "see all", not content.
+      return (all.length - inLinks) < 40;
+    } catch (e) { return true; }
+  };
+
   var isOverlay = function (el) {
     try {
       var pos = root.getComputedStyle(el).position;
@@ -501,14 +576,24 @@
       if (used.has(r.trigger) || !r.opened.length) return;
       var panel = r.opened[0];
       var type = isOverlay(panel) ? 'dialog'
-        : (panel.querySelectorAll('a[href]').length >= 2 ? 'menu' : 'accordion');
+        : (mostlyLinks(panel) ? 'menu' : 'accordion');
+      var why = type === 'dialog' ? 'it opened a layer over the page'
+        : type === 'menu' ? 'it revealed a panel of links and nothing else'
+        : 'it revealed and hid a region';
+      // How the page SAYS open, when it says it with a class. Worth reporting
+      // even for a dialog: it is the same answer to the same question, and a
+      // mapping that has it does not need a person to go and find it.
+      if (r.stateClass) {
+        var added = (r.stateClass.panel && r.stateClass.panel.added) ||
+                    (r.stateClass.trigger && r.stateClass.trigger.added) || [];
+        if (added.length) why += ', and marks it open with .' + added[0];
+      }
       comps.push({
         type: type,
         root: type === 'dialog' ? panel : commonAncestor([r.trigger, panel]),
         parts: { trigger: [r.trigger], panel: [panel] },
-        why: type === 'dialog' ? 'it opened a layer over the page'
-          : type === 'menu' ? 'it revealed a panel of links'
-          : 'it revealed and hid a region',
+        stateClass: r.stateClass || null,
+        why: why,
       });
     });
 
@@ -543,7 +628,9 @@
         if (r.skipped) { skipped++; continue; }
         everPressed.add(list[i]);
         pressed.push(list[i]);
-        if (r.opened.length) results.push({ trigger: list[i], opened: r.opened, closed: r.closed });
+        if (r.opened.length) {
+          results.push({ trigger: list[i], opened: r.opened, closed: r.closed, stateClass: r.stateClass });
+        }
       }
 
       // Put the whole scope back.
