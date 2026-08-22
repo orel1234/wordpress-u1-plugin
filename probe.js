@@ -1494,6 +1494,74 @@
     return out;
   }
 
+  /**
+   * Hover over it, and see what appears.
+   *
+   * The whole behavioural layer PRESSES, so anything that opens on hover was
+   * invisible to it: tooltips, and the very common nav whose drop-downs open on
+   * mouseover and do nothing at all when clicked. Such a menu came back as a
+   * flat row of links with no submenus, and the three fields that exist to
+   * describe exactly this — openByMouseover, openByMouseenter, openByFocus —
+   * sat empty, because nothing has ever measured which event it is. The tool's
+   * own note beside them says it: "whether that is HOVER or a click cannot be
+   * told from the markup".
+   *
+   * Safer than everything else in this file by a wide margin. Hovering
+   * activates nothing, sends nothing and changes no state — there is no
+   * blocklist case, because there is no button a pointer can ruin by passing
+   * over it.
+   *
+   * Each event is tried SEPARATELY, because the answer is which one to write in
+   * the mapping. Firing all three and reporting "it opens on hover" would leave
+   * the same guess the field already has.
+   */
+  async function probeHover(el, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 120 : opts.settle;
+    if (!el || el.nodeType !== 1) return null;
+
+    var scope = opts.scope || el.closest('li,div,nav,section') || doc.body;
+    var els = watched(scope, opts.limit);
+
+    var send = function (name, Ctor) {
+      try { el.dispatchEvent(new root[Ctor](name, { bubbles: true })); } catch (e) {
+        try { el.dispatchEvent(new root.Event(name, { bubbles: true })); } catch (e2) {}
+      }
+    };
+    var away = function () {
+      send('mouseleave', 'MouseEvent');
+      send('mouseout', 'MouseEvent');
+      try { el.blur(); } catch (e) {}
+    };
+
+    var attempts = [
+      { field: 'openByMouseover', fire: function () { send('mouseover', 'MouseEvent'); } },
+      { field: 'openByMouseenter', fire: function () { send('mouseenter', 'MouseEvent'); } },
+      { field: 'openByFocus', fire: function () { try { el.focus(); } catch (e) {} send('focus', 'FocusEvent'); } },
+    ];
+
+    for (var i = 0; i < attempts.length; i++) {
+      var before = fingerprint(els);
+      attempts[i].fire();
+      await raf();
+      if (settle) await wait(settle);
+      var appeared = outermost(diff(before, fingerprint(els)).appeared);
+
+      away();
+      await raf();
+      if (settle) await wait(settle);
+
+      if (appeared.length) {
+        return {
+          opensOn: attempts[i].field,
+          revealed: appeared,
+          restored: same(before, fingerprint(els)),
+        };
+      }
+    }
+    return { opensOn: null, revealed: [], restored: true };
+  }
+
   /** How many children each list-shaped element is showing right now. */
   function listCounts(scope) {
     var out = new Map();
@@ -1651,6 +1719,7 @@
     probeTyping: probeTyping,
     probeCalendar: probeCalendar,
     probeToggle: probeToggle,
+    probeHover: probeHover,
     armNet: armNet,
     DANGER: DANGER,
   };

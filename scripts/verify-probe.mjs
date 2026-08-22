@@ -944,6 +944,44 @@ console.log('\npage numbers, and content that is replaced');
     out.components.map((c) => c.type).join() || '(nothing)');
 }
 
+// ── Hovering, which the whole layer could not do ───────────────────────────
+//
+// Everything else here PRESSES, so anything opening on hover was invisible:
+// tooltips, and the very common nav whose drop-downs open on mouseover and do
+// nothing at all when clicked. Such a menu came back as a flat row of links
+// with no submenus — while three fields exist in the builder to describe
+// exactly this, and sat empty because nothing had ever measured which event it
+// is. The tool's own note beside them says so: "whether that is HOVER or a
+// click cannot be told from the markup."
+//
+// Each event is tried SEPARATELY, because the answer IS which one to write.
+console.log('\nhovering, and which event it was');
+{
+  const onEvent = async (ev) => {
+    const w = page(`<li id="item"><a href="#" id="t">Men</a>
+      <div id="panel" hidden><a href="/s">Shoes</a><a href="/b">Boots</a></div></li>`);
+    const d = w.document;
+    const t = d.getElementById('t'), panel = d.getElementById('panel');
+    t.addEventListener(ev, () => { panel.hidden = false; });
+    ['mouseleave', 'mouseout', 'blur'].forEach((x) =>
+      t.addEventListener(x, () => { panel.hidden = true; }));
+    return w.__u1Probe.probeHover(t, { scope: d.getElementById('item'), settle: 10 });
+  };
+
+  for (const [ev, field] of [['mouseover', 'openByMouseover'],
+                             ['mouseenter', 'openByMouseenter'],
+                             ['focus', 'openByFocus']]) {
+    const r = await onEvent(ev);
+    check(`a menu that opens on ${ev} names that exact field`,
+      r.opensOn === field && r.revealed.length === 1, r.opensOn + ' / ' + r.revealed.length);
+    check(`…and the page is put back after ${ev}`, r.restored === true);
+  }
+
+  const w = page(`<li id="item"><a href="#" id="t">Plain</a></li>`);
+  const r = await w.__u1Probe.probeHover(w.document.getElementById('t'), { settle: 10 });
+  check('a link that opens nothing on any of the three says so', r.opensOn === null, String(r.opensOn));
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`

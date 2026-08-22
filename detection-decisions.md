@@ -529,12 +529,62 @@ Watched now as its own thing, and kept out of the restore fingerprint for the
 third time and for the third same reason: a page with a clock, a price ticker or
 a countdown in it would start reporting itself as never restored.
 
-## tooltip
+## tooltip — decided
 
-Extra text shown beside a control.
+Extra text shown beside a control, on hover or on focus.
 
 - **Read:** tooltip or popover.
 - A tooltip nothing opens is half a mapping — the trigger matters.
+
+### Hovering, which the behavioural layer could not do at all
+
+Everything in the probe PRESSES, so anything opening on hover was invisible to
+it — tooltips, and the very common nav whose drop-downs open on mouseover and do
+nothing when clicked. Such a menu came back as a flat row of links with no
+submenus.
+
+Three fields exist in the builder for exactly this — `openByMouseover`,
+`openByMouseenter`, `openByFocus` — and they sat empty, because nothing had ever
+measured which event it is. The tool's own note beside them said so: *"whether
+that is HOVER or a click cannot be told from the markup"*, and *"left unticked:
+guessing wrong here rewires the menu to the wrong event."* The knowledge was
+written down and nothing acted on it.
+
+Each event is now tried SEPARATELY, because the answer IS which one to write.
+Firing all three and reporting "it opens on hover" would leave the same guess
+the field already had.
+
+Hovering is the safest thing in the whole file: it activates nothing, sends
+nothing and changes no state. There is no blocklist case, because there is no
+button a pointer can ruin by passing over it.
+
+### What a tooltip needs — WCAG 1.4.13 Content on Hover or Focus (AA)
+
+Three requirements, and the library gave one and a half:
+
+- **dismissible** — Escape closes it without moving the pointer. The library
+  does this.
+- **persistent** — it stays until the trigger is left or it is dismissed.
+  Mostly done.
+- **hoverable** — the pointer must be able to move ONTO the content. **Not
+  done.** The library dismisses on the trigger's `mouseout`, which fires the
+  moment the pointer leaves the trigger — including when it is moving onto the
+  tooltip to read it. For somebody magnifying the screen that is a tooltip which
+  cannot be read at all: the text runs off the viewport and reaching for it
+  makes it vanish.
+
+Plus a fourth thing that is not 1.4.13 but decides whether a screen reader says
+anything at all: **the trigger must be tied to the tooltip up front.** The
+library attaches `aria-describedby` inside its own show handler, so the first
+time a trigger takes focus there is nothing connecting them and the control is
+announced with no description. The sentence the tooltip adds is the entire
+reason it exists.
+
+Both are corrected now. The previous version of the hoverable fix RECORDED the
+pointer being over the tooltip in a data attribute and then did nothing with it
+— a state nothing reads is the same as no fix at all. It holds the tooltip open
+now, by swallowing the dismissing event in the capture phase while the pointer
+is genuinely on it, and everything else about dismissal is untouched.
 
 ## loading
 

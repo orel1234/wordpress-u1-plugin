@@ -610,5 +610,58 @@ console.log('\nstatic corrections');
     w.document.getElementById('a').getAttribute('tabindex') === '0');
 }
 
+// ── Tooltips, and WCAG 1.4.13 ──────────────────────────────────────────────
+//
+// Two defects were written into the tooltip region as prose and one and a half
+// were left standing. This is the half that mattered most: the previous version
+// RECORDED the pointer being over the tooltip in a data attribute and then did
+// nothing with it — a state nothing reads is the same as no fix.
+console.log('\ntooltips');
+{
+  const dom = boot(`<span id="trig">?</span><div id="tip" role="tooltip">Ships in two days</div>`,
+    ['tooltip']);
+  await settle(dom);
+  const d = dom.window.document;
+  const trig = d.getElementById('trig'), tip = d.getElementById('tip');
+
+  // 1. The library ties these together only inside its own onTooltipShow, so
+  //    the first time the trigger takes focus there is nothing to announce —
+  //    and the sentence the tooltip adds is the whole reason it exists.
+  check('the trigger is tied to its tooltip up front, not on first show',
+    trig.getAttribute('aria-describedby') === tip.id,
+    String(trig.getAttribute('aria-describedby')));
+  check('…and a tooltip on a non-focusable trigger becomes keyboard-reachable',
+    trig.getAttribute('tabindex') === '0', String(trig.getAttribute('tabindex')));
+
+  // 2. HOVERABLE. The library dismisses on the trigger's mouseout, which fires
+  //    the moment the pointer leaves the trigger — including when it is moving
+  //    ONTO the tooltip to read it. For somebody magnifying the screen that is
+  //    a tooltip which cannot be read at all.
+  let dismissed = 0;
+  trig.addEventListener('mouseout', () => { dismissed++; });
+
+  tip.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: true }));
+  trig.dispatchEvent(new dom.window.MouseEvent('mouseout', { bubbles: true }));
+  check('while the pointer is ON the tooltip, the dismiss is swallowed',
+    dismissed === 0, String(dismissed));
+
+  // …and everything else about dismissal is left exactly as it was.
+  tip.dispatchEvent(new dom.window.MouseEvent('mouseleave', { bubbles: true }));
+  const before = dismissed;
+  trig.dispatchEvent(new dom.window.MouseEvent('mouseout', { bubbles: true }));
+  check('once the pointer leaves it, dismissing works again',
+    dismissed > before, `${before} -> ${dismissed}`);
+
+  // A page that already did it right is left alone.
+  const ok = boot(`<button id="b" aria-describedby="t2">?</button><div id="t2" role="tooltip">x</div>`,
+    ['tooltip']);
+  await settle(ok);
+  const b = ok.window.document.getElementById('b');
+  check('a trigger that was already tied is not given a second reference',
+    b.getAttribute('aria-describedby') === 't2', b.getAttribute('aria-describedby'));
+  check('…and a native button is not given a tabindex it does not need',
+    b.getAttribute('tabindex') === null, String(b.getAttribute('tabindex')));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

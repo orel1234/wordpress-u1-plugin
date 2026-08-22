@@ -1534,11 +1534,36 @@
 //#endregion
 
 //#region u1-patch:tooltip
-// aria-describedby is attached only inside onTooltipShow, so the very first time
-// a trigger takes focus there is nothing to announce. And 1.4.13 is only half
-// met: the tooltip can be dismissed with Escape and on focusout, but it is not
-// hoverable — moving the pointer onto the tooltip makes it disappear, which
-// defeats reading it.
+// ─────────────────────────────────────────────────────────────────────────────
+//  Tooltips, and WCAG 1.4.13 Content on Hover or Focus (AA).
+//
+//  Two defects were written down here and one and a half were left standing.
+//  This closes both, and the note that described them is now a description of
+//  what is corrected rather than of what is missing.
+//
+//  1. THE NAME NEVER ARRIVES. The library attaches aria-describedby inside its
+//     own onTooltipShow, so the first time a trigger takes focus there is
+//     nothing tying the two together and a screen reader announces the control
+//     with no description at all. The whole point of a tooltip is the sentence
+//     it adds; a tooltip nobody hears is decoration. Tied up front here.
+//
+//  2. IT IS NOT HOVERABLE. 1.4.13 asks for three things and the library gives
+//     one and a half: dismissible with Escape — yes; persistent — mostly; and
+//     HOVERABLE — no. The library dismisses on the trigger's mouseout, which
+//     fires the moment the pointer leaves the trigger, including when it is
+//     moving onto the tooltip to read it. For somebody magnifying the screen,
+//     that is a tooltip that cannot be read at all: the text runs off the
+//     viewport and reaching for it makes it vanish.
+//
+//     The previous version recorded the pointer being over the tooltip in a
+//     data attribute and then did nothing with it. Recording a state nothing
+//     reads is the same as not fixing it — this now actually holds the tooltip
+//     open, by swallowing the dismissing events in the capture phase while the
+//     pointer is on it.
+//
+//  Everything checks the current state first, so a library that ships its own
+//  fix and a page that was already correct are both left alone.
+// ─────────────────────────────────────────────────────────────────────────────
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
@@ -1547,17 +1572,60 @@
     u.qsa('[role="tooltip"]').forEach(function (tip) {
       if (!tip.id) tip.id = 'u1p-tip-' + Math.random().toString(36).slice(2, 9);
 
-      // Keep the tooltip alive while the pointer is on it. The library dismisses
-      // on the trigger's mouseout, which fires the moment the pointer leaves the
-      // trigger — including when it moves onto the tooltip itself.
+      // ── 1. Tie it to its trigger, now, not on first show ──────────────────
+      //
+      // The trigger is whatever already points at this tooltip, or — the usual
+      // case, since the page has not been told to point at anything yet — the
+      // control it sits beside.
+      var trigger = document.querySelector('[aria-describedby~="' + tip.id + '"]');
+      if (!trigger) {
+        var near = tip.previousElementSibling || (tip.parentElement &&
+                   tip.parentElement.querySelector('button,a[href],input,[tabindex]'));
+        if (near && near !== tip && !tip.contains(near)) trigger = near;
+      }
+      if (trigger) {
+        var have = (u.get(trigger, 'aria-describedby') || '').split(/\s+/).filter(Boolean);
+        if (have.indexOf(tip.id) === -1) {
+          have.push(tip.id);
+          u.set(trigger, 'aria-describedby', have.join(' '));
+        }
+        // A tooltip on something a keyboard cannot reach is a tooltip only a
+        // mouse ever sees. 1.4.13 is about focus as much as hover.
+        if (!/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(trigger.tagName) &&
+            trigger.getAttribute('tabindex') === null) {
+          u.setTabIndex(trigger, 0);
+        }
+      }
+
+      // ── 2. Hoverable: hold it open while the pointer is on it ─────────────
       if (!tip.__u1pHover) {
         tip.__u1pHover = true;
-        tip.addEventListener('mouseenter', function () {
-          tip.setAttribute('data-u1p-hovered', 'true');
-        });
+        var hovering = false;
+
+        tip.addEventListener('mouseenter', function () { hovering = true; });
         tip.addEventListener('mouseleave', function () {
-          tip.removeAttribute('data-u1p-hovered');
+          hovering = false;
+          // Leaving the tooltip itself dismisses it, which is what a person
+          // expects and what "persistent until the trigger is removed" means.
+          if (trigger) {
+            try {
+              trigger.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+            } catch (e) {}
+          }
         });
+
+        // The swallow. Capture phase on the trigger, so it runs before the
+        // library's own handler and can stop it reaching one.
+        if (trigger && !trigger.__u1pHold) {
+          trigger.__u1pHold = true;
+          ['mouseout', 'mouseleave'].forEach(function (name) {
+            trigger.addEventListener(name, function (e) {
+              // Only while the pointer is genuinely ON the tooltip. Everything
+              // else about dismissal is left exactly as it was.
+              if (hovering) e.stopImmediatePropagation();
+            }, true);
+          });
+        }
       }
     });
   });
