@@ -241,6 +241,20 @@ Something that opens over the page and takes it over until dismissed.
   trigger is still a real mapping.
 - **Not:** a panel that pushes the page down rather than covering it.
 
+**A banner is a dialog.** A cookie bar, a coupon strip, a consent notice: pinned
+to the top or bottom edge, nearly full width, and deliberately SHORT. "Covers
+most of the screen" was only one shape of layer and the height test alone threw
+every banner out. They appear over the page, they demand an answer, and one you
+cannot close by keyboard is a real trap. Guarded so a 3px progress rule and a
+strip sitting in the middle of the page are not swept in.
+
+**One that opens ITSELF is a dialog too.** A coupon after five seconds, a cookie
+notice on load. Nobody pressed anything, so pressing can never find it — it is
+found by comparing the page against how it looked at the START of the run, not
+against the start of the idle window. A watch that only sees what appears after
+it begins misses anything that arrives while the pressing is going on, which on
+a real page is most of the time.
+
 **Focus behaviour is a FINDING, never a condition.** A first draft of this file
 proposed checking that focus is really trapped and returned. That is backwards:
 a site's developer often does not build that, focus often is not trapped, and

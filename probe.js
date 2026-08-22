@@ -650,13 +650,40 @@
     return null;
   };
 
+  /**
+   * A layer over the page — which is what makes something a dialog.
+   *
+   * TWO shapes, because "covers most of the screen" was only one of them and
+   * the other is extremely common:
+   *
+   *   · a MODAL: a box over the middle of the page, most of the screen wide
+   *     and half of it tall.
+   *   · a BANNER: a cookie bar, a coupon strip, a consent notice. Pinned to the
+   *     top or bottom edge, nearly the full width, and DELIBERATELY short — it
+   *     covers a sliver, and the height test alone threw every one of them out.
+   *     Decided that these are dialogs like any other, which they are: they
+   *     appear over the page, they demand an answer, and the ones that trap you
+   *     without a reachable close button are a genuine trap.
+   *
+   * `fixed` is required for the banner and not for the modal. A short strip
+   * that merely happens to be absolutely positioned inside some section is
+   * ordinary page furniture; one pinned to the viewport edge is a layer.
+   */
   var isOverlay = function (el) {
     try {
       var pos = root.getComputedStyle(el).position;
       if (pos !== 'fixed' && pos !== 'absolute') return false;
       var r = el.getBoundingClientRect();
       var vw = root.innerWidth || 1024, vh = root.innerHeight || 768;
-      return r.width >= vw * 0.6 && r.height >= vh * 0.5;
+      if (r.width >= vw * 0.6 && r.height >= vh * 0.5) return true;
+
+      if (pos !== 'fixed') return false;
+      var wide = r.width >= vw * 0.8;
+      var atEdge = r.top <= 4 || Math.abs(r.bottom - vh) <= 4;
+      // Not a hairline: a progress bar and a coloured rule are also wide, fixed
+      // and against an edge, and neither is asking anybody anything.
+      var tall = r.height >= 40;
+      return wide && atEdge && tall;
     } catch (e) { return false; }
   };
 
@@ -916,7 +943,39 @@
       // trigger of every group re-OPENED every menu and accordion on the page,
       // which is the exact opposite of restoring. Classify first, then press
       // back only the thing that cannot undo itself.
-      comps = classify(results, pressed);
+      // CONCAT, not assign. Twice now something pushed onto `comps` before this
+      // line was silently thrown away by it — the idle watch's carousel, then
+      // the self-opening dialog — each time looking exactly like "the detection
+      // does not work", each time costing a debugging session. Appending
+      // removes the trap rather than remembering to avoid it.
+      comps = comps.concat(classify(results, pressed));
+
+      // Something that put ITSELF over the page: a coupon, a cookie notice, a
+      // newsletter box that waits five seconds. Nobody pressed anything, so
+      // pressing can never find it. Decided that these are dialogs like any
+      // other, and they are the ones a person is most likely to be trapped by.
+      //
+      // Compared against the state at the START OF THE RUN, not against the
+      // start of the idle window. A watch that only sees what appears after it
+      // begins misses anything that arrived while the pressing was going on —
+      // which on a page whose coupon fires at three seconds is most of the
+      // time. Found by a test where the coupon appeared 60ms in and the watch,
+      // starting later, reported an empty page with complete confidence.
+      var opened = [];
+      results.forEach(function (r) { opened = opened.concat(r.opened); });
+      var uninvited = outermost(diff(start, fingerprint(wholeScope)).appeared)
+        .filter(function (el) { return opened.indexOf(el) === -1 && isOverlay(el); });
+      uninvited.forEach(function (el) {
+        comps.push({
+          type: 'dialog',
+          root: el,
+          parts: { panel: [el] },
+          openedItself: true,
+          why: 'it put itself over the page with nobody touching anything',
+        });
+      });
+
+
 
       // What moves on its own. Done AFTER pressing, so a panel this run opened
       // is closed again and cannot be mistaken for something that moved by

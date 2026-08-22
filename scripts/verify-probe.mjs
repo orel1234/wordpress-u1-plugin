@@ -437,6 +437,83 @@ console.log('\nfocus behaviour is a finding, never a condition');
     c.type + ' / ' + c.focusEntered);
 }
 
+// ── A banner is a dialog, and so is one that opens itself ──────────────────
+//
+// "Covers most of the screen" was only one shape of layer. A cookie bar, a
+// coupon strip and a consent notice are pinned to an edge, nearly full width
+// and deliberately SHORT — the height test alone threw every one of them out.
+// Decided: they are dialogs like any other. They appear over the page, they
+// demand an answer, and one you cannot close by keyboard is a real trap.
+console.log('\na banner is a dialog too');
+{
+  const bar = (h, pos, top) => {
+    const w = page(`<div id="w"><button id="b">Show</button>
+      <div id="bar" hidden>We use cookies. <button id="ok">OK</button></div></div>`);
+    const d = w.document;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      if (this.id === 'bar') {
+        return { top: top, left: 0, right: 1024, bottom: top + h, width: 1024, height: h };
+      }
+      return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+    };
+    w.getComputedStyle = (el) => ({
+      position: el && el.id === 'bar' ? pos : 'static',
+      visibility: 'visible', display: 'block', opacity: '1',
+    });
+    d.getElementById('b').addEventListener('click', () => {
+      const el = d.getElementById('bar'); el.hidden = !el.hidden;
+    });
+    return w;
+  };
+
+  // Pinned to the bottom edge of a 768-high viewport, 90px tall.
+  const w1 = bar(90, 'fixed', 678);
+  let out = await w1.__u1Probe.probeAll(w1.document.getElementById('w'), { settle: 0, idle: 0 });
+  check('a cookie bar pinned to the bottom is a dialog',
+    (out.components[0] || {}).type === 'dialog',
+    out.components.map(c => c.type).join() || '(nothing)');
+
+  const w2 = bar(60, 'fixed', 0);
+  out = await w2.__u1Probe.probeAll(w2.document.getElementById('w'), { settle: 0, idle: 0 });
+  check('…and so is one pinned to the top', (out.components[0] || {}).type === 'dialog',
+    out.components.map(c => c.type).join() || '(nothing)');
+
+  // The things that must NOT become dialogs on the strength of that rule.
+  const thin = bar(3, 'fixed', 0);
+  out = await thin.__u1Probe.probeAll(thin.document.getElementById('w'), { settle: 0, idle: 0 });
+  check('a 3px progress rule at the top is not a dialog',
+    (out.components[0] || {}).type !== 'dialog',
+    out.components.map(c => c.type).join() || '(nothing)');
+
+  const inflow = bar(90, 'absolute', 300);
+  out = await inflow.__u1Probe.probeAll(inflow.document.getElementById('w'), { settle: 0, idle: 0 });
+  check('a short strip in the middle of the page is not a dialog',
+    (out.components[0] || {}).type !== 'dialog',
+    out.components.map(c => c.type).join() || '(nothing)');
+}
+{
+  // Nobody pressed anything. Pressing can never find this one.
+  const w = page(`<div id="w"><p>Some page content here.</p>
+    <div id="coupon" hidden>10% off! <button id="x">Close</button></div></div>`);
+  const d = w.document;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    if (this.id === 'coupon') return { top: 100, left: 100, right: 900, bottom: 600, width: 800, height: 500 };
+    return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+  };
+  w.getComputedStyle = (el) => ({
+    position: el && el.id === 'coupon' ? 'fixed' : 'static',
+    visibility: 'visible', display: 'block', opacity: '1',
+  });
+  setTimeout(() => { d.getElementById('coupon').hidden = false; }, 60);
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 400 });
+  const c = out.components[0] || {};
+  check('a coupon that opens itself after a delay is found as a dialog',
+    c.type === 'dialog' && c.openedItself === true,
+    out.components.map(x => x.type).join() || '(nothing)');
+}
+
 // ── What the page does when nobody touches it ──────────────────────────────
 //
 // A gallery you swipe has no arrows to press and announces itself no other way.
