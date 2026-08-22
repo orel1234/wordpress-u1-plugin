@@ -1094,9 +1094,9 @@
         // text node rather than an element of its own.
         var between = text;
         for (var j = 0; j < links.length; j++) {
-          between = between.replace((links[j].textContent || '').trim(), ' ');
+          between = between.replace((links[j].textContent || '').trim(), ' ');
         }
-        var gaps = between.split(' ').filter(function (g) { return g.trim(); });
+        var gaps = between.split(' ').filter(function (g) { return g.trim(); });
         separated = gaps.length >= 1 && gaps.every(function (g) { return SEPARATOR_RE.test(g); });
       }
       if (!separated) return false;
