@@ -705,8 +705,10 @@ console.log('\na <form> is a form');
   check('…as ONE form, not one per row of fields',
     finder.name('.finder__row') !== 'form' && finder.name('.finder__opts') !== 'form',
     `${finder.name('.finder__row')} / ${finder.name('.finder__opts')}`);
-  check('…and the tab strip beside it is still its own component',
-    finder.name('.finder__tabs') === 'tabs', finder.name('.finder__tabs'));
+  // Still a component of its own — the point of this check — but named `menu`
+  // now that a strip and a nav bar are one component.
+  check('…and the strip beside it is still its own component',
+    finder.name('.finder__tabs') === 'menu', finder.name('.finder__tabs'));
 
   // The guard this replaces was written for a real case and still catches it.
   // One submit is a form whose fields are in rows; three submits is a page
@@ -813,7 +815,7 @@ console.log('\nfingerprints a framework left behind');
     named('<div id="x" class="ReactModal__Content"><a href="/">A</a></div>', '#x') === 'dialog',
     named('<div id="x" class="ReactModal__Content"><a href="/">A</a></div>', '#x'));
   check('Reach UI tabs are found by their data- attribute, having no class',
-    named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x') === 'tabs',
+    named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x') === 'menu',
     named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x'));
 
   // A site that says "carousel" in its own words is read in its own words. The

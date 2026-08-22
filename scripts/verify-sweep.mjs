@@ -1683,11 +1683,14 @@ console.log('\nthe hints, on the markup they were written for');
 
   check('the <nav> is named a menu', /menu/.test(line), line);
   check('the carousel is found from its class', /carousel/.test(line), line);
-  check('role="tablist" is named a tab strip', /tabs/.test(line), line);
+  // A tab strip reports as a MENU: the two were decided to be one component,
+  // and the page here has a <nav> as well, so both land in the same count.
+  check('role="tablist" is named a menu', /menus?/.test(line), line);
   check('the <form> is named', /form/.test(line), line);
   const hintOf = (sel) => got.candidates.find(c => (c.selector || '').includes(sel));
   check('a role-based hint is stated as fact',
-    hintOf('finder__tabs')?.component === 'tabs' && hintOf('finder__tabs')?.maybe === false);
+    hintOf('finder__tabs')?.component === 'menu' && hintOf('finder__tabs')?.maybe === false,
+    JSON.stringify(hintOf('finder__tabs')));
   check('a class-based hint is stated as a guess',
     hintOf('hero-carousel')?.component === 'carousel' && hintOf('hero-carousel')?.maybe === true,
     JSON.stringify(hintOf('hero-carousel')));
@@ -1723,7 +1726,7 @@ console.log('\nthe annotated survey picture');
   check('a box is drawn for each component that was recognised', drawn >= 4, String(drawn));
   check('the boxes are labelled with the component, not a number',
     /menu/.test(layer.textContent) && /carousel/.test(layer.textContent) &&
-    /tabs/.test(layer.textContent) && /table/.test(layer.textContent),
+    /table/.test(layer.textContent),
     layer.textContent);
   check('nothing is numbered — that is the model\'s picture, not this one',
     !/^\d+$/m.test(layer.textContent));
@@ -1777,7 +1780,10 @@ console.log('\nscreenfuls that used to come back unmarked');
   const named = [
     ['<div class="site-navbar"><a href="#a">One</a></div>', 'menu'],
     ['<div class="main-menu"><a href="#a">One</a></div>', 'menu'],
-    ['<div class="tab-bar"><button>A</button></div>', 'tabs'],
+    ['<div class="tab-bar"><button>A</button></div>', 'menu'],
+    // camelCase, which the collector could not see until both class lists were
+    // made case-insensitive. Named nothing at all before that.
+    ['<div class="dealTabs"><button>A</button></div>', 'menu'],
     ['<div class="photo-gallery"><img alt="x"></div>', 'carousel'],
     ['<div class="faq-list"><button>Q</button></div>', 'accordion'],
     ['<div class="cart-drawer"><button>Close</button></div>', 'dialog'],

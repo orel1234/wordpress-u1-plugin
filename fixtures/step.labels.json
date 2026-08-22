@@ -27,31 +27,31 @@
       "builtByJs": true
     },
     {
-      "type": "tabs",
+      "type": "menu",
       "root": ".finder__tabs",
-      "why": "role=tablist with five buttons and five sibling panels outside it.",
+      "why": "Five sibling controls over five panels. Labelled `tabs` until a tab strip was decided to BE a menu — same shape, and the class list was already calling `nav nav-tabs` a menu anyway.",
       "fields": {
-        "tab": ".finder__tab",
-        "tabPanel": ".finder__panel"
+        "items": ".finder__tab",
+        "submenus": ".finder__panel"
       }
     },
     {
-      "type": "tabs",
+      "type": "menu",
       "root": "#dealTabs",
-      "why": "role=tablist. Six buttons over ONE re-rendered region, not six panels.",
+      "why": "Six sibling controls over ONE re-rendered region, not six panels. A strip over one region is still the shape, and the already-selected one belongs to it.",
       "fields": {
-        "tab": ".tab-bar__btn",
-        "tabPanel": "#dealGrid"
+        "items": ".tab-bar__btn",
+        "submenus": "#dealGrid"
       },
       "builtByJs": true
     },
     {
-      "type": "tabs",
+      "type": "menu",
       "root": "#faqTabs",
-      "why": "The same tab-bar shape again, over the accordion below it.",
+      "why": "The same strip shape again, over the accordion below it.",
       "fields": {
-        "tab": ".tab-bar__btn",
-        "tabPanel": "#faqPanel"
+        "items": ".tab-bar__btn",
+        "submenus": "#faqPanel"
       },
       "builtByJs": true
     },

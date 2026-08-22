@@ -473,11 +473,26 @@
       tabs.sort(function (a, b) {
         return (a.compareDocumentPosition(b) & 4) ? -1 : 1;   // 4 = FOLLOWING
       });
+      // A MENU, not a tab strip. The two are one shape — several sibling
+      // controls, pressing one swaps what is shown — and detection stopped
+      // trying to tell them apart by which word the developer happened to use.
+      //
+      // `shape: 'strip'` is kept because the RESTORE below needs it, and that
+      // is a mechanical fact rather than a name: a control that cannot undo
+      // itself by being pressed again has to be pressed back deliberately.
+      // Keying the restore on the type name would have broken it the moment
+      // the name changed — silently, on somebody's live site.
+      //
+      // Rooted on the DIRECT PARENT of the controls, per the menu rules, not on
+      // the common ancestor of the controls AND their panels: that reaches up
+      // past the strip and u1.fix.menu walks the root's own children looking
+      // for items.
       comps.push({
-        type: 'tabs',
-        root: commonAncestor(tabs.concat(panels)),
-        parts: { tab: tabs, tabPanel: panels },
-        why: tabs.length + ' controls, each revealing ' +
+        type: 'menu',
+        shape: 'strip',
+        root: siblings[0].parentElement || commonAncestor(tabs.concat(panels)),
+        parts: { items: tabs, submenus: panels },
+        why: tabs.length + ' sibling controls, each revealing ' +
              (panels.length === 1 ? 'the same region' : 'a different panel'),
       });
     });
@@ -533,7 +548,7 @@
 
       // Put the whole scope back.
       //
-      // Only a TAB STRIP needs this. A toggle was already closed by probeOne —
+      // Only a STRIP needs this. A toggle was already closed by probeOne —
       // pressing it a second time is what closed it — so pressing the first
       // trigger of every group re-OPENED every menu and accordion on the page,
       // which is the exact opposite of restoring. Classify first, then press
@@ -541,8 +556,8 @@
       comps = classify(results, pressed);
       if (!same(start, fingerprint(wholeScope))) {
         for (var g = 0; g < comps.length; g++) {
-          if (comps[g].type !== 'tabs') continue;
-          try { comps[g].parts.tab[0].click(); } catch (e) {}
+          if (comps[g].shape !== 'strip') continue;
+          try { comps[g].parts.items[0].click(); } catch (e) {}
         }
         await raf();
         if (!same(start, fingerprint(wholeScope))) {

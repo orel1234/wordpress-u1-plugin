@@ -212,20 +212,29 @@ console.log('\na page with no semantics at all');
   const out = await w.__u1Probe.probeAll(d.getElementById('page'), { settle: 0 });
   const of = (t) => out.components.filter(c => c.type === t);
   const idsOf = (els) => els.map(e => e.id).join(',');
+  // A tab strip reports as a MENU now — the two were decided to be one
+  // component. `shape` is what still separates them, and it exists because the
+  // RESTORE depends on the difference: a strip cannot undo itself by being
+  // pressed a second time, and a toggle already has.
+  const strips = out.components.filter(c => c.shape === 'strip');
+  const opened = out.components.filter(c => c.type === 'menu' && c.shape !== 'strip');
 
-  check('the tab strip is found', of('tabs').length === 1,
-    out.components.map(c => c.type).join());
-  check('…with every tab, including the one already selected',
-    of('tabs').length === 1 && idsOf(of('tabs')[0].parts.tab) === 't1,t2,t3',
-    of('tabs')[0] && idsOf(of('tabs')[0].parts.tab));
+  check('the strip is found, and reported as a menu', strips.length === 1 && strips[0].type === 'menu',
+    out.components.map(c => c.type + (c.shape ? ':' + c.shape : '')).join());
+  check('…with every control, including the one already selected',
+    strips.length === 1 && idsOf(strips[0].parts.items) === 't1,t2,t3',
+    strips[0] && idsOf(strips[0].parts.items));
   check('…and the panels it switches between',
-    of('tabs').length === 1 && of('tabs')[0].parts.tabPanel.length >= 2);
+    strips.length === 1 && strips[0].parts.submenus.length >= 2);
+  check('…rooted on the direct parent of the controls, not above the panels',
+    strips.length === 1 && strips[0].root === d.getElementById('t1').parentElement,
+    strips[0] && strips[0].root && (strips[0].root.id || strips[0].root.className));
   check('both drop-downs are found, and called menus because they hold links',
-    of('menu').length === 2, String(of('menu').length));
+    opened.length === 2, String(opened.length));
   check('…each paired with the panel IT opens, not another one',
-    of('menu').length === 2 &&
-    of('menu').every(c => c.parts.trigger[0].id.replace('n', 'np') === c.parts.panel[0].id),
-    of('menu').map(c => c.parts.trigger[0].id + '→' + c.parts.panel[0].id).join(' '));
+    opened.length === 2 &&
+    opened.every(c => c.parts.trigger[0].id.replace('n', 'np') === c.parts.panel[0].id),
+    opened.map(c => c.parts.trigger[0].id + '→' + c.parts.panel[0].id).join(' '));
   check('the accordion is found, and NOT called a menu — it holds no links',
     of('accordion').length === 1 && of('accordion')[0].parts.panel[0].id === 'a1');
 
@@ -269,9 +278,10 @@ console.log('\nwhen the only signal left is the cursor');
   check('and the prose is not', !list.some(e => e.id === 'text'));
 
   const out = await w.__u1Probe.probeAll(d.getElementById('page'), { settle: 0 });
-  check('the tab strip is identified from behaviour alone',
-    out.components.length === 1 && out.components[0].type === 'tabs',
-    out.components.map(c => c.type).join());
+  check('the strip is identified from behaviour alone — a menu, by its shape',
+    out.components.length === 1 && out.components[0].type === 'menu' &&
+    out.components[0].shape === 'strip',
+    out.components.map(c => c.type + (c.shape ? ':' + c.shape : '')).join());
   check('the page is put back', out.restored === true);
 }
 

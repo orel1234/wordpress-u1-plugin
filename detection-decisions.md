@@ -37,6 +37,25 @@ particular are not a menu; they are ordinary links.
 **Root:** the DIRECT parent of the items, never the wrapper. A frame holding a
 logo, a search box and one list is a menu of one item — descend to the list.
 
+**Done:** the reader now says `menu` wherever it used to say `tabs` — role
+`tablist`, a bare strip of `role="tab"`, the class words, the library
+fingerprints and the Reach UI attribute. The behavioural layer says `menu` too,
+and roots the strip on the DIRECT PARENT of its controls rather than on the
+common ancestor of the controls and their panels, which reached up past the
+strip. The corpus moved with it: the three components labelled `tabs` are
+labelled `menu`, with `items` / `submenus` for what were `tab` / `tabPanel`.
+Accuracy held at 8/8 found, 8/8 named.
+
+The `tabs` TYPE is untouched — it is still in the builder, still has its own
+engine, still ships its own corrections. Detection suggesting `menu` and a
+specialist choosing to build `tabs` are different questions, and only the first
+was decided.
+
+One thing deliberately left alone: the element INVENTORY line still counts "5
+tabs, 1 tab strip". That counts elements the page itself declares, one by one,
+and `tab` is still the ARIA name of a part whatever we call the whole. Renaming
+it there would turn a count into a claim.
+
 **Not yet in the code:** there is no notion of "inside the page header" anywhere
 in detection today. The reader asks only what an element is CALLED, never where
 it SITS. The one existing piece of header logic — `travelsWithViewport` — is
@@ -124,14 +143,6 @@ come back unanswered rather than pressed.
 - **toolbar, media player, radio group** — three more names the reader can
   produce that no type can build. Breadcrumb was the fourth and is now fixed;
   these are still dead ends.
-- **the corpus conflict** — `fixtures/step.labels.json` labels the breadcrumb
-  as `menu`, reasoning "not a drop-down, but it is navigation". Under the rules
-  above it is a breadcrumb. The label has to move, or the score will fall for a
-  reason that has nothing to do with detection getting worse.
-- **the case-sensitivity gap** — a class written in joined-capital style
-  (`dealTabs`) is never COLLECTED, because the collection list compares case
-  exactly while the naming stage does not. The two lists are supposed to stay in
-  step and here they do not.
 
 ## Not yet reviewed
 

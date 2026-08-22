@@ -950,8 +950,18 @@
    * the caller: `.tab-content` matches /tab/ and is not a tab strip. This
    * proposes; the scan confirms.
    */
+  // `tablist` says MENU, and that is a decision rather than a mistake. A tab
+  // strip and a nav bar with drop-downs are the same shape by every test either
+  // layer applies — several sibling controls, pressing one swaps what is shown —
+  // and the tool was already half-agreeing: the class list checks "nav" before
+  // it checks "tabs", so `class="nav nav-tabs"`, the commonest tab markup on the
+  // web, has always come back as a menu. The separation existed on paper.
+  //
+  // The `tabs` TYPE still exists in the builder and still has its own engine.
+  // This is what detection SUGGESTS, which is a different question from what a
+  // specialist chooses to build.
   const COMPONENT_BY_ROLE = {
-    tablist: 'tabs', menu: 'menu', menubar: 'menu', navigation: 'menu',
+    tablist: 'menu', menu: 'menu', menubar: 'menu', navigation: 'menu',
     dialog: 'dialog', alertdialog: 'dialog', listbox: 'listbox',
     combobox: 'combobox', grid: 'grid', table: 'table', tree: 'menu',
     radiogroup: 'radio group', toolbar: 'toolbar', search: 'form',
@@ -978,7 +988,7 @@
     [/datepicker|calendar/i, 'datepicker'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
-    [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
+    [/\btabs\b|tab-bar|tabbar|tablist/i, 'menu'],
     [/pagination|pager/i, 'pagination'],
     [/tooltip|popover/i, 'tooltip'],
     [/breadcrumb/i, 'breadcrumb'],
@@ -1002,7 +1012,7 @@
     // about what any individual element is.
     [/react-datepicker|mat-datepicker|\bdatepicker__|-datepicker\b/i, 'datepicker'],
     [/mat-autocomplete|downshift|react-select|select2|choices__/i, 'combobox'],
-    [/mat-tab\b|mat-tab-|data-reach-tab|react-tabs__/i, 'tabs'],
+    [/mat-tab\b|mat-tab-|data-reach-tab|react-tabs__/i, 'menu'],
     [/mat-expansion|MuiAccordion|chakra-accordion/i, 'accordion'],
     [/mat-menu|MuiMenu|headlessui-menu/i, 'menu'],
     [/mat-dialog|MuiDialog|headlessui-dialog|ReactModal/i, 'dialog'],
@@ -1031,7 +1041,7 @@
   // keeps `_ngcontent-` and `sc-` out of the class list above. An attribute
   // earns a place here only when it names one kind of thing.
   const COMPONENT_BY_ATTR = [
-    [/^data-reach-tab-list$|^data-reach-tabs$/i, 'tabs'],
+    [/^data-reach-tab-list$|^data-reach-tabs$/i, 'menu'],
   ];
 
   const FIELD = 'input:not([type="hidden"]),select,textarea';
@@ -1128,7 +1138,7 @@
     // was nothing here. The parts were seen; the thing they add up to was not.
     try {
       if (el.querySelectorAll(':scope > [role="tab"]').length >= 2) {
-        return { name: 'tabs', sure: true };
+        return { name: 'menu', sure: true };
       }
     } catch (e) { /* :scope is old enough to rely on, but never worth throwing for */ }
 
