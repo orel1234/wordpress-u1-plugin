@@ -501,14 +501,33 @@ builder's type is `radio`, so the label matched no type and led nowhere. It was
 one of the four names that could be produced and not built. `toolbar` and
 `media player` are the last two.
 
-## pagination
+## pagination — decided
 
-Numbered controls that move through pages of one result list.
+A page of products split across several pages, with a row of page numbers at
+the bottom. Pressing one shows the same kind of content, cut differently.
 
 - **Read:** pagination or pager.
-- **Against menu:** pagination leads to the same content in pages; a menu leads
-  to different places.
-- The current page is usually a class, not an attribute.
+- **Counted:** sibling controls whose faces are RUNNING NUMBERS. Nothing else on
+  a page is a row of controls that says 1, 2, 3 — the same trick the calendar
+  uses, and reliable for the same reason.
+- **Against menu:** page numbers lead to the same content in pieces; a menu
+  leads to different places. Both are "press one of a row of siblings and what
+  is shown changes", so the counting is what separates them, and it has to be
+  checked FIRST or the strip rule claims it as a menu. A strip of WORDS doing
+  the same thing is still a menu, and there is a test saying so.
+- The current page is usually a class, not an attribute — and that class is what
+  a press now reports, the same as everywhere else.
+
+**A gap this uncovered, wider than pagination:** a region whose contents are
+REPLACED was invisible to the entire behavioural layer. Press page 3 and the
+grid still holds two cards and is still on screen — same count, same visibility,
+nothing hidden and nothing shown — so a pagination strip came back as an empty
+finding. So does any strip that re-renders ONE region instead of swapping
+between several, which is a very common way to build tabs.
+
+Watched now as its own thing, and kept out of the restore fingerprint for the
+third time and for the third same reason: a page with a clock, a price ticker or
+a countdown in it would start reporting itself as never restored.
 
 ## tooltip
 

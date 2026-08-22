@@ -271,6 +271,46 @@
     return out;
   }
 
+  /**
+   * What each watched element is SHOWING, in a few characters.
+   *
+   * The third thing the visibility fingerprint cannot see, after class and
+   * position: a region whose contents were REPLACED. Press page 3 of a product
+   * list and the grid still has two cards in it and is still on screen — same
+   * count, same visibility — so nothing anywhere registered that the whole page
+   * of products had changed. Measured: a pagination strip came back as an empty
+   * finding, and so does any strip that re-renders one region instead of
+   * swapping between several.
+   *
+   * Out of `fingerprint` for the third time and for the third same reason: the
+   * restore check compares fingerprints, and a page with a clock, a price
+   * ticker or a countdown would start reporting itself as never restored.
+   */
+  function contentOf(all) {
+    var out = new Map();
+    for (var i = 0; i < all.length; i++) {
+      var t = '';
+      try { t = (all[i].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120); } catch (e) {}
+      out.set(all[i], t);
+    }
+    return out;
+  }
+
+  /** Regions whose contents were swapped for different contents. */
+  function replaced(before, after) {
+    var out = [];
+    after.forEach(function (now, el) {
+      var was = before.get(el);
+      // Something has to have been there and something else has to be there
+      // now. An element that merely emptied has vanished, which is reported
+      // already, and one that filled from nothing is a reveal.
+      if (!was || !now || was === now) return;
+      if (was.length < 8 || now.length < 8) return;
+      out.push(el);
+    });
+    return outermost(out);
+  }
+
   function shown(el) {
     if (el.hasAttribute('hidden')) return false;
     var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
@@ -399,6 +439,7 @@
     var before = fingerprint(els);
     var classBefore = classesOf(els);
     var whereBefore = geometry(els);
+    var textBefore = contentOf(els);
     var focusBefore = doc.activeElement;
     try { el.click(); } catch (e) { return { skipped: true, why: 'could not be pressed' }; }
     await raf();
@@ -407,6 +448,7 @@
     var classAfter = classesOf(els);
     var d = diff(before, after);
     var slid = outermost(shifted(whereBefore, geometry(els)));
+    var swapped = replaced(textBefore, contentOf(els));
 
     // Is what opened a LAYER OVER THE PAGE? Measured HERE, while it is open.
     //
@@ -476,6 +518,7 @@
       opened: outermost(d.appeared),
       closed: outermost(d.vanished),
       moved: slid,
+      rerendered: swapped,
       touched: d.changed.length,
       focusEntered: focusEntered,
       overlay: isLayer,
@@ -575,6 +618,15 @@
     }
     return out.slice(0, opts.max || 40);
   }
+
+  // Grouping by parent needs a key, and the parent element itself cannot be one
+  // in a plain object. A WeakMap-backed counter keeps it identity-based rather
+  // than depending on a selector that may not exist.
+  var keySeq = 0, keyed = new WeakMap();
+  var robustKey = function (el) {
+    if (!keyed.has(el)) keyed.set(el, 'p' + (++keySeq));
+    return keyed.get(el);
+  };
 
   var commonAncestor = function (els) {
     if (!els.length) return null;
@@ -838,6 +890,51 @@
         parts: { items: tabs, submenus: panels },
         why: tabs.length + ' sibling controls, each revealing ' +
              (panels.length === 1 ? 'the same region' : 'a different panel'),
+      });
+    });
+
+    // A PAGE STRIP, told by counting rather than by naming — the same trick the
+    // calendar uses, and reliable for the same reason. Sibling controls whose
+    // faces are running numbers are page numbers; nothing else on a page is a
+    // row of controls that says 1, 2, 3.
+    //
+    // It has to come before the strip rule below, which would otherwise call it
+    // a menu: pressing one of these swaps what is shown, which is exactly the
+    // shape a menu has. And the difference matters — a menu leads to different
+    // places, page numbers lead to the same content cut into pieces.
+    var numbered = {};
+    pressed.forEach(function (el) {
+      var p = el.parentElement;
+      if (!p) return;
+      var key = robustKey(p);
+      if (!numbered[key]) numbered[key] = { parent: p, nums: [], all: [] };
+      numbered[key].all.push(el);
+      var face = faceOf(el);
+      if (/^\d{1,3}$/.test(face)) numbered[key].nums.push(el);
+    });
+    Object.keys(numbered).forEach(function (key) {
+      var g = numbered[key];
+      // Three numbers is the smallest strip worth the name; two is a pair of
+      // buttons that happen to say 1 and 2.
+      if (g.nums.length < 3) return;
+      if (g.nums.some(function (el) { return used.has(el); })) return;
+      var values = g.nums.map(function (el) { return Number(faceOf(el)); });
+      var rising = 0;
+      for (var i = 1; i < values.length; i++) if (values[i] === values[i - 1] + 1) rising++;
+      if (rising < values.length - 2) return;
+
+      g.all.forEach(function (el) { used.add(el); });
+      var parts = { pageButtons: g.nums };
+      g.all.forEach(function (el) {
+        var role = arrowRole(el);
+        if (role === 'prevButton' && !parts.prevButton) parts.prevButton = [el];
+        if (role === 'nextButton' && !parts.nextButton) parts.nextButton = [el];
+      });
+      comps.push({
+        type: 'pagination',
+        root: g.parent,
+        parts: parts,
+        why: g.nums.length + ' controls numbered in sequence',
       });
     });
 
@@ -1441,9 +1538,10 @@
         if (r.skipped) { skipped++; continue; }
         everPressed.add(list[i]);
         pressed.push(list[i]);
-        if (r.opened.length || r.moved.length) {
+        if (r.opened.length || r.moved.length || r.rerendered.length) {
           results.push({ trigger: list[i], opened: r.opened, closed: r.closed,
-                         moved: r.moved, stateClass: r.stateClass,
+                         moved: r.moved, rerendered: r.rerendered,
+                         stateClass: r.stateClass,
                          focusEntered: r.focusEntered, overlay: r.overlay });
         }
       }

@@ -896,6 +896,54 @@ console.log('\nticking it reads both states');
     r.skipped === true, JSON.stringify(r));
 }
 
+// ── Page numbers, and a region that is REPLACED rather than revealed ───────
+//
+// Two findings in one fixture. A pagination strip swaps the products for
+// different products: same count, same visibility, nothing hidden and nothing
+// shown — so the visibility fingerprint saw nothing at all and the whole strip
+// came back as an empty finding. That is true of any strip that re-renders one
+// region instead of swapping between several.
+//
+// And page numbers are told from a menu by COUNTING, the same trick the
+// calendar uses: sibling controls whose faces are running numbers are page
+// numbers. Nothing else on a page is a row of controls that says 1, 2, 3.
+console.log('\npage numbers, and content that is replaced');
+{
+  const w = page(`<div id="page">
+    <div class="grid"><div>Runner</div><div>Trainer</div></div>
+    <div class="pager"><button id="prev">Prev</button>
+      <button class="pg" data-p="1">1</button><button class="pg" data-p="2">2</button>
+      <button class="pg" data-p="3">3</button><button id="next">Next</button></div></div>`);
+  const d = w.document;
+  const grid = d.querySelector('.grid');
+  d.querySelectorAll('.pg').forEach((b) => b.addEventListener('click', () => {
+    grid.innerHTML = `<div>Page ${b.dataset.p} first item</div><div>Page ${b.dataset.p} second item</div>`;
+  }));
+  const out = await w.__u1Probe.probeAll(d.getElementById('page'), { settle: 0, idle: 0 });
+  const c = out.components[0] || {};
+  check('a strip that only REPLACES content is found at all',
+    out.components.length > 0, out.components.map((x) => x.type).join() || '(nothing)');
+  check('…and running numbers make it pagination, not a menu', c.type === 'pagination', c.type);
+  check('…with the page buttons and both arrows',
+    c.parts.pageButtons.length === 3 && c.parts.prevButton && c.parts.nextButton);
+}
+{
+  // The guard: a strip of WORDS doing the same thing is still a menu.
+  const w = page(`<div id="page"><div class="nav">
+    <button id="a">Men</button><button id="b">Women</button><button id="c">Kids</button></div>
+    <div id="pa" hidden><a href="/1">x</a><a href="/2">y</a></div>
+    <div id="pb" hidden><a href="/3">x</a><a href="/4">y</a></div>
+    <div id="pc" hidden><a href="/5">x</a><a href="/6">y</a></div></div>`);
+  const d = w.document;
+  ['a', 'b', 'c'].forEach((id, i) => d.getElementById(id).addEventListener('click', () => {
+    ['pa', 'pb', 'pc'].forEach((p, j) => { d.getElementById(p).hidden = i !== j; });
+  }));
+  const out = await w.__u1Probe.probeAll(d.getElementById('page'), { settle: 0, idle: 0 });
+  check('a strip of WORDS doing the same thing is still a menu',
+    (out.components[0] || {}).type === 'menu',
+    out.components.map((c) => c.type).join() || '(nothing)');
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`
