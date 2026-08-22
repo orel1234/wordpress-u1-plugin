@@ -1244,19 +1244,19 @@
     // somewhere, and a "·" between two links is also how a byline is written.
     if (looksLikeBreadcrumb(el)) return { name: 'breadcrumb', sure: false };
 
-    // Three or more fields gathered under one element is a form, whatever the
-    // tag says. The newsletter sign-up — name, email, phone, date, size, eight
-    // checkboxes and a submit — was reported as "14 inputs" and no component,
-    // which is exactly backwards: it is the most mappable thing on the page.
+    // A form is a real <form>, or a thing with more than one field and a way to
+    // send them. That is the whole rule, and it replaces a longer one.
     //
-    // Counting fields ALONE said every wrapper up to <body> was a form, because
-    // every one of them contains three inputs somewhere below. Two conditions
-    // narrow it to the thing a person would point at:
+    // What it replaces: three-or-more fields, plus a "packaging" test that
+    // climbed for the tightest cluster, plus a links-versus-fields ratio. Those
+    // existed because there was no submit requirement, so every wrapper up to
+    // <body> qualified and the heuristics were there to pick which wrapper. Ask
+    // for the SUBMIT and the ambiguity mostly goes: a wrapper holding two forms
+    // holds two submits, and the tightest element holding both a field group and
+    // one submit is the form.
     //
-    //   · nothing INSIDE it already holds them all — otherwise the answer is
-    //     that tighter element, and this is just its packaging
-    //   · it is not mostly navigation — a form is fields with a few links in
-    //     it, not a page of links that happens to contain a search box
+    // Two fields rather than three, also decided: a login box is an email, a
+    // password and a button, and it was under the old floor.
     try {
       // A real <form> IS a form, and could never say so.
       //
@@ -1265,41 +1265,26 @@
       // itself, so a <form> matched its own guard — the one element on the page
       // that needs no heuristic at all was the only one the heuristic could not
       // name. Reported as, exactly: funny, it did not catch the form.
-      //
-      // No field threshold here. A search form is one input and a button and is
-      // still a form; the three-field rule exists to find forms built out of
-      // divs, where there is no tag to go on. A <form> inside a <form> is
-      // invalid HTML, so there is no nesting case to resolve.
       if (el.tagName === 'FORM') return { name: 'form', sure: true };
 
-      const fields = el.querySelectorAll(FIELD).length;
-      if (fields >= 3 && !el.closest('form')) {
-        // Descend to the tightest cluster. Asking only whether a child holds
-        // ALL of them is not enough: a page with three separate forms has them
-        // split across three children, so their common ancestor is the page —
-        // which is how "form?" ended up on twenty sections in a row. If ANY
-        // child is itself a group of fields, this element is packaging.
-        let packaging = Array.prototype.some.call(el.children,
-          (ch) => ch.querySelectorAll(FIELD).length >= 3);
-
-        // …unless there is exactly one way to submit all of it, in which case
-        // it is one form whose fields are laid out in rows.
-        //
-        // The shop's shoe finder is that shape: a row of five selects, a row of
-        // five checkboxes, and one "Find my shoe" button over both. The rule
-        // above called the panel packaging and named each row a form instead —
-        // two halves of one thing, and u1.fix.form applied to each decorates
-        // two halves.
-        //
-        // One submit is a form. Several means this really is the wrapper round
-        // several forms, and the tighter answer was right after all — which is
-        // the case the packaging rule was written for and still catches.
-        if (packaging && el.querySelectorAll(SUBMITISH).length === 1) packaging = false;
-
-        const links = el.querySelectorAll('a[href]').length;
-        if (!packaging && links <= fields) return { name: 'form', sure: false };
+      var fields = el.querySelectorAll(FIELD).length;
+      if (fields >= 2 && !el.closest('form')) {
+        var submits = el.querySelectorAll(SUBMITISH).length;
+        // No submit, no form. A row of filter selects that applies on change is
+        // a real thing and it is not this; it has no send.
+        if (submits >= 1) {
+          // Still the tightest answer: if a child already holds a whole form —
+          // its own fields AND its own submit — then this element is the
+          // wrapper around several, and each child is the form.
+          var packaging = Array.prototype.some.call(el.children, function (ch) {
+            return ch.querySelectorAll(FIELD).length >= 2 &&
+                   ch.querySelectorAll(SUBMITISH).length >= 1;
+          });
+          if (!packaging) return { name: 'form', sure: false };
+        }
       }
     } catch (e) {}
+
     return null;
   }
 

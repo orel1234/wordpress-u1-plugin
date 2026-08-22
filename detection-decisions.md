@@ -291,16 +291,60 @@ are not inside what you chose, you chose wrong.**
   control that does not exist. What is missing there is a status message saying
   how many results are showing.
 
-## form
+## form — decided
 
-- **Read:** a real `<form>` is a form and needs no heuristic — that was a bug
-  once, because the guard against naming every div inside a form also caught the
-  form itself.
-- **Shape:** three or more fields under one element, where nothing tighter
-  already holds them all, and there are no more links than fields.
-- **One submit is one form.** Several means this is the wrapper around several,
-  and the tighter answer was right — a filter panel of five selects, five
-  checkboxes and one button is ONE form, not two rows.
+**A real `<form>`, or an element with more than one field AND a way to send
+them.** That is the whole rule, and it replaces a longer one: three-or-more
+fields, plus a climb for the tightest cluster, plus a links-versus-fields ratio.
+Those existed because there was no submit requirement, so every wrapper up to
+`<body>` qualified and the heuristics were there to choose between them. Ask for
+the submit and the ambiguity mostly goes.
+
+Two fields, not three: a login box is an email, a password and a button, and it
+sat under the old floor.
+
+**One submit is one form.** A wrapper holding two complete forms holds two
+submits, and then each child is the form.
+
+### The form is ASKED, not guessed
+
+Submitting an EMPTY form makes the page write down, itself, the three things a
+mapping needs and a person otherwise hunts for by hand:
+
+- which fields are **required** — they are the ones it rejects
+- the **class it puts on a rejected field**, which is `invalidField`
+- **where the message goes**
+
+Nothing is sent. The submit event is cancelled in the capture phase and fetch,
+XHR and sendBeacon are stubbed for the duration — that is what makes pressing
+submit defensible at all, since it is otherwise the single most dangerous
+control on the page and the blocklist refuses to touch it.
+
+Nothing is filled in either: an empty submit produces the most errors and
+touches the least. A form somebody has already typed in is left alone — that is
+their work in progress, and a form that passes validation teaches us nothing.
+A reset button is never the one pressed.
+
+**What it leaves behind:** the form showing its validation errors. That is not
+undone — the classes belong to the page's own state and stripping them would
+leave its JavaScript believing something the DOM no longer says. It is reported
+instead, so it can be said out loud rather than found.
+
+**The error class is chosen by MEANING.** Counting picked the wrong one first
+time: a field going from `class=""` to `class="field field--error"` added both,
+on the same number of fields, and the tie broke on iteration order — so the
+answer was `field`, which is every field on the form including the valid ones.
+A mapping built on that marks the whole form as wrong. A name that says error
+wins now, in either language; when none does, the candidates are all reported
+and none is chosen, because a field left for a person is honest and a wrong one
+filled in confidently is not.
+
+**A consequence to be aware of:** with a submit required, a filter bar that
+applies on change is no longer a form. It is not a combobox either (decided
+earlier — no popup, so those roles describe a control that does not exist). What
+it needs is a status message saying how many results are showing. That pattern
+is described in `component-rules.md` and has no type of its own, so such a bar
+is currently detected as nothing at all.
 
 ## table and grid
 

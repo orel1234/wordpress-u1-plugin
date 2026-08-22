@@ -132,12 +132,51 @@
     var openWas = root.open;
     try { root.open = function () { return null; }; } catch (e) {}
 
+    // Nothing leaves over the NETWORK either, and this is what makes pressing a
+    // submit button defensible at all.
+    //
+    // Cancelling the submit event stops a form POSTing the old way. It does
+    // nothing about a form that sends itself with fetch from a click handler,
+    // which is how most of them are written now — and probing forms means
+    // deliberately pressing the one control on the page whose whole purpose is
+    // to send a stranger's data somewhere. An empty form usually fails its own
+    // validation before it gets that far; "usually" is not a guarantee anybody
+    // should be offering about somebody else's site.
+    //
+    // So: while the net is armed, requests do not go out. Each stub rejects or
+    // no-ops the way a blocked request would, so the page's own error handling
+    // runs rather than the page hanging on a promise that never settles.
+    var fetchWas = root.fetch;
+    var xhrWas = root.XMLHttpRequest && root.XMLHttpRequest.prototype.send;
+    var beaconWas = root.navigator && root.navigator.sendBeacon;
+    try {
+      if (fetchWas) {
+        root.fetch = function () {
+          return Promise.reject(new Error('blocked while U1 Studio is inspecting this page'));
+        };
+      }
+      if (xhrWas) {
+        root.XMLHttpRequest.prototype.send = function () {
+          var self = this;
+          setTimeout(function () {
+            try { self.dispatchEvent(new root.Event('error')); } catch (e) {}
+          }, 0);
+        };
+      }
+      if (beaconWas) root.navigator.sendBeacon = function () { return false; };
+    } catch (e) {}
+
     net = {
       disarm: function () {
         doc.removeEventListener('click', onClick, true);
         doc.removeEventListener('submit', onSubmit, true);
         root.removeEventListener('beforeunload', onLeave, true);
         try { root.open = openWas; } catch (e) {}
+        try {
+          if (fetchWas) root.fetch = fetchWas;
+          if (xhrWas) root.XMLHttpRequest.prototype.send = xhrWas;
+          if (beaconWas) root.navigator.sendBeacon = beaconWas;
+        } catch (e) {}
         net = null;
       },
     };
@@ -152,6 +191,8 @@
   // disclosure actually does.
   var STATE_ATTRS = ['hidden', 'aria-expanded', 'aria-selected', 'aria-hidden',
                      'aria-current', 'open', 'checked'];
+
+  var FIELD_SEL = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]),select,textarea';
 
   /**
    * The classes on a set of elements, read separately from `fingerprint`.
@@ -902,6 +943,114 @@
   }
 
   /**
+   * Ask a form to validate itself, and read the answer off the page.
+   *
+   * A form mapping needs three things a person otherwise finds by hand: which
+   * fields are required, the class the page puts on a field it has rejected,
+   * and where the message goes. All three are written on the page the moment an
+   * EMPTY form is submitted — so the form is asked, rather than the specialist.
+   *
+   * Nothing is sent. The submit event is cancelled in the capture phase and
+   * fetch/XHR/sendBeacon are stubbed for the duration, so the page's own
+   * validation runs and its request does not. That is the whole reason this is
+   * defensible: pressing submit is otherwise the single most dangerous thing
+   * that could be done to somebody's site, and the blocklist refuses to do it.
+   *
+   * Nothing is filled in either. An empty submit is the one that produces the
+   * most errors and touches the least.
+   *
+   * WHAT IT LEAVES BEHIND: the form showing its validation errors. That is not
+   * undone — the classes belong to the page's own state and stripping them
+   * would leave its JavaScript believing something the DOM no longer says. It
+   * is reported instead, so a caller can say so rather than a person finding a
+   * red form they did not ask for.
+   */
+  async function probeForm(form, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 200 : opts.settle;
+    var fields = [];
+    try { fields = Array.prototype.slice.call(form.querySelectorAll(FIELD_SEL)); } catch (e) {}
+    if (!fields.length) return null;
+
+    var submit = null;
+    try {
+      var cands = form.querySelectorAll('button,input[type="submit"],[role="button"]');
+      for (var i = 0; i < cands.length; i++) {
+        var t = (cands[i].getAttribute('type') || '').toLowerCase();
+        // A reset button empties what somebody typed. Never that one.
+        if (t === 'reset' || t === 'button') continue;
+        if (/reset|clear|cancel|נקה|בטל/i.test(faceOf(cands[i]))) continue;
+        submit = cands[i];
+        break;
+      }
+    } catch (e) {}
+    if (!submit) return null;
+
+    // Anything already filled in is somebody's work in progress. Submitting a
+    // half-typed form is not a thing to do to a person, and a form that passes
+    // validation would tell us nothing anyway.
+    for (var f = 0; f < fields.length; f++) {
+      var v = fields[f].value;
+      if (typeof v === 'string' && v.trim()) return { skipped: true, why: 'somebody has typed in it' };
+      if (fields[f].checked) return { skipped: true, why: 'somebody has ticked something in it' };
+    }
+
+    var watchList = watched(form, opts.limit);
+    var before = fingerprint(watchList);
+    var classBefore = classesOf(watchList);
+    var invalidBefore = fields.map(function (el) { return el.getAttribute('aria-invalid'); });
+
+    try { submit.click(); } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var classAfter = classesOf(watchList);
+    var d = diff(before, fingerprint(watchList));
+
+    // Which fields the form rejected, and how it said so.
+    var rejected = [], marks = {};
+    fields.forEach(function (el, i) {
+      var said = false;
+      if (el.getAttribute('aria-invalid') === 'true' && invalidBefore[i] !== 'true') said = true;
+      var delta = classDelta(classBefore, classAfter, el);
+      if (delta && delta.added.length) {
+        said = true;
+        delta.added.forEach(function (c) { marks[c] = (marks[c] || 0) + 1; });
+      }
+      // A native control the browser itself refused.
+      try { if (el.willValidate && el.validity && !el.validity.valid) said = true; } catch (e) {}
+      if (said) rejected.push(el);
+    });
+
+    // The class the page uses for "this one is wrong".
+    //
+    // Counting alone is not enough and picked the wrong one first time: a field
+    // going from `class=""` to `class="field field--error"` has added BOTH, on
+    // exactly the same number of fields, and the tie broke on iteration order —
+    // so the answer was `field`, which is every field on the form including the
+    // valid ones. A mapping built on that marks the whole form as wrong.
+    //
+    // So a name that SAYS error wins, in either language, before any counting.
+    // When nothing says it, the candidates are all reported rather than one
+    // being picked by luck — a field left for a person to choose is honest, a
+    // wrong one filled in confidently is not.
+    var SAYS_ERROR = /error|invalid|danger|warn|fail|required|שגיא|שגוי|חוב/i;
+    var candidates = Object.keys(marks).sort(function (a, b) { return marks[b] - marks[a]; });
+    var named = candidates.filter(function (c) { return SAYS_ERROR.test(c); });
+    var invalidClass = named.length ? named[0] : (candidates.length === 1 ? candidates[0] : null);
+
+    return {
+      submit: submit,
+      fields: fields,
+      required: rejected,
+      invalidClass: invalidClass,
+      invalidCandidates: candidates,
+      messages: outermost(d.appeared),
+      leftShowingErrors: rejected.length > 0 || d.appeared.length > 0,
+    };
+  }
+
+  /**
    * Press everything worth pressing inside `scope`, and say what is there.
    *
    * The net is armed for the whole run and disarmed in `finally`, so an
@@ -1037,6 +1186,7 @@
     probeAll: probeAll,
     pressable: pressable,
     classify: classify,
+    probeForm: probeForm,
     armNet: armNet,
     DANGER: DANGER,
   };

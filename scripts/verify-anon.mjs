@@ -723,23 +723,30 @@ console.log('\na <form> is a form');
     three.name('.page') !== 'form',
     `.page is ${three.name('.page')}`);
 
-  // A filter bar that applies on change has no submit anywhere. Still a form;
-  // there is simply nothing better to anchor on.
+  // No submit, no form — decided. A filter bar that applies on change is a real
+  // thing and it is not a form; it has no send. What it actually needs is a
+  // status message saying how many results are showing, which is the pattern
+  // `component-rules.md` describes and which has no type of its own yet.
   const bar = collectIn(`<div class="filters"><select id="a"></select><select id="b"></select><select id="c"></select></div>`);
-  check('a filter bar with no submit at all is still found',
-    bar.name('.filters') === 'form', bar.name('.filters'));
+  check('a filter bar with no submit is NOT a form',
+    bar.name('.filters') !== 'form', bar.name('.filters'));
 
-  // Two fields are not a form. Without a floor, every pair of inputs on a page
-  // becomes a component to map.
+  // Two fields are not a form on their own — without a floor every pair of
+  // inputs on a page becomes a component to map.
   const two = collectIn(`<div class="pair"><input><input></div>`);
-  check('two fields are not a form', two.name('.pair') !== 'form', two.name('.pair'));
+  check('two fields with nothing to send them are not a form', two.name('.pair') !== 'form', two.name('.pair'));
 
-  // Div-soup forms are what the three-field rule is for, and it is untouched.
-  // The wrapper has to be a candidate for any of this to reach it — a bare
-  // <div> with no tag, role, class or handler is not collected at all, and
-  // that is the pre-existing behaviour this change does not touch.
-  const e = collectIn(`<div id="soup" tabindex="-1"><input type="text"><input type="email"><select><option>A</option></select></div>`);
-  check('a form built out of divs is still found by counting fields',
+  // …but two fields AND a way to send them are. A login box is an email, a
+  // password and a button, and it sat under the old three-field floor.
+  const login = collectIn(`<div class="login" tabindex="-1"><input type="email"><input type="password"><button>Sign in</button></div>`);
+  check('two fields and a submit ARE a form — a login box is the case',
+    login.name('.login') === 'form', login.name('.login'));
+
+  // Div-soup forms are the point of having a rule at all. The wrapper has to be
+  // a candidate for any of this to reach it — a bare <div> with no tag, role,
+  // class or handler is not collected, which is pre-existing and untouched.
+  const e = collectIn(`<div id="soup" tabindex="-1"><input type="text"><input type="email"><select><option>A</option></select><button>Send</button></div>`);
+  check('a form built out of divs is found by its fields and its submit',
     e.name('#soup') === 'form', e.name('#soup'));
 }
 

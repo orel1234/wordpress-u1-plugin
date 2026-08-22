@@ -560,6 +560,113 @@ console.log('\nwhat moves with nobody touching it');
     out3.components.map(x => x.type).join());
 }
 
+// ── Asking a form to validate itself ───────────────────────────────────────
+//
+// A form mapping needs three things a person otherwise hunts for by hand:
+// which fields are required, the class the page puts on a rejected field, and
+// where the message goes. All three are written on the page the moment an EMPTY
+// form is submitted — so the form is asked instead of the specialist.
+//
+// Pressing submit is otherwise the single most dangerous thing that could be
+// done to somebody's site, and the blocklist refuses to do it. What makes this
+// defensible is that nothing leaves: the submit event is cancelled in the
+// capture phase AND fetch, XHR and sendBeacon are stubbed for the duration.
+console.log('\nasking a form to validate itself');
+{
+  const form = (onSubmit, attrs) => {
+    const w = page(`<form id="f">
+      <input id="name" ${attrs || ''}><span id="e1" hidden>Required</span>
+      <input id="mail" ${attrs || ''}><span id="e2" hidden>Required</span>
+      <input id="note">
+      <button type="submit">Send</button></form>`);
+    const d = w.document;
+    d.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); onSubmit(d); });
+    return w;
+  };
+  const ask = async (w) => {
+    const net = w.__u1Probe.armNet();
+    const r = await w.__u1Probe.probeForm(w.document.getElementById('f'), { settle: 20 });
+    net.disarm();
+    return r;
+  };
+
+  let r = await ask(form((d) => {
+    ['name', 'mail'].forEach((id, i) => {
+      d.getElementById(id).className = 'field field--error';
+      d.getElementById(id).setAttribute('aria-invalid', 'true');
+      d.getElementById('e' + (i + 1)).hidden = false;
+    });
+  }));
+  check('the fields the form rejected are the required ones',
+    r.required.map((e) => e.id).join() === 'name,mail', r.required.map((e) => e.id).join());
+  check('the error message elements are found', r.messages.length === 2,
+    r.messages.map((e) => e.id).join());
+  check('and it says it left the form showing errors', r.leftShowingErrors === true);
+
+  // Counting alone picked the WRONG class first time: a field going from
+  // class="" to class="field field--error" added both, on the same number of
+  // fields, and the tie broke on iteration order — so the answer was `field`,
+  // which is every field on the form including the valid ones. A mapping built
+  // on that marks the whole form as wrong.
+  check('the error class is the one that SAYS error, not the one it came with',
+    r.invalidClass === 'field--error', r.invalidClass + ' of ' + r.invalidCandidates.join());
+
+  r = await ask(form((d) => {
+    ['name', 'mail'].forEach((id) => { d.getElementById(id).className = 'is-invalid'; });
+  }));
+  check('a single state class is taken as it stands', r.invalidClass === 'is-invalid', r.invalidClass);
+
+  // When nothing says error, a field left empty for a person is honest; one
+  // filled in confidently by luck is not.
+  r = await ask(form((d) => {
+    ['name', 'mail'].forEach((id) => { d.getElementById(id).className = 'x y'; });
+  }));
+  check('when no name says error, none is guessed — the candidates are reported',
+    r.invalidClass === null && r.invalidCandidates.join() === 'x,y',
+    String(r.invalidClass) + ' of ' + r.invalidCandidates.join());
+}
+{
+  // Somebody's half-typed form is their work in progress.
+  const w = page(`<form id="f"><input id="a" value="Dana"><input id="b">
+    <button type="submit">Send</button></form>`);
+  const r = await w.__u1Probe.probeForm(w.document.getElementById('f'), { settle: 0 });
+  check('a form somebody has typed in is left alone', r && r.skipped === true, JSON.stringify(r));
+}
+{
+  // And the part that makes the whole thing allowable.
+  const w = page(`<form id="f"><input id="a"><input id="b">
+    <button type="submit">Send</button></form>`);
+  const d = w.document;
+  let sent = 0;
+  const realFetch = () => { sent++; return Promise.resolve(); };
+  w.fetch = realFetch;
+  d.getElementById('f').addEventListener('submit', (e) => {
+    e.preventDefault();
+    w.fetch('/api/subscribe', { method: 'POST' }).catch(() => {});
+  });
+  const net = w.__u1Probe.armNet();
+  await w.__u1Probe.probeForm(d.getElementById('f'), { settle: 20 });
+  net.disarm();
+  check('nothing reached the network while the net was armed', sent === 0, String(sent));
+  check('…and fetch is handed back exactly as it was found', w.fetch === realFetch);
+}
+{
+  // A reset button empties what somebody typed. It must never be the one pressed.
+  const w = page(`<form id="f"><input id="a"><input id="b">
+    <button type="reset">Clear</button><button type="submit">Send</button></form>`);
+  const d = w.document;
+  let pressed = null;
+  ['reset', 'submit'].forEach((t) => {
+    d.querySelector(`button[type="${t}"]`).addEventListener('click', (e) => {
+      e.preventDefault(); pressed = t;
+    });
+  });
+  const net = w.__u1Probe.armNet();
+  await w.__u1Probe.probeForm(d.getElementById('f'), { settle: 20 });
+  net.disarm();
+  check('the reset button is never the one pressed', pressed === 'submit', String(pressed));
+}
+
 console.log('\nthe contents of a panel are not separate findings');
 {
   const w = page(`
