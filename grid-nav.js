@@ -818,3 +818,197 @@ window.__u1InstallTabsFromMapping = function (primary, config) {
   });
 };
 //#endregion
+
+//#region u1-engine:linklist
+// ─────────────────────────────────────────────────────────────────────────────
+//  Inline links in prose: tell them apart, and say where they go.
+//
+//  From a real page (tamam.co.il), a paragraph ending:
+//
+//      …<a href="…כשרות.jpg">תעודת כשרות</a><a href="…רישיון.pdf"> ורישיון יצרן.</a>
+//
+//  Three defects, all readable off the markup — none of them a judgement call:
+//
+//  1. ADJACENT LINKS. Between that </a> and the next <a> there is not one
+//     character. JAWS and NVDA run them together, so a listener hears
+//     "תעודת כשרות ורישיון יצרן" as ONE link and never learns there are two
+//     separate documents. This is the whole of "it reads all the links
+//     together" — the other links in that paragraph have commas and are fine.
+//
+//  2. A FILE, NOT A PAGE. Four of the five are .pdf and one is .jpg. Nothing
+//     says so, so activating "HACCP" drops you into a PDF viewer.
+//
+//  3. A NEW TAB, UNANNOUNCED. Every one is target="_blank" (WCAG 3.2.5). The
+//     back button does not work and nothing warned you.
+//
+//  NOTHING HERE CHANGES A PIXEL. That is a hard requirement, not a preference:
+//  the separator is inserted visually-hidden (clipped, not display:none, which
+//  would take it out of the accessibility tree along with the layout), and the
+//  file/new-tab notes go on aria-label, which paints nothing. A visible comma
+//  would be the more standard repair and is deliberately not what this does.
+//
+//  Standalone: DOM only, needs neither U1 nor the extension.
+// ─────────────────────────────────────────────────────────────────────────────
+window.__u1FixLinkList = function (opts) {
+  const containerSel = opts && opts.container;
+  if (!containerSel) return { ok: false, err: 'container is required' };
+
+  // Said by the page, in the page's own language. A Hebrew site announcing
+  // "opens in a new tab" in English is a worse answer than none.
+  const sep       = (opts && opts.separator) || ', ';
+  const fileWord  = (opts && opts.fileWord)  || '';
+  const tabWord   = (opts && opts.newTabWord) || '';
+  const doSep     = opts ? opts.separate !== false : true;
+  const doFile    = !!fileWord;
+  const doTab     = !!tabWord;
+
+  const MARK = '__u1LinkList';
+  // Clipped rather than hidden: display:none and visibility:hidden both remove
+  // the node from the accessibility tree, which is the one thing this must not
+  // do — the separator exists to BE announced.
+  const HIDDEN = 'position:absolute!important;width:1px!important;height:1px!important;' +
+                 'margin:-1px!important;padding:0!important;border:0!important;' +
+                 'clip:rect(0 0 0 0)!important;clip-path:inset(50%)!important;' +
+                 'overflow:hidden!important;white-space:nowrap!important;';
+
+  // The extension of the thing on the other end, when the URL says plainly.
+  // A querystring or a trailing slash means it does not, and a guess about
+  // what a URL serves is exactly the kind of confident wrong answer that
+  // makes a mapping worse than nothing.
+  const fileType = (href) => {
+    if (!href) return '';
+    let path = href;
+    try { path = new URL(href, location.href).pathname; } catch (e) {}
+    const m = /\.([a-z0-9]{2,5})$/i.exec(path);
+    if (!m) return '';
+    const ext = m[1].toLowerCase();
+    const KNOWN = { pdf:'PDF', doc:'Word', docx:'Word', xls:'Excel', xlsx:'Excel',
+                    ppt:'PowerPoint', pptx:'PowerPoint', csv:'CSV', txt:'Text', rtf:'RTF',
+                    zip:'ZIP', jpg:'JPG', jpeg:'JPG', png:'PNG', gif:'GIF', svg:'SVG',
+                    mp3:'MP3', mp4:'MP4', wav:'WAV' };
+    return KNOWN[ext] || '';
+  };
+
+  let separated = 0, described = 0, links = 0;
+
+  const run = () => {
+    let containers;
+    try { containers = document.querySelectorAll(containerSel); } catch (e) { return; }
+
+    containers.forEach((box) => {
+      let all;
+      try { all = [...box.querySelectorAll('a[href]')]; } catch (e) { return; }
+
+      all.forEach((a) => {
+        if (a[MARK]) return;
+        a[MARK] = true;
+        links++;
+
+        // ── 1. Adjacent links ────────────────────────────────────────────
+        // Only when there is genuinely NOTHING between the two anchors.
+        // Whitespace alone still counts as nothing: "</a> <a>" reads as one
+        // run in several screen readers, and a comma is what actually parts
+        // them. A previous sibling that is real text is left alone.
+        if (doSep) {
+          const prevEl = a.previousElementSibling;
+          if (prevEl && prevEl.tagName === 'A') {
+            let gap = '';
+            for (let nd = a.previousSibling; nd && nd !== prevEl; nd = nd.previousSibling) {
+              if (nd.nodeType === 3) gap = nd.textContent + gap;
+            }
+            if (!gap.replace(/\s+/g, '')) {
+              const s = document.createElement('span');
+              s.setAttribute('style', HIDDEN);
+              s.setAttribute(MARK + 'Sep', '1');
+              s.textContent = sep;
+              a.parentNode.insertBefore(s, a);
+              separated++;
+            }
+          }
+        }
+
+        // ── 2 & 3. What is on the other end ──────────────────────────────
+        // Written to aria-label, which changes nothing visible. The link's
+        // own text leads, so the name still starts with what is on screen —
+        // that is what keeps voice control ("click HACCP") working.
+        if (!doFile && !doTab) return;
+        const own = (a.getAttribute('aria-label') || a.textContent || '').trim().replace(/\s+/g, ' ');
+        if (!own) return;                      // an icon link is somebody else's fix
+        const notes = [];
+        const kind = doFile ? fileType(a.getAttribute('href')) : '';
+        if (kind) notes.push(fileWord.replace('%s', kind));
+        // Only a genuinely new tab, and only when the label does not already
+        // say so — plenty of sites write it themselves, and saying it twice
+        // is its own defect.
+        if (doTab && a.getAttribute('target') === '_blank') notes.push(tabWord);
+        if (!notes.length) return;
+        const already = notes.every((t) => own.indexOf(t) !== -1);
+        if (already) return;
+        a.setAttribute('aria-label', own + ' (' + notes.filter((t) => own.indexOf(t) === -1).join(', ') + ')');
+        described++;
+      });
+    });
+  };
+
+  run();
+
+  // Re-applied across re-renders, the same way the other engines are.
+  window.__u1LinkListWatchers = window.__u1LinkListWatchers || {};
+  if (!window.__u1LinkListWatchers[containerSel]) {
+    let queued = false;
+    const mo = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; run(); });
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    window.__u1LinkListWatchers[containerSel] = mo;
+  }
+
+  if (!links) {
+    // Pointed at the LINKS instead of the block that holds them. An <a>
+    // contains no <a>, so the run does nothing at all — and reporting that as
+    // `ok` with a soft "wires automatically if they appear" is a failure
+    // dressed as a success, which is worse than an error. Reported from
+    // tamam.co.il: `.elementor-widget-container>p>a` was entered, five links
+    // were listed back as matches, and nothing happened.
+    //
+    // The parent is almost certainly what was meant, so it is named rather
+    // than left to be guessed at a second time.
+    let hits = [];
+    try { hits = [...document.querySelectorAll(containerSel)]; } catch (e) {}
+    const anchors = hits.filter((el) => el.tagName === 'A' && el.hasAttribute('href'));
+    if (anchors.length && anchors.length === hits.length) {
+      const up = anchors[0].parentElement;
+      let better = '';
+      try {
+        better = (up && window.__u1SelectorIntel) ? window.__u1SelectorIntel.robustSelector(up) : '';
+      } catch (e) {}
+      return { ok: false, links: 0,
+        err: `That is the links themselves, not the block around them — ` +
+             `${containerSel} matches ${anchors.length} <a> element${anchors.length === 1 ? '' : 's'}, ` +
+             `and a link contains no links, so nothing would be done. ` +
+             `Point it at the text block that HOLDS them` +
+             (better ? ` — try ${better}.` : ` (usually the <p>).`) };
+    }
+    if (!hits.length) {
+      return { ok: false, links: 0,
+        err: `${containerSel} matches nothing on this page.` };
+    }
+    return { ok: true, watching: true, links: 0,
+             note: `No links inside ${containerSel} yet — wires automatically if they appear.` };
+  }
+  return { ok: true, watching: true, links, separated, described };
+};
+
+window.__u1FixLinkListFromMapping = function (primary, config) {
+  const s = (config && config.selectors) || {};
+  return window.__u1FixLinkList({
+    container: s.container || primary,
+    separate: config ? config.separate !== false : true,
+    separator: (config && config.separator) || ', ',
+    fileWord: (config && config.fileWord) || '',
+    newTabWord: (config && config.newTabWord) || '',
+  });
+};
+//#endregion

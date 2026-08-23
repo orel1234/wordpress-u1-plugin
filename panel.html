@@ -640,6 +640,13 @@
     <!-- Stage 2 result: the same mapping form as Manual mode, pre-filled, shown
          one at a time so a card gets the full panel width and full attention. -->
     <div class="ai-results" id="aiMappings" style="display:none;">
+      <!-- The cards' OWN status line. #aiMapStatus lives inside #aiResults,
+           which setStage('cards') hides while a card is on screen — so every
+           message the card wrote, refusals included, was painted into a hidden
+           element. Reported as "I press Approve and nothing happens": the save
+           WAS being refused (a form with no invalidField), and the sentence
+           saying so was invisible. A stage's messages belong in that stage. -->
+      <div class="map-mode-hint" id="aiCardStatus" style="margin:0 0 6px;"></div>
       <div class="ai-carousel-head" style="display:none;">
         <button class="btn-ghost btn-xs" data-slide="aiSlide:prev" title="Previous">‹</button>
         <span id="aiSlideCount" class="ai-slide-count"></span>
@@ -691,6 +698,7 @@
         <option value="tooltip">tooltip</option>
         <option value="heading">heading</option>
         <option value="aria-label">aria-label (custom description)</option>
+        <option value="link-list">inline links (custom — parts touching links, names files)</option>
         <option value="keyboard-grid">keyboard grid (custom — arrow nav, no U1)</option>
         <option value="keyboard-tabs">tab strip (custom — full pattern, no U1)</option>
         <option value="keyboard-clickable">make keyboard-clickable (custom — all matches)</option>
@@ -917,13 +925,23 @@
       </select>
     </div>
     <ul class="contents-list">
-      <li><strong>A .docx guide</strong> — install / injection instructions for the platform and skip links</li>
+      <!-- Named after the file it actually is. "A .docx guide" read as though
+           the guide were CALLED "A" — every other row here names its file, so
+           the one row that led with an article looked like one too. -->
+      <li><strong>U1-Implementation-Guide.docx</strong> — install / injection instructions for the platform and skip links</li>
       <li><strong>u1-config.js</strong> — visualFocus, language, direction</li>
       <li><strong>u1-patch.js</strong> — the library corrections the fixes depend on</li>
       <li><strong>u1-fixes.js</strong> — <strong id="exportMappingsCount">0 mappings</strong> for this site</li>
       <li><strong>u1-monitoring.js</strong> — inert unless loaded with ?u1qa=1</li>
+      <li><strong>U1-Monitoring.docx</strong> — installing the hook, the hook itself, and the three firewall addresses</li>
     </ul>
     <button class="btn-primary" id="exportBtn">Export package (.zip)</button>
+    <!-- On its own, because the person who administers the firewall is usually
+         not the person implementing the library. Sending them the whole
+         WordPress guide to find one paragraph in is how the request gets
+         ignored — and a blocked monitor looks exactly like a broken one. -->
+    <button class="btn-outline btn-sm" id="exportMonitoringBtn"
+            title="Installing the hook, the hook's own source, and the firewall addresses — as one document that stands alone">🛡 Monitoring guide only (.docx)</button>
     <div class="notice" id="exportStatus"></div>
   </div>
 

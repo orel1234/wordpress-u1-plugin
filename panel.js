@@ -362,6 +362,62 @@ const COMPONENT_SCHEMAS = {
     },
   },
 
+  // Custom (NOT a u1.fix call) — inline links in a run of prose.
+  //
+  // From tamam.co.il: a paragraph ending `…כשרות</a><a> ורישיון יצרן.</a>` with
+  // not one character between the two anchors. JAWS and NVDA run adjacent links
+  // together, so two separate documents are heard as one link — which is the
+  // whole of "the screen reader reads all the links together". The other links
+  // in the same paragraph have commas between them and are fine.
+  //
+  // The same paragraph's five links all open a PDF or a JPG in a new tab and
+  // none of them says so.
+  //
+  // Every one of those is READ OFF THE MARKUP — the href's extension, the
+  // target attribute, and whether two anchors touch. Nothing here is asked of
+  // the model, and nothing here paints: the separator is clipped rather than
+  // display:none (which would take it out of the accessibility tree, the one
+  // thing it exists to be in) and the notes go on aria-label.
+  'link-list': {
+    custom:'linkList',
+    selectors:{container:'PRIMARY'},
+    // Several matches is the ORDINARY case here, not a defect: "every
+    // paragraph in the article" is a perfectly good scope, and this engine
+    // loops rather than resolving one element the way u1.fix.* does. Without
+    // this the primary field warned "not unique — U1 uses the first match"
+    // over a selector that was exactly right.
+    primaryMany:true,
+    fields:[],
+    // Real values, not placeholders. These two shipped as '' with the wording
+    // shown only as a PLACEHOLDER — grey text that reads exactly like a filled
+    // field. It was filled in in the screenshot, applied, and did nothing,
+    // because empty means "skip this". A default that has to be retyped to
+    // take effect is a trap; these are prefilled, in the site's own language
+    // (see LINK_NOTE_WORDS), and clearing one is how you turn it off.
+    rootFields:{separate:true, separator:', ', fileWord:'%s file', newTabWord:'opens in a new tab'},
+    selectorRoots:[],
+    req:['container'],
+    placeholders:{
+      separator: ', ',
+      fileWord: 'file %s — clear this to say nothing about file types',
+      newTabWord: 'clear this to say nothing about new tabs',
+    },
+    labels:{
+      container:'The text block holding the links (e.g. the <p>)',
+      separate:'Part links that touch',
+      separator:'What to put between them',
+      fileWord:'Say a link opens a file',
+      newTabWord:'Say a link opens a new tab',
+    },
+    desc:{
+      container:'Selector of the paragraph or content area whose links need this. Every link inside it is handled.',
+      separate:'Two anchors with nothing between them are read as ONE link. Inserts a separator that only a screen reader hears — the page looks identical.',
+      separator:'The text inserted between two touching links. A comma and a space is what parts them in speech.',
+      fileWord:'Added to the link\'s name when the href ends in a known file type. Use %s for the type — "קובץ %s" becomes "קובץ PDF". Leave empty to skip. In the page\'s own language.',
+      newTabWord:'Added when the link has target="_blank". Leave empty to skip. In the page\'s own language.',
+    },
+  },
+
   // Custom (NOT a u1.fix call) — the extension itself makes a grid of cells
   // keyboard-operable: role=gridcell + roving tabindex + Arrow/Home/End/Enter,
   // re-applied on DOM changes (survives Angular re-renders). For widgets U1
@@ -679,6 +735,25 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
     return { type, primary: target, firstArg: target, config, code, custom: 'keyboardClickable' };
   }
 
+  // Custom: inline links in prose — part the ones that touch, and say where
+  // each goes. Nothing here is visible; see the schema note.
+  if (schema.custom === 'linkList') {
+    const container = primary.trim();
+    const r = rootValues || {};
+    const config = {
+      selectors: { container },
+      separate: r.separate !== false && r.separate !== 'false',
+      separator: r.separator || ', ',
+      fileWord: r.fileWord || '',
+      newTabWord: r.newTabWord || '',
+    };
+    const code = `/* Inline links: part the ones that touch, and say where each goes.\n` +
+      `   Nothing here changes the page's appearance — the separator is clipped,\n` +
+      `   the notes go on aria-label. Engine is included in the export. */\n` +
+      `window.__u1FixLinkListFromMapping(${JSON.stringify(container)}, ${formatJsObject(config)});`;
+    return { type, primary: container, firstArg: container, config, code, custom: 'linkList' };
+  }
+
   // Custom: extension-provided tab strip, full ARIA pattern (no U1).
   if (schema.custom === 'keyboardTabs') {
     const tabList = primary.trim();
@@ -940,7 +1015,34 @@ async function applyOne(type, primary, config, custom, owner) {
   if (custom === 'keyboardGrid') return applyKeyboardGrid(primary, config);
   if (custom === 'keyboardClickable') return applyKeyboardClickable(primary, config);
   if (custom === 'keyboardTabs') return applyKeyboardTabs(primary, config);
+  if (custom === 'linkList') return applyLinkList(primary, config);
   return applyFix(type, primary, config, owner);
+}
+
+// Inline links, fixed in the accessibility tree only. Same shape as the other
+// engine appliers: inject grid-nav.js, then call into it.
+async function applyLinkList(primary, config) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  const s = (config && config.selectors) || {};
+  const opts = {
+    container: s.container || primary,
+    separate: config ? config.separate !== false : true,
+    separator: (config && config.separator) || ', ',
+    fileWord: (config && config.fileWord) || '',
+    newTabWord: (config && config.newTabWord) || '',
+  };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['grid-nav.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (a) => (window.__u1FixLinkList ? window.__u1FixLinkList(a) : { ok: false, err: 'grid-nav.js not loaded' }),
+      args: [opts],
+    });
+    return (res && res[0] && res[0].result) || { ok: false, err: 'No answer from the page.' };
+  } catch (e) {
+    return { ok: false, err: e.message };
+  }
 }
 
 // A readable preview of what the keyboard-grid datepicker mapping does.
@@ -1804,6 +1906,11 @@ function mappingToCode(m) {
   if (m.custom === 'keyboardTabs') {
     return `/* Accessible tab strip — uses the engine included above. */\n` +
            `window.__u1InstallTabsFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
+  }
+  if (m.custom === 'linkList') {
+    return `/* Inline links: part the ones that touch, name where each goes.\n` +
+           `   Changes nothing visible. Uses the engine included above. */\n` +
+           `window.__u1FixLinkListFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
   if (m.custom === 'staticFix') {
     // The rule name and its options only. The correctors themselves ship in the
@@ -3115,6 +3222,39 @@ document.getElementById('editSkipBtn').addEventListener('click', async () => {
   document.getElementById('skipInputs').style.display   = 'block';
 });
 
+/**
+ * Does this string look like a CSS selector a person MEANT to write?
+ *
+ * Deliberately not "is it valid CSS" — that question is useless here, because
+ * CSS identifiers may be non-ASCII, so the Hebrew label `ראש העמוד` is valid
+ * CSS (element <העמוד> inside element <ראש>) and validity caught nothing.
+ * This asks the useful question instead: does it carry the punctuation that
+ * only ever appears in a selector.
+ */
+function looksLikeSelector(s) {
+  const v = String(s || '').trim();
+  if (!v) return false;
+  // A class, an id, an attribute, a combinator, or a bare tag name.
+  return /^[.#\[]/.test(v) || /[>+~]/.test(v) ||
+         /^[a-z][a-z0-9]*([.#\[][^\s]*)+$/i.test(v) ||
+         /^(main|header|footer|nav|section|article|aside|form|body)$/i.test(v);
+}
+
+/**
+ * Does this look like words for a person rather than a selector?
+ *
+ * Several words, and none of the punctuation a selector is built from. A
+ * one-word label ("Menu") is deliberately NOT prose by this test: it is also a
+ * plausible tag name, and guessing wrong in that direction would refuse a
+ * legitimate mapping.
+ */
+function looksLikeProse(s) {
+  const v = String(s || '').trim();
+  if (!v) return false;
+  if (/[.#\[\]>+~=]/.test(v)) return false;
+  return /\s/.test(v);
+}
+
 document.getElementById('saveSkipBtn').addEventListener('click', async () => {
   const tab = await getTab();
   const links = [];
@@ -3175,6 +3315,34 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
     if (!queryResult || queryResult.error) {
       if (hintEl) {
         hintEl.textContent = `Invalid selector: ${queryResult?.error || 'unknown error'}`;
+        hintEl.className = 'field-hint error';
+      }
+      hasError = true;
+      continue;
+    }
+    // ── The two fields, filled the wrong way round ───────────────────────────
+    //
+    // From tamam.co.il: two of four skip links were saved as
+    //   { label: '#site-header',  selector: 'ראש העמוד' }
+    //   { label: 'main#main',     selector: 'תוכן המרכזי של העמוד' }
+    // — the selector typed into the label box and the label into the selector
+    // box. Nothing caught it, because CSS identifiers may be non-ASCII:
+    // `ראש העמוד` parses perfectly as "element <העמוד> inside element <ראש>".
+    // It is valid CSS that matches nothing, so it went down the benign
+    // "not on this page — saved anyway" path and was stored with an anchor
+    // that can never be assigned.
+    //
+    // Neither half is detectable alone: a label with spaces is normal, and a
+    // selector matching nothing is legitimate on a site-wide skip link. The
+    // PAIR is unambiguous — a label that is plainly a selector next to a
+    // selector that is plainly prose is one thing and one thing only.
+    if (looksLikeSelector(label) && looksLikeProse(target) && queryResult.count === 0) {
+      if (hintEl) {
+        hintEl.textContent =
+          `These two look swapped: "${label}" is a selector and "${target}" is a label. ` +
+          `Put "${label}" in the target box and "${target}" in the label box. ` +
+          `(Saved as-is this link would point at nothing — "${target}" is valid CSS, ` +
+          `it just matches no element.)`;
         hintEl.className = 'field-hint error';
       }
       hasError = true;
@@ -3690,6 +3858,9 @@ const FIELD_HOW = {
   'aria-label': {
     target: 'The element that needs a name a screen reader can read. Usually one with an icon and no text.',
   },
+  'link-list': {
+    container: 'The block of TEXT holding the links — usually the <p> itself, or the content area around several paragraphs. Not one link, and not the whole page: every link inside whatever you name here is handled, so naming <body> would sweep in the nav and the footer.',
+  },
   'keyboard-clickable': {
     target: 'An element with a click handler that the keyboard cannot reach — a <div> or <span> acting as a control. A real <button> already works.',
   },
@@ -3990,7 +4161,14 @@ function renderSubSelectorInputs(type, into, opts) {
 
   // Root fields (options)
   if (schema.rootFields) {
-    for (const [k, defaultVal] of Object.entries(schema.rootFields)) {
+    for (const [k, schemaDefault] of Object.entries(schema.rootFields)) {
+      // A default that is a sentence spoken to the visitor has to be in the
+      // visitor's language, and only the site knows which that is.
+      let defaultVal = schemaDefault;
+      if (type === 'link-list' && (k === 'fileWord' || k === 'newTabWord')) {
+        const w = linkNoteWords();
+        defaultVal = k === 'fileWord' ? w.file : w.tab;
+      }
       const hint = desc[k] || '';
       if (typeof defaultVal === 'boolean') {
         const row = document.createElement('label');
@@ -5270,6 +5448,42 @@ document.addEventListener('click', (e) => {
   setStage(to);
 });
 
+/**
+ * What a link's file type and its new tab are CALLED, per language.
+ *
+ * These go into aria-label, so they are spoken to the visitor — an Israeli
+ * site announcing "opens in a new tab" in English is a worse answer than
+ * saying nothing at all. The Config tab already knows the site's language, so
+ * the builder prefills from it rather than making every implementer translate
+ * two strings by hand and get it wrong on the sites where they forget.
+ *
+ * %s is the file type, already uppercase (PDF, JPG, Word).
+ */
+const LINK_NOTE_WORDS = {
+  en: { file: '%s file',        tab: 'opens in a new tab' },
+  he: { file: 'קובץ %s',        tab: 'נפתח בלשונית חדשה' },
+  ar: { file: 'ملف %s',         tab: 'يفتح في علامة تبويب جديدة' },
+  fr: { file: 'fichier %s',     tab: 'ouvre un nouvel onglet' },
+  es: { file: 'archivo %s',     tab: 'se abre en una pestaña nueva' },
+  de: { file: '%s-Datei',       tab: 'wird in einem neuen Tab geöffnet' },
+  ru: { file: 'файл %s',        tab: 'откроется в новой вкладке' },
+  it: { file: 'file %s',        tab: 'si apre in una nuova scheda' },
+  pt: { file: 'ficheiro %s',    tab: 'abre num novo separador' },
+  zh: { file: '%s 文件',         tab: '在新标签页中打开' },
+};
+
+// The site's configured language, or English. Read at the moment the form is
+// built, so changing the language in Config and coming back gets the right
+// wording without a reload.
+function linkNoteWords() {
+  // Straight off the Config tab's own control, which is the single source of
+  // truth for the site's language and is already populated from storage by
+  // the time any builder form is opened.
+  let lang = 'en';
+  try { lang = (document.getElementById('langSelect') || {}).value || 'en'; } catch (e) {}
+  return LINK_NOTE_WORDS[lang] || LINK_NOTE_WORDS.en;
+}
+
 // Fields that point at exactly ONE element. u1.fix.* resolves a selector rather
 // than looping, and applies to the LAST match — so several matches here is a
 // real defect, not a style note. (Plural fields like `items` are meant to match
@@ -5337,7 +5551,8 @@ async function refreshStrength() {
   const rows = [];
   if ($primarySelectorInput) {
     const badge = $primarySelectorInput.parentElement?.querySelector('.sel-strength');
-    if (badge) rows.push({ input: $primarySelectorInput, badge, key: pKey || 'element', unique: true });
+    if (badge) rows.push({ input: $primarySelectorInput, badge, key: pKey || 'element',
+                           unique: !(schema && schema.primaryMany) });
   }
   $subSelArea.querySelectorAll('.sel-strength-wrap').forEach(wrap => {
     const input = wrap.querySelector('input[type="text"]');
@@ -7531,6 +7746,27 @@ function setBulkStatus(msg, kind = 'info', ms = 0) {
   showNotice(document.getElementById('aiBulkStatus'), msg, kind, ms);
 }
 
+/**
+ * The status line belonging to the stage that is actually on screen.
+ *
+ * Each AI stage carries its own, and setStage shows exactly one stage — so a
+ * message written to another stage's line is painted into a display:none
+ * container and is never seen. That is not a cosmetic problem: it is how
+ * "Approve & apply does nothing" happened. The save was refused, correctly and
+ * with a good sentence explaining why, into a hidden element.
+ */
+function stageStatusEl() {
+  const byStage = {
+    found: 'aiMapStatus',
+    cards: 'aiCardStatus',
+    review: 'aiBulkStatus',
+    screens: 'sweepPicksStatus',
+    components: 'sweepPicksStatus',
+  };
+  return document.getElementById(byStage[currentStage] || 'aiMapStatus') ||
+         document.getElementById('aiMapStatus');
+}
+
 document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('aiMapAllBtn');
   const stopBtn = document.getElementById('aiMapAllStopBtn');
@@ -7850,7 +8086,10 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
 
     setStage(resumeStage());
     const bad = details.filter(d => !d.verdict.ok).length;
-    showNotice(document.getElementById('aiMapStatus'),
+    // AFTER setStage, and addressed to whichever stage it just chose —
+    // resumeStage can land on cards or applied, and #aiMapStatus is hidden in
+    // both.
+    showNotice(stageStatusEl(),
       `${details.length} mapping${details.length === 1 ? '' : 's'} saved and applied` +
       (bad ? `, ${bad} with something to look at — see the list below.` : '.'),
       bad ? 'error' : 'success', 9000);
@@ -10817,16 +11056,20 @@ async function refreshAiCard(idx) {
   if (!form) return;
   const wraps = [...form.querySelectorAll('.sel-strength-wrap')];
   const sels = wraps.map(w => w.querySelector('input').value.trim());
+  // A type whose primary is MEANT to match many must not be graded as though
+  // it were a u1.fix.* selector that resolves one element.
+  const many = !!(tpl && COMPONENT_SCHEMAS[tpl.type] && COMPONENT_SCHEMAS[tpl.type].primaryMany);
+  const isUnique = (key) => (key === '__primary' ? !many : SINGULAR_FIELDS.has(key));
   wraps.forEach((w, i) => {
     const key = w.querySelector('input').dataset.field || '';
-    paintStrength(w.querySelector('.sel-strength'), strengthOf(sels[i], { unique: key === '__primary' || SINGULAR_FIELDS.has(key) }));
+    paintStrength(w.querySelector('.sel-strength'), strengthOf(sels[i], { unique: isUnique(key) }));
   });
   const counts = await countSelectors(sels);
   wraps.forEach((w, i) => {
     const inp = w.querySelector('input');
     if (inp.value.trim() !== sels[i]) return;
     const key = inp.dataset.field || '';
-    const o = { unique: key === '__primary' || SINGULAR_FIELDS.has(key) };
+    const o = { unique: isUnique(key) };
     if (typeof counts[i] === 'number') o.count = counts[i];
     paintStrength(w.querySelector('.sel-strength'), strengthOf(sels[i], o));
   });
@@ -10855,7 +11098,12 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
   if (save) {
     const idx = Number(save.dataset.savecard);
     const tpl = aiCardTemplate(idx);
-    const status = document.getElementById('aiMapStatus');
+    // The CARDS stage's own status line. #aiMapStatus is inside #aiResults,
+    // which is display:none whenever a card is showing — so everything this
+    // handler said, refusals included, went into a hidden element and the
+    // button looked dead. Falls back to the old one only if the markup is
+    // older than this fix.
+    const status = stageStatusEl();
     if (isReadonly()) {
       showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
       return;
@@ -13813,7 +14061,7 @@ async function getGridEngineSource(kinds) {
   try {
     const res = await fetch(chrome.runtime.getURL('grid-nav.js'));
     const src = await res.text();
-    const wanted = new Set(kinds && kinds.length ? kinds : ['grid', 'clickable', 'tabs']);
+    const wanted = new Set(kinds && kinds.length ? kinds : ['grid', 'clickable', 'tabs', 'linklist']);
 
     const picked = [];
     const re = /\/\/#region u1-engine:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
@@ -13915,7 +14163,7 @@ function qaCheckFor(m) {
 // Builds the full, self-contained script the implementer pastes into the site
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
-  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [], statics = [];
+  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [], linkLists = [], statics = [];
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
@@ -13939,6 +14187,8 @@ async function buildDeployableCode(list, hostname) {
     // Must sit in an engine-carrying bucket, not with the plain customs: its
     // call is meaningless without the engine source shipped alongside it.
     else if (m.custom === 'keyboardTabs') tabStrips.push(m);
+    // Same reason: the call needs its engine region shipped beside it.
+    else if (m.custom === 'linkList') linkLists.push(m);
     // Declarations, not calls: a static fix switches on a corrector that lives
     // in the patch, so it has to be emitted BEFORE the patch runs.
     else if (m.custom === 'staticFix') { const c = mappingToCode(m); if (c) statics.push(header(m) + '\n' + c); }
@@ -14002,12 +14252,13 @@ async function buildDeployableCode(list, hostname) {
     fixesParts.push(`/* ---- Accessible names ---- */\n` +
       `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1ApplyNames();`);
   }
-  if (grids.length || clickables.length || tabStrips.length) {
+  if (grids.length || clickables.length || tabStrips.length || linkLists.length) {
     // Only the engines these mappings actually call.
     const kinds = [];
     if (grids.length) kinds.push('grid');
     if (clickables.length) kinds.push('clickable');
     if (tabStrips.length) kinds.push('tabs');
+    if (linkLists.length) kinds.push('linklist');
     // A hosted engine turns ~26KB of pasted code into one <script src> line,
     // and lets an engine fix reach every client without anyone re-pasting it.
     // Empty field → inline, exactly as before, so a client who will not load a
@@ -14019,6 +14270,8 @@ async function buildDeployableCode(list, hostname) {
       header(c) + `\nwindow.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' }, null, 2)});`
     )).concat(tabStrips.map(t =>
       header(t) + `\nwindow.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${JSON.stringify(t.config, null, 2)});`
+    )).concat(linkLists.map(l =>
+      header(l) + `\nwindow.__u1FixLinkListFromMapping(${JSON.stringify(l.primary)}, ${JSON.stringify(l.config, null, 2)});`
     )).join('\n\n');
     fixesParts.push(
       `/* ---- Keyboard engines (grid / clickable / tab strip) ----\n` +
@@ -14758,6 +15011,33 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
     statusEl.className = 'notice error';
     statusEl.textContent = 'Error: ' + err.message;
     flashMessage(statusEl, 4500);
+  }
+});
+
+// The firewall sheet on its own. It needs no CSS/JS links and no mappings —
+// it is one request to one person, and gating it behind a complete package
+// would be gating it behind work that has nothing to do with it.
+document.getElementById('exportMonitoringBtn')?.addEventListener('click', async () => {
+  const statusEl = document.getElementById('exportStatus');
+  try {
+    // The hook's own source, so the document is self-contained: it is very
+    // often forwarded on its own, weeks after the .zip was sent and lost.
+    let src = '';
+    try {
+      const mKey = storageKey('mappings', currentHostname);
+      const stored = await U1Store.get([mKey]);
+      src = (await buildDeployableCode(stored[mKey] || [], currentHostname)).monitoring || '';
+    } catch {}
+    const platform = document.getElementById('platformSelect')?.value || 'wordpress';
+    generateAndDownloadMonitoringGuide(currentHostname, src, platform);
+    showNotice(statusEl, src
+      ? 'Monitoring guide downloaded — how to install the hook, the hook itself, and the ' +
+        'three firewall addresses, in one document.'
+      : 'Firewall allowlist downloaded. There are no mappings on this site yet, so the ' +
+        'monitoring hook is not in it — re-export once there are.',
+      'success', 9000);
+  } catch (err) {
+    showNotice(statusEl, 'Error: ' + err.message, 'error', 5000);
   }
 });
 

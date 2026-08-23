@@ -168,6 +168,37 @@ The fix:
 Telling the two apart: if the list is visible before anyone types, it is this.
 If typing makes a list appear that was not there, it is a combobox.
 
+## link-list
+
+Inline links in a run of prose. Not a u1.fix call — the extension's own engine,
+and it is the one fix that is guaranteed to change **nothing visible**.
+
+- `container` — the paragraph or content area. Every link inside it is handled.
+- `separate` — part links that touch. Default true.
+- `separator` — what goes between them. Default `, `.
+- `fileWord` — added when the href names a file type. `%s` is the type.
+- `newTabWord` — added when the link has `target="_blank"`.
+
+**Adjacent links are the defect.** Two anchors with nothing at all between them:
+
+    ...<a href="kosher.jpg">תעודת כשרות</a><a href="license.pdf"> ורישיון יצרן.</a>
+
+JAWS and NVDA run those together, so two separate documents are heard as one
+link. This is what "the screen reader reads all the links together" means in
+practice — and note that the OTHER links in the same paragraph, the ones with
+commas between them, are fine. Only the touching pair is repaired.
+
+**The separator is clipped, never `display:none`.** Both `display:none` and
+`visibility:hidden` remove a node from the accessibility tree, which is the one
+place this separator exists to be. It is positioned off-screen with
+`clip-path: inset(50%)` instead: announced, and not painted.
+
+**A file and a new tab are facts, not guesses.** The href's extension and the
+`target` attribute are in the markup. A URL that does not plainly end in a
+known extension is given nothing — a guess about what `/reports?id=7` serves is
+the confident-wrong-answer failure this file exists to prevent. Both words are
+supplied per site so a Hebrew page does not announce in English.
+
 ## Never map a tag that already is what you would declare
 
 `<a href>` IS a link. `<button>` IS a button. The browser gives them the role,

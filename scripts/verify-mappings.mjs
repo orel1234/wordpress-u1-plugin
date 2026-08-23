@@ -1001,6 +1001,279 @@ if (!dlgCloseNoOverrule) failed++;
 console.log(`  ${dlgCloseFills ? '✅' : '❌'} …filling only what the model left empty, never overruling a real answer`);
 if (!dlgCloseFills) failed++;
 
+// ── A stage's messages must land in that stage ──────────────────────────────
+//
+// Reported as "I press Approve & apply and nothing happens". It was not doing
+// nothing: the card was a form with no invalidField, the save refused it — and
+// the sentence saying so was written to #aiMapStatus, which lives inside
+// #aiResults, which setStage('cards') had set to display:none. A correct
+// refusal, painted where nobody could read it.
+let stageStatusScoped = false, cardStatusExists = false, refusalSaysWhy = false;
+{
+  const html = readFileSync(join(ROOT, 'panel.html'), 'utf8');
+  const dom = new JSDOM(html);
+  const doc = dom.window.document;
+  const inResults = doc.getElementById('aiResults');
+  const inCards = doc.getElementById('aiMappings');
+  const cardStatus = doc.getElementById('aiCardStatus');
+  // The cards stage has a line of its own, and it is INSIDE the cards stage.
+  cardStatusExists = !!cardStatus && inCards.contains(cardStatus) &&
+                     !inResults.contains(cardStatus);
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  // The card handler and the bulk finish both address the stage on screen.
+  stageStatusScoped = /function stageStatusEl\(\)/.test(src) &&
+    /cards: 'aiCardStatus'/.test(src) &&
+    /const save = e\.target\.closest\('\[data-savecard\]'\);[\s\S]{0,900}const status = stageStatusEl\(\);/.test(src) &&
+    // …and the bulk one AFTER setStage, since resumeStage picks the stage.
+    /setStage\(resumeStage\(\)\);[\s\S]{0,300}showNotice\(stageStatusEl\(\)/.test(src);
+  // The refusal itself has to name the fields and say what saving anyway would
+  // produce — "invalid" alone sends people hunting through eight selectors.
+  refusalSaysWhy = /it would decorate nothing and say nothing/.test(src) &&
+                   /needs \$\{missing\.join\(' and '\)\}/.test(src);
+}
+console.log(`  ${cardStatusExists ? '✅' : '❌'} the cards stage has its own status line, inside the cards stage`);
+if (!cardStatusExists) failed++;
+console.log(`  ${stageStatusScoped ? '✅' : '❌'} …and messages go to the stage on screen, not into a hidden container`);
+if (!stageStatusScoped) failed++;
+console.log(`  ${refusalSaysWhy ? '✅' : '❌'} …so a refused save names the empty required fields and why it refused`);
+if (!refusalSaysWhy) failed++;
+
+// ── Inline links in prose ───────────────────────────────────────────────────
+//
+// The markup below is verbatim from tamam.co.il. Reported as "the screen reader
+// reads all the links together", and the cause is in the last two: between
+// `כשרות</a>` and the next `<a>` there is not one character, so JAWS and NVDA
+// run them into a single link and two separate documents are heard as one. The
+// other three have commas and are fine.
+//
+// The whole point of the fix is that it changes NOTHING VISIBLE — a hard
+// requirement from the client, not a preference — so that is asserted as
+// firmly as the repair itself.
+const TAMAM = `<p>אנו בת.מ.מ פועלים בפיקוח משרד הבריאות <a href="/a/HACCP.pdf" target="_blank" rel="noopener">HACCP</a>, ` +
+  `<a href="/a/iso.pdf" target="_blank" rel="noopener">ISO 9001</a> ,` +
+  `<a href="/a/GMP.pdf" target="_blank" rel="noopener">GMP</a> וכן ` +
+  `<a href="/a/kosher.jpg" target="_blank" rel="noopener">תעודת כשרות</a>` +
+  `<a href="/a/license.pdf" target="_blank" rel="noopener"> ורישיון יצרן.</a></p>`;
+
+let llBuilt = false, llParted = false, llNamed = false, llInvisible = false,
+    llLeavesGoodAlone = false, llIdempotent = false, llNoGuess = false;
+{
+  const tpl = buildTemplate('link-list', 'p', {}, {
+    separate: true, separator: ', ', fileWord: 'קובץ %s', newTabWord: 'נפתח בלשונית חדשה',
+  });
+  llBuilt = !!tpl && tpl.custom === 'linkList' && tpl.primary === 'p' &&
+            /__u1FixLinkListFromMapping/.test(tpl.code);
+
+  const dom = new JSDOM(`<!doctype html><body>${TAMAM}</body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://www.tamam.co.il/' });
+  const w = dom.window;
+  w.requestAnimationFrame = (f) => setTimeout(f, 0);
+  const seenBefore = w.document.querySelector('p').textContent;
+  w.eval(readFileSync(join(ROOT, 'grid-nav.js'), 'utf8'));
+  // The template's OWN generated code, not a hand-written call — so this
+  // proves the path a specialist actually gets, builder included.
+  w.eval(tpl.code);
+
+  const links = [...w.document.querySelectorAll('a')];
+  const nameOf = (a) => a.getAttribute('aria-label') || a.textContent;
+
+  // 1. The two that touched are parted, and ONLY those two.
+  const seps = [...w.document.querySelectorAll('span[__u1LinkListSep]')];
+  // The separator has to sit BETWEEN the two anchors that touched — inserting
+  // one somewhere else would score the same on a count and fix nothing.
+  llParted = seps.length === 1 &&
+    links[4].previousSibling === seps[0] &&
+    seps[0].previousSibling === links[3] &&
+    /,/.test(seps[0].textContent);
+  // The three with commas of their own must not have collected a second one.
+  llLeavesGoodAlone = !/,\s*,/.test(w.document.querySelector('p').textContent);
+
+  // 2 & 3. Each link says its own type and that it opens a new tab.
+  llNamed =
+    nameOf(links[0]) === 'HACCP (קובץ PDF, נפתח בלשונית חדשה)' &&
+    nameOf(links[3]) === 'תעודת כשרות (קובץ JPG, נפתח בלשונית חדשה)' &&
+    // The leading space and the sentence's full stop come off the name.
+    nameOf(links[4]) === 'ורישיון יצרן. (קובץ PDF, נפתח בלשונית חדשה)';
+
+  // NOTHING VISIBLE MAY CHANGE. display:none and visibility:hidden would also
+  // hide the separator from the accessibility tree, which is the one thing it
+  // exists to be in — so it must be CLIPPED, and nothing else may be touched.
+  llInvisible = seps.length > 0 &&
+    seps.every((s) => {
+      const st = s.getAttribute('style') || '';
+      return /clip-path:\s*inset\(50%\)/.test(st) &&
+             !/display:\s*none/.test(st) && !/visibility:\s*hidden/.test(st);
+    }) &&
+    // No style was put on the links themselves, and the paragraph's own text
+    // is byte-for-byte what it was once the clipped separators are discounted
+    // — they are the only thing added, and they are not on screen.
+    links.every((a) => !a.getAttribute('style')) &&
+    (() => {
+      const copy = w.document.querySelector('p').cloneNode(true);
+      copy.querySelectorAll('span[__u1LinkListSep]').forEach((s) => s.remove());
+      return copy.textContent === seenBefore;
+    })();
+
+  // Applying twice must not stack a second separator or a second "(PDF…)".
+  w.eval(tpl.code);
+  llIdempotent =
+    [...w.document.querySelectorAll('span[__u1LinkListSep]')].length === 1 &&
+    nameOf(w.document.querySelectorAll('a')[0]) === 'HACCP (קובץ PDF, נפתח בלשונית חדשה)';
+
+  // A URL that does not plainly name a file type must not be given one — a
+  // guess about what a URL serves is the confident-wrong-answer failure mode.
+  const d2 = new JSDOM(`<!doctype html><body><p><a href="/reports?id=7">Report</a>` +
+    `<a href="/about/">About</a></p></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  d2.window.requestAnimationFrame = (f) => setTimeout(f, 0);
+  d2.window.eval(readFileSync(join(ROOT, 'grid-nav.js'), 'utf8'));
+  d2.window.eval(tpl.code);
+  llNoGuess = [...d2.window.document.querySelectorAll('a')]
+    .every((a) => !/קובץ/.test(a.getAttribute('aria-label') || ''));
+}
+console.log(`  ${llBuilt ? '✅' : '❌'} link-list builds a runnable mapping from the container alone`);
+if (!llBuilt) failed++;
+console.log(`  ${llParted ? '✅' : '❌'} …two links that TOUCH are parted, which is what "reads them all together" is`);
+if (!llParted) failed++;
+console.log(`  ${llLeavesGoodAlone ? '✅' : '❌'} …while links already separated by a comma are left alone`);
+if (!llLeavesGoodAlone) failed++;
+console.log(`  ${llNamed ? '✅' : '❌'} …each link says its file type and that it opens a new tab, in the page's language`);
+if (!llNamed) failed++;
+console.log(`  ${llNoGuess ? '✅' : '❌'} …and a URL that names no file type is not given one`);
+if (!llNoGuess) failed++;
+console.log(`  ${llInvisible ? '✅' : '❌'} …changing NOTHING visible: the separator is clipped, never display:none`);
+if (!llInvisible) failed++;
+console.log(`  ${llIdempotent ? '✅' : '❌'} …and applying it twice does not stack a second separator or note`);
+if (!llIdempotent) failed++;
+
+// ── A skip link with its two fields filled the wrong way round ──────────────
+//
+// From tamam.co.il. Two of four skip links were stored as
+//   { label: '#site-header', selector: 'ראש העמוד' }
+//   { label: 'main#main',    selector: 'תוכן המרכזי של העמוד' }
+// — selector in the label box, label in the selector box. Nothing caught it,
+// because CSS identifiers may be non-ASCII: `ראש העמוד` is VALID CSS meaning
+// "element <העמוד> inside element <ראש>". It matched nothing, took the benign
+// "not on this page — saved anyway" path, and was stored pointing at an anchor
+// that can never be assigned.
+let skipSwapCaught = false, skipNoFalsePositive = false, skipGuardWired = false;
+{
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const fns = /function looksLikeSelector[\s\S]*?\n\}/.exec(src)[0] +
+              /function looksLikeProse[\s\S]*?\n\}/.exec(src)[0];
+  const { looksLikeSelector, looksLikeProse } =
+    new Function(fns + '; return { looksLikeSelector, looksLikeProse };')();
+
+  // The real swapped pairs must be recognised as swapped.
+  const swapped = [['#site-header', 'ראש העמוד'], ['main#main', 'תוכן המרכזי של העמוד']];
+  skipSwapCaught = swapped.every(([lab, tgt]) => looksLikeSelector(lab) && looksLikeProse(tgt));
+
+  // …and the CORRECT rows from the very same save must not be touched. A label
+  // with spaces is ordinary; refusing those would break every real skip link.
+  const fine = [
+    ['תפריט ניווט', '.elementor-nav-menu'],
+    ['טופס צרו איתנו קשר', '.elementor-form'],
+    ['Skip to main content', '#main'],
+    ['Menu', 'nav'],                      // one word: ambiguous, so left alone
+  ];
+  skipNoFalsePositive = fine.every(([lab, tgt]) => !(looksLikeSelector(lab) && looksLikeProse(tgt)));
+
+  // Wired into the save, and only when the "selector" also matches nothing —
+  // prose that somehow does match is not a swap, it is a working selector.
+  skipGuardWired =
+    /if \(looksLikeSelector\(label\) && looksLikeProse\(target\) && queryResult\.count === 0\) \{/.test(src) &&
+    /These two look swapped/.test(src) &&
+    /hasError = true;[\s\S]{0,40}continue;[\s\S]{0,200}if \(queryResult\.count === 0\) \{/.test(src);
+}
+console.log(`  ${skipSwapCaught ? '✅' : '❌'} a skip link with label and target swapped is caught before it is saved`);
+if (!skipSwapCaught) failed++;
+console.log(`  ${skipNoFalsePositive ? '✅' : '❌'} …while the correctly-filled rows beside it are left alone`);
+if (!skipNoFalsePositive) failed++;
+console.log(`  ${skipGuardWired ? '✅' : '❌'} …and it only fires when the "selector" really does match nothing`);
+if (!skipGuardWired) failed++;
+
+// ── A default that must be retyped to take effect is a trap ─────────────────
+//
+// fileWord and newTabWord shipped as '' with the wording shown only as a
+// PLACEHOLDER — grey text that reads exactly like a filled field. On
+// tamam.co.il the mapping was created with them looking filled in, applied,
+// and the separator went in while not one aria-label did, because empty means
+// "skip this". Verified against the live DOM afterwards.
+let llRealDefaults = false, llLangAware = false, llClearable = false;
+{
+  const sc = COMPONENT_SCHEMAS['link-list'];
+  llRealDefaults = !!String(sc.rootFields.fileWord || '').trim() &&
+                   !!String(sc.rootFields.newTabWord || '').trim() &&
+                   sc.rootFields.fileWord.includes('%s');
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  // Spoken to the visitor, so it has to be the visitor's language — and the
+  // Config tab already knows which that is.
+  const table = /const LINK_NOTE_WORDS = \{[\s\S]*?\n\};/.exec(src);
+  llLangAware = !!table &&
+    /he: \{ file: 'קובץ %s'/.test(table[0]) &&
+    /getElementById\('langSelect'\)/.test(src) &&
+    /type === 'link-list' && \(k === 'fileWord' \|\| k === 'newTabWord'\)/.test(src);
+  // Every language in the Config dropdown needs an entry, or a site set to it
+  // silently falls back to English in the visitor's ear.
+  const html = readFileSync(join(ROOT, 'panel.html'), 'utf8');
+  const langSel = /<select id="langSelect">([\s\S]*?)<\/select>/.exec(html);
+  const langs = langSel ? [...langSel[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]) : [];
+  const words = table ? table[0] : '';
+  const missing = langs.filter((l) => !new RegExp('\\b' + l + ': \\{').test(words));
+  if (missing.length) llLangAware = false;
+  // Clearing one is how you switch it off — the placeholder now says so
+  // instead of impersonating a value.
+  llClearable = /clear this to say nothing about file types/.test(src) &&
+                /clear this to say nothing about new tabs/.test(src);
+  if (missing.length) console.log('    (languages with no wording: ' + missing.join(', ') + ')');
+}
+console.log(`  ${llRealDefaults ? '✅' : '❌'} the file/new-tab wording is a real default, not a placeholder that does nothing`);
+if (!llRealDefaults) failed++;
+console.log(`  ${llLangAware ? '✅' : '❌'} …in the site's own language, for every language Config offers`);
+if (!llLangAware) failed++;
+console.log(`  ${llClearable ? '✅' : '❌'} …and the placeholder says clearing it is how you switch it off`);
+if (!llClearable) failed++;
+
+// ── Pointing at the links instead of the block that holds them ──────────────
+// Reported from tamam.co.il: `.elementor-widget-container>p>a` was entered, the
+// panel listed five matching links back, and nothing happened — because an <a>
+// contains no <a>. It returned ok:true with a soft "wires automatically if they
+// appear", which is a failure dressed as a success and worse than an error.
+let llRefusesLinks = false, llNamesTheParent = false, llRefusesNothing = false, llManyOk = false;
+{
+  const d = new JSDOM(`<!doctype html><body><div class="wrap">${TAMAM}</div></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://www.tamam.co.il/' });
+  const w = d.window;
+  w.requestAnimationFrame = (f) => setTimeout(f, 0);
+  w.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 10, left: 10, bottom: 50, right: 310 });
+  w.eval(readFileSync(join(ROOT, 'selector-intel.js'), 'utf8'));
+  w.eval(readFileSync(join(ROOT, 'grid-nav.js'), 'utf8'));
+
+  const atLinks = w.__u1FixLinkList({ container: '.wrap>p>a' });
+  llRefusesLinks = atLinks.ok === false && /not the block around them/.test(atLinks.err || '');
+  // Naming the parent matters: without it the same wrong answer gets typed
+  // twice, since the field gives no clue which element it wanted.
+  llNamesTheParent = /try p\b/.test(atLinks.err || '');
+  const atNothing = w.__u1FixLinkList({ container: '.does-not-exist' });
+  llRefusesNothing = atNothing.ok === false && /matches nothing/.test(atNothing.err || '');
+}
+// Several matches is the ORDINARY case for this type — "every paragraph in the
+// article" is a good scope — so the primary must not be graded as though it
+// were a u1.fix.* selector that resolves exactly one element.
+llManyOk = COMPONENT_SCHEMAS['link-list'].primaryMany === true &&
+  /unique: !\(schema && schema\.primaryMany\)/.test(readFileSync(join(ROOT, 'panel.js'), 'utf8')) &&
+  /const isUnique = \(key\) => \(key === '__primary' \? !many : SINGULAR_FIELDS\.has\(key\)\);/
+    .test(readFileSync(join(ROOT, 'panel.js'), 'utf8'));
+console.log(`  ${llRefusesLinks ? '✅' : '❌'} …pointing it at the LINKS is refused, not silently reported as done`);
+if (!llRefusesLinks) failed++;
+console.log(`  ${llNamesTheParent ? '✅' : '❌'} …naming the element that should have been used instead`);
+if (!llNamesTheParent) failed++;
+console.log(`  ${llRefusesNothing ? '✅' : '❌'} …and a selector matching nothing is refused too`);
+if (!llRefusesNothing) failed++;
+console.log(`  ${llManyOk ? '✅' : '❌'} …while several paragraphs is NOT warned about — the normal case for this type`);
+if (!llManyOk) failed++;
+
 // ── Opening a dialog and pressing "Scan the whole page" ─────────────────────
 // That route begins with window.scrollTo(0,0) and walks the page a screenful
 // at a time — which is exactly what closes a modal. It then surveys the page
@@ -1149,6 +1422,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 71;
+const total = results.length + 91;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

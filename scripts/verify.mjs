@@ -431,5 +431,68 @@ console.log('\nAI modes are gated on the key, at the door:');
   else fail(`${stray.length} hardcoded font stacks left: ${[...new Set(stray)].join(' | ')}`);
 }
 
+// ── The monitoring allowlist reaches the client ─────────────────────────────
+//
+// The monitor calls the site from Railway, which round-robins outbound traffic
+// across three fixed addresses. A client who allows only the one they saw in a
+// log is unblocked until the next request leaves from a different one — and
+// the block then looks like a new, unrelated fault. All three, or it comes
+// back.
+{
+  const gen = read('docx-gen.js');
+  const ips = ['152.55.180.240', '162.220.234.242', '152.55.180.243'];
+  const hasAll = ips.every((ip) => gen.includes(ip));
+  if (hasAll) pass('all three monitoring addresses are in the guide, not just one');
+  else fail(`monitoring IPs missing: ${ips.filter((ip) => !gen.includes(ip)).join(', ')}`);
+
+  // The reason has to travel WITH the addresses. "Allow these three" without
+  // the why invites a firewall admin to allow one and call it done.
+  const explains = /balances outbound traffic/.test(gen) && /rotation/.test(gen) &&
+                   /allowing a single address is not enough/.test(gen) && /Railway/.test(gen);
+  if (explains) pass('…and it says why three, so nobody allows one and calls it done');
+  else fail('the guide lists the addresses without explaining the round-robin');
+
+  // Only when the site is actually monitored — asking for three addresses to
+  // be opened on a site with no monitor is asking for a change nobody needs.
+  const gated = /files && files\.monitoring \? monitoringSection\(hostname/.test(gen);
+  if (gated) pass('…and it is only asked for when the monitor is in the package');
+  else fail('the allowlist section is not gated on the monitor being included');
+
+  // A sheet of its own: whoever runs the firewall is usually not whoever
+  // implements the library, and a WordPress guide to find one paragraph in is
+  // how the request gets ignored.
+  const standalone = /function buildMonitoringOnlyDocumentXml/.test(gen) &&
+                     /function generateAndDownloadMonitoringGuide/.test(gen) &&
+                     /U1-Monitoring-\$\{safeFilenamePart\(hostname\)\}\.docx/.test(gen);
+  const wired = /getElementById\('exportMonitoringBtn'\)/.test(read('panel.js')) &&
+                /id="exportMonitoringBtn"/.test(read('panel.html'));
+  if (standalone && wired) pass('…and the monitoring guide can be downloaded on its own');
+  else fail(`standalone monitoring guide — built:${standalone} wired:${wired}`);
+
+  // Self-contained: it is forwarded on its own, weeks after the .zip was sent
+  // and lost, usually to somebody who never saw the implementation guide. So
+  // it carries the install, the script's own source, and the allowlist.
+  const whole = /heading\('Installing the monitoring hook'/.test(gen) &&
+                /add_action\('wp_footer', 'u1_load_monitoring'\)/.test(gen) &&
+                /heading\('The script itself'/.test(gen) &&
+                /codeBlock\(src\)/.test(gen) &&
+                /heading\('Checking it works'/.test(gen);
+  if (whole) pass('…carrying the install, the script itself and how to verify it');
+  else fail('the standalone monitoring guide is missing the install or the script');
+
+  // The panel has to HAND it the script, or the section renders empty.
+  const fed = /generateAndDownloadMonitoringGuide\(currentHostname, src, platform\)/.test(read('panel.js')) &&
+              /buildDeployableCode\(stored\[mKey\] \|\| \[\], currentHostname\)\)\.monitoring/.test(read('panel.js'));
+  if (fed) pass('…and the panel passes the built script into it, not just the hostname');
+  else fail('the standalone guide is not given the monitoring source');
+
+  // The guide row named the file "A", because it led with an article where
+  // every other row leads with a filename.
+  const named = /<strong>U1-Implementation-Guide\.docx<\/strong>/.test(read('panel.html')) &&
+                !/<strong>A \.docx guide<\/strong>/.test(read('panel.html'));
+  if (named) pass('the export list names the guide file instead of calling it "A"');
+  else fail('the export list still reads "A .docx guide"');
+}
+
 console.log(failures === 0 ? '\n✅ All extension checks passed.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

@@ -376,6 +376,11 @@ add_action('wp_footer', 'u1_load_fix_files');`
     // Step 4 (only if there are files to link — config, patch, fixes, monitoring)
     ...fixFilesStep,
 
+    // The firewall allowlist, only when the monitor is actually in the package.
+    // Asking for three addresses to be opened on a site that is not monitored
+    // would be asking for a change nobody needs.
+    ...(files && files.monitoring ? monitoringSection(hostname, { level: 1 }) : []),
+
     // Closing
     para('That\'s it! At this point, the User1st system should be properly implemented and configured on your website.', 'Normal'),
   ];
@@ -437,6 +442,142 @@ function jsObjSource(obj, indent = 0) {
   return `{\n${Object.keys(obj)
     .map((k) => `${padInner}${key(k)}: ${jsObjSource(obj[k], indent + 1)}`)
     .join(',\n')}\n${pad}}`;
+}
+
+// ── The monitoring allowlist ─────────────────────────────────────────────────
+//
+// The monitor calls the client's site from our backend. Plenty of the sites we
+// are engaged on sit behind a WAF, a CDN or a firewall that blocks unknown
+// server-to-server traffic, and the block looks exactly like the monitor being
+// broken — so the addresses to allow have to be IN the guide, next to the file
+// they belong to, rather than asked for over email once it has already failed.
+//
+// THREE addresses, not one, and the reason is worth stating plainly: Railway
+// (the platform running the backend) round-robins outbound traffic across a
+// fixed set of three. Allowing whichever one happened to appear in a log works
+// until the next request leaves from a different one, and then the block comes
+// back looking like a new, unrelated fault. Allowing one is the failure mode;
+// allowing all three is the fix.
+const MONITOR_IPS = ['152.55.180.240', '162.220.234.242', '152.55.180.243'];
+
+function monitoringSection(hostname, opts) {
+  const o = opts || {};
+  const level = o.level || 1;
+  const out = [
+    heading('Monitoring: addresses to allow through the firewall', level),
+    para('The accessibility monitor checks ' + (hostname || 'the site') +
+      ' from User1st\u2019s servers. If the site sits behind a firewall, a WAF or a CDN ' +
+      '(Cloudflare, Imperva, Akamai, F5, AWS WAF and similar), that traffic is often ' +
+      'blocked as unrecognised server-to-server requests \u2014 and a blocked monitor looks ' +
+      'exactly like a broken one. Allow these three addresses:', 'Normal'),
+    emptyPara(),
+  ];
+  MONITOR_IPS.forEach((ip) => out.push(bullet(ip)));
+  out.push(
+    emptyPara(),
+    heading('Why three addresses and not one', level + 1),
+    para('Railway, the platform running the monitoring backend, balances outbound traffic ' +
+      'across these three fixed addresses in rotation. Any given request may leave from ' +
+      'any one of the three, and not always the same one.', 'Normal'),
+    para('This is why allowing a single address is not enough: it works while traffic ' +
+      'happens to leave from that address, and the block returns the moment a request ' +
+      'goes out through one of the other two \u2014 usually looking like a new and unrelated ' +
+      'fault. All three have to be allowed together for the block not to come back.', 'Normal'),
+    emptyPara(),
+  );
+  if (o.withFile !== false) {
+    out.push(
+      para('u1-monitoring.js itself is inert: it does nothing at all unless the page is ' +
+        'loaded with ?u1qa=1 appended to the URL, so it has no effect on ordinary visitors.',
+        'Normal'),
+      emptyPara(),
+    );
+  }
+  return out;
+}
+
+// The whole monitoring story as a document of its own: how to install the
+// hook, the hook itself, and the addresses to allow.
+//
+// Standalone because monitoring is very often a SEPARATE conversation from the
+// implementation — it gets turned on weeks later, by a different person, and
+// sending them the full WordPress guide to find the two parts that concern
+// them is how the request gets ignored. It carries the script inline as well
+// as referencing the file, so it still works when the .zip has been lost and
+// only the document was forwarded.
+function buildMonitoringOnlyDocumentXml(hostname, monitoringSrc, siteType) {
+  const type = siteType || 'wordpress';
+  const src = String(monitoringSrc || '').trim();
+
+  const installParts = [];
+  if (src) {
+    installParts.push(
+      heading('Installing the monitoring hook', 1),
+      para('The hook is one file, u1-monitoring.js. It does nothing at all unless the ' +
+        'page is loaded with ?u1qa=1 appended to the URL \u2014 ordinary visitors never ' +
+        'execute any of it \u2014 so it is safe to load site-wide and on production.',
+        'Normal'),
+      emptyPara(),
+    );
+    if (type === 'wordpress') {
+      installParts.push(
+        bullet('Upload u1-monitoring.js into your active theme\u2019s folder, beside style.css.'),
+        bullet('In functions.php, add:'),
+        emptyPara(),
+        para('PHP', 'CodeLabel'),
+        codeBlock(`function u1_load_monitoring() {
+?>
+<script src="<?php echo esc_url( get_stylesheet_directory_uri() . '/u1-monitoring.js' ); ?>"></script>
+<?php
+}
+add_action('wp_footer', 'u1_load_monitoring');`),
+      );
+    } else {
+      installParts.push(
+        bullet('Serve u1-monitoring.js alongside the site\u2019s other scripts.'),
+        bullet('Load it before the closing body tag:'),
+        emptyPara(),
+        para('HTML', 'CodeLabel'),
+        codeBlock('<script src="/u1-monitoring.js"></script>'),
+      );
+    }
+    installParts.push(
+      emptyPara(),
+      heading('The script itself', 2),
+      para('If u1-monitoring.js did not reach you with this document, the whole of it is ' +
+        'below \u2014 save it under that name. It is generated for ' + (hostname || 'this site') +
+        ' and lists that site\u2019s own mappings, so it is not interchangeable between sites.',
+        'Normal'),
+      emptyPara(),
+      para('JavaScript \u2014 u1-monitoring.js', 'CodeLabel'),
+      codeBlock(src),
+      emptyPara(),
+      heading('Checking it works', 2),
+      para('Open any page of the site with ?u1qa=1 on the end of the URL and look at the ' +
+        'browser console. Silence is the healthy result. A mapping whose selector no ' +
+        'longer matches prints one line beginning U1-VALIDATION-ERROR, naming the ' +
+        'component and the selector that broke \u2014 that is what the monitor collects.',
+        'Normal'),
+      emptyPara(),
+    );
+  }
+
+  return wrapDoc([
+    para('User1st accessibility monitoring' + (hostname ? ' \u2014 ' + hostname : ''), 'Title'),
+    emptyPara(),
+    para(src
+      ? 'This document covers everything monitoring needs: installing the hook, the hook\u2019s ' +
+        'own source, and the firewall addresses to allow. The install is one file; the ' +
+        'firewall change is three addresses. They are often done by different people, so ' +
+        'each part stands on its own.'
+      : 'This page is for whoever administers the firewall, WAF or CDN. It asks for one ' +
+        'change and explains why. Nothing here needs to be installed on the site.', 'Normal'),
+    emptyPara(),
+    ...installParts,
+    ...monitoringSection(hostname, { level: 1, withFile: !src }),
+    para('Once the three addresses are allowed, no further action is needed \u2014 the monitor ' +
+      'resumes on its next run.', 'Normal'),
+  ]);
 }
 
 function skipLinksHtmlOf(skipLinks) {
@@ -751,6 +892,54 @@ function buildDocxBytes(hostname, cssLink, jsLink, files, skipLinks, config, sit
   return zip.toUint8Array();
 }
 
+// The same .docx shell around any document body. buildDocxBytes builds the
+// implementation guide specifically; this exists so the monitoring-only sheet
+// gets identical styles without either one growing a second copy of the
+// OOXML boilerplate.
+function docxBytesFromDocumentXml(documentXml) {
+  const zip = new ZipWriter();
+  zip.add('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml"  ContentType="application/xml"/>
+  <Override PartName="/word/document.xml"
+    ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml"
+    ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>`);
+  zip.add('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+    Target="word/document.xml"/>
+</Relationships>`);
+  zip.add('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
+    Target="styles.xml"/>
+</Relationships>`);
+  zip.add('word/styles.xml', buildStylesXml());
+  zip.add('word/document.xml', documentXml);
+  return zip.toUint8Array();
+}
+
+// The firewall sheet on its own, for downloading without the rest of the
+// package — see the note on buildMonitoringOnlyDocumentXml.
+function generateAndDownloadMonitoringGuide(hostname, monitoringSrc, siteType) {
+  const bytes = docxBytesFromDocumentXml(
+    buildMonitoringOnlyDocumentXml(hostname, monitoringSrc, siteType));
+  const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `U1-Monitoring-${safeFilenamePart(hostname)}.docx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // Everything the client's dev needs, as one download: the guide (.docx) plus
 // the three separate source files it now only REFERENCES rather than embeds.
 // Previously the whole thing was pasted as raw text inside the Word document
@@ -807,7 +996,15 @@ function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks,
   if (files.config) pkg.add('u1-config.js', configContent);
   if (files.patch) pkg.add('u1-patch.js', built.patch);
   if (files.fixes) pkg.add('u1-fixes.js', built.fixes);
-  if (files.monitoring) pkg.add('u1-monitoring.js', built.monitoring);
+  if (files.monitoring) {
+    pkg.add('u1-monitoring.js', built.monitoring);
+    // A separate sheet for whoever runs the firewall — very often not the
+    // person implementing the library, and sending them a WordPress guide to
+    // find one paragraph in is how the request gets ignored.
+    pkg.add(`U1-Monitoring-${safeHost}.docx`,
+            docxBytesFromDocumentXml(
+              buildMonitoringOnlyDocumentXml(hostname, built.monitoring, type)));
+  }
 
   const bytes = pkg.toUint8Array();
   const blob  = new Blob([bytes], { type: 'application/zip' });
