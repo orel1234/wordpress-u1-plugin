@@ -285,12 +285,27 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 
     const hostname = getHostnameFromTab(tab);
     if (!hostname) return;
-    // FIRST, and whatever else is stored. Ahead of the config preset below,
-    // which does `window.u1 = window.u1 || {}` — with the patch already in
-    // place the library's own assignment is the one it intercepts, instead of
-    // having to notice a bare object we made ourselves.
-    await injectPatch(tabId);
     const stored = await U1Store.get([`manualInject_${hostname}`, `config_${hostname}`, `mappings_${hostname}`]);
+
+    // ── Only where this extension has work ────────────────────────────────
+    //
+    // This used to run before the storage read, on EVERY page load of every
+    // site, so a browser with U1 Studio installed had a document-wide keyboard
+    // interceptor on Gmail, on the bank, on everything. Reported as "I cannot
+    // type spaces or Enter in Gmail until I disable the extension" — the patch
+    // took those keys from any field sitting inside a collapsed container,
+    // which Gmail's compose body does. The handlers themselves are fixed (see
+    // caretOwns in u1-patch.js), but the blast radius was the real defect: a
+    // tool for working on ONE site had put itself on all of them.
+    //
+    // Still ahead of injectConfig below, which does `window.u1 = window.u1 ||
+    // {}` — with the patch in place first, the library's own assignment is the
+    // one it intercepts, rather than a bare object we made ourselves. That was
+    // the reason it moved to document_start, and it is preserved: the race only
+    // ever mattered on a site we have data for.
+    const hasWork = !!(stored[`config_${hostname}`] || stored[`manualInject_${hostname}`] ||
+                       (stored[`mappings_${hostname}`] || []).length);
+    if (hasWork) await injectPatch(tabId);
     // Auto-inject the saved config on EVERY load for this hostname — not just
     // ones where U1 was manually injected — so skip links / colors / language
     // persist across normal site navigation.

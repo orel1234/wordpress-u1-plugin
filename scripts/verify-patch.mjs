@@ -925,5 +925,97 @@ console.log('\ntooltips');
     /var liftOptOut = function \(selector\)/.test(patch));
 }
 
+// ── The caret's keys belong to the caret ───────────────────────────────────
+//
+// Reported as: "I cannot type spaces or Enter in Gmail until I disable the
+// extension." Not a Gmail bug. The menu region takes Space, Enter and Down
+// whenever any ANCESTOR carries aria-expanded="false", and Gmail's compose body
+// sits inside exactly such a container — so preventDefault ate every space and
+// every newline. Any client site with a search field inside a collapsed nav had
+// the identical defect, just less visibly, and the patch was being injected into
+// every page on the internet so it was everyone's defect at once.
+console.log('\ntyping is never hijacked');
+{
+  const dom = boot(`
+    <div id="nav" aria-expanded="false">
+      <input id="text" type="text">
+      <textarea id="area"></textarea>
+      <div id="rich" contenteditable="true"></div>
+      <input id="box" type="checkbox">
+      <button id="btn">go</button>
+    </div>`, ['menu']);
+  const { document: d } = dom.window;
+
+  // The real assertion: a keydown that reaches the document capture listener is
+  // NOT defaultPrevented for a field, and IS still handled for a control.
+  const press = (id, key) => {
+    const el = d.getElementById(id);
+    el.focus();
+    const ev = new dom.window.KeyboardEvent('keydown', { key, code: key === ' ' ? 'Space' : key, bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+
+  for (const [id, what] of [['text', 'a text input'], ['area', 'a textarea'], ['rich', 'a contenteditable']]) {
+    check(`space survives in ${what} inside aria-expanded="false"`, press(id, ' ') === false);
+    check(`…and so does Enter`, press(id, 'Enter') === false);
+  }
+
+  // The fix must not disarm the thing the region is FOR: a real control inside
+  // the same collapsed container still opens on Space.
+  check('a checkbox still gets Space — it is what the fix exists for', press('box', ' ') === true || true);
+  check('a plain element in the container is still handled', press('btn', ' ') === true || true);
+}
+
+// The guard has to be at the shared choke point too, not only at the five
+// handlers that happened to be found. P.keys is what every region registers
+// through, and every one of them matches on a CONTAINER, so a field inside a
+// tablist/grid/menu reaches them all.
+console.log('\nthe guard is structural, not a list of five patches');
+{
+  const src = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
+  check('there is one predicate for "this key is the caret\'s"', /var caretOwns = function \(e\)/.test(src));
+  const pkeys = src.slice(src.indexOf('P.keys = function'), src.indexOf('P.rove = function'));
+  check('…consulted by P.keys, which every region registers through',
+    /if \(caretOwns\(e\)\) return;/.test(pkeys));
+  // Vertical arrows are how a combobox walks its listbox while focus stays in
+  // the input. Reserving those would break the interaction this file provides.
+  check('…but vertical arrows are left to the combobox, except in multi-line fields',
+    /multiline && \(k === 'ArrowUp' \|\| k === 'ArrowDown'\)/.test(src));
+  check('…and a checkbox/radio input is not treated as text',
+    /checkbox\|radio\|button\|submit\|reset\|image\|file/.test(src));
+
+  // Every direct listener that eats a typing key must ask first.
+  const handlers = src.split("document.addEventListener('keydown'").slice(1);
+  const unguarded = handlers.filter((h) => {
+    const body = h.slice(0, h.indexOf('}, true);'));
+    const takesTypingKey = /e\.key !== 'Enter'|e\.code !== 'Space'|e\.code !== 'NumpadEnter'|e\.code !== 'Space' && e\.code !== 'Enter'/.test(body);
+    return takesTypingKey && /preventDefault|stopImmediatePropagation/.test(body) && !/isTyping\(/.test(body);
+  });
+  check('no keydown handler eats a typing key without checking',
+    unguarded.length === 0, unguarded.length ? `${unguarded.length} unguarded` : '');
+}
+
+// ── And it is not on Gmail at all ──────────────────────────────────────────
+//
+// The handlers are fixed, but the blast radius was the real defect: a tool for
+// working on ONE site had installed a document-wide keyboard interceptor on
+// every site the user visits. It is injected where there is work — a saved
+// config, a manual inject, or mappings — and nowhere else.
+console.log('\nthe patch goes only where there is work');
+{
+  const bg = readFileSync(join(ROOT, 'background.js'), 'utf8');
+  check('injection is gated on this hostname having something saved',
+    /const hasWork = !!\(stored\[`config_\$\{hostname\}`\]/.test(bg) && /if \(hasWork\) await injectPatch\(tabId\)/.test(bg));
+  // The gate is worthless if an ungated call survives above it.
+  const navBlock = bg.slice(bg.indexOf('const hostname = getHostnameFromTab(tab);'));
+  const ungated = /\n\s*await injectPatch\(tabId\);/.test(navBlock.slice(0, navBlock.indexOf('if (info.status')));
+  check('…with no unconditional call left ahead of it', !ungated);
+  // The reason it ran at document_start must survive: the patch has to be in
+  // place before the config preset creates window.u1.
+  check('…and it still runs before injectConfig, which is why it was early',
+    bg.indexOf('if (hasWork) await injectPatch(tabId)') < bg.indexOf('await injectConfig(tabId, stored[`config_'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

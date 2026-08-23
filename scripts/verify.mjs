@@ -514,15 +514,22 @@ console.log('\nAI modes are gated on the key, at the door:');
   if (standalone) pass('the patch is injected by a function of its own, not only alongside mappings');
   else fail('u1-patch.js injection is still welded to injectMappings');
 
-  // Unconditional at document_start, and BEFORE the config preset — that
-  // preset does `window.u1 = window.u1 || {}`, and the patch would rather
-  // intercept the library's own assignment than have to notice a bare object
-  // we made ourselves.
-  const at = bg.indexOf('await injectPatch(tabId);\n    const stored = await U1Store.get(');
+  // At document_start and BEFORE the config preset — that preset does
+  // `window.u1 = window.u1 || {}`, and the patch would rather intercept the
+  // library's own assignment than have to notice a bare object we made
+  // ourselves. That ordering is the whole reason it runs this early.
+  //
+  // This check used to demand it run UNCONDITIONALLY, and that was wrong in a
+  // way that reached the user: it meant a document-wide keyboard interceptor
+  // on every site in the browser, and on Gmail it ate every space and every
+  // newline typed into compose. The race it was protecting only ever existed
+  // on a site we hold data for, so the gate costs nothing and the ordering —
+  // the part that mattered — is unchanged.
+  const at = bg.indexOf('if (hasWork) await injectPatch(tabId);');
   const cfg = bg.indexOf('await injectConfig(tabId, stored[`config_${hostname}`])');
   const gated = /if \(early\.length\)[\s\S]{0,80}injectMappings/.test(bg);
   if (at > 0 && cfg > at && gated) {
-    pass('…at document_start whatever is stored, and ahead of the config preset');
+    pass('…at document_start on a site we have data for, ahead of the config preset');
   } else {
     fail(`patch injection order wrong — patch@${at} config@${cfg}`);
   }

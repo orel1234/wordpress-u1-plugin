@@ -74,8 +74,64 @@
   var FOCUSABLE = 'a[href],button,input,select,textarea,summary,iframe,' +
     '[contenteditable]:not([contenteditable="false"]),[tabindex]:not([tabindex="-1"])';
 
+  /**
+   * Is the user typing into this?
+   *
+   * Every handler below that calls preventDefault on Space, Enter or an arrow
+   * MUST ask this first, and none of them did. The menu region takes Space and
+   * Enter whenever any ANCESTOR carries aria-expanded="false" — so a text field
+   * inside a collapsed nav, a search box in a closed drawer, or Gmail's compose
+   * body (which sits inside exactly such a container) could not receive a space
+   * or a newline at all. Reported as "I cannot type spaces or Enter in Gmail
+   * until I disable the extension", and it was never Gmail-specific: any client
+   * site with a field inside a collapsed region had the same defect, less
+   * visibly.
+   *
+   * A key that produces a character, or moves a caret, belongs to whatever the
+   * caret is in. There is no accessibility fix worth taking it away for.
+   */
+  var isTyping = function (el) {
+    if (!el || el.nodeType !== 1) return false;
+    var tag = el.tagName;
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (tag === 'INPUT') {
+      // Checkbox, radio and button inputs genuinely act on Space — they are the
+      // ones a keyboard fix is FOR. Everything else takes text.
+      return !/^(checkbox|radio|button|submit|reset|image|file)$/i.test(el.type || 'text');
+    }
+    // contenteditable is inherited, so the attribute alone misses a caret
+    // sitting in a child of the editable host — which is where Gmail's is.
+    // isContentEditable answers that correctly and is the primary check; the
+    // ancestor lookup is the fallback for anything that does not implement it.
+    if (el.isContentEditable) return true;
+    if (closest(el, '[contenteditable]:not([contenteditable="false"])')) return true;
+    var role = el.getAttribute && el.getAttribute('role');
+    if (role === 'textbox' || role === 'searchbox' || role === 'combobox' || role === 'spinbutton') return true;
+    return false;
+  };
+
+  /**
+   * Does this keystroke belong to the text the user is editing?
+   *
+   * Deliberately narrower than "is typing": vertical arrows are how a combobox
+   * walks its own listbox while focus stays in the input, and taking those away
+   * would break the interaction this file exists to provide. So only the keys
+   * that always move or extend a caret are reserved — plus multi-line fields,
+   * where up and down are line moves rather than list navigation.
+   */
+  var caretOwns = function (e) {
+    var el = e.target;
+    if (!isTyping(el)) return false;
+    var k = e.key;
+    if (k === ' ' || k === 'Enter' || k === 'Home' || k === 'End' ||
+        k === 'ArrowLeft' || k === 'ArrowRight') return true;
+    var multiline = el.tagName === 'TEXTAREA' || el.isContentEditable;
+    return multiline && (k === 'ArrowUp' || k === 'ArrowDown');
+  };
+
   P.util = { qsa: qsa, get: get, set: set, setTabIndex: setTabIndex, closest: closest,
-             isNative: isNative, visible: visible, named: named, FOCUSABLE: FOCUSABLE };
+             isNative: isNative, visible: visible, named: named, isTyping: isTyping,
+             FOCUSABLE: FOCUSABLE };
 
   /** A correction pass. Registered by each region, run together and debounced. */
   P.correct = function (fn) { P.correctors.push(fn); };
@@ -198,6 +254,12 @@
   // document runs first, which is what lets a key be added without racing it.
   P.keys = function (containerSel, handler) {
     document.addEventListener('keydown', function (e) {
+      // The caret's keys are the caret's. Every region below matches on a
+      // CONTAINER, so a text field inside a tablist, a grid cell or a menu
+      // reaches these handlers, and the ones that preventDefault then eat the
+      // keystroke. No handler registered here consumes Space or Enter, so this
+      // costs nothing and closes the whole class.
+      if (caretOwns(e)) return;
       var container = closest(e.target, containerSel);
       if (container) handler(e, container);
     }, true);
@@ -256,6 +318,7 @@
   P.numpadEnter = function (selector) {
     document.addEventListener('keydown', function (e) {
       if (e.code !== 'NumpadEnter') return;
+      if (isTyping(e.target)) return;
       var el = closest(e.target, selector);
       // Native controls activate on their own — clicking again would double-fire.
       if (!el || isNative(el)) return;
@@ -786,6 +849,7 @@
   };
   document.addEventListener('keydown', function (e) {
     if (!configs.length || (e.code !== 'Space' && e.code !== 'Enter')) return;
+    if (u.isTyping(e.target)) return;
     var header = u.closest(e.target, headerSelectorList());
     if (!header || u.isNative(header)) return;
     e.preventDefault();
@@ -1053,6 +1117,7 @@
   };
   document.addEventListener('keydown', function (e) {
     if (!configs.length || e.code !== 'Space') return;
+    if (u.isTyping(e.target)) return;
     var box = u.closest(e.target, checkboxSelectorList());
     if (!box || u.isNative(box)) return;
     e.preventDefault();
@@ -1346,6 +1411,10 @@
   // Enter, Space or Down on a closed trigger opens it and steps inside.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+    // The caret wins. This matches on an ANCESTOR with aria-expanded, so
+    // without this line a field inside any collapsed region loses Space and
+    // Enter entirely — see isTyping.
+    if (u.isTyping(e.target)) return;
     var t = u.closest(e.target, '[aria-expanded]');
     if (!t || u.get(t, 'aria-expanded') !== 'false') return;
     // A native button already opens on Enter and Space; only Down is ours.
@@ -1571,6 +1640,7 @@
   // per APG, and no part of the library implements it.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+    if (u.isTyping(e.target)) return;
     var trigger = u.closest(e.target, TRIGGER);
     if (!trigger) return;
     var list = listFor(trigger);
