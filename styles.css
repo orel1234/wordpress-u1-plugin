@@ -5165,3 +5165,29 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   gap: 4px;
   align-items: flex-start;
 }
+
+
+/* ── The apply report ───────────────────────────────────────────────────────
+   One line per mapping. It used to be a single paragraph carrying every
+   finding about every mapping, run together with middots — reported as a wall
+   of information. The facts were right; nothing said which mapping each
+   belonged to. */
+.apply-report-head {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.apply-report {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.apply-report li {
+  /* The ✗ / ! that opens each line is the scan target, so it must not be
+     swallowed by the wrapped text under it. */
+  padding-inline-start: 14px;
+  text-indent: -14px;
+  line-height: 1.5;
+}

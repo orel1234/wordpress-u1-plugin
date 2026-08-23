@@ -380,6 +380,7 @@
         <label><input type="radio" name="direction" value="rtl">RTL</label>
       </div>
     </div>
+    <div id="langMismatch" class="notice error" style="display:none"></div>
   </div>
 
   <!-- Skip Links read-only -->
@@ -776,6 +777,11 @@
     <!-- Where the work on screen came from, and anything a colleague changed
          under you. It sits ABOVE the list because it is about the list. -->
     <div class="notice" id="mappingsStatus"></div>
+    <!-- A site that already carries a U1 deployment somebody else wrote. The
+         patch records every u1.fix.* the page runs, so those can be read back
+         in rather than re-derived by hand. Shown only when the page actually
+         ran some — see findExistingFixes. -->
+    <div id="importExisting" class="advisor-note" style="display:none;"></div>
     <div id="mappingsList"><div class="empty-state">No mappings yet.</div></div>
 
     <div class="btn-row" id="applyAllRow" style="display:none;">
@@ -968,7 +974,7 @@
            the one row that led with an article looked like one too. -->
       <li><strong>U1-Implementation-Guide.docx</strong> — install / injection instructions for the platform and skip links</li>
       <li><strong>u1-config.js</strong> — visualFocus, language, direction</li>
-      <li><strong>u1-patch.js</strong> — the library corrections the fixes depend on</li>
+      <li><strong>u1-patch.js</strong> — the U1 runtime extensions the fixes depend on</li>
       <li><strong>u1-fixes.js</strong> — <strong id="exportMappingsCount">0 mappings</strong> for this site</li>
       <li><strong>u1-monitoring.js</strong> — inert unless loaded with ?u1qa=1</li>
       <li><strong>U1-Monitoring.docx</strong> — installing the hook, the hook itself, and the three firewall addresses</li>
@@ -981,6 +987,22 @@
     <button class="btn-outline btn-sm" id="exportMonitoringBtn"
             title="Installing the hook, the hook's own source, and the firewall addresses — as one document that stands alone">🛡 Monitoring guide only (.docx)</button>
     <div class="notice" id="exportStatus"></div>
+  </div>
+
+  <!-- Finish project: the whole handover, as one bundle, into the client's
+       folder on Drive. Separate from "Export package" on purpose — that one is
+       the developer's artefact and is taken many times during a project; this
+       is taken once, at the end, and includes the close-out report as a PDF. -->
+  <div class="section">
+    <div class="section-title">Finish Project<span class="dot">.</span></div>
+    <p class="hint">
+      Creates this site's folder on Drive and puts the whole handover in it — the
+      guide, every generated file, and the close-out report as a <strong>PDF</strong> —
+      then opens the folder. Nothing to fill in: the CRM owns the Drive identity
+      and decides where client folders live.
+    </p>
+    <button class="btn-primary" id="finishProjectBtn">🏁 Finish project</button>
+    <div class="notice" id="finishStatus"></div>
   </div>
 
   <!-- Close-out report (all pages, with element screenshots) -->

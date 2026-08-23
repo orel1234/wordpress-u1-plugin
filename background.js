@@ -28,8 +28,52 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     chrome.tabs.reload(tabId);
     sendResponse({ ok: true });
   }
+
+  // ── Print a report tab to a real PDF, with no dialog ────────────────────
+  //
+  // The ⬇ Download PDF button hands the job to Chrome's print dialog, which is
+  // right when a person is reading the report and wants a copy. It is no use
+  // for "finish the project": that has to produce a PDF as a FILE, to go into
+  // a bundle, without anyone standing at a dialog choosing a destination.
+  //
+  // Page.printToPDF over CDP does exactly that, and the manifest already
+  // carries the `debugger` permission it needs. No PDF library, nothing
+  // fetched — the same engine that backs the dialog, driven directly.
+  if (msg.action === 'printTabToPdf') {
+    printTabToPdf(msg.tabId)
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+    return true;                       // async responder
+  }
   return false;
 });
+
+async function printTabToPdf(tabId) {
+  const target = { tabId };
+  await chrome.debugger.attach(target, '1.3');
+  try {
+    // A4 in inches, and printBackground because the report IS its colour
+    // coding — without it the type badges print as white boxes.
+    //
+    // Zero margins for the same reason @page does it in the report's own print
+    // CSS: Chrome paints its date/title/URL into the margin, and there is no
+    // flag here that turns that off either. The 12mm of breathing room comes
+    // from the report's body padding.
+    const res = await chrome.debugger.sendCommand(target, 'Page.printToPDF', {
+      printBackground: true,
+      preferCSSPageSize: true,
+      paperWidth: 8.27,
+      paperHeight: 11.69,
+      marginTop: 0, marginBottom: 0, marginLeft: 0, marginRight: 0,
+    });
+    if (!res || !res.data) throw new Error('Chrome returned no PDF data');
+    return res.data;                   // base64
+  } finally {
+    // Always detached, including on failure — an attached debugger leaves the
+    // "U1 Studio is debugging this browser" bar across the tab for good.
+    try { await chrome.debugger.detach(target); } catch {}
+  }
+}
 
 function getHostnameFromTab(tab) {
   // MUST match panel.js's getHostname(), which strips a leading "www." — otherwise
@@ -113,17 +157,36 @@ async function injectConfig(tabId, config) {
 // page. U1 processes each element once per page load, so mappings MUST be
 // registered right when u1.fix appears (before/at U1's first scan) — applying
 // them later from the panel is too late, which is why auto-apply "did nothing".
-async function injectMappings(tabId, mappings) {
-  // The library corrections must be on the page BEFORE any u1.fix.* call, since
-  // part of what they do is wrap those functions. Injecting here — the same
-  // moment the mappings are armed — is what makes an auto-applied page behave
-  // like the exported bundle rather than like raw U1. The patch guards itself
-  // against a second install, and a failure must not stop the mappings.
+/**
+ * The library corrections, on their own.
+ *
+ * This used to live inside injectMappings, which is only reached when the site
+ * has at least one NON-custom mapping. So a site with no mappings — or with
+ * only custom ones, which is what a link-list or a keyboard-grid is — never
+ * got the patch at all. Two things followed from that, and both were reported:
+ * the corrections silently did not apply, and u1-patch's recorder (which is
+ * how the panel reads back a U1 deployment somebody else wrote) had nothing to
+ * record. The feature was least available exactly where it is most useful — a
+ * client site you have just arrived at, with nothing mapped yet.
+ *
+ * The patch is worth having whenever U1 is on the page, mappings or not. It
+ * guards itself against a second install, so calling this more than once per
+ * load is free.
+ */
+async function injectPatch(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId }, world: 'MAIN', injectImmediately: true, files: ['u1-patch.js'],
     });
   } catch {}
+}
+
+async function injectMappings(tabId, mappings) {
+  // The corrections must be on the page BEFORE any u1.fix.* call, since part of
+  // what they do is wrap those functions. Armed at document_start too, but
+  // repeated here because a failure must not stop the mappings and the patch
+  // guards itself against a second install.
+  await injectPatch(tabId);
   await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
@@ -222,6 +285,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 
     const hostname = getHostnameFromTab(tab);
     if (!hostname) return;
+    // FIRST, and whatever else is stored. Ahead of the config preset below,
+    // which does `window.u1 = window.u1 || {}` — with the patch already in
+    // place the library's own assignment is the one it intercepts, instead of
+    // having to notice a bare object we made ourselves.
+    await injectPatch(tabId);
     const stored = await U1Store.get([`manualInject_${hostname}`, `config_${hostname}`, `mappings_${hostname}`]);
     // Auto-inject the saved config on EVERY load for this hostname — not just
     // ones where U1 was manually injected — so skip links / colors / language

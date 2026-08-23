@@ -140,20 +140,43 @@ function para(text, styleId, rPrExtra = '') {
 </w:p>`;
 }
 
+// keepNext binds a heading to the paragraph after it, so Word can never leave
+// a heading stranded at the foot of a page with its section overleaf — which
+// is exactly how "Why that order" came out: the title and one and a half
+// bullets on one page, the rest on the next.
 function heading(text, level) {
   return `<w:p>
-  <w:pPr><w:pStyle w:val="Heading${level}"/></w:pPr>
+  <w:pPr><w:pStyle w:val="Heading${level}"/><w:keepNext/><w:keepLines/></w:pPr>
   <w:r><w:t>${xe(text)}</w:t></w:r>
 </w:p>`;
 }
 
+// keepLines holds one bullet's own wrapped lines together; a bullet split
+// mid-sentence across a page break is the other half of the same problem.
 function bullet(text) {
   return `<w:p>
   <w:pPr>
     <w:pStyle w:val="ListParagraph"/>
     <w:ind w:left="720" w:hanging="360"/>
+    <w:keepLines/>
   </w:pPr>
   <w:r><w:t xml:space="preserve">•  ${xe(text)}</w:t></w:r>
+</w:p>`;
+}
+
+// A bullet that opens with the script it is about, in bold, then explains it.
+// Every entry in a load-order list is about one file, so every entry reads the
+// same way and the filename is the thing the eye lands on.
+function bulletFile(name, rest) {
+  return `<w:p>
+  <w:pPr>
+    <w:pStyle w:val="ListParagraph"/>
+    <w:ind w:left="720" w:hanging="360"/>
+    <w:keepLines/>
+  </w:pPr>
+  <w:r><w:t xml:space="preserve">•  </w:t></w:r>
+  <w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">${xe(name)}</w:t></w:r>
+  <w:r><w:t xml:space="preserve"> — ${xe(rest)}</w:t></w:r>
 </w:p>`;
 }
 
@@ -279,35 +302,78 @@ function buildStylesXml() {
 
 // ── Document body builder ─────────────────────────────────────────────────────
 
-function buildDocumentXml(hostname, cssLink, jsLink, files, skipLinks, config) {
-  const safeSkipLinks = Array.isArray(skipLinks) ? skipLinks : [];
+// ── Load order, explained the same way for every file ─────────────────────────
+//
+// Both guides print the same list, differing only in how the SDK gets on the
+// page (a <script> line, or a wp_footer hook at priority 10), so `sdkWhere`
+// carries that one difference and everything else is shared. Order here
+// follows the code block above it exactly — a reader checking their markup
+// against the list should be able to go down both in step.
+function orderBullets(names, sdkWhere) {
+  const has = (n) => names.includes(n);
+  const out = [
+    bulletFile('u1_vanilla-js-a11y.js',
+      `the U1 library itself, loaded by ${sdkWhere}. It has to be first: every ` +
+      'file below calls window.u1, and window.u1 does not exist until it has run.'),
+  ];
+  if (has('u1-config.js')) {
+    out.push(bulletFile('u1-config.js',
+      'the settings U1 reads: the focus outline, the language and reading direction, ' +
+      'and the skip links, which U1 renders itself from here rather than from pasted ' +
+      'markup. Its position among the files below does not matter; first means it is ' +
+      'in effect before anything reads it.'));
+  }
+  if (has('u1-patch.js')) {
+    out.push(bulletFile('u1-patch.js',
+      'extends window.u1.fix.* with component behaviours, and whole fixers, that the ' +
+      'current U1 infrastructure does not cover yet. It has to come before ' +
+      'u1-fixes.js, which is what calls them: a fix that runs first finds nothing to ' +
+      'call and does nothing, without an error.'));
+  }
+  if (has('u1-fixes.js')) {
+    out.push(bulletFile('u1-fixes.js',
+      'the accessibility fixes for this site, one call per mapped component. This is ' +
+      'the file that does the visible work, and it needs everything above it already ' +
+      'on the page.'));
+  }
+  if (has('u1-monitoring.js')) {
+    // The old bullet said only "does nothing unless ?u1qa=1", which answers
+    // "is it safe" and not "what is it" — leaving the reader with a file in
+    // their footer whose purpose they were never told.
+    out.push(bulletFile('u1-monitoring.js',
+      'the daily health check. A site redesign can change the markup a fix was ' +
+      'pointed at, and the fix then silently stops applying: nothing errors, the ' +
+      'page just quietly loses that piece of accessibility. This file re-tests every ' +
+      'mapped selector on load and reports the ones that no longer match, so a break ' +
+      'is caught within a day instead of at the next audit. It runs only when the ' +
+      'page is opened with ?u1qa=1 on the URL, which is how the monitor requests it, ' +
+      'so ordinary visitors never execute it and its position does not matter.'));
+  }
+  return out;
+}
 
-  const skipLinksHtml = safeSkipLinks.length > 0
-    ? safeSkipLinks.map(s => `<a href="${s.target}" class="skip-link">${s.label}</a>`).join('\n')
-    : '<!-- No skip links configured. -->';
+function buildDocumentXml(hostname, cssLink, jsLink, files, skipLinks, config) {
 
   const phpJs = `function add_u1_js() {
 ?>
 <script id="u1Js" src="${jsLink}" type="text/javascript"></script>
 <?php
 }
-add_action('wp_footer', 'add_u1_js');`;
+add_action('wp_footer', 'add_u1_js', 10);`;
 
   const htmlCss = `<link id="u1Css" rel="stylesheet" href="${cssLink}">`;
 
-  const step2BulletsExtra = safeSkipLinks.length > 0
-    ? [
-        bullet('Then, immediately after the opening <body> tag, paste the following Skip Links so keyboard users can jump straight to key sections:'),
-      ]
-    : [];
-
-  const skipLinksBlock = safeSkipLinks.length > 0
-    ? [
-        emptyPara(),
-        para('Skip Links HTML', 'CodeLabel'),
-        codeBlock(skipLinksHtml),
-      ]
-    : [];
+  // No skip-links section, in either guide.
+  //
+  // The guide used to print them as HTML to paste after <body>. That was wrong
+  // — they ship in u1-config.js and U1 renders them from config.skipLinks, so
+  // pasting produced a second set that scrolled without moving focus. The first
+  // repair replaced the markup with a paragraph explaining all of that, which
+  // was still a section whose entire content was "there is nothing to do here".
+  // An implementer following a numbered install has no use for the history of
+  // an instruction we withdrew; the skip links simply work, from the config
+  // file the same package already tells them to load. So the section is gone.
+  // (skipLinks is still a parameter — it feeds u1-config.js, generated below.)
 
   const names = fileList(files);
   const phpFiles = names.length
@@ -316,24 +382,36 @@ add_action('wp_footer', 'add_u1_js');`;
 ${names.map(n => `<script src="<?php echo esc_url( get_stylesheet_directory_uri() . '/${n}' ); ?>"></script>`).join('\n')}
 <?php
 }
-add_action('wp_footer', 'u1_load_fix_files');`
+add_action('wp_footer', 'u1_load_fix_files', 20);`
     : null;
 
   const fixFilesStep = phpFiles ? [
     heading('Step 4: Configuration and Accessibility Fixes', 1),
     para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
       ' (' + names.join(', ') + ') alongside this document — the site configuration, the ' +
-      'site-specific fixes, and the library corrections they depend on.', 'Normal'),
-    bullet(`Upload ${names.join(', ')} into your active theme's folder — the same place as style.css (via FTP, or the Theme File Editor's "Add New File").`),
-    bullet('Back in functions.php, paste the following code below what you added in Step 3:'),
-    ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
-      para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. u1-config.js can load in any position relative to the other two. The code below keeps the right order.', 'Normal'),
-    ] : []),
+      'site-specific fixes, and the runtime extensions they depend on.', 'Normal'),
+    bullet(`Upload ${names.join(', ')} into your active theme's folder — the same place as style.css (via FTP, or the Theme File Editor's "Add New File"). If you keep them somewhere else inside the theme, add that subfolder to the paths below.`),
+    emptyPara(),
+    // Ordering used to rest on one sentence saying "paste this below Step 3",
+    // i.e. on where in the file the implementer happened to drop it. Both
+    // callbacks hang off wp_footer, and same-priority callbacks fire in
+    // registration order — so pasting Step 4 above Step 3 loaded the fixes
+    // before the SDK, with no error, just nothing applied. The explicit
+    // priorities (10 then 20) make the order a property of the code rather
+    // than of the paste position, and it is now stated instead of implied.
+    heading('Where it goes', 2),
+    para('Back in functions.php, paste this below the code from Step 3. Both blocks output ' +
+         'at the end of the <body> on every page; the priority numbers (10 then 20) fix the ' +
+         'order, so it holds even if the blocks end up the other way round in the file:',
+         'Normal'),
     emptyPara(),
     para('PHP', 'CodeLabel'),
     codeBlock(phpFiles),
     emptyPara(),
     bullet('Click to save/update the file in WordPress.'),
+    emptyPara(),
+    heading('Why that order', 2),
+    ...orderBullets(names, 'the SDK block from Step 3 (priority 10)'),
     emptyPara(),
   ] : [];
 
@@ -350,8 +428,10 @@ add_action('wp_footer', 'u1_load_fix_files');`
     bullet('From the admin panel left menu, navigate to Appearance and then click on Theme File Editor.'),
     emptyPara(),
 
-    // Step 2 — CSS + Skip Links
-    heading('Step 2: Add the CSS File and Skip Links', 1),
+    // Step 2 — CSS. (Skip links used to be part of this step; they come from
+    // config.skipLinks in u1-config.js and need nothing pasted, so the heading
+    // must not keep promising them.)
+    heading('Step 2: Add the CSS File', 1),
     para('The CSS file is responsible for styling the accessibility components. It should be placed in the site\'s Header.', 'Normal'),
     bullet('In the file list, find and open the header.php file.'),
     bullet('Look for the closing head tag: </head>.'),
@@ -359,8 +439,6 @@ add_action('wp_footer', 'u1_load_fix_files');`
     emptyPara(),
     para('HTML', 'CodeLabel'),
     codeBlock(htmlCss),
-    ...step2BulletsExtra,
-    ...skipLinksBlock,
     emptyPara(),
 
     // Step 3
@@ -580,12 +658,6 @@ add_action('wp_footer', 'u1_load_monitoring');`),
   ]);
 }
 
-function skipLinksHtmlOf(skipLinks) {
-  const sl = Array.isArray(skipLinks) ? skipLinks : [];
-  return sl.length
-    ? sl.map(s => `<a href="${s.target}" class="skip-link">${s.label}</a>`).join('\n')
-    : '<!-- No skip links configured. -->';
-}
 
 // The package's file names, in the order they must load: u1-patch.js wraps
 // window.u1.fix.* before u1-fixes.js calls it, so it has to come first
@@ -639,9 +711,8 @@ function angularU1Config(config) {
 // ── JS / plain-HTML guide ─────────────────────────────────────────────────────
 
 function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
-  const skipHtml = skipLinksHtmlOf(skipLinks);
-  const hasSkip  = (Array.isArray(skipLinks) ? skipLinks : []).length > 0;
   const names = fileList(files);
+  const hasFiles = names.length > 0;
   const fileTags = names.map((n) => `<script src="${n}"></script>`).join('\n');
 
   return [
@@ -655,16 +726,18 @@ function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
     emptyPara(),
     para('HTML', 'CodeLabel'),
     codeBlock(`<link id="u1-css" rel="stylesheet" href="${cssLink}">`),
-    ...(hasSkip ? [
-      emptyPara(),
-      para('Then, immediately after the opening <body> tag, add the Skip Links:', 'Normal'),
-      para('Skip Links HTML', 'CodeLabel'),
-      codeBlock(skipHtml),
-    ] : []),
     emptyPara(),
 
     heading('Step 2: Add the U1 JS SDK', 1),
-    para('Place this script at the end of the <body> section of your main HTML file:', 'Normal'),
+    // Named as provisional when step 3 is going to replace it with the full
+    // block. Two code blocks for the same line, with no word saying they are
+    // the same line, is how an implementer ends up with the SDK loaded twice.
+    para(hasFiles
+      ? 'The SDK goes at the end of the <body> section, on every page. Step 3 replaces ' +
+        'this single line with the complete block — add it there rather than here if you ' +
+        'are doing both in one pass:'
+      : 'Place this script at the end of the <body> section of your main HTML file:',
+      'Normal'),
     emptyPara(),
     para('HTML', 'CodeLabel'),
     codeBlock(`<script id="u1-js" src="${jsLink}" type="text/javascript"></script>`),
@@ -674,17 +747,37 @@ function buildBodyPartsJS(hostname, cssLink, jsLink, files, skipLinks, config) {
       heading('Step 3: Configuration and Accessibility Fixes', 1),
       para('This package includes ' + names.length + ' file' + (names.length === 1 ? '' : 's') +
         ' (' + names.join(', ') + ') alongside this document — the site configuration, the ' +
-        'site-specific fixes, and the library corrections they depend on.', 'Normal'),
-      bullet(`Copy ${names.join(', ')} to your server, alongside your other JS files.`),
-      bullet('Immediately after the U1 JS SDK script from Step 2, add:'),
-      ...(names.includes('u1-patch.js') && names.includes('u1-fixes.js') ? [
-        para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. u1-config.js can load in any position relative to the other two. The order below is correct.', 'Normal'),
-      ] : []),
+        'site-specific fixes, and the runtime extensions they depend on.', 'Normal'),
+      emptyPara(),
+      bullet('Put the files wherever you keep your JavaScript. The paths below are ' +
+             'relative to the page — change them to match where you actually put them.'),
+      emptyPara(),
+      // The whole block, SDK included, in the order it has to run.
+      //
+      // Step 2 gave the SDK tag and step 3 gave ours, and between them sat two
+      // sentences about which goes after which. That left the implementer to
+      // assemble the final markup themselves from two places, and the order is
+      // the one thing here that cannot be got wrong safely — reported as "it is
+      // not clear where I embed the files, and in what order". So the finished
+      // block is printed once, complete, and the rules under it explain why it
+      // is in that order rather than asking anyone to reconstruct it.
+      heading('Where it goes, in full', 2),
+      para('Replace the single SDK line from Step 2 with this whole block. It goes at the ' +
+           'END of the <body>, on every page of the site, and the order of the lines matters:',
+           'Normal'),
       emptyPara(),
       para('HTML', 'CodeLabel'),
-      codeBlock(fileTags),
+      codeBlock(`<script id="u1-js" src="${jsLink}" type="text/javascript"></script>\n` + fileTags),
       emptyPara(),
-      para('Update the src paths above if the files are placed somewhere other than alongside this page.', 'Normal'),
+      heading('Why that order', 2),
+      // One bullet per line of the block above, in the same order, all in the
+      // same shape: bold filename, then what it is and why it sits there. The
+      // list previously mixed "the SDK" with filenames, skipped u1-fixes.js
+      // entirely, ran in a different order from the code block, and ended on a
+      // monitoring bullet that described when the file activates instead of
+      // where it belongs — so the last entry read as a different kind of fact
+      // from the three above it.
+      ...orderBullets(names, 'the U1 SDK line above'),
       emptyPara(),
     ] : []),
 
@@ -748,12 +841,12 @@ function buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config
       heading('Step 6: Add the Accessibility Fixes', 1),
       para('This package includes ' + scriptNames.length + ' file' + (scriptNames.length === 1 ? '' : 's') +
         ' (' + scriptNames.join(', ') + ') alongside this document — the per-component fixes built for ' +
-        'this site and the library corrections they depend on. They are plain scripts, not React ' +
+        'this site and the runtime extensions they depend on. They are plain scripts, not React ' +
         'components, so they load as static assets rather than an import.', 'Normal'),
       bullet(`Copy ${scriptNames.join(', ')} into your project's public/ folder.`),
       bullet('In public/index.html, add the following AFTER the U1 toolbar script tag (or wherever <u1-app> loads from):'),
       ...(scriptNames.includes('u1-patch.js') && scriptNames.includes('u1-fixes.js') ? [
-        para('u1-patch.js must load before u1-fixes.js — it wraps window.u1.fix.* first. The order below is correct.', 'Normal'),
+        para('u1-patch.js must load before u1-fixes.js — it extends window.u1.fix.* with the behaviours and fixers u1-fixes.js goes on to call. The order below is correct.', 'Normal'),
       ] : []),
       emptyPara(),
       para('HTML', 'CodeLabel'),
@@ -826,7 +919,7 @@ function buildBodyPartsAngular(hostname, cssLink, jsLink, files, skipLinks, conf
       heading('Step 6: Add the Accessibility Fixes', 1),
       para('This package includes ' + scriptNames.length + ' file' + (scriptNames.length === 1 ? '' : 's') +
         ' (' + scriptNames.join(', ') + ') alongside this document — the per-component fixes built for ' +
-        'this site and the library corrections they depend on. They are plain scripts, not Angular ' +
+        'this site and the runtime extensions they depend on. They are plain scripts, not Angular ' +
         'modules, so they load as global assets rather than an import.', 'Normal'),
       bullet(`Copy ${scriptNames.join(', ')} into src/assets/.`),
       bullet('In angular.json, add them to the build target\'s "scripts" array, in this exact order (patch first — it wraps window.u1.fix.* before fixes.js calls it):'),
@@ -976,6 +1069,68 @@ function buildConfigFileContent(config, skipLinks, siteType) {
   const src = `window.u1.config = ${JSON.stringify(safeConfig, null, 4)
     .replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:')};`;
   return `window.u1 = window.u1 || {};\n${src}`;
+}
+
+// ── The handover bundle ──────────────────────────────────────────────────────
+//
+// Everything generateAndDownloadPackage produces, plus the close-out report as
+// a PDF, as ONE zip named after the client. Split out from that function
+// rather than bolted onto it: Export package (.zip) is the developer's
+// artefact and must not change, while this is what is handed over at the end
+// of a project, and the two will drift apart.
+//
+// Returns the bytes instead of downloading them, because the caller may be
+// uploading rather than saving.
+// The files themselves, as a list. The Drive upload puts these in the client's
+// folder one by one — the point of a handover folder is that the client can
+// SEE the guide and the PDF in it, not one zip they have to unpack first.
+// buildHandoverZip wraps the same list for the local download.
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+function buildHandoverFiles(hostname, cssLink, jsLink, built, skipLinks, config, siteType, closeOutPdf) {
+  const type = siteType || 'wordpress';
+  const safeHost = safeFilenamePart(hostname);
+  const configContent = buildConfigFileContent(config, skipLinks, type);
+  const has = {
+    config: !!configContent,
+    patch: !!(built && built.patch),
+    fixes: !!(built && built.fixes),
+    monitoring: !!(built && built.monitoring),
+  };
+
+  const out = [{
+    name: `U1-Implementation-Guide-${type}-${safeHost}.docx`,
+    mime: DOCX_MIME,
+    data: buildDocxBytes(hostname, cssLink, jsLink, has, skipLinks, config, siteType),
+  }];
+  const js = (name, content) => ({ name, mime: 'text/javascript', data: content });
+  if (has.config) out.push(js('u1-config.js', configContent));
+  if (has.patch) out.push(js('u1-patch.js', built.patch));
+  if (has.fixes) out.push(js('u1-fixes.js', built.fixes));
+  if (has.monitoring) {
+    out.push(js('u1-monitoring.js', built.monitoring));
+    out.push({
+      name: `U1-Monitoring-${safeHost}.docx`,
+      mime: DOCX_MIME,
+      data: docxBytesFromDocumentXml(
+        buildMonitoringOnlyDocumentXml(hostname, built.monitoring, type)),
+    });
+  }
+  // Optional on purpose: a project with no mappings yet has no report, and
+  // that must not stop the rest of the handover from being produced.
+  if (closeOutPdf && closeOutPdf.length) {
+    out.push({ name: `U1-CloseOut-Report-${safeHost}.pdf`, mime: 'application/pdf', data: closeOutPdf });
+  }
+  return out;
+}
+
+function buildHandoverZip(hostname, cssLink, jsLink, built, skipLinks, config, siteType, closeOutPdf) {
+  const safeHost = safeFilenamePart(hostname);
+  const pkg = new ZipWriter();
+  for (const f of buildHandoverFiles(hostname, cssLink, jsLink, built, skipLinks, config, siteType, closeOutPdf)) {
+    pkg.add(f.name, f.data);
+  }
+  return { bytes: pkg.toUint8Array(), name: `U1-Handover-${safeHost}.zip` };
 }
 
 function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks, config, siteType) {

@@ -1,18 +1,26 @@
 'use strict';
 //#region u1-patch:core
 // ─────────────────────────────────────────────────────────────────────────────
-//  U1 patch — corrects defects in the U1 library from the outside.
+//  U1 patch — extends the U1 runtime from the outside.
 //
-//  Every fix here was verified by reading u1_vanilla-js-a11y.js. The library is
-//  a product on its own release cycle; this file closes the gap in the meantime
-//  and is written so it becomes inert the day a defect is fixed upstream.
+//  U1 covers the common shape of each component. Real sites keep turning up
+//  ground the current infrastructure does not reach yet: a fix that decorates
+//  one match where the page has many, a keyboard key a particular widget needs,
+//  an ARIA state that goes stale, a component type this build carries no fixer
+//  for at all. This file adds those, by wrapping window.u1.fix.* before the
+//  site's own fixes call it.
+//
+//  Every addition here was written against the real u1_vanilla-js-a11y.js, not
+//  guessed — each region records what it observed and why it acts. The library
+//  is a product on its own release cycle; this file covers the gap in the
+//  meantime and is written to stand down the day U1 covers the same ground.
 //
 //  Two rules hold throughout:
-//    1. Never touch a state that is already correct. Each fix checks first, so
-//       a corrected library and this patch cannot fight each other.
+//    1. Never touch a state that is already correct. Each addition checks
+//       first, so U1 and this file cannot fight each other.
 //    2. Only observable DOM is touched. Nothing here reaches into U1 internals.
 //
-//  Runs only where U1 is loaded — it corrects what U1 produced.
+//  Runs only where U1 is loaded — it builds on what U1 produced.
 // ─────────────────────────────────────────────────────────────────────────────
 (function () {
   var W = window;
@@ -26,7 +34,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], build: '2026-08-13d' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-08-20d' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -274,6 +282,62 @@
   // it to one that is. See the tabs region for the case that needs it.
   P.contextRoot = {};
 
+  // ── Fixers this build of U1 does not have ─────────────────────────────────
+  //
+  // U1 is delivered per client and not every build carries every fixer. Read
+  // off the real engine at dev.tamam.user1st.com: it defines nineteen, and
+  // `heading` is not among them — so a heading mapping, correct in every other
+  // way, failed with "u1.fix.heading missing" and could never work there.
+  //
+  // Supplying it is what this file is for; grid-nav.js already ships whole
+  // engines that need no U1 at all.
+  //
+  //   · ONLY what is missing. A build with the real fixer keeps it — the
+  //     vendor's is authoritative and ours is a stand-in, not an improvement.
+  //   · ONLY where the behaviour is exact. `heading` is role="heading" plus
+  //     aria-level and nothing else. `menu` is not, and half-guessing one
+  //     would be worse than the honest failure the panel reports.
+  var FALLBACK = {
+    // fix.heading(selector, { level, selectors: { heading } })
+    heading: function (selector, props) {
+      var lvl = props && props.level;
+      var n = parseInt(lvl, 10);
+      if (!(n >= 1 && n <= 6)) n = 2;
+      var els = qsa(selector);
+      els.forEach(function (el) {
+        // Never over a real heading: <h2> already IS one, and the role can
+        // only add nothing or disagree with the tag.
+        if (/^H[1-6]$/.test(el.tagName)) return;
+        set(el, 'role', 'heading');
+        set(el, 'aria-level', String(n));
+      });
+      return els.length;
+    },
+  };
+
+  /**
+   * Put the missing fixers on whatever window.u1 is RIGHT NOW.
+   *
+   * Idempotent, and deliberately callable at any moment rather than only from
+   * wrap(). Installing once was not enough: settle() leaves window.u1 an
+   * ordinary writable property (it has to — the site may legitimately reassign
+   * it), and a library that re-initialises takes every fixer we added with it.
+   * The panel calls this immediately before it applies, so what it checks for
+   * is what is actually there.
+   */
+  P.filled = P.filled || [];
+  P.ensureFixers = function () {
+    var u1 = W.u1 !== undefined ? W.u1 : W.U1 !== undefined ? W.U1 : W.user1st;
+    if (!u1 || !u1.fix) return [];
+    Object.keys(FALLBACK).forEach(function (name) {
+      if (typeof u1.fix[name] === 'function') return;    // the real one wins
+      u1.fix[name] = FALLBACK[name];
+      u1.fix[name].__u1PatchFilled = true;
+      if (P.filled.indexOf(name) === -1) P.filled.push(name);
+    });
+    return P.filled;
+  };
+
   var wrap = function () {
     var u1 = W.u1 !== undefined ? W.u1 : W.U1 !== undefined ? W.U1 : W.user1st;
     if (!u1 || !u1.fix || u1.fix.__u1PatchWrapped) return !!(u1 && u1.fix);
@@ -382,12 +446,201 @@
       };
     }
 
+    // ── Record what the SITE itself asked for ─────────────────────────────
+    //
+    // Every fix the page runs, as it runs it: the type, the selector and the
+    // props. That is exactly a mapping, so a site already carrying a U1
+    // deployment can be read back into the panel instead of re-derived by
+    // hand — which on a site like tamam.co.il means several menus somebody
+    // else wired months ago.
+    //
+    // A SEPARATE pass over every fixer, not folded into the per-match wrapper
+    // above: PER_MATCH is seven types and `menu` is not one of them, so
+    // recording inside it would have silently missed the very component that
+    // prompted this. Recording is orthogonal to correcting, and every fixer
+    // is worth recording.
+    //
+    // Wrapped LAST, so it sits outside the corrections and sees the arguments
+    // the site actually passed rather than anything this patch rewrote. It
+    // only observes — the original is called with `arguments` untouched, and
+    // a throw here must never take the site's own fix down, hence the catch.
+    P.calls = P.calls || [];
+    Object.keys(u1.fix).forEach(function (name) {
+      if (name.charAt(0) === '_' || typeof u1.fix[name] !== 'function') return;
+      var inner = u1.fix[name];
+      u1.fix[name] = function (selector, props) {
+        try {
+          if (typeof selector === 'string') {
+            P.calls.push({
+              type: name,
+              selector: selector,
+              // Structured-cloned across the world boundary later, so it must
+              // be plain data. A props object holding a function or a node
+              // would make the whole list unreadable from the panel.
+              props: JSON.parse(JSON.stringify(props === undefined ? {} : props)),
+              at: Date.now(),
+            });
+          }
+        } catch (e) {}
+        return inner.apply(this, arguments);
+      };
+    });
+
+    // ── Filling in a fixer the build does not have ────────────────────────
+    //
+    // U1 is delivered per client, and not every build carries every fixer. On
+    // tamam.co.il window.u1.fix.heading simply does not exist, so a heading
+    // mapping — correct selector, correct level, saved and exported — failed
+    // with "u1.fix.heading missing" and could never work on that site however
+    // it was written.
+    //
+    // Supplying it here is what this file is for, and the project already does
+    // exactly this elsewhere: grid-nav.js ships whole engines (tabs, clickable,
+    // breadcrumb, link-list) that need no U1 at all.
+    //
+    // Two rules, both deliberate:
+    //
+    //   · ONLY what is missing. A build that has the real fixer keeps it —
+    //     the vendor's is authoritative and ours is a stand-in, never an
+    //     improvement on it.
+    //   · ONLY where the behaviour is unambiguous. `heading` is role="heading"
+    //     plus aria-level and nothing else, so a stand-in is exact. `menu` is
+    //     not, and half-guessing one would be worse than the honest failure
+    //     the panel reports today.
+    //
+    // Anything filled in here is marked so the panel can say the fix came from
+    // the patch rather than from the library.
+    P.ensureFixers();
+
+    // ── u1st-avoid-change-detection, on an element we were asked to fix ───
+    //
+    // The attribute tells U1 to skip an element entirely. It is usually not a
+    // decision anybody made: U1 stamps it on what it has processed, and a site
+    // whose framework re-renders that element leaves the stamp behind on
+    // markup U1 never actually touched. On tamam.co.il #menu-1-a35013c carries
+    // it in the served HTML, and the menu mapping therefore did nothing.
+    //
+    // The panel already lifts it so a fix can run while you are testing —
+    // which meant the mapping worked in the panel and was dead in production,
+    // the exact split this file exists to close. The exported bundle carries
+    // this patch, so doing it here makes the two agree.
+    //
+    // ONLY on an element a fix is actually being called on. This does not
+    // sweep the page clearing the attribute: everywhere else it is left alone,
+    // because everywhere else nobody has said they want that element changed.
+    var liftOptOut = function (selector) {
+      var lifted = [];
+      qsa(selector).forEach(function (el) {
+        if (el.hasAttribute && el.hasAttribute('u1st-avoid-change-detection')) {
+          el.removeAttribute('u1st-avoid-change-detection');
+          lifted.push(el);
+        }
+      });
+      return lifted;
+    };
+    P.lifted = P.lifted || [];
+    Object.keys(u1.fix).forEach(function (name) {
+      if (name.charAt(0) === '_' || typeof u1.fix[name] !== 'function') return;
+      var inner = u1.fix[name];
+      u1.fix[name] = function (selector, props) {
+        try {
+          if (typeof selector === 'string') {
+            var lifted = liftOptOut(selector);
+            if (lifted.length) P.lifted.push({ type: name, selector: selector, n: lifted.length });
+          }
+        } catch (e) {}
+        return inner.apply(this, arguments);
+      };
+    });
+
     u1.fix.__u1PatchWrapped = true;
     return true;
   };
 
+  // ── Winning the race for the library ──────────────────────────────────────
+  //
+  // This used to be a 250ms poll, and on a site that already deploys U1 it
+  // lost almost every time: at document_start `window.u1` does not exist yet,
+  // the library then loads and runs the site's own fix calls, and our next
+  // tick arrives after they are already done. The wrapper then wrapped a
+  // library whose work was finished — so the per-instance corrections never
+  // saw those calls, and the recorder recorded nothing at all. Reported as an
+  // adopt list that stayed empty on a site visibly full of U1.
+  //
+  // Catching the ASSIGNMENT removes the race instead of narrowing it: the
+  // setter runs synchronously, inside the library's own `window.u1 = …`, so
+  // there is no window in which a fix can be called unwrapped.
+  //
+  // The poll stays as a fallback — defineProperty can be refused, and a
+  // library that was already assigned before this file ran needs the plain
+  // path anyway.
+  var watchAssign = function () {
+    ['u1', 'U1', 'user1st'].forEach(function (name) {
+      // ALREADY an object, but with no .fix on it yet. This is not the rare
+      // case — it is the normal one, and we cause it ourselves: background.js
+      // presets the config at document_start with
+      // `window.u1 = window.u1 || {}; window.u1.config = cfg`, which creates
+      // a bare object before the library has loaded. Skipping it here (it is
+      // "already there") sent us straight back to the poll and lost the race
+      // again, which is why the adopt list stayed empty on a site plainly
+      // running U1. Watch .fix on the object that exists.
+      if (W[name] !== undefined) {
+        var cur = W[name];
+        if (cur && typeof cur === 'object' && cur.fix === undefined) watchFix(cur, null);
+        return;                                       // wrap() handles the rest
+      }
+      var held;
+      try {
+        Object.defineProperty(W, name, {
+          configurable: true,
+          enumerable: true,
+          get: function () { return held; },
+          set: function (v) {
+            held = v;
+            if (wrap()) { settle(name, v); return; }
+            // The library sometimes lands as `window.u1 = {}` and grows `.fix`
+            // a moment later. Watch that too, or we are back to guessing.
+            if (v && typeof v === 'object' && v.fix === undefined) watchFix(v, name);
+          },
+        });
+      } catch (e) {}
+    });
+  };
+  // Once wrapped there is nothing left to intercept, so the accessor is put
+  // back to an ordinary data property — a getter where the library expects a
+  // value is a difference nobody should have to think about later.
+  var settle = function (name, v) {
+    try {
+      Object.defineProperty(W, name, {
+        configurable: true, enumerable: true, writable: true, value: v,
+      });
+    } catch (e) {}
+  };
+  var watchFix = function (obj, name) {
+    var heldFix;
+    try {
+      Object.defineProperty(obj, 'fix', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return heldFix; },
+        set: function (f) {
+          heldFix = f;
+          try {
+            Object.defineProperty(obj, 'fix', {
+              configurable: true, enumerable: true, writable: true, value: f,
+            });
+          } catch (e) {}
+          wrap();
+          if (name) settle(name, obj);
+        },
+      });
+    } catch (e) {}
+  };
+
   if (!wrap()) {
-    // The library may still be loading. Keep trying briefly, then stop.
+    watchAssign();
+    // Still polled, but only as a safety net for the cases the setter cannot
+    // see. Keep trying briefly, then stop.
     var tries = 0;
     var poll = setInterval(function () {
       if (wrap() || ++tries > 40) clearInterval(poll);

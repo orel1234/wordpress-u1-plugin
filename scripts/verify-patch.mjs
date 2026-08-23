@@ -732,5 +732,198 @@ console.log('\ntooltips');
     b.getAttribute('tabindex') === null, String(b.getAttribute('tabindex')));
 }
 
+
+// ── The patch has to win the race for the library ───────────────────────────
+//
+// This was a 250ms poll, and on a site that already deploys U1 it lost almost
+// every time: at document_start window.u1 does not exist, the library then
+// loads and runs the site's own fix calls, and the next tick arrives after
+// they are done. The wrapper then wrapped a library whose work was finished —
+// the per-instance corrections never saw those calls and the recorder recorded
+// nothing. Reported as an adopt list that stayed empty on a site visibly full
+// of U1.
+{
+  const patch = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
+  check('the library is caught on ASSIGNMENT, not by polling for it',
+    /Object\.defineProperty\(W, name, \{/.test(patch) && /set: function \(v\) \{/.test(patch) &&
+    /\['u1', 'U1', 'user1st'\]\.forEach/.test(patch));
+  check('…including the shape where .fix arrives after the object does',
+    /var watchFix = function \(obj, name\)/.test(patch) &&
+    /v\.fix === undefined\) watchFix\(v, name\)/.test(patch));
+  check('…with the poll kept only as a fallback, not removed',
+    /watchAssign\(\);[\s\S]{0,300}setInterval\(/.test(patch));
+
+  const mk = () => {
+    const d = new JSDOM('<body></body>', { runScripts: 'outside-only', url: 'https://x.test/' });
+    d.window.eval(patch);
+    return d.window;
+  };
+  // The order that used to lose: patch first, library second.
+  let w = mk();
+  w.u1 = { fix: { menu: () => 1, dialog: () => 1 } };
+  w.u1.fix.menu('.nav', { selectors: { items: '.i' } });
+  w.u1.fix.dialog('.modal', {});
+  check('a library assigned AFTER the patch has its calls recorded',
+    (w.__u1Patch.calls || []).length === 2, String((w.__u1Patch.calls || []).length));
+
+  w = mk();
+  w.u1 = {};
+  w.u1.fix = { menu: () => 1 };
+  w.u1.fix.menu('.nav', {});
+  check('…and so does one that grows .fix a moment later',
+    (w.__u1Patch.calls || []).length === 1);
+
+  // The order that actually happens on a real site, and the one that defeated
+  // the first attempt. background.js presets the config at document_start with
+  // `window.u1 = window.u1 || {}`, so OUR OWN injection creates a bare object
+  // before the library loads. Treating "already there" as "nothing to watch"
+  // sent it back to the poll, and the adopt list stayed empty on a site
+  // plainly running U1. Verbatim from a real console on tamam.co.il.
+  {
+    const d2 = new JSDOM('<body></body>', { runScripts: 'outside-only', url: 'https://www.tamam.co.il/' });
+    const v = d2.window;
+    v.eval("window.u1 = window.u1 || {}; window.u1.config = { skipLinks: [1, 2, 3, 4] };");
+    v.eval(patch);                                  // patch AFTER the bare object
+    v.eval("window.u1.fix = { menu: function () { return 'ran'; } };");
+    v.u1.fix.menu('.elementor-nav-menu', { selectors: { items: '.u1_menu_link' } });
+    check('a bare window.u1 preset by our OWN config injection is still watched',
+      (v.__u1Patch.calls || []).length === 1 &&
+      v.__u1Patch.calls[0].selector === '.elementor-nav-menu',
+      String((v.__u1Patch.calls || []).length));
+    check('…and the config we preset onto it survives being watched',
+      Array.isArray(v.u1.config.skipLinks) && v.u1.config.skipLinks.length === 4);
+    check('…and the library\'s own fixer still returns what it returned',
+      v.u1.fix.menu('.x') === 'ran');
+  }
+
+  // Intercepting must leave nothing for the site to trip over.
+  w = mk();
+  w.u1 = { fix: { menu: (s) => 'ran ' + s } };
+  const dd = Object.getOwnPropertyDescriptor(w, 'u1');
+  check('…and window.u1 is an ordinary value afterwards, not an accessor',
+    'value' in dd && !dd.get);
+  check('…the site still reads it, and its fixer still returns what it returned',
+    w.u1.fix.menu('.x') === 'ran .x');
+  check('…and the site may reassign it', (() => {
+    try { w.u1 = { fix: {} }; return true; } catch (e) { return false; }
+  })());
+}
+
+
+// ── A fixer the client's build does not have ────────────────────────────────
+//
+// U1 is delivered per client and not every build carries every fixer. On
+// tamam.co.il window.u1.fix.heading does not exist, so a heading mapping —
+// right selector, right level, saved and exported — failed with
+// "u1.fix.heading missing" and could never work on that site. Supplying it is
+// what this file is for; grid-nav.js already ships whole engines that need no
+// U1 at all.
+{
+  const patch = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
+  const mk = (fix) => {
+    const d = new JSDOM('<body><div class=t>a title</div><h2 class=t>real heading</h2></body>',
+      { runScripts: 'outside-only', url: 'https://x.test/' });
+    d.window.eval(patch);
+    d.window.u1 = { fix: fix };
+    return d.window;
+  };
+
+  // Missing → supplied, and it does the whole of what fix.heading does.
+  let w = mk({ menu: () => 1 });
+  check('a fixer the build lacks is supplied by the patch',
+    typeof w.u1.fix.heading === 'function' && (w.__u1Patch.filled || []).includes('heading'));
+  w.u1.fix.heading('.t', { level: '3', selectors: { heading: '.t' } });
+  const [div, h2] = [...w.document.querySelectorAll('.t')];
+  check('…writing role=heading and the level it was given',
+    div.getAttribute('role') === 'heading' && div.getAttribute('aria-level') === '3');
+  // <h2> already IS a heading; the role adds nothing and could only disagree
+  // with the tag.
+  check('…and never over an element that is already a real heading',
+    h2.getAttribute('role') === null);
+  // A level outside 1..6 is not a level.
+  w = mk({});
+  w.u1.fix.heading('.t', { level: 'banana' });
+  check('…falling back to a sane level rather than writing nonsense',
+    w.document.querySelector('div.t').getAttribute('aria-level') === '2');
+
+  // Installing once is not enough. window.u1 is an ordinary writable property
+  // — settle() makes it one deliberately, because a site may legitimately
+  // reassign it — so a library that re-initialises takes every fixer the patch
+  // added with it, and the next apply reports "u1.fix.heading missing" about
+  // something the patch had already supplied on that same page load.
+  w = mk({ menu: () => 1 });
+  check('the fallback is there after the library first arrives',
+    typeof w.u1.fix.heading === 'function');
+  w.u1 = { fix: { menu: () => 1 } };                 // the site re-initialises
+  check('…and a reassignment of window.u1 does take it away',
+    typeof w.u1.fix.heading === 'undefined');
+  w.__u1Patch.ensureFixers();
+  check('…so ensureFixers puts it back on whatever window.u1 is NOW',
+    typeof w.u1.fix.heading === 'function');
+  w.u1.fix.heading('.t', { level: '4' });
+  check('…and the restored one still works',
+    w.document.querySelector('div.t').getAttribute('aria-level') === '4');
+  // Which is why the apply path calls it immediately before it checks.
+  check('…and the panel calls it right before asking whether the fixer exists',
+    /patch\.ensureFixers\(\); \} catch \(e\) \{\}[\s\S]{0,900}typeof raw\.fix\[it\.type\] === 'function'/
+      .test(readFileSync(join(ROOT, 'panel.js'), 'utf8')));
+
+  // The vendor's own is authoritative. Ours is a stand-in, never an upgrade.
+  w = mk({ heading: function () { return 'THE REAL ONE'; } });
+  check('a build that HAS the fixer keeps its own',
+    w.u1.fix.heading('.t', {}) === 'THE REAL ONE' && !(w.__u1Patch.filled || []).length);
+
+  // Only where the behaviour is unambiguous. Half-guessing `menu` would be
+  // worse than the honest failure the panel reports today.
+  const table = /var FALLBACK = \{([\s\S]*?)\n    \};/.exec(patch)[1];
+  check('…and only fixers whose behaviour is exact are filled in at all',
+    /heading:/.test(table) && !/\bmenu:/.test(table) && !/\btabs:/.test(table));
+
+  // The panel says where the behaviour came from — it works, and it works
+  // because of the patch, which the client's bundle also carries.
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  check('…and the panel reports which fixer the patch supplied',
+    /const filledIn = \(patch && patch\.filled\) \|\| \[\];/.test(src) &&
+    /This build of U1 has no \$\{filledIn\.map/.test(src));
+}
+
+
+// ── The opt-out that made a mapping work in the panel and die in production ─
+//
+// u1st-avoid-change-detection tells U1 to skip an element. It is usually not
+// anybody's decision: U1 stamps it on what it has processed, and a framework
+// that re-renders that element leaves the stamp on markup U1 never touched. On
+// tamam.co.il #menu-1-a35013c carries it in the served HTML and the menu
+// mapping did nothing. The panel already lifted it for local testing — so the
+// mapping worked in the panel and was dead in the client's bundle, the exact
+// split this file exists to close.
+{
+  const patch = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
+  const d = new JSDOM(
+    '<body><ul id="m" u1st-avoid-change-detection="true"><li><a href="/">x</a></li></ul>' +
+    '<div id="other" u1st-avoid-change-detection="true">not mapped</div></body>',
+    { runScripts: 'outside-only', url: 'https://x.test/' });
+  const w = d.window;
+  w.eval(patch);
+  let sawAttr = null;
+  w.u1 = { fix: { menu: function (sel) {
+    sawAttr = w.document.querySelector(sel).hasAttribute('u1st-avoid-change-detection');
+    return 1;
+  } } };
+  w.u1.fix.menu('#m', {});
+  check('the opt-out is lifted BEFORE U1 sees the element, not after',
+    sawAttr === false);
+  check('…and what was lifted is recorded, so it can be reported',
+    (w.__u1Patch.lifted || []).length === 1 && w.__u1Patch.lifted[0].selector === '#m');
+  // It does not sweep the page. Everywhere else nobody has said they want that
+  // element changed, and the attribute is the site's to keep.
+  check('…while an element nobody mapped keeps its attribute',
+    w.document.getElementById('other').hasAttribute('u1st-avoid-change-detection'));
+  // In the PATCH, which is what the exported bundle carries — the panel-only
+  // lift is what created the split in the first place.
+  check('…and it lives in the patch, so the export behaves as the panel does',
+    /var liftOptOut = function \(selector\)/.test(patch));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

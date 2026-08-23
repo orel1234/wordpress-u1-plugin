@@ -281,5 +281,24 @@ const U1Sync = (() => {
     return U1Auth.request(path(hostname, '/sweep'), { method: 'DELETE' });
   }
 
-  return { pull, pushMappings, pushSettings, pushSweep, fetchThumb, deleteSweep, forget };
+  /**
+   * The end-of-project handover, uploaded into the client's folder on Drive.
+   *
+   * The CRM does the upload, not us: Google has no anonymous write API, and an
+   * OAuth client inside the extension would mean every specialist authorising
+   * Drive again on every machine they use. The CRM already holds a Google
+   * identity for Sheets, Tasks and the pricing screenshots.
+   *
+   * The parent folder is the server's to decide. Sending one from here would
+   * let any signed-in panel write anywhere that identity can reach.
+   */
+  async function uploadHandover(hostname, files) {
+    const payload = files.map((f) => ({ name: f.name, mime: f.mime, b64: f.b64 }));
+    return U1Auth.request(path(hostname, '/handover'), {
+      method: 'POST',
+      body: JSON.stringify({ files: payload }),
+    });
+  }
+
+  return { pull, pushMappings, pushSettings, pushSweep, fetchThumb, deleteSweep, forget, uploadHandover };
 })();

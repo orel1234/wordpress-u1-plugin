@@ -58,13 +58,16 @@ function lift(kind, name) {
 const parts = [
   lift('const', 'COMPONENT_SCHEMAS'),
   lift('const', 'JS_LINE_WIDTH'),
+  lift('const', 'U1_COMPOUND_RE'),
+  lift('const', 'U1_PSEUDO_OK'),
+  lift('function', 'u1PseudosOk'),
   ...['setDeep', 'deepClone', 'normalizeU1Selector', 'isU1ValidSelector', 'isValidIdent',
       'formatJsInline', 'formatJsObject', 'buildAriaLabelCode', 'buildTemplate', 'stripEmpty',
       'buildKeyboardGridCode', 'buildKeyboardTabsCode', 'primaryKeyOf'].map(n => lift('function', n)),
 ];
 const sandbox = {};
-new Function('S', `${parts.join('\n')}\nS.COMPONENT_SCHEMAS=COMPONENT_SCHEMAS;S.buildTemplate=buildTemplate;`)(sandbox);
-const { COMPONENT_SCHEMAS, buildTemplate } = sandbox;
+new Function('S', `${parts.join('\n')}\nS.COMPONENT_SCHEMAS=COMPONENT_SCHEMAS;S.buildTemplate=buildTemplate;S.primaryKeyOf=primaryKeyOf;S.isU1ValidSelector=isU1ValidSelector;`)(sandbox);
+const { COMPONENT_SCHEMAS, buildTemplate, primaryKeyOf, isU1ValidSelector } = sandbox;
 
 // The in-page apply function, lifted verbatim from applyMappingsBatch.
 const applyFnSrc = panelSrc
@@ -555,6 +558,10 @@ const controlLeftAlone = ct.detail.rebuilt !== true;
 // Rebuild the real validator, compound rule and normaliser included.
 const validator = new Function(
   lift('const', 'U1_COMPOUND_RE') + '\n' +
+  // The pseudo allow-list, which the panel's copy of the validator was missing
+  // entirely — it matched the SHAPE of a compound and never looked inside it.
+  lift('const', 'U1_PSEUDO_OK') + '\n' +
+  lift('function', 'u1PseudosOk') + '\n' +
   lift('function', 'normalizeU1Selector') + '\n' +
   lift('function', 'isU1ValidSelector') + '\n' +
   'return isU1ValidSelector;')();
@@ -1001,6 +1008,209 @@ if (!dlgCloseNoOverrule) failed++;
 console.log(`  ${dlgCloseFills ? '✅' : '❌'} …filling only what the model left empty, never overruling a real answer`);
 if (!dlgCloseFills) failed++;
 
+// ── Reading back a U1 deployment somebody else wrote ────────────────────────
+//
+// A site we are engaged on has often had U1 on it for months. Its effect is
+// visible in the DOM (u1_menu_link, u1st-* ids) but what was ASKED for was
+// not, so the only way to work with it was to guess the original call. The
+// patch now records every u1.fix.* the page runs, and background.js injects
+// that patch at document_start in the MAIN world — before the site's own U1 —
+// so the record is the site's real arguments, not a reconstruction.
+let recRecords = false, recAllTypes = false, recHarmless = false, recConverts = false, recDropsUnknown = false;
+{
+  const patch = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
+
+  // Recorded over EVERY fixer, not folded into PER_MATCH — that list is seven
+  // types and `menu` is not one of them, which is the very component that
+  // prompted this. Recording is orthogonal to correcting.
+  const perMatch = /var PER_MATCH = \[([^\]]*)\]/.exec(patch)[1];
+  recAllTypes = !/'menu'/.test(perMatch) &&
+                /Object\.keys\(u1\.fix\)\.forEach/.test(patch) &&
+                /P\.calls\.push\(\{/.test(patch);
+  recRecords = /type: name,/.test(patch) && /selector: selector,/.test(patch) &&
+               /props: JSON\.parse\(JSON\.stringify\(props === undefined \? \{\} : props\)\)/.test(patch);
+  // It only observes: the original is called with `arguments` untouched, and a
+  // throw in the recorder must never take the site's own fix down.
+  recHarmless = /try \{[\s\S]{0,600}\} catch \(e\) \{\}\s*\n\s*return inner\.apply\(this, arguments\);/.test(patch);
+
+  // A recorded call becomes the mapping the builder would have produced.
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const w = dom.window;
+  const recorded = [
+    { type: 'menu', selector: '.elementor-nav-menu',
+      props: { selectors: { items: '.u1_menu_link', submenus: '.u1_submenu_con' }, menubar: false } },
+    { type: 'dialog', selector: '.modal', props: { selectors: { closeBtn: '.close' } } },
+  ];
+  const isInternalFn = new Function(
+    /\nfunction isU1InternalSelector[\s\S]*?\n\}/.exec(panelSrc)[0] +
+    '; return isU1InternalSelector;')();
+  const conv = new Function('COMPONENT_SCHEMAS', 'buildTemplate', 'primaryKeyOf', 'isU1InternalSelector',
+    /\nfunction mappingFromRecordedCall\([\s\S]*?\n\}/.exec(panelSrc)[0] +
+    '; return mappingFromRecordedCall;')(COMPONENT_SCHEMAS, buildTemplate, primaryKeyOf, isInternalFn);
+
+  const menu = conv(recorded[0]);
+  const dlg = conv(recorded[1]);
+  recConverts =
+    !!menu && menu.type === 'menu' && menu.primary === '.elementor-nav-menu' &&
+    menu.config.selectors.items === '.u1_menu_link' &&
+    menu.config.selectors.submenus === '.u1_submenu_con' &&
+    menu.config.menubar === false &&                       // a root option survives
+    !!dlg && dlg.config.selectors.dialog === '.modal' &&   // the primary is filled in
+    dlg.config.selectors.closeBtn === '.close';
+  // The library has fixers this build does not model. A mapping that cannot be
+  // rebuilt cannot be exported, edited or verified, so it is dropped rather
+  // than half-adopted.
+  recDropsUnknown = conv({ type: 'notathing', selector: '.z', props: {} }) === null;
+
+  // Adopting goes through the ONE save path, so an adopted mapping meets the
+  // same required-field refusal and role question as a hand-built one. A
+  // recorded call is evidence of what the site asked for, not proof it was right.
+  const adopts = /closest\('#adoptExistingBtn'\)[\s\S]{0,1200}saveMappingEntry\(tpl, \{ refreshUi: false \}\)/.test(panelSrc);
+  if (!adopts) recConverts = false;
+}
+console.log(`  ${recRecords ? '✅' : '❌'} the patch records every fix the SITE runs — type, selector and props`);
+if (!recRecords) failed++;
+console.log(`  ${recAllTypes ? '✅' : '❌'} …over every fixer, not just PER_MATCH, which does not include menu`);
+if (!recAllTypes) failed++;
+console.log(`  ${recHarmless ? '✅' : '❌'} …observing only: the site's own fix still runs, and a throw here cannot stop it`);
+if (!recHarmless) failed++;
+console.log(`  ${recConverts ? '✅' : '❌'} …and a recorded call becomes a real mapping, adopted through the one save path`);
+if (!recConverts) failed++;
+console.log(`  ${recDropsUnknown ? '✅' : '❌'} …while a fixer this build cannot rebuild is dropped, not half-adopted`);
+if (!recDropsUnknown) failed++;
+
+// ── U1 scanning for its OWN markers is not a deployment ─────────────────────
+//
+// The library bootstraps by calling fix.checkbox('[u1-checkbox]'),
+// fix.tabs('[u1-tabs]') and so on for every type. The first run of adopt took
+// that for a deployment and saved 21 empty mappings, one per component type.
+// A site's own fix points at the SITE's markup; pointing one at a marker the
+// library adds to itself would be circular, so the primary tells them apart.
+let junkFiltered = false, junkKeepsReal = false, junkCleansUp = false;
+{
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const isInternal = new Function(
+    /\nfunction isU1InternalSelector[\s\S]*?\n\}/.exec(src)[0] +
+    '; return isU1InternalSelector;')();
+  // Every scaffolding selector seen in the real run.
+  junkFiltered = ['[u1-checkbox]', '[u1-radio]', '[u1-grid]', '[u1-tabs]', '[u1-form]',
+                  '[u1-menu]', '[u1-listbox]', '[u1-carousel]', '[u1-pagination]',
+                  '.u1_Datepicker_trigger', '#u1st-abc'].every(isInternal);
+  // And nothing a person would write.
+  junkKeepsReal = ['.elementor-nav-menu', '.modal', '#site-header', 'a.x',
+                   '.elementor-widget-container>p', 'main#main'].every((v) => !isInternal(v));
+  const conv = new Function('COMPONENT_SCHEMAS', 'buildTemplate', 'primaryKeyOf', 'isU1InternalSelector',
+    /\nfunction mappingFromRecordedCall\([\s\S]*?\n\}/.exec(src)[0] +
+    '; return mappingFromRecordedCall;')(COMPONENT_SCHEMAS, buildTemplate, primaryKeyOf, isInternal);
+  const refused = conv({ type: 'checkbox', selector: '[u1-checkbox]', props: {} }) === null;
+  // Only the PRIMARY is judged — a menu's items really can be .u1_menu_link
+  // once the library has run, and that must not disqualify the mapping.
+  const fieldOk = !!conv({ type: 'menu', selector: '.elementor-nav-menu',
+                           props: { selectors: { items: '.u1_menu_link' } } });
+  junkFiltered = junkFiltered && refused && fieldOk;
+  // The ones already saved before the filter existed have to be cleared, since
+  // a mapping does not remove itself.
+  junkCleansUp = /async function migrateDropU1Internal\(host\)/.test(src) &&
+                 /isU1InternalSelector\(m\.primary\)/.test(src) &&
+                 /await migrateDropU1Internal\(currentHostname\)/.test(src);
+}
+console.log(`  ${junkFiltered ? '✅' : '❌'} U1's own bootstrap scan is not adopted as if it were a deployment`);
+if (!junkFiltered) failed++;
+console.log(`  ${junkKeepsReal ? '✅' : '❌'} …while a selector a person would actually write is kept`);
+if (!junkKeepsReal) failed++;
+console.log(`  ${junkCleansUp ? '✅' : '❌'} …and the ones already saved before the filter are cleared out`);
+if (!junkCleansUp) failed++;
+
+// ── A U1 deployment is per PAGE, not per site ───────────────────────────────
+//
+// tamam.co.il's home page runs a menu; its Aviation Catering page runs a form,
+// a menu and a carousel. Walking the site is how the full picture is
+// collected — so every page has to be looked at, including one on the same
+// host. loadMappingsList lives inside the hostnameChanged branch, so moving
+// between two pages of one site never re-checked, and the offer went stale.
+let rescansEveryPage = false, rescansAfterSettling = false;
+{
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const fn = /async function onTabChanged\(tab\) \{[\s\S]*?\n\}/.exec(src)[0];
+  // Outside the hostnameChanged branch — that branch is the one that misses a
+  // same-site navigation entirely.
+  const branch = /if \(hostnameChanged\) \{[\s\S]*?\n  \}/.exec(fn)[0];
+  rescansEveryPage = /renderExistingFixes\(\);/.test(fn) &&
+                     !/renderExistingFixes\(\)/.test(branch);
+  // The library's own fixes land as the page settles, so `complete` alone is
+  // often a fraction early — an offer that appears empty and fills in later
+  // reads as the tool having missed things.
+  rescansAfterSettling =
+    /setTimeout\(async \(\) => \{[\s\S]{0,200}renderExistingFixes\(\);[\s\S]{0,60}\}, 2000\);/.test(fn);
+}
+console.log(`  ${rescansEveryPage ? '✅' : '❌'} the offer is re-read on every page, not only when the SITE changes`);
+if (!rescansEveryPage) failed++;
+console.log(`  ${rescansAfterSettling ? '✅' : '❌'} …and again once the page has settled, since fixes land after "complete"`);
+if (!rescansAfterSettling) failed++;
+
+// ── A selector the ENGINE cannot use must not be saveable ───────────────────
+//
+// U1 resolves through jQuery, which refuses a pseudo-class SILENTLY — the fix
+// never applies and nothing says so, so the mapping looks finished in the
+// drawer, ships in the export, and decorates nothing forever. From
+// tamam.co.il: a heading rooted on
+//   .elementor-widget-text-editor>.elementor-widget-container>p:last-of-type
+// saved cleanly and did nothing. isU1ValidSelector existed all along; the AI
+// route called it and the manual builder never did.
+let engineRefuses = false, engineChecksFields = false, engineAllowsGood = false;
+{
+  const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const fn = /\nasync function saveMappingEntry\([\s\S]*?\n\}/.exec(src);
+  const body = fn ? fn[0] : src;
+  engineRefuses = /if \(template\.primary && !isU1ValidSelector\(template\.primary\)\)/.test(src) &&
+                  /U1 cannot use \$\{bad\.length === 1 \? 'this selector' : 'these selectors'\}/.test(src) &&
+                  /refuses them SILENTLY/.test(src);
+  // Not only the primary: a sub-selector with a pseudo-class fails the same
+  // silent way, and a mapping half of which never runs is no better.
+  engineChecksFields = /for \(const \[k, v\] of Object\.entries\(sels\)\)[\s\S]{0,200}!isU1ValidSelector\(v\)/.test(src);
+  // The validator itself agrees about the real case.
+  const isValid = isU1ValidSelector;
+  engineAllowsGood =
+    !isValid('.elementor-widget-text-editor>.elementor-widget-container>p:last-of-type') &&
+    !isValid('.a .b') &&                       // a descendant space is refused too
+    isValid('.elementor-slides>.swiper-slide') &&
+    isValid('#menu-1-a35013c') &&
+    isValid('.a,.b');
+}
+console.log(`  ${engineRefuses ? '✅' : '❌'} a selector U1 cannot resolve is refused at save, not shipped to fail silently`);
+if (!engineRefuses) failed++;
+console.log(`  ${engineChecksFields ? '✅' : '❌'} …sub-selectors too, since half a mapping that never runs is no better`);
+if (!engineChecksFields) failed++;
+console.log(`  ${engineAllowsGood ? '✅' : '❌'} …while > + ~ , and plain compounds still pass`);
+if (!engineAllowsGood) failed++;
+
+// ── The two validators must not disagree ────────────────────────────────────
+//
+// There are two: selector-intel's isU1Valid and panel.js's isU1ValidSelector.
+// The panel's had no pseudo check at all — it matched the SHAPE of a compound
+// and never looked inside it — so :last-of-type was refused by one and waved
+// through by the other, and the permissive one was the one guarding the save.
+// A check that passes in the panel and fails in the field is the worst
+// outcome available, so they are held to the same answer here.
+let validatorsAgree = false;
+{
+  const dom = new JSDOM('<!doctype html><body></body>',
+    { runScripts: 'outside-only', url: 'https://x.test/' });
+  dom.window.eval(readFileSync(join(ROOT, 'selector-intel.js'), 'utf8'));
+  const intel = dom.window.__u1SelectorIntel.isU1Valid;
+  const cases = [
+    '.a:last-of-type', '.a:hover', '.a::before', 'p:nth-of-type(2)',
+    'li:first-child>a', '.a:not(.b)', '.a .b', '.a>.b', '.a,.b',
+    '#id', 'div[data-x="1"]', '.elementor-slides>.swiper-slide',
+    '.elementor-widget-text-editor>.elementor-widget-container>p:last-of-type',
+  ];
+  const differ = cases.filter((c) => intel(c) !== isU1ValidSelector(c));
+  validatorsAgree = differ.length === 0;
+  if (differ.length) console.log('    (they differ on: ' + differ.join(', ') + ')');
+}
+console.log(`  ${validatorsAgree ? '✅' : '❌'} …and the panel's validator answers exactly as selector-intel's does`);
+if (!validatorsAgree) failed++;
+
 // ── A stage's messages must land in that stage ──────────────────────────────
 //
 // Reported as "I press Approve & apply and nothing happens". It was not doing
@@ -1422,6 +1632,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 91;
+const total = results.length + 105;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

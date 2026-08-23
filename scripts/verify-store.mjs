@@ -266,6 +266,72 @@ console.log('\n  A pull against unpushed local work:');
         /\[storageKey\('mappings', currentHostname\)\]: merged/.test(panelSrc));
   check('…and only server-confirmed keys are remembered as pushed',
         /await rememberPushedKeys\(currentHostname, out\.keys \|\| \[\]\);/.test(panelSrc));
+
+  // ── The screenshot survives the round trip ────────────────────────────────
+  //
+  // pushMappings strips `screenshot` on purpose: it is a data: URI, the
+  // largest thing on a mapping, and two on elal.com were individually over the
+  // whole request budget. The consequence was never followed through — the
+  // server therefore holds a screenshot-less copy of every row it HAS seen,
+  // and those are precisely the rows this function replaces wholesale. So the
+  // picture was captured, saved, pushed without itself, and destroyed by the
+  // next pull, on the machine that took it. Reported twice as images that
+  // would not stay saved.
+  const shot = 'data:image/png;base64,AAAA';
+  const withShot = { ...m('form', '.f'), screenshot: shot, pageUrl: 'https://s/a', pageTitle: 'A', capturedAt: 111 };
+  const fromServer = m('form', '.f');                    // same row, stripped
+  const pushedF = new Set([key(withShot)]);
+
+  const r5 = reconcile([fromServer], [withShot], pushedF);
+  check('a screenshot is NOT lost when the server returns the row without one',
+        r5.merged.length === 1 && r5.merged[0].screenshot === shot);
+  // The close-out report groups by pageUrl. Carrying the picture without the
+  // page it was taken on would file it under the wrong section.
+  check('…along with the page it was taken on',
+        r5.merged[0].pageUrl === 'https://s/a' && r5.merged[0].pageTitle === 'A' &&
+        r5.merged[0].capturedAt === 111);
+  // Only the local-only field is rescued; the server still decides behaviour.
+  const changedOnServer = { ...m('form', '.f'), overwriteRole: 'button' };
+  const r6 = reconcile([changedOnServer], [withShot], pushedF);
+  check('…while the server still wins on everything that decides behaviour',
+        r6.merged[0].overwriteRole === 'button' && r6.merged[0].screenshot === shot);
+  // If a colleague ever does push one, theirs is not overwritten by ours.
+  const serverHasShot = { ...m('form', '.f'), screenshot: 'data:image/png;base64,BBBB' };
+  const r7 = reconcile([serverHasShot], [withShot], pushedF);
+  check('…and a screenshot the server DOES hold is left alone',
+        r7.merged[0].screenshot === 'data:image/png;base64,BBBB');
+  // A row nobody has a picture for must not gain a stray field.
+  const r8 = reconcile([fromServer], [m('form', '.f')], pushedF);
+  check('…and a row with no screenshot anywhere is untouched',
+        !('screenshot' in r8.merged[0]));
+
+  // ── Import's type allow-list must cover every component type ─────────────
+  //
+  // sanitizeImport filters mappings by VALID_MAPPING_TYPES. A type missing
+  // there is not rejected loudly: the row is silently dropped from the
+  // restored backup. link-list, keyboard-tabs and breadcrumb were all added as
+  // component types long after that set was written, and none of them was
+  // added to it — so a backup from a site using them restored short, quietly.
+  // Derived from the schema rather than hand-listed, so the next new type
+  // cannot repeat it.
+  {
+    const schemaStart = panelSrc.indexOf('const COMPONENT_SCHEMAS');
+    const schemaBody = panelSrc.slice(schemaStart, panelSrc.indexOf('const VALID_MAPPING_TYPES'));
+    const schemaTypes = [...schemaBody.matchAll(/^  '?([a-z-]+)'?:\s*\{/gm)].map((m) => m[1]);
+    const setBody = panelSrc.slice(panelSrc.indexOf('const VALID_MAPPING_TYPES'),
+                                   panelSrc.indexOf('function sanitizeImport'));
+    const allowed = new Set([...setBody.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]));
+    const missing = schemaTypes.filter((t) => !allowed.has(t));
+    check('every component type survives an imported backup',
+          schemaTypes.length > 0 && missing.length === 0,
+          missing.length ? `dropped on import: ${missing.join(', ')}` : '');
+  }
+
+  // The strip is deliberate and must stay — this is the reason the rescue above
+  // has to exist, so if the strip ever goes, the comment stops being true.
+  const syncSrc = readFileSync(join(ROOT, 'sync.js'), 'utf8');
+  check('pushMappings still strips the screenshot before sending',
+        /delete copy\.screenshot;/.test(syncSrc));
 }
 
 // ── The survey upload: nothing scratch may ride along ───────────────────────

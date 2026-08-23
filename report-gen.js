@@ -99,6 +99,113 @@ const REPORT_SELECTOR_DESC = {
   'heading text': 'The nearby heading whose text is appended.',
 };
 
+// ── Saving a report as a PDF ─────────────────────────────────────────────────
+//
+// The reports already had an @media print block and no way to reach it: the
+// only route was the browser's own menu, which nobody looks for on a page that
+// looks like an app. Chrome's print dialog writes PDF natively, so a button
+// calling window.print() is the whole feature — no library, nothing to fetch,
+// and it works under the extension page's CSP.
+//
+// Two things print needs that screen does not:
+//   · print-color-adjust. Browsers drop background colours when printing, and
+//     this report IS its colour coding — the type badges and the header rule
+//     would come out as white boxes.
+//   · break-inside on every card AND its screenshot. A fix split across a page
+//     boundary from its own screenshot is the one thing that makes a close-out
+//     report unusable as a deliverable.
+const REPORT_PRINT_CSS = `
+  .pdf-btn { position: fixed; top: 16px; right: 16px; z-index: 99; border: 0;
+    background: linear-gradient(135deg,#6c4cf1,#a06cff); color: #fff; font: inherit;
+    font-weight: 600; font-size: 13px; padding: 9px 16px; border-radius: 8px;
+    cursor: pointer; box-shadow: 0 2px 10px rgba(108,76,241,.35); }
+  .pdf-btn:hover { filter: brightness(1.07); }
+  .pdf-btn:focus-visible { outline: 3px solid #1f1147; outline-offset: 2px; }
+  @media print {
+    .pdf-btn { display: none !important; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+    /* Chrome draws its own date, title and chrome-extension://… URL INTO the
+       page margin. There is no property that turns them off, but with no
+       margin there is nowhere to draw them, so the sheet comes out clean. The
+       whitespace the page still needs then has to come from the body. */
+    @page { margin: 0; }
+    html, body { background: #fff !important; }
+    body { padding: 12mm !important; }
+
+    /* Only things small enough to actually fit on a sheet.
+       section.page was in this list and it is the wrong size for it: a page
+       section holding four fixes is taller than A4, so "do not break inside"
+       cannot be honoured — and the engine's response is to shove the whole
+       block to the next sheet, which is what left page 1 holding nothing but
+       the title. The fixes inside it are the right unit, and they are here. */
+    .issue, .element, .fix, tr { break-inside: avoid; page-break-inside: avoid; }
+    /* A screenshot torn in half is worse than one that starts a new sheet. */
+    img { break-inside: avoid; page-break-inside: avoid;
+          max-width: 100% !important; height: auto !important; }
+
+    /* A per-page heading must not be the last thing on a sheet. NOT
+       .report-head: it is followed by a section taller than the sheet, so the
+       same rule split the title from its own summary line. */
+    .page-head { break-after: avoid; }
+    .report-head { break-inside: avoid; }
+
+    a { text-decoration: none; color: inherit; }
+  }`;
+
+// type="button" so it never submits anything, and the label says what comes
+// out rather than what the browser calls it — the dialog's own default
+// destination is Save as PDF.
+//
+// No inline onclick. These reports render inside report.html, an extension
+// page, and MV3's script-src 'self' blocks inline handlers outright — the
+// button would have looked perfectly normal and done nothing at all. The
+// listener is attached by report-view.js after the document is written.
+// The dot-free filename rides on the button, because the two things that need
+// it run in different worlds: the inline script below (which works only in the
+// downloaded copy) and report-view.js (which works only in the extension page,
+// where the inline script is blocked). A data attribute is the one channel
+// both can read, so the name is computed once.
+function reportPdfButton(basename) {
+  return '<button type="button" class="pdf-btn" data-print data-pdf-name="' +
+    reportEsc(reportSafeBasename(basename)) + '">\u2b07 Download PDF</button>';
+}
+
+// Chrome will not append ".pdf" to a name that already looks like it has an
+// extension, and a hostname ends in one: ".il". Strip every dot.
+function reportSafeBasename(basename) {
+  return String(basename || 'U1-Report').replace(/[^A-Za-z0-9-]+/g, '-')
+    .replace(/-+/g, '-').replace(/^-|-$/g, '') || 'U1-Report';
+}
+
+// Every one of these reports is ALSO downloaded as a standalone .html file,
+// and that copy has no report-view.js beside it — so on disk the button would
+// be dead. This inline script covers that copy: opened from the filesystem
+// there is no extension CSP to stop it. Inside report.html the same script is
+// blocked and never runs, which is fine, because report-view.js has already
+// bound the identical listener there. One button, two contexts, no branch.
+//
+// It also renames the document for the duration of the print.
+//
+// Chrome takes the PDF's filename straight from document.title, and it will
+// not append ".pdf" to a name that already looks like it has an extension. A
+// report titled "… - tamam.co.il" therefore saved as a file called
+// "U1 Accessibility Close-out Report - tamam.co.il" with no extension at all,
+// which macOS then refused to open: "There is no application set to open the
+// document". The PDF was fine; nothing could tell it was one.
+//
+// So the title is swapped for a dot-free name before printing and put back
+// afterwards, on both beforeprint (which covers Cancel, unlike doing it in the
+// click handler) and afterprint.
+const REPORT_PDF_SCRIPT =
+  '<script>(function(){var t,b=document.querySelector("[data-pdf-name]");' +
+  'document.addEventListener("click",function(e){' +
+  'if(e.target.closest("[data-print]"))window.print();});' +
+  'addEventListener("beforeprint",function(){' +
+  'if(!b)return;t=document.title;document.title=b.getAttribute("data-pdf-name");});' +
+  'addEventListener("afterprint",function(){if(t)document.title=t;});' +
+  '})();<\/script>';
+
 function reportSelectorDesc(key) {
   if (REPORT_SELECTOR_DESC[key]) return REPORT_SELECTOR_DESC[key];
   const last = key.split('.').pop();
@@ -113,6 +220,29 @@ function reportCleanUrl(u) {
   let s = String(u).split('#')[0].split('?')[0];
   s = s.replace(/\/+$/, '');
   return s;
+}
+
+// The same URL, written the way the client reads it.
+//
+// A Hebrew (or any non-ASCII) path arrives percent-encoded from tab.url, so
+// the report printed two lines of %d7%a7%d7%99… where the page's own name
+// should be — in a document written for the client, about their own site.
+//
+// This is for DISPLAY only. reportCleanUrl stays the canonical form and is
+// what the href and the page-grouping key use, because it is the one
+// guaranteed to resolve and to group two spellings of a page together.
+//
+// Decoded per segment: a stray '%' that is not a valid escape makes
+// decodeURIComponent throw, and one bad segment must not cost the whole URL.
+function reportDisplayUrl(u) {
+  const s = reportCleanUrl(u);
+  if (!s) return '';
+  const m = /^([a-z][\w+.-]*:\/\/[^/]*)(\/.*)?$/i.exec(s);
+  if (!m) return s;
+  const path = (m[2] || '').split('/').map((seg) => {
+    try { return decodeURIComponent(seg); } catch { return seg; }
+  }).join('/');
+  return m[1] + path;
 }
 
 // Only emit a real data:image URL into <img src> — never an arbitrary/imported
@@ -213,6 +343,7 @@ function reportCollectPages(allStorage, onlyHostname) {
 
 function reportBuildHtml(pages) {
   const generatedAt = new Date().toLocaleString();
+  const reportHost = (pages.find(p => p && p.hostname) || {}).hostname || 'site';
   const totalFixes = pages.reduce((s, p) => s + p.items.length, 0);
 
   const pagesHtml = pages.map(page => {
@@ -224,18 +355,23 @@ function reportBuildHtml(pages) {
         `<tr><td class="sel-key">${reportEsc(k)}</td><td class="sel-val">${reportEsc(v)}</td>` +
         `<td class="sel-desc">${reportEsc(reportSelectorDesc(k))}</td></tr>`
       ).join('');
+      // No placeholder where a screenshot is missing.
+      //
+      // This is the document the client reads. A dashed box telling them to
+      // "open the element's page and use the 📷 button" is an instruction to
+      // US, printed in THEIR report, and it says of a fix that genuinely
+      // shipped that something about it is missing. The fix and its selectors
+      // are the substance; the picture is supporting evidence, and evidence
+      // that does not exist is simply not shown.
       const shot = reportSafeImg(m.screenshot);
-      const img = shot
-        ? `<img src="${shot}" alt="Screenshot of ${reportEsc(d.primary)}">`
-        : `<div class="no-shot">No screenshot captured.<br><span>Open the element's page and use the 📷 button on the mapping.</span></div>`;
       return `
-        <div class="element">
+        <div class="element${shot ? '' : ' no-shot-el'}">
           <div class="element-info">
             <h3>${m.id ? `<span class="mapid" title="Monitor id">${reportEsc(m.id)}</span> ` : ''}<span class="badge">${reportEsc(d.label)}</span> <code>${reportEsc(d.primary)}</code></h3>
             <p class="desc">${reportEsc(d.desc)}</p>
             ${selectorRows ? `<table class="selectors"><tbody>${selectorRows}</tbody></table>` : ''}
           </div>
-          <div class="element-shot">${img}</div>
+          ${shot ? `<div class="element-shot"><img src="${shot}" alt="Screenshot of ${reportEsc(d.primary)}"></div>` : ''}
         </div>`;
     }).join('');
 
@@ -243,7 +379,7 @@ function reportBuildHtml(pages) {
       <section class="page">
         <div class="page-head">
           <h2>${reportEsc(page.title)}</h2>
-          ${page.url ? `<a href="${reportEsc(page.url)}">${reportEsc(page.url)}</a>` : `<span>${reportEsc(page.hostname)}</span>`}
+          ${page.url ? `<a href="${reportEsc(page.url)}">${reportEsc(reportDisplayUrl(page.url))}</a>` : `<span>${reportEsc(page.hostname)}</span>`}
           <span class="count">${page.items.length} element${page.items.length !== 1 ? 's' : ''}</span>
         </div>
         ${rows}
@@ -270,6 +406,9 @@ function reportBuildHtml(pages) {
   .page-head a, .page-head span { color: #6c4cf1; font-size: 13px; text-decoration: none; word-break: break-all; }
   .page-head .count { margin-left: auto; color: #888; font-size: 12px; }
   .element { display: grid; grid-template-columns: 1fr 320px; gap: 20px; padding: 16px 0; border-bottom: 1px dashed #e5e5ef; align-items: start; }
+  /* Dropping the screenshot column entirely, rather than leaving the 320px
+     track empty — a blank gutter reads as a picture that failed to load. */
+  .element.no-shot-el { grid-template-columns: 1fr; }
   .element:last-child { border-bottom: none; }
   .element-info h3 { margin: 0 0 8px; font-size: 15px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .element-info code { background: #f0eefb; color: #4b32c3; padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
@@ -283,14 +422,13 @@ function reportBuildHtml(pages) {
   .sel-val { font-family: "SF Mono", Consolas, monospace; color: #333; word-break: break-all; }
   .sel-desc { color: #666; }
   .element-shot img { width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; }
-  .no-shot { border: 1px dashed #ccc; border-radius: 8px; padding: 24px 12px; text-align: center; color: #999; font-size: 12px; }
-  .no-shot span { font-size: 11px; color: #bbb; }
   .empty { text-align: center; color: #888; padding: 60px 20px; }
-  @media print { body { background: #fff; padding: 0; } section.page { box-shadow: none; break-inside: avoid; } .element { break-inside: avoid; } }
   @media (max-width: 640px) { .element { grid-template-columns: 1fr; } }
+  ${REPORT_PRINT_CSS}
 </style>
 </head>
 <body>
+  ${reportPdfButton('U1-CloseOut-Report-' + reportHost)}
   <div class="report">
     <div class="report-head">
       <h1><span class="u1">u</span>Accessibility Close-out Report</h1>
@@ -298,6 +436,7 @@ function reportBuildHtml(pages) {
     </div>
     ${pages.length ? pagesHtml : '<div class="empty">No accessibility mappings saved yet. Build component templates and add them to a mapping first.</div>'}
   </div>
+  ${REPORT_PDF_SCRIPT}
 </body>
 </html>`;
 }
@@ -333,12 +472,11 @@ const STATIC_CAT_LABEL = {
 function buildStaticIssuesHtml(hostname, items, pageUrl, pageTitle) {
   const generatedAt = new Date().toLocaleString();
   const rows = items.map(it => {
+    // Same rule as the close-out report: no dashed box standing in for a
+    // picture that does not exist. The issue and its selector are the content.
     const shot = reportSafeImg(it.screenshot);
-    const img = shot
-      ? `<img src="${shot}" alt="Screenshot">`
-      : `<div class="no-shot">No screenshot<br><span>(element off-screen or has no box)</span></div>`;
     return `
-      <div class="issue">
+      <div class="issue${shot ? '' : ' no-shot-el'}">
         <div class="issue-info">
           <h3><span class="badge">${reportEsc(STATIC_CAT_LABEL[it.cat] || it.cat)}</span>
             ${it.severity ? `<span class="lvl sev-${reportEsc((it.severity || '').toLowerCase())}">${reportEsc(it.severity)}</span>` : ''}
@@ -350,7 +488,7 @@ function buildStaticIssuesHtml(hostname, items, pageUrl, pageTitle) {
           ${it.selector ? `<p class="sel"><code>${reportEsc(it.selector)}</code></p>` : ''}
           <p class="fix"><strong>How to fix:</strong> ${reportEsc(it.fix || issueFix(it.issue))}</p>
         </div>
-        <div class="issue-shot">${img}</div>
+        ${shot ? `<div class="issue-shot"><img src="${shot}" alt="Screenshot"></div>` : ''}
       </div>`;
   }).join('');
 
@@ -379,23 +517,25 @@ function buildStaticIssuesHtml(hostname, items, pageUrl, pageTitle) {
   .sel code { background:#f0eefb; color:#4b32c3; padding:2px 6px; border-radius:5px; font-size:12px; word-break:break-all; }
   .fix { margin:0; font-size:13px; color:#245c2b; background:#eafaef; border-radius:6px; padding:8px 10px; }
   .issue-shot img { width:100%; height:auto; border:1px solid #ddd; border-radius:8px; }
-  .no-shot { border:1px dashed #ccc; border-radius:8px; padding:24px 12px; text-align:center; color:#999; font-size:12px; }
   .empty { text-align:center; color:#888; padding:60px 20px; }
-  @media print { body { background:#fff; padding:0; } .issue { box-shadow:none; break-inside:avoid; } }
+  ${REPORT_PRINT_CSS}
+  .issue.no-shot-el { grid-template-columns: 1fr; }
   @media (max-width: 640px) { .issue { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
+  ${reportPdfButton('U1-Static-Issues-' + hostname)}
   <div class="report">
     <div class="report-head">
       <h1><span class="u1">u</span>Static Accessibility Issues</h1>
       <div class="meta">${items.length} issue${items.length !== 1 ? 's' : ''} on
         ${pageTitle ? reportEsc(pageTitle) + ' — ' : ''}
-        ${pageUrl ? `<a href="${reportEsc(pageUrl)}">${reportEsc(pageUrl)}</a>` : reportEsc(hostname)}
+        ${pageUrl ? `<a href="${reportEsc(pageUrl)}">${reportEsc(reportDisplayUrl(pageUrl))}</a>` : reportEsc(hostname)}
         · Generated ${reportEsc(generatedAt)}</div>
     </div>
     ${items.length ? rows : '<div class="empty">No static issues found — nice.</div>'}
   </div>
+  ${REPORT_PDF_SCRIPT}
 </body>
 </html>`;
 }
@@ -449,12 +589,9 @@ function buildElementScanHtml(hostname, items, pageUrl, pageTitle) {
 
   const rows = items.map(it => {
     const shot = reportSafeImg(it.screenshot);
-    const img = shot
-      ? `<img src="${shot}" alt="Screenshot">`
-      : `<div class="no-shot">No screenshot<br><span>(captured when the mapping was made)</span></div>`;
     const tested = it.status === 'pass' || it.status === 'warn' || it.status === 'fail';
     return `
-      <div class="issue st-${reportEsc(it.status)}">
+      <div class="issue st-${reportEsc(it.status)}${shot ? '' : ' no-shot-el'}">
         <div class="issue-info">
           <h3><span class="badge">Fix #${reportEsc(String(it.fixNo ?? '—'))}</span>
             <span class="lvl st-${reportEsc(it.status)}">${reportEsc(ELEM_STATUS_LABEL[it.status] || it.status)}</span>
@@ -465,7 +602,7 @@ function buildElementScanHtml(hostname, items, pageUrl, pageTitle) {
             <p class="problem">🏷️ Accessibility (code)</p>${stepList(it.staticSteps)}
             <p class="problem">⌨️ Keyboard navigation</p>${stepList(it.keyboardSteps)}` : ''}
         </div>
-        <div class="issue-shot">${img}</div>
+        ${shot ? `<div class="issue-shot"><img src="${shot}" alt="Screenshot"></div>` : ''}
       </div>`;
   }).join('');
 
@@ -509,23 +646,25 @@ function buildElementScanHtml(hostname, items, pageUrl, pageTitle) {
   .step .sm { color:#666; font-size:12px; margin-top:2px; }
   .wcag { color:#4b32c3; font-size:11px; font-weight:600; }
   .issue-shot img { width:100%; height:auto; border:1px solid #ddd; border-radius:8px; }
-  .no-shot { border:1px dashed #ccc; border-radius:8px; padding:24px 12px; text-align:center; color:#999; font-size:12px; }
   .empty { text-align:center; color:#888; padding:60px 20px; }
-  @media print { body { background:#fff; padding:0; } .issue { box-shadow:none; break-inside:avoid; } }
+  ${REPORT_PRINT_CSS}
+  .issue.no-shot-el { grid-template-columns: 1fr; }
   @media (max-width: 640px) { .issue { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
+  ${reportPdfButton('U1-Mapping-Tests-' + hostname)}
   <div class="report">
     <div class="report-head">
       <h1><span class="u1">u</span>Mapping Test Results</h1>
       <div class="meta">${reportEsc(summary || 'nothing tested')} on
         ${pageTitle ? reportEsc(pageTitle) + ' — ' : ''}
-        ${pageUrl ? `<a href="${reportEsc(pageUrl)}">${reportEsc(pageUrl)}</a>` : reportEsc(hostname)}
+        ${pageUrl ? `<a href="${reportEsc(pageUrl)}">${reportEsc(reportDisplayUrl(pageUrl))}</a>` : reportEsc(hostname)}
         · Generated ${reportEsc(generatedAt)}</div>
     </div>
     ${items.length ? rows : '<div class="empty">No mappings were tested.</div>'}
   </div>
+  ${REPORT_PDF_SCRIPT}
 </body>
 </html>`;
 }

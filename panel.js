@@ -570,10 +570,17 @@ function isSafeHttpUrl(u) {
 const IMPORT_KEY_RE = /^(mappings|config|skipLinks|autoApply|platform|manualInject)_.+/;
 const SAFE_URL = (v) => typeof v === 'string' && /^https?:\/\//i.test(v.trim());
 const SAFE_IMG = (v) => v == null || v === '' || (typeof v === 'string' && /^data:image\//i.test(v));
+// Must list every key in COMPONENT_SCHEMAS. It is an allow-list on IMPORT, so
+// a type missing here is not rejected loudly — the mapping is silently dropped
+// from the restored backup. 'link-list', 'keyboard-tabs' and 'breadcrumb' were
+// all added as component types after this set was written and none of them was
+// added here, so a backup taken on a site using them restored short, quietly.
+// verify-store pins this against the schema so the next new type cannot repeat
+// it.
 const VALID_MAPPING_TYPES = new Set([
   'button','link','menu','accordion','carousel','datepicker','dialog','listbox','combobox',
   'checkbox','radio','tabs','form','table','grid','pagination','loading','tooltip','heading',
-  'aria-label','keyboard-grid','keyboard-clickable',
+  'breadcrumb','aria-label','link-list','keyboard-tabs','keyboard-grid','keyboard-clickable',
 ]);
 
 function sanitizeImport(raw) {
@@ -638,11 +645,29 @@ function normalizeU1Selector(s) {
   return String(s == null ? '' : s).trim().replace(/\s*([>+~,])\s*/g, '$1');
 }
 
+// Which pseudo-classes U1 can actually resolve. This list, and the check that
+// uses it, existed only in selector-intel.js — the panel's copy of the
+// validator matched the SHAPE of a compound and never looked at the pseudos
+// inside it, so the two disagreed and the permissive one was the one guarding
+// the save. `:last-of-type` sailed through here and was refused there.
+//
+// Reported from tamam.co.il: a heading rooted on
+//   .elementor-widget-text-editor>.elementor-widget-container>p:last-of-type
+// saved cleanly, exported, and did nothing — jQuery refuses the pseudo and
+// refuses it silently. Kept identical to selector-intel's PSEUDO_OK; a check
+// that works in the panel and fails in the field is the worst outcome there is.
+const U1_PSEUDO_OK = /^:(?:not|nth-child|nth-of-type|nth-last-child|nth-last-of-type|first-child|last-child|only-child)\b/;
+function u1PseudosOk(compound) {
+  const found = compound.match(/::?[\w-]+(?:\([^()]*\))?/g);
+  return !found || found.every((pseudo) => U1_PSEUDO_OK.test(pseudo));
+}
+
 function isU1ValidSelector(s) {
   const n = normalizeU1Selector(s);
   if (n === '') return true;
   return n.split(',').every(group =>
-    group !== '' && group.split(/[>+~]/).every(c => c !== '' && U1_COMPOUND_RE.test(c)));
+    group !== '' && group.split(/[>+~]/).every(
+      c => c !== '' && U1_COMPOUND_RE.test(c) && u1PseudosOk(c)));
 }
 
 function isValidIdent(s) {
@@ -1404,6 +1429,68 @@ async function applyMappingsBatch(items) {
         // types even when the mapping worked perfectly, which is exactly the
         // false negative that sends you looking at correct selectors.
         const snapAll = (roots) => roots.filter(Boolean).map(r => snap(r));
+
+        // ── The design must not change. Measured, not assumed. ─────────────
+        //
+        // "אסור ששום תיקון ישנה את העיצוב של האתר" is the hard rule on this
+        // product, and it was being enforced by reading code — which failed:
+        // images disappeared on tamam.co.il twice, and static analysis of the
+        // engine could not say which fix did it, because it depends on the
+        // live page. A fix that hides something throws nothing and reports
+        // success, so the only way to know is to measure the page before and
+        // after each call and compare.
+        //
+        // Geometry only. getComputedStyle on every element would be far too
+        // slow to run twice per mapping; reading rects in one pass costs a
+        // single forced layout and catches every way an element can vanish —
+        // display:none, visibility, zero size, a clipped ancestor — because
+        // all of them end in "no box, or a box with no area".
+        const VIS_CAP = 4000;
+        const visualSnap = () => {
+          const m = new Map();
+          const els = Array.from(document.body.querySelectorAll('*')).slice(0, VIS_CAP);
+          for (const el of els) {
+            const r = el.getBoundingClientRect();
+            m.set(el, { w: Math.round(r.width), h: Math.round(r.height),
+                        boxed: el.getClientRects().length > 0 });
+          }
+          return m;
+        };
+        // What an element is, for a message a human has to act on. "3 things
+        // vanished" is not actionable; "the 3 images inside .hero-slider are
+        // gone" is.
+        const describeEl = (el) => {
+          const tag = el.tagName.toLowerCase();
+          if (tag === 'img') {
+            const src = (el.getAttribute('src') || el.getAttribute('data-src') || '').split('/').pop();
+            return src ? `<img ${src.slice(0, 40)}>` : '<img>';
+          }
+          const id = el.id ? '#' + el.id : '';
+          const cls = (el.className && typeof el.className === 'string')
+            ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+          return tag + id + cls;
+        };
+        const isImagey = (el) => {
+          if (el.tagName === 'IMG' || el.tagName === 'PICTURE' ||
+              el.tagName === 'SVG' || el.tagName === 'VIDEO') return true;
+          // Only asked for the handful of candidates, never page-wide.
+          const bg = getComputedStyle(el).backgroundImage;
+          return !!bg && bg !== 'none';
+        };
+        // Elements that HAD a visible box and now have none, or none of any
+        // area. Resizes are deliberately not reported: a fix that adds a
+        // hidden separator span can shift a neighbour by a pixel, and flagging
+        // that would bury the real thing under noise.
+        const visualLosses = (before, after) => {
+          const gone = [];
+          for (const [el, b] of before) {
+            if (!b.boxed || b.w === 0 || b.h === 0) continue;   // was not visible anyway
+            const a = after.get(el);
+            if (!a) continue;                                   // removed from DOM entirely: see below
+            if (!a.boxed || a.w === 0 || a.h === 0) gone.push(el);
+          }
+          return gone;
+        };
         const changedAll = (before, roots) => {
           const after = snapAll(roots);
           let n = 0;
@@ -1427,15 +1514,42 @@ async function applyMappingsBatch(items) {
         // together — and until now that refusal was silent, which made a
         // correct-looking mapping do nothing with no explanation anywhere.
         const patch = window.__u1Patch;
+        // Put any missing fixer back on the CURRENT window.u1 before the check
+        // below asks whether it is there. Installing them once at wrap time
+        // was not enough: window.u1 is an ordinary writable property, so a
+        // library that re-initialises — or a site that reassigns it — takes
+        // everything the patch added with it, and the apply then reports
+        // "u1.fix.heading missing" about a fixer the patch had supplied
+        // earlier in the same page load.
+        try { if (patch && patch.ensureFixers) patch.ensureFixers(); } catch (e) {}
         const skipMark = patch && patch.skipped ? patch.skipped.length : 0;
+        // Fixers this build of U1 does not have, which the patch supplied. The
+        // mapping works — but the client's own bundle carries the patch too,
+        // and saying where the behaviour came from is the difference between
+        // "it works" and "it works, and here is what it depends on".
+        const filledIn = (patch && patch.filled) || [];
 
-        let applied = 0, failed = 0, noEffect = 0, errs = [], details = [];
+        let applied = 0, failed = 0, noEffect = 0, errs = [], details = [], hidContent = [];
         let u1State = null;   // filled the first time a fix has no effect
         for (const it of list) {
           const sel = it.firstArg || it.primary;
           try {
             if (!(raw.fix && typeof raw.fix[it.type] === 'function')) {
-              failed++; errs.push('u1.fix.' + it.type + ' missing');
+              // Say WHICH patch is on the page and whether it could have
+              // helped. "u1.fix.heading missing" on its own cannot tell apart
+              // three different faults — the page is running an old patch, the
+              // patch is there but has no stand-in for this type, or it has one
+              // and something stripped it — and each needs a different action.
+              // Two rounds of this were spent guessing between them.
+              const p = window.__u1Patch;
+              const where = !p ? 'the patch is not on this page at all'
+                : !p.ensureFixers ? `the page is running patch ${p.build || '(no build stamp)'}, ` +
+                  `which is older than the one that supplies missing fixers — reload the page`
+                : (p.filled || []).indexOf(it.type) !== -1
+                  ? `patch ${p.build} did supply it and something removed it again`
+                  : `patch ${p.build} has no stand-in for ${it.type}`;
+              failed++;
+              errs.push(`u1.fix.${it.type} missing — ${where}`);
               continue;
             }
             let target = null;
@@ -1542,6 +1656,7 @@ async function applyMappingsBatch(items) {
                 });
               } catch {}
             }
+            const vBefore = visualSnap();
             raw.fix[it.type](sel, it.config);
 
             // U1 decorates asynchronously (RxJS + MutationObserver), and how
@@ -1551,6 +1666,25 @@ async function applyMappingsBatch(items) {
             // which is worse than saying nothing at all. So watch until it
             // changes, and only give up after a real budget.
             let changed = await waitForChange(before, roots, 4000);
+
+            // Measured after waitForChange, not straight after the call: U1
+            // decorates asynchronously, so anything it hides is hidden later
+            // than the call returns. Sampling immediately would have shown a
+            // clean page every time and reported nothing.
+            const vanished = visualLosses(vBefore, visualSnap());
+            if (vanished.length) {
+              const imgs = vanished.filter(isImagey);
+              const shown = (imgs.length ? imgs : vanished).slice(0, 3).map(describeEl).join(', ');
+              const rest = (imgs.length ? imgs : vanished).length - 3;
+              errs.push(
+                `${it.type} on ${sel} HID ${vanished.length} visible element(s)` +
+                (imgs.length ? `, ${imgs.length} of them images` : '') +
+                ` — ${shown}${rest > 0 ? ` and ${rest} more` : ''}. ` +
+                `A fix must never change what the site looks like. Reload the page, then ` +
+                `narrow this mapping's selector so it covers only the component itself.`);
+              hidContent.push({ type: it.type, sel, n: vanished.length, images: imgs.length,
+                                examples: vanished.slice(0, 5).map(describeEl) });
+            }
 
             // Is a role the SITE wrote standing in the way?
             //
@@ -1712,7 +1846,7 @@ async function applyMappingsBatch(items) {
           }
         }
         const skipped = patch && patch.skipped ? patch.skipped.slice(skipMark) : [];
-        return { ok: true, applied, failed, noEffect, errs, details, u1State, skipped };
+        return { ok: true, applied, failed, noEffect, errs, details, hidContent, u1State, skipped, filledIn };
       },
       args: [structured],
     });
@@ -2048,6 +2182,22 @@ function genMappingId() {
  * once, so it is in that set, so it is NOT kept — the tombstone still wins,
  * which is the behaviour the wholesale replace existed to protect.
  *
+ * The screenshot is carried across from the local row.
+ *
+ * pushMappings strips it deliberately — it is a data: URI, by far the largest
+ * thing on a mapping, and it is local evidence rather than configuration
+ * anybody else needs. The consequence was never followed through: the server
+ * therefore holds a screenshot-less copy of every row it HAS seen, and those
+ * are exactly the rows this function replaces wholesale. So a screenshot was
+ * captured, saved, pushed (without the picture), and destroyed by the next
+ * pull — on the machine that took it. Reported twice as images that would not
+ * stay saved.
+ *
+ * The server is the truth about behaviour. It is not the truth about a picture
+ * it was never sent, so on that one field the local copy wins. Only when the
+ * server has nothing: if a colleague ever does push a screenshot, theirs is
+ * left alone.
+ *
  * Pure on purpose: this is the one decision in the sync that can destroy work,
  * and it should be answerable without a server, a browser or a login.
  */
@@ -2056,12 +2206,33 @@ function reconcilePulled(serverRows, localRows, everPushed) {
   const local = Array.isArray(localRows) ? localRows : [];
   const seen = new Set(everPushed || []);
   const onServer = new Set(server.map((m) => mappingKey(m)));
+
+  // Local evidence the server is never sent, keyed the same way the rows are.
+  const localByKey = new Map();
+  for (const m of local) {
+    if (m && typeof m === 'object') localByKey.set(mappingKey(m), m);
+  }
+  const restored = server.map((m) => {
+    if (!m || typeof m !== 'object' || m.screenshot) return m;
+    const mine = localByKey.get(mappingKey(m));
+    if (!mine || !mine.screenshot) return m;
+    // pageUrl/pageTitle/capturedAt describe WHEN AND WHERE that picture was
+    // taken. Carrying the picture without them would file it under the wrong
+    // page in the close-out report, which groups by pageUrl.
+    return Object.assign({}, m, {
+      screenshot: mine.screenshot,
+      pageUrl: m.pageUrl || mine.pageUrl || '',
+      pageTitle: m.pageTitle || mine.pageTitle || '',
+      capturedAt: m.capturedAt || mine.capturedAt || null,
+    });
+  });
+
   const stranded = local.filter((m) => {
     if (!m || typeof m !== 'object') return false;
     const k = mappingKey(m);
     return !onServer.has(k) && !seen.has(k);
   });
-  return { merged: stranded.length ? server.concat(stranded) : server, stranded };
+  return { merged: stranded.length ? restored.concat(stranded) : restored, stranded };
 }
 
 /**
@@ -2467,6 +2638,43 @@ async function adoptServerSweep(sweep) {
   }
 }
 
+/**
+ * A headline plus one line per mapping, instead of one paragraph for all of
+ * them.
+ *
+ * The apply report used to be a single concatenated string — a count, then
+ * U1's errors, then the opt-out note, then the half-applied detail, then the
+ * role clashes. Six sentences about four different mappings with nothing
+ * saying which belonged to which. Every sentence was worth keeping; only the
+ * shape was wrong.
+ *
+ * Stays put until dismissed. This is the report a person reads when a fix did
+ * not work, and timing it out is how the one sentence naming the cause gets
+ * lost.
+ */
+function renderApplyReport(el, headline, lines, kind) {
+  if (!el) return;
+  if (!lines || !lines.length) {
+    showNotice(el, headline + '.', kind, kind === 'success' ? 4000 : 12000);
+    return;
+  }
+  el.className = `notice ${kind}`;
+  el.style.display = 'block';
+  el.innerHTML =
+    `<div class="apply-report-head">${escapeHtml(headline)}</div>` +
+    `<ul class="apply-report">` +
+    lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('') +
+    `</ul>` +
+    `<button type="button" class="btn-ghost btn-xs" data-dismiss-report>Dismiss</button>`;
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-dismiss-report]');
+  if (!btn) return;
+  const box = btn.closest('.notice');
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+});
+
 function showNotice(el, text, kind = 'success', duration = 3500) {
   if (!el) return;
   el.className = `notice ${kind}`;
@@ -2647,6 +2855,30 @@ async function migrateInvertedDialog(host) {
   return fixed;
 }
 
+/**
+ * Mappings adopted from the library's own bootstrap scan.
+ *
+ * The first run of "adopt what the site already runs" took U1's own marker
+ * sweep — fix.checkbox('[u1-checkbox]'), fix.tabs('[u1-tabs]'), one per type —
+ * as a deployment and saved 21 of them. They point at markers the library adds
+ * to itself, so they decorate nothing and only make the list unreadable.
+ * mappingFromRecordedCall refuses them now; this clears the ones already in
+ * storage, since a mapping does not remove itself.
+ *
+ * Only ever mappings whose PRIMARY is entirely u1-owned tokens, which nothing
+ * a person built can be — see isU1InternalSelector.
+ */
+async function migrateDropU1Internal(host) {
+  const key = storageKey('mappings', host);
+  const list = (await U1Store.get([key]))[key];
+  if (!Array.isArray(list) || !list.length) return 0;
+  const keep = list.filter((m) => !(m && typeof m === 'object' && m.primary &&
+                                    isU1InternalSelector(m.primary)));
+  const dropped = list.length - keep.length;
+  if (dropped) await U1Store.set({ [key]: keep });
+  return dropped;
+}
+
 async function migrateWwwHostname(host) {
   if (!host || host === 'unknown' || host.startsWith('www.')) return;
   const suffix = '_www.' + host;
@@ -2717,6 +2949,16 @@ async function init() {
     if (repaired) {
       showNotice(document.getElementById('applyAllStatus'),
         `Repaired ${repaired} menu mapping${repaired === 1 ? '' : 's'} that had menubar ON together with submenus — U1 throws on that pair and adds nothing. menubar is now off. Reload the page and press Apply All.`,
+        'success', 12000);
+    }
+  } catch {}
+  try {
+    const junk = await migrateDropU1Internal(currentHostname);
+    if (junk) {
+      showNotice(document.getElementById('applyAllStatus'),
+        `Removed ${junk} mapping${junk === 1 ? '' : 's'} that had been adopted from U1's own ` +
+        `bootstrap scan — selectors like [u1-checkbox] are markers the library adds to itself, ` +
+        `so they decorated nothing. Your own mappings are untouched.`,
         'success', 12000);
     }
   } catch {}
@@ -3551,13 +3793,86 @@ $autoApplyConfig.addEventListener('change', async () => {
   if ($autoApplyConfig.checked) maybeAutoApply();
 });
 
+// ── The page already knows its own language. Ask it. ────────────────────────
+//
+// The form defaulted to English/LTR from the markup, so a site nobody had
+// visited the Config tab for was preset with language:'en', direction:'ltr'.
+// On tamam.co.il — Hebrew, RTL — the console showed exactly that, and it is
+// not cosmetic: the engine's getDirectionByLanguage() calls
+// Utils.isRtl(getLang()) and multiplies its step by -1 for an RTL language.
+// With 'en' configured on a Hebrew page, every arrow-key move through a
+// carousel, a menu or a tab strip goes the WRONG WAY — the fix is applied,
+// reports success, and navigates backwards.
+//
+// <html lang> and dir are what the site itself declares, so they are a far
+// better default than a constant. Only a default: anything saved wins, and
+// changing it by hand still sticks.
+async function pageLangDir() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !/^https?:/.test(tab.url || '')) return null;
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const h = document.documentElement;
+        // A dir the page actually renders with beats a declared one: themes
+        // set it on <body> as often as on <html>.
+        const dir = (h.getAttribute('dir') || document.body?.getAttribute('dir') ||
+                     getComputedStyle(h).direction || '').toLowerCase();
+        return { lang: (h.getAttribute('lang') || '').slice(0, 2).toLowerCase(),
+                 dir: dir === 'rtl' ? 'rtl' : 'ltr' };
+      },
+    });
+    return res && res.result ? res.result : null;
+  } catch { return null; }
+}
+
 async function loadConfigForm() {
   const key = storageKey('config', currentHostname);
   const autoKey = storageKey('autoApply', currentHostname);
   const stored = await U1Store.get([key, autoKey]);
   if ($autoApplyConfig) $autoApplyConfig.checked = !!stored[autoKey];
   const cfg = stored[key];
-  if (!cfg) { updateConfigPreview(); return; }
+  if (!cfg) {
+    const site = await pageLangDir();
+    if (site) {
+      // Only if the language is one the picker offers — an unlisted lang would
+      // silently select nothing and leave the value empty.
+      if (site.lang && [...$langSelect.options].some(o => o.value === site.lang)) {
+        $langSelect.value = site.lang;
+      }
+      const radio = document.querySelector(`input[name="direction"][value="${site.dir}"]`);
+      if (radio) radio.checked = true;
+    }
+    updateConfigPreview();
+    return;
+  }
+
+  // A config saved before the form learned to read the page — or set by hand
+  // and since contradicted by the site — is worth saying out loud. Not
+  // rewritten: it is the specialist's setting, and silently changing saved
+  // data is how a tool stops being trusted. But the consequence is specific
+  // enough to name, so it is named.
+  (async () => {
+    const box = document.getElementById('langMismatch');
+    if (!box) return;
+    const site = await pageLangDir();
+    if (!site) { box.style.display = 'none'; return; }
+    const bad = [];
+    if (site.lang && cfg.language && site.lang !== cfg.language) {
+      bad.push(`the page declares lang="${site.lang}" but this config says "${cfg.language}"`);
+    }
+    if (site.dir !== (cfg.direction || 'ltr')) {
+      bad.push(`the page renders ${site.dir.toUpperCase()} but this config says ` +
+               `${(cfg.direction || 'ltr').toUpperCase()}`);
+    }
+    if (!bad.length) { box.style.display = 'none'; return; }
+    box.textContent =
+      `Does not match the site: ${bad.join(', ')}. U1 decides arrow-key direction from the ` +
+      `configured language — with the wrong one, every carousel, menu and tab strip steps ` +
+      `backwards while still reporting the fix as applied. Set it above and save.`;
+    box.style.display = 'block';
+  })();
 
   if (cfg.visualFocus?.style) {
     const c1 = cfg.visualFocus.style.color || '#FFFFFF';
@@ -13718,6 +14033,40 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   //
   // Here, for the same reason the role question is here: one save path, one
   // place to refuse.
+  // ── A selector the ENGINE cannot use ──────────────────────────────────────
+  //
+  // U1 resolves selectors through jQuery, and a pseudo-class is refused there
+  // SILENTLY — the fix simply never applies, and nothing anywhere says so. So
+  // a mapping built on one looks finished in the drawer, ships in the export,
+  // and decorates nothing on the client's site, forever.
+  //
+  // isU1ValidSelector has existed all along and this path never called it: the
+  // AI route checked (checkAiSelector), the manual builder did not. Reported
+  // from tamam.co.il, where
+  //   .elementor-widget-text-editor>.elementor-widget-container>p:last-of-type
+  // saved cleanly and did nothing. Checked here because this is the one save
+  // path, which is where the required-field refusal already lives.
+  if (template && template.type) {
+    const sels = (template.config && template.config.selectors) || {};
+    const bad = [];
+    if (template.primary && !isU1ValidSelector(template.primary)) {
+      bad.push(template.primary);
+    }
+    for (const [k, v] of Object.entries(sels)) {
+      if (typeof v === 'string' && v.trim() && !isU1ValidSelector(v) && !bad.includes(v)) {
+        bad.push(`${k}: ${v}`);
+      }
+    }
+    if (bad.length) {
+      throw new Error(
+        `U1 cannot use ${bad.length === 1 ? 'this selector' : 'these selectors'} — it resolves them ` +
+        `through jQuery, which refuses a pseudo-class (:last-of-type, :nth-child, :hover) and a ` +
+        `descendant space, and it refuses them SILENTLY. Saved like this the fix would never run and ` +
+        `nothing would say why. ${bad.join(' · ')}. Use > + ~ , between compound selectors, and give ` +
+        `the element a class if it has nothing else to point at.`);
+    }
+  }
+
   if (template && template.type && !template.custom) {
     const sc = COMPONENT_SCHEMAS[template.type];
     if (sc) {
@@ -13850,7 +14199,7 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
   const fixes = list.filter(m => !(m && typeof m === 'object' && m.custom));
 
   let applied = 0, failed = 0, noEffect = 0, u1Missing = false, err = null, u1State = null;
-  let details = [], engineErrs = [];
+  let details = [], engineErrs = [], filledIn = [], hidContent = [];
   if (fixes.length) {
     const result = await applyMappingsBatch(fixes);
     if (result.ok) {
@@ -13859,6 +14208,8 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
       noEffect += result.noEffect || 0;
       details = result.details || [];
       engineErrs = result.errs || [];
+      hidContent = result.hidContent || [];
+      filledIn = result.filledIn || [];
       for (const d of details) {
         if (d.receipt && d.receipt.length) applyReceipts.set(d.type + '::' + d.sel, d.receipt);
       }
@@ -13890,43 +14241,80 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
       if (engineErrs.length) msg += ' ' + engineErrs.join(' · ');
       showNotice(status, msg, 'error', 12000);
     } else {
+      // ── One line per mapping, not one paragraph for all of them ───────────
+      //
+      // This used to concatenate every finding into a single string: a headline
+      // count, then U1's own errors, then the opt-out note, then the
+      // half-applied detail, then the role clashes — six sentences about four
+      // different mappings, run together with middots. Reported, fairly, as a
+      // wall of information. Every one of those sentences is worth keeping;
+      // what was wrong is that nothing said WHICH mapping each belonged to.
+      //
+      // So the same facts are grouped by the mapping they are about, and the
+      // headline says only how many landed. Nothing is dropped — the detail is
+      // the whole value here, and a person reading this is trying to find out
+      // why one specific fix did not work.
+      const clashes = details.filter(d => d.roleClash);
+      const unblocked = details.filter(d => d.unblocked);
+
+      // What to say about ONE mapping, gathered from wherever it was recorded.
+      const notesFor = (d) => {
+        const out = [];
+        if (d.fieldsNoEffect && d.fieldsNoEffect.length) {
+          const m = fixes.find(f => (f.firstArg || f.primary) === d.sel);
+          const said = describeApply({ ok: true, applied: 1, details: [d] }, m).msg
+            .replace(/^Applied — \d+ elements? changed on the page\. /, '');
+          if (said) out.push(said);
+        }
+        if (d.roleClash) {
+          out.push(`The site's own HTML gives it role="${d.roleClash.role}". U1 will not write ` +
+                   `role="${d.roleClash.willWrite}" over an author's role, so this cannot land ` +
+                   `while that attribute is there.`);
+        }
+        if (d.unblocked) {
+          out.push(`The markup carries u1st-avoid-change-detection. It was lifted here so the fix ` +
+                   `could run, but it must come out of the site's HTML or this will not work in ` +
+                   `production.`);
+        }
+        return out;
+      };
+
+      const lines = [];
+      for (const d of details) {
+        const notes = notesFor(d);
+        const broke = d.status && d.status !== 'ok';
+        if (!broke && !notes.length) continue;          // it simply worked
+        const mark = broke ? '✗' : '!';
+        const head = `${mark} ${d.type || 'fix'} ${d.sel}`;
+        lines.push(notes.length ? `${head} — ${notes.join(' ')}` : head);
+      }
+      // U1's own words are the most useful sentence available and must never be
+      // dropped. They arrive without a mapping attached, so they get their own
+      // lines rather than being appended to somebody else's.
+      for (const e of engineErrs) lines.push(`✗ ${e}`);
+
+      // A fixer this build of U1 does not have, which the patch supplied. The
+      // mapping works — and it works BECAUSE of the patch, which the client's
+      // bundle also carries. Worth saying once, not worth an error.
+      if (filledIn.length) {
+        lines.push(`i This build of U1 has no ${filledIn.map(f => 'u1.fix.' + f).join(', ')} — ` +
+                   `u1-patch.js supplied ${filledIn.length === 1 ? 'it' : 'them'}, so the fix works ` +
+                   `here and in the export (the patch ships with it). Nothing to do.`);
+      }
+
       const parts = [`Applied ${applied} mapping${applied !== 1 ? 's' : ''}`];
       if (noEffect) parts.push(`${noEffect} changed nothing`);
       if (failed) parts.push(`${failed} failed`);
-      const unblocked = details.filter(d => d.unblocked);
-      let msg = parts.join(' · ') + '.';
-      // Whatever U1 itself said is the most useful sentence here — never drop it.
-      if (engineErrs.length) msg += ' ' + engineErrs.join(' · ');
-      if (unblocked.length) {
-        msg += ` ${unblocked.map(d => d.sel).join(', ')} had u1st-avoid-change-detection in the page markup — it was lifted here so the fix could run, but it must come out of the site's HTML for this to work in production.`;
+      // A fix that hid something is never a success, however many others
+      // landed — changing the site's appearance is the one thing this product
+      // may not do, so it leads the headline and forces the error styling.
+      if (hidContent.length) {
+        parts.unshift(`${hidContent.length} CHANGED THE PAGE'S APPEARANCE`);
       }
-      // Half-applied mappings, named. This detail only ever reached the AI
-      // card, so building the same mapping by hand told you nothing about a
-      // menu that decorated its container and skipped every field.
-      for (const d of details.filter(x => x.fieldsNoEffect && x.fieldsNoEffect.length)) {
-        const m = fixes.find(f => (f.firstArg || f.primary) === d.sel);
-        msg += ' ' + describeApply({ ok: true, applied: 1, details: [d] }, m).msg
-          .replace(/^Applied — \d+ elements? changed on the page\. /, `${d.sel}: `);
-      }
-      // The blocker, named, with the one action that clears it.
-      //
-      // "These fields changed nothing" is a symptom, and it was the whole
-      // report. When the cause is a role the site wrote, say the cause: U1 does
-      // not write over an author's role, so the fix cannot land however right
-      // the selectors are, and re-applying will never change that.
-      // describeApply appends this sentence for any detail that went through
-      // the loop above; what is left is a clash on a mapping whose fields all
-      // moved, which never reached it.
-      const clashes = details.filter(d => d.roleClash);
-      for (const d of clashes.filter(x => !(x.fieldsNoEffect && x.fieldsNoEffect.length))) {
-        msg += ` ${d.roleClash.sel} carries role="${d.roleClash.role}" in the site's own HTML.` +
-          ` U1 will not write role="${d.roleClash.willWrite}" over it, so this fix cannot land while it is there.`;
-      }
-      showNotice(status, msg,
-        (failed || noEffect || clashes.length) ? 'error' : (unblocked.length ? 'error' : 'success'),
-        (noEffect || failed || unblocked.length || clashes.length) ? 20000 : 4000);
-      // showNotice writes textContent, so the action has to be appended as
-      // markup afterwards — the same shape offerReload uses.
+
+      renderApplyReport(status, parts.join(' · '), lines,
+        (hidContent.length || failed || noEffect || clashes.length || unblocked.length) ? 'error' : 'success');
+
       if (clashes.length && !silent) {
         const c = clashes[0].roleClash;
         if (await askRoleClash(c)) await applyRoleOverwrite(c.sel, c.role, status);
@@ -14503,12 +14891,14 @@ async function buildDeployableCode(list, hostname) {
     const patch = await getPatchSource(mappedTypes);
     if (patch) {
       patchParts.push(
-        fileBanner('library corrections (u1-patch.js)',
-          'Load this BEFORE u1-fixes.js — it wraps window.u1.fix.* first.') + '\n\n' +
-        `/* Corrects defects in the U1 library for the components mapped in\n` +
-        ` * u1-fixes.js: per-match application, missing keys, and ARIA states\n` +
-        ` * left unmaintained. Each correction checks the current state first,\n` +
-        ` * so it goes quiet on its own once the library ships the same fix. */\n` +
+        fileBanner('U1 runtime extensions (u1-patch.js)',
+          'Load this BEFORE u1-fixes.js — it extends window.u1.fix.* first.') + '\n\n' +
+        `/* Extends window.u1.fix.* for the components mapped in u1-fixes.js,\n` +
+        ` * covering what the current U1 infrastructure does not reach yet:\n` +
+        ` * application to every match rather than one, additional keyboard\n` +
+        ` * keys, additional ARIA state, and fixers this build does not carry.\n` +
+        ` * Each extension checks the current state first, so it stands down on\n` +
+        ` * its own once U1 itself covers the same ground. */\n` +
         `(function () {\n${patch}\n})();`
       );
     }
@@ -14840,6 +15230,186 @@ function renderElemScanSaved(list) {
   });
 }
 
+/**
+ * The U1 fixes the SITE itself is already running.
+ *
+ * A site we are engaged on has often had U1 on it for months, wired by
+ * somebody else — tamam.co.il arrives with several menus already deployed.
+ * Until now those were invisible to the panel: you could see their EFFECT in
+ * the DOM (u1_menu_link, u1st-* ids) but not what had been asked for, so the
+ * only way to work with them was to guess the original call and retype it.
+ *
+ * u1-patch.js records every u1.fix.* the page runs, with the selector and the
+ * props the site passed. background.js injects that patch at document_start in
+ * the MAIN world, BEFORE the site's own U1 runs, so the record is what the
+ * site actually asked for rather than a reconstruction of it.
+ *
+ * Returns [] when the page was loaded before the patch was armed — the record
+ * is only as good as its timing, and an empty list is the honest answer to
+ * "I cannot know", not a claim that the site has no fixes.
+ */
+async function findExistingFixes() {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return [];
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      func: () => {
+        const p = window.__u1Patch;
+        return (p && Array.isArray(p.calls)) ? p.calls : [];
+      },
+    });
+    return (res && res[0] && res[0].result) || [];
+  } catch { return []; }
+}
+
+/**
+ * One recorded call, as the mapping the builder would have produced.
+ *
+ * The recorded shape is the fixer's own — { selectors: {...}, ...options } —
+ * and buildTemplate wants the two halves separately, so they are split here
+ * rather than in every caller. A type this build has no schema for is dropped:
+ * the library has fixers we do not model, and a mapping we cannot rebuild is
+ * one we cannot export, edit or verify.
+ */
+/**
+ * Is this selector the LIBRARY talking to itself?
+ *
+ * U1 bootstraps by scanning the page for its own markers: on load it calls
+ * fix.checkbox('[u1-checkbox]'), fix.radio('[u1-radio]'), fix.tabs('[u1-tabs]')
+ * and so on for every type, plus things like '.u1_Datepicker_trigger'. Those
+ * are the library's scaffolding, not a deployment anybody wrote, and adopting
+ * them fills the list with one empty mapping per component type — which is
+ * exactly what happened the first time this ran: 21 adopted, every one of them
+ * scaffolding.
+ *
+ * Told apart by the selector alone, and safely: a site's own deployment points
+ * at the SITE's markup (.elementor-nav-menu, .modal). Pointing a fix at a
+ * marker the library itself adds would be circular, so a primary built only
+ * from u1-owned tokens is never a real one.
+ *
+ * Only the PRIMARY is judged. A field may legitimately name a u1 class — a
+ * menu's items really can be `.u1_menu_link` once the library has run.
+ */
+function isU1InternalSelector(sel) {
+  const v = String(sel || '').trim();
+  if (!v) return false;
+  // Every simple token in it belongs to U1: [u1-*], .u1_*, .u1st-*, #u1st-*.
+  const tokens = v.match(/#[\w-]+|\.[\w-]+|\[[^\]]+\]|[a-z][\w-]*/gi) || [];
+  if (!tokens.length) return false;
+  return tokens.every((t) => /^\[\s*u1[-_]/i.test(t) || /^[.#]u1(st)?[-_]/i.test(t));
+}
+
+function mappingFromRecordedCall(call) {
+  if (!call || !call.type || !call.selector) return null;
+  // The library scanning for its own markers, not a deployment to adopt.
+  if (isU1InternalSelector(call.selector)) return null;
+  const schema = COMPONENT_SCHEMAS[call.type];
+  if (!schema) return null;
+  const props = call.props || {};
+  const pKey = primaryKeyOf(schema);
+  const fields = {};
+  const sels = props.selectors || {};
+  for (const k of Object.keys(sels)) {
+    if (k === pKey) continue;                 // the primary is the first argument
+    if (typeof sels[k] === 'string') fields[k] = sels[k];
+  }
+  const roots = {};
+  for (const k of Object.keys(props)) {
+    if (k === 'selectors') continue;
+    if (Object.prototype.hasOwnProperty.call(schema.rootFields || {}, k)) roots[k] = props[k];
+  }
+  try { return buildTemplate(call.type, call.selector, fields, roots); } catch { return null; }
+}
+
+/**
+ * Offer the site's own fixes, and say plainly whose they are.
+ *
+ * Adopting one makes it a mapping like any other — editable, exportable,
+ * monitored. That is what makes it useful and also what makes it worth being
+ * explicit about: the exported file will then call a fix the site is ALREADY
+ * calling, and two calls on the same elements fight (the panel warns about
+ * exactly this elsewhere). So the offer says so, and the intended use is that
+ * the adopted mappings REPLACE the old deployment rather than sit beside it.
+ */
+async function renderExistingFixes() {
+  const box = document.getElementById('importExisting');
+  if (!box) return;
+  const calls = await findExistingFixes();
+  if (!calls.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  const key = storageKey('mappings', currentHostname);
+  const have = new Set(((await U1Store.get([key]))[key] || []).map(mappingKey));
+  const fresh = [];
+  const seen = new Set();
+  for (const c of calls) {
+    const tpl = mappingFromRecordedCall(c);
+    if (!tpl) continue;
+    const k = mappingKey(tpl);
+    if (have.has(k) || seen.has(k)) continue;   // already ours, or the page ran it twice
+    seen.add(k);
+    fresh.push(tpl);
+  }
+  if (!fresh.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  existingFixTemplates = fresh;
+  const byType = {};
+  for (const t of fresh) byType[t.type] = (byType[t.type] || 0) + 1;
+  box.style.display = '';
+  box.className = 'advisor-note warn';
+  box.innerHTML =
+    `<strong>This site is already running ${fresh.length} U1 fix${fresh.length === 1 ? '' : 'es'} ` +
+    `that ${fresh.length === 1 ? 'is' : 'are'} not in your list</strong> — ` +
+    escapeHtml(Object.entries(byType).map(([t, n]) => `${n} ${t}`).join(', ')) + `. ` +
+    `Recorded as the page ran them, so these are the selectors the site itself passed.` +
+    `<div class="input-hint" style="display:block;">Adopting them makes them yours: editable, exported, ` +
+    `and covered by monitoring. Your exported file will then call the same fixes the site's current ` +
+    `deployment calls, so it is meant to REPLACE that deployment — two calls on the same elements fight.</div>` +
+    `<div class="btn-row"><button class="btn-outline btn-sm" id="adoptExistingBtn">` +
+    `Adopt ${fresh.length === 1 ? 'it' : 'all ' + fresh.length} into my mappings</button></div>`;
+}
+
+// The templates renderExistingFixes last offered, so Adopt saves exactly what
+// was described rather than re-reading a page that may have moved on.
+let existingFixTemplates = [];
+
+document.addEventListener('click', async (e) => {
+  if (!e.target.closest('#adoptExistingBtn')) return;
+  const btn = e.target.closest('#adoptExistingBtn');
+  const status = document.getElementById('mappingsStatus');
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Adopting…';
+  let saved = 0;
+  const failed = [];
+  for (const tpl of existingFixTemplates) {
+    // Through saveMappingEntry, the one save path — so an adopted mapping goes
+    // through the same required-field refusal, selector narrowing and role
+    // question as one built by hand. A recorded call is evidence of what the
+    // site asked for, not proof that it was correct.
+    try {
+      const r = await saveMappingEntry(tpl, { refreshUi: false });
+      if (r && r.cancelled) failed.push(`${tpl.type} ${tpl.primary}: role question declined`);
+      else saved++;
+    } catch (err) {
+      failed.push(`${tpl.type} ${tpl.primary}: ${err.message}`);
+    }
+  }
+  existingFixTemplates = [];
+  await loadMappingsList();
+  refreshExportInfo();
+  await renderExistingFixes();
+  showNotice(status,
+    `${saved} adopted.` +
+    (failed.length ? ` ${failed.length} could not be: ${failed.join(' · ')}` : '') +
+    (saved ? ' They are ordinary mappings now — edit or delete them like any other.' : ''),
+    failed.length ? 'error' : 'success', failed.length ? 0 : 9000);
+});
+
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
@@ -14855,6 +15425,9 @@ async function loadMappingsList() {
     // absence is noticed, instead of leaving an empty list to be believed.
     container.innerHTML = '<div class="empty-state">No mappings yet.</div>';
     if (applyAllRow) applyAllRow.style.display = 'none';
+    // An empty list is exactly where "the site already runs six of these"
+    // matters most, so the offer is made here too.
+    renderExistingFixes();
     if (toolbar) toolbar.style.display = 'none';
     // Nothing is saved, so "approved and applied" is describing mappings that
     // no longer exist. Clear it, and drop the agent threads that were about
@@ -14980,6 +15553,9 @@ async function loadMappingsList() {
   container.innerHTML = entries.map(e => itemHtml(e.m, e.idx)).join('');
 
   if (applyAllRow) applyAllRow.style.display = 'flex';
+  // Whatever the site is running that this list does not have. Not awaited —
+  // it reaches into the page, and the list must not wait on that to paint.
+  renderExistingFixes();
 
   // Accordion: each mapping collapsed by default; click the header to toggle.
   // ── Hover a mapping, see it on the page ───────────────────────────────────
@@ -15313,6 +15889,164 @@ document.getElementById('exportMonitoringBtn')?.addEventListener('click', async 
       'success', 9000);
   } catch (err) {
     showNotice(statusEl, 'Error: ' + err.message, 'error', 5000);
+  }
+});
+
+// ── Finish project ───────────────────────────────────────────────────────────
+//
+// One bundle at the end of a project: everything Export package produces, plus
+// the close-out report as a real PDF, named for the client — then the Drive
+// folder opens so it can be dropped into their folder.
+//
+// The PDF is made by Chrome itself (Page.printToPDF over CDP, in the service
+// worker) rather than by the print dialog. The dialog is right when a person
+// is reading the report and wants a copy; it cannot produce a FILE to put in a
+// zip, because it needs somebody standing at it choosing a destination.
+//
+// Nothing to fill in. The CRM holds the Google identity and owns the parent
+// folder, creates the site's folder under it and returns its URL — so there is
+// no folder for the specialist to choose, paste or keep in step. A field for
+// it was there briefly and was exactly wrong: it made a step look manual that
+// the server had already decided, and a pasted parent from the client would
+// let any signed-in panel write anywhere that identity can reach.
+// btoa needs a binary string. Built in chunks because
+// String.fromCharCode(...bytes) on a multi-megabyte docx exceeds the argument
+// limit and throws RangeError — which would have failed only on the big files,
+// i.e. exactly the real ones.
+function bytesToBase64(data) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+
+/**
+ * Render the close-out report and print it to PDF, with no dialog.
+ * Returns the PDF bytes, or null when there is nothing to report on.
+ */
+async function closeOutPdfBytes(hostname) {
+  const allStorage = await U1Store.get(null);
+  const pages = reportCollectPages(allStorage, hostname);
+  if (!pages.length) return null;
+
+  // Cleared BEFORE the tab opens: a flag left over from the last handover
+  // would be read as "this one is ready" and print an empty page.
+  await U1Store.setLocalOnly({ __closeOutReportHtml: reportBuildHtml(pages) });
+  await U1Store.remove('__closeOutReportReady');
+  const tab = await chrome.tabs.create({ url: chrome.runtime.getURL('report.html'), active: false });
+  try {
+    // report-view.js writes the document AFTER load, so "complete" on the tab
+    // is not the same thing as "the report is on the page".
+    await waitForReportRendered();
+    const res = await chrome.runtime.sendMessage({ action: 'printTabToPdf', tabId: tab.id });
+    if (!res || !res.ok) throw new Error(res && res.error ? res.error : 'print failed');
+    // atob gives one char per byte; Uint8Array.from turns that into the real
+    // bytes. The zip writer wants bytes, not a string.
+    const bin = atob(res.data);
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  } finally {
+    try { await chrome.tabs.remove(tab.id); } catch {}
+  }
+}
+
+/**
+ * Wait for report-view.js to say the document is on the page.
+ *
+ * This polled the tab with chrome.scripting.executeScript, looking for the
+ * report's root element. The scripting API does not inject into an extension's
+ * own pages, so the poll saw nothing, ran its whole budget out, and reported
+ * "the report did not finish rendering" about a report that had rendered
+ * perfectly — every single time. The page sets a storage flag instead.
+ */
+async function waitForReportRendered(budgetMs = 15000) {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    const { __closeOutReportReady } = await U1Store.get('__closeOutReportReady');
+    if (__closeOutReportReady) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error('the report did not finish rendering');
+}
+
+document.getElementById('finishProjectBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('finishProjectBtn');
+  const status = document.getElementById('finishStatus');
+  const label = btn.textContent;
+  btn.disabled = true;
+
+  try {
+    const cssLink = document.getElementById('cssLink').value.trim();
+    const jsLink  = document.getElementById('jsLink').value.trim();
+    if (!cssLink || !jsLink) throw new Error('Fill in the CSS/JS links in Setup first.');
+
+    const mKey = storageKey('mappings', currentHostname);
+    const cKey = storageKey('config', currentHostname);
+    const sKey = storageKey('skipLinks', currentHostname);
+    const stored = await U1Store.get([mKey, cKey, sKey]);
+    const platform = document.getElementById('platformSelect').value || 'wordpress';
+
+    btn.textContent = 'Building code…';
+    const built = await buildDeployableCode(stored[mKey] || [], currentHostname);
+
+    btn.textContent = 'Rendering PDF…';
+    // A failed PDF must not cost the whole handover: the code files are the
+    // part the client cannot proceed without, and the report can be exported
+    // by hand from the Close-out section.
+    let pdf = null, pdfErr = null;
+    try { pdf = await closeOutPdfBytes(currentHostname); }
+    catch (e) { pdfErr = String((e && e.message) || e); }
+
+    btn.textContent = 'Packing…';
+    const args = [currentHostname, cssLink, jsLink, built,
+                  stored[sKey] || [], stored[cKey], platform, pdf];
+    const files = buildHandoverFiles(...args);
+
+    const lines = [];
+    if (pdf) lines.push('Close-out report included as a PDF.');
+    else if (pdfErr) lines.push(`No PDF — ${pdfErr}. Everything else was still produced.`);
+    else lines.push('No PDF — this site has no mappings to report on yet.');
+
+    // Upload if there is somebody to upload as. The CRM holds the Google
+    // identity and decides the parent folder; all this sends is the files.
+    let uploaded = null, uploadErr = null;
+    if (await U1Auth.isLoggedIn()) {
+      btn.textContent = 'Uploading to Drive…';
+      try {
+        uploaded = await U1Sync.uploadHandover(currentHostname,
+          files.map((f) => ({ name: f.name, mime: f.mime, b64: bytesToBase64(f.data) })));
+      } catch (e) {
+        uploadErr = String((e && e.message) || e);
+      }
+    } else {
+      uploadErr = 'not signed in';
+    }
+
+    if (uploaded && uploaded.folderUrl) {
+      lines.unshift(`${uploaded.uploaded.length} file(s) uploaded to the client's folder.`);
+      await chrome.tabs.create({ url: uploaded.folderUrl });
+      renderApplyReport(status, `Handover delivered — ${currentHostname}`, lines, 'success');
+    } else {
+      // Never leave the specialist with nothing. The bundle is produced and
+      // downloaded whatever the server did, and the reason is stated rather
+      // than swallowed.
+      const { bytes, name } = buildHandoverZip(...args);
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+      lines.unshift(`Not uploaded (${uploadErr}) — ${name} downloaded instead.`);
+      renderApplyReport(status, 'Handover ready (local)', lines, 'error');
+    }
+  } catch (e) {
+    showNotice(status, String((e && e.message) || e), 'error', 8000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
   }
 });
 
@@ -15716,6 +16450,29 @@ async function onTabChanged(tab) {
     const freshTab = await getTab();
     if (freshTab && freshTab.id === tab.id) await refreshSetupTab(freshTab);
   }, 1800);
+
+  // What the site runs, re-read on EVERY page — including one on the same
+  // host, which is the case that matters and the one that was missed.
+  //
+  // loadMappingsList() lives inside the hostnameChanged branch above, so
+  // walking from one page of a site to the next never re-checked. A U1
+  // deployment is per PAGE, not per site: tamam.co.il's home page runs a menu,
+  // and its Aviation Catering page runs a form, a menu and a carousel. Walking
+  // the site is exactly how the full picture is collected, so it has to be the
+  // moment this looks again.
+  //
+  // Not awaited, and cheap: one scripting call that returns nothing when the
+  // page ran no fixes. It only draws the offer — nothing is adopted without
+  // the button being pressed.
+  //
+  // Delayed once, because the library's own fixes run as the page settles: at
+  // `complete` the recording is often a fraction behind, and an offer that
+  // appears empty and fills in a second later reads as the tool missing things.
+  renderExistingFixes();
+  setTimeout(async () => {
+    const freshTab = await getTab();
+    if (freshTab && freshTab.id === tab.id) renderExistingFixes();
+  }, 2000);
 }
 
 // Full page navigation (including regular links and form submissions)
