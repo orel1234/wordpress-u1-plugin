@@ -852,6 +852,36 @@ console.log('\nAI modes are gated on the key, at the door:');
     pass('…and a failed upload still downloads the bundle, saying why');
   else fail('a failed upload leaves the specialist with nothing');
 
+  // ── The result is the folder, read back ──────────────────────────────────
+  //
+  // "7 files uploaded" is a claim about our own intent: it reads identically
+  // whether Drive kept them or not, and it says nothing about what was already
+  // in the folder from an earlier run or put there by hand. Finishing a project
+  // is precisely when somebody opens the folder to check, so the check is the
+  // result.
+  const hv = read('../user1st_project/user1st-backend/src/modules/studio/studioHandover.controller.ts', true);
+  if (hv === null) pass('(backend not checked out here — skipping its assertions)');
+  else if (/q: `'\$\{folderId\}' in parents and trashed = false`/.test(hv) && /contents,/.test(hv))
+    pass('the server reads the folder back and returns what is in it');
+  else fail('the handover reports what it sent, not what the folder holds');
+
+  // listFolderContent returns [] on ANY error, so right after uploading seven
+  // files it would report an empty folder with complete confidence.
+  // Comments stripped: the note explaining WHY that helper is avoided names it.
+  const hvCode = hv === null ? '' : hv.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  if (hv === null || !/listFolderContent/.test(hvCode))
+    pass('…without the helper that turns a Drive outage into "empty"');
+  else fail('the read-back uses listFolderContent, which swallows errors');
+
+  if (/lines\.length = 0;\s+\/\/ the listing IS the report/.test(pan) && /fileSize\(f\.size\)/.test(pan))
+    pass('…and the panel prints that listing, with sizes');
+  else fail('the panel still reports a count instead of the folder contents');
+
+  // A failed read-back must not be dressed up as a listing.
+  if (/Could not read the folder back\. Sent: /.test(pan))
+    pass('…and says "sent" rather than "in the folder" when the read fails');
+  else fail('a failed read-back is indistinguishable from a real listing');
+
   // Only ever open a real Drive URL: this value is opened in a tab, and a
   // pasted javascript:/data: link must not be navigable.
   // The URL opened comes from our own server's response, not from user input,

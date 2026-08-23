@@ -15913,6 +15913,14 @@ document.getElementById('exportMonitoringBtn')?.addEventListener('click', async 
 // String.fromCharCode(...bytes) on a multi-megabyte docx exceeds the argument
 // limit and throws RangeError — which would have failed only on the big files,
 // i.e. exactly the real ones.
+/** Bytes as something a person reads at a glance, for the handover listing. */
+function fileSize(n) {
+  if (!(n > 0)) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function bytesToBase64(data) {
   const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
   let bin = '';
@@ -16025,9 +16033,27 @@ document.getElementById('finishProjectBtn')?.addEventListener('click', async () 
     }
 
     if (uploaded && uploaded.folderUrl) {
-      lines.unshift(`${uploaded.uploaded.length} file(s) uploaded to the client's folder.`);
+      // Show the folder and what is IN it, not a count of what we sent.
+      //
+      // "7 files uploaded" is a claim about our own intent; it reads the same
+      // whether Drive kept them or not, and it says nothing about what was
+      // already in the folder from an earlier run or added by hand. Finishing a
+      // project is the moment somebody wants to look at the folder and check —
+      // so the check is the result.
+      const files = uploaded.contents;
+      if (files && files.length) {
+        lines.length = 0;                       // the listing IS the report
+        for (const f of files) lines.push(`${f.name}${f.size ? `  (${fileSize(f.size)})` : ''}`);
+      } else {
+        // The read-back failed, so this is what we SENT — said plainly, because
+        // the two are not the same claim.
+        lines.unshift(`Could not read the folder back. Sent: ${uploaded.uploaded.map(u => u.name).join(', ')}.`);
+      }
       await chrome.tabs.create({ url: uploaded.folderUrl });
-      renderApplyReport(status, `Handover delivered — ${currentHostname}`, lines, 'success');
+      renderApplyReport(
+        status,
+        `${uploaded.folderName || currentHostname} on Drive — ${files ? `${files.length} file${files.length === 1 ? '' : 's'}` : 'uploaded'}`,
+        lines, 'success');
     } else {
       // Never leave the specialist with nothing. The bundle is produced and
       // downloaded whatever the server did, and the reason is stated rather
