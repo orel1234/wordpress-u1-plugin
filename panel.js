@@ -340,6 +340,33 @@ const COMPONENT_SCHEMAS = {
     desc:{ heading:'Selector of the element to mark as a heading.' },
   },
 
+  // Custom (NOT a u1.fix call) — U1 has no breadcrumb component, and a
+  // breadcrumb needs no keyboard work: its links are links and are already in
+  // the tab order. What it is missing is structure — a named navigation
+  // landmark, an ordered list, a marked current page, and silent separators.
+  // See the engine's own region in grid-nav.js for why each of the four.
+  breadcrumb: {
+    custom:'breadcrumb',
+    selectors:{container:'PRIMARY', item:'', current:'', separator:''},
+    fields:['item','current','separator'],
+    rootFields:{label:'Breadcrumb'},
+    req:['container'],
+    labels:{
+      container:'The whole trail',
+      item:'Each link in the trail (empty = every link inside)',
+      current:'The current page (empty = the last one)',
+      separator:'The / or › between them (empty = found by its text)',
+      label:'What the landmark is called',
+    },
+    desc:{
+      container:'The element wrapping the whole trail. It becomes a navigation landmark with its own name, so it is distinguishable from the main menu in a screen reader’s landmark list.',
+      item:'(Optional) Each link in the trail. Left empty, every link inside the container is used, which is right for almost every trail.',
+      current:'(Optional) The item for the page you are on — it gets aria-current="page". Left empty the LAST item is used, which is what a breadcrumb means. Give a selector only when the trail ends in something that is not the current page.',
+      separator:'(Optional) The / › or → drawn between the links, when it is written in the markup rather than in CSS. It is hidden from screen readers so the trail does not read "shop slash shoes slash running". Left empty, elements whose whole text is a separator character are found and hidden.',
+      label:'The name of the navigation landmark. Defaults to "Breadcrumb". A label the site already wrote is never replaced.',
+    },
+  },
+
   // Custom (NOT a u1.fix call) — give ambiguous buttons/links an accessible name
   // built from nearby context. E.g. every ".read-more" → aria-label
   // "Read more about " + the text of the card's heading.
@@ -754,6 +781,17 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
     return { type, primary: container, firstArg: container, config, code, custom: 'linkList' };
   }
 
+  // Custom: extension-provided breadcrumb structure (no U1).
+  if (schema.custom === 'breadcrumb') {
+    const container = normalizeU1Selector(primary.trim());
+    const g = (k) => normalizeU1Selector((fieldValues[k] || '').trim());
+    const selectors = { container, item: g('item'), current: g('current'), separator: g('separator') };
+    const label = ((rootValues && rootValues.label) || 'Breadcrumb').trim() || 'Breadcrumb';
+    const config = { selectors, label };
+    const code = buildBreadcrumbCode(selectors, label);
+    return { type, primary: container, firstArg: container, config, code, custom: 'breadcrumb' };
+  }
+
   // Custom: extension-provided tab strip, full ARIA pattern (no U1).
   if (schema.custom === 'keyboardTabs') {
     const tabList = primary.trim();
@@ -1012,6 +1050,7 @@ async function applyAriaLabel(target, config) {
 // to reach the page before the fix does.
 async function applyOne(type, primary, config, custom, owner) {
   if (custom === 'ariaLabel') return applyAriaLabel(primary, config);
+  if (custom === 'breadcrumb') return applyBreadcrumb(primary, config);
   if (custom === 'keyboardGrid') return applyKeyboardGrid(primary, config);
   if (custom === 'keyboardClickable') return applyKeyboardClickable(primary, config);
   if (custom === 'keyboardTabs') return applyKeyboardTabs(primary, config);
@@ -1057,6 +1096,17 @@ function buildKeyboardTabsCode(tabList, tab, tabPanel, isVertical) {
          `window.__u1InstallTabsFromMapping(${JSON.stringify(tabList)}, ${formatJsObject(config)});`;
 }
 
+// The RUNNABLE install call for a breadcrumb mapping — same call the export
+// emits, so "Copy" on a single template gives code that runs as it stands.
+function buildBreadcrumbCode(selectors, label) {
+  const config = { selectors, label };
+  return `/* Accessible breadcrumb — navigation landmark with a name, ordered-list\n` +
+         `   structure, aria-current="page" on the current item, and the visual\n` +
+         `   separators hidden from screen readers (WAI-ARIA breadcrumb pattern,\n` +
+         `   WCAG G65). Needs the breadcrumb engine (included in the export). */\n` +
+         `window.__u1InstallBreadcrumbFromMapping(${JSON.stringify(selectors.container || '')}, ${formatJsObject(config)});`;
+}
+
 function buildKeyboardGridCode(s, columns, direction) {
   const config = { selectors: s, columns, direction };
   return `/* Accessible grid/datepicker — full ARIA + keyboard. Needs the grid engine\n` +
@@ -1089,6 +1139,26 @@ async function applyKeyboardTabs(primary, config) {
       target: { tabId: tab.id },
       func: (a) => (window.__u1InstallTabs ? window.__u1InstallTabs(a) : { ok: false, err: 'grid-nav.js not loaded' }),
       args: [opts],
+    });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
+// Installs breadcrumb structure on the page (no U1). Same shared engine file
+// the exported bundle ships, so what is tested here is what the client gets.
+async function applyBreadcrumb(primary, config) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['grid-nav.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (sel, cfg) => (window.__u1InstallBreadcrumbFromMapping
+        ? window.__u1InstallBreadcrumbFromMapping(sel, cfg)
+        : { ok: false, err: 'grid-nav.js not loaded' }),
+      args: [primary, config],
     });
     return res?.[0]?.result || { ok: false, err: 'No result' };
   } catch (err) {
@@ -1911,6 +1981,10 @@ function mappingToCode(m) {
     return `/* Inline links: part the ones that touch, name where each goes.\n` +
            `   Changes nothing visible. Uses the engine included above. */\n` +
            `window.__u1FixLinkListFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
+  }
+  if (m.custom === 'breadcrumb') {
+    return `/* Accessible breadcrumb — uses the engine included above. */\n` +
+           `window.__u1InstallBreadcrumbFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
   if (m.custom === 'staticFix') {
     // The rule name and its options only. The correctors themselves ship in the
@@ -3728,6 +3802,12 @@ const FIELD_HOW = {
   link: {
     element: 'The <a> itself, not its wrapper. If it has no href it is a button, not a link.',
   },
+  breadcrumb: {
+    container: 'The element wrapping the WHOLE trail — it becomes the navigation landmark. The <nav>, or the div standing in for one. Not the <ol> inside it, and not one crumb.',
+    item: 'Each link in the trail. Almost always left empty: every link inside the container is used, which is what a trail is. Fill it only when the container also holds a link that is not part of the trail.',
+    current: 'The crumb for the page you are ON. Left empty, the LAST one is used — which is the definition of a breadcrumb, so leaving it empty is normally right. Fill it only when the trail ends in something that is not the current page.',
+    separator: 'The / › or → drawn between the crumbs, when it is written in the MARKUP. A separator drawn in CSS is already silent to a screen reader and needs nothing here. Left empty, elements whose entire text is a separator character are found and hidden.',
+  },
   menu: {
     menu: 'The element whose OWN CHILDREN are the menu items — the <ul>, not the <nav> around it. A wrapper that also holds a logo or a search box is one level too high: U1 walks the root\'s children looking for items and finds furniture.',
     items: 'Everything the arrow keys move between, top level AND inside drop-downs. The element a person activates: if a row is <li><a>, it is the <a>. One class rarely covers both levels — use a comma group.',
@@ -3903,6 +3983,13 @@ const TYPE_GUIDE = {
       ['A standing nav bar with no single trigger', 'That is a menu, not a listbox.'],
       ['The site already put role="menu" on the list', 'Believe it — map it as a menu. Writing role="listbox" over an author\'s role leaves the two disagreeing, and the list ends up decorated by neither.'],
       ['There is a text field that filters the list', 'That is a combobox.'],
+    ] },
+  breadcrumb: { what:'The "you are here" trail — Home › Shoes › Running.', keys:'Nothing to add: its links are already links and already in the tab order. What is missing is structure, not keyboard.', wcag:[['2.4.8','Location'],['1.3.1','Info and Relationships']], apg:'breadcrumb',
+    variants:[
+      ['Links with a / › or → between them, in smaller text', 'This. Named landmark, ordered list, aria-current="page" on the last one, separators silenced.'],
+      ['The same row of links in the page header, no separators', 'That is a menu.'],
+      ['Columns of links in the footer', 'Ordinary links. Nothing to map.'],
+      ['The trail ends in plain text, not a link', 'Still this. aria-current="page" is what marks the current page, whether or not it is a link.'],
     ] },
   combobox:   { what:'A text field with a popup list of suggestions.', keys:'Type to filter · Arrows into the list · Enter selects · Esc closes.', wcag:[['4.1.2','Name, Role, Value'],['4.1.3','Status Messages']], apg:'combobox',
     variants:[
@@ -8809,8 +8896,18 @@ async function probeScreen(tab) {
     return await inPage(tab.id, async () => {
       const P = window.__u1Probe, S = window.__u1SelectorIntel;
       if (!P || !S) return null;
+      // `idle` buys the two findings a press cannot make: a gallery you swipe,
+      // which has no control to press and announces itself no other way, and a
+      // thing that moves on its own and cannot be stopped, which is a WCAG
+      // 2.2.2 failure nobody reports because nothing looks broken.
+      //
+      // It costs its own window per section, on top of the pressing, and a
+      // sweep visits a lot of sections — so it is stated here rather than
+      // defaulted into silently. Two seconds is under the shortest auto-advance
+      // worth calling one (a slide nobody could read faster than that), and the
+      // watch samples inside the window rather than only at its ends.
       const out = await P.probeAll(document.body,
-        { inViewport: true, settle: 80, max: 12, limit: 2500 });
+        { inViewport: true, settle: 80, max: 12, limit: 2500, idle: 2000 });
       // Selectors are worked out HERE, where the elements are. The panel never
       // handles a node — only a selector produced by the same code that
       // produces every other selector in the tool.
@@ -8825,7 +8922,17 @@ async function probeScreen(tab) {
         components: out.components.map((c) => {
           const parts = {};
           for (const k of Object.keys(c.parts)) parts[k] = nameFor(c.root, c.parts[k]);
-          return { type: c.type, root: c.root ? S.robustSelector(c.root) : '', why: c.why, parts };
+          const out = { type: c.type, root: c.root ? S.robustSelector(c.root) : '', why: c.why, parts };
+          // Both of these were being dropped on the floor here, which is the
+          // quietest way to lose a finding: observed correctly, reported
+          // correctly, and then not carried across the boundary.
+          if (c.autoAdvances) out.autoAdvances = true;      // WCAG 2.2.2
+          if (c.stateClass) out.stateClass = c.stateClass;  // how the page says "open"
+          // Whether focus followed what opened. A finding, not a condition —
+          // a panel that covers the page is a dialog either way, and the ones
+          // that get this wrong are the ones worth mapping.
+          if (c.focusEntered != null) out.focusEntered = c.focusEntered;
+          return out;
         }),
       };
     });
@@ -12501,6 +12608,168 @@ async function applyStaticFixesToPage() {
 // The filter-and-results pattern: find it, then make it announce itself.
 let filterShape = null;
 
+/* ── Static fixes: the headings review, and the "Read more" cards ──────────
+ *
+ * Neither is a scan finding, because nothing about either is malformed: the
+ * markup is correct and the result is unusable anyway. They sit together
+ * because they are the two things on a page that only a person can settle.
+ *
+ * The headings box is a REVIEW and approving writes NOTHING. That is not a
+ * detail of the interface, it is the rule: a page's own author knows things
+ * about their structure that reading order cannot show, and the rules have
+ * always said not to renumber a page's headings to make them tidy. A level is
+ * rewritten only where somebody asks for one.
+ */
+async function readHeadingOutline() {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return null;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+    return await inPage(tab.id, () => {
+      const S = window.__u1SelectorIntel;
+      if (!S || !S.headingOutline) return null;
+      const list = S.headingOutline();
+      return { rows: list.slice(), noH1: !!list.noH1 };
+    });
+  } catch { return null; }
+}
+
+function headingRowHtml(h, i) {
+  const lvl = h.level ? 'H' + h.level : 'no level';
+  const note = h.problem
+    ? `<span class="head-problem">${escapeHtml(h.problem)}</span>` : '';
+  // The suggestion is offered, never pre-selected. A row nobody touches leaves
+  // the page exactly as it is.
+  const choices = [1, 2, 3, 4, 5, 6].map((n) =>
+    `<option value="${n}"${n === h.level ? ' selected' : ''}>H${n}</option>`).join('');
+  return `<div class="head-row" data-i="${i}">
+    <span class="head-lvl">${escapeHtml(lvl)}</span>
+    <span class="head-text">${escapeHtml(h.text || '(empty)')}</span>
+    ${note}
+    <code class="head-sel">${escapeHtml(h.selector)}</code>
+    <span class="head-actions">
+      ${h.should ? `<span class="head-suggest">outline implies H${h.should}</span>` : ''}
+      <select class="head-level" aria-label="Level for ${escapeHtml(h.text || 'this heading')}">${choices}</select>
+      <button class="btn-outline btn-xs head-change" data-i="${i}">Change it</button>
+    </span>
+  </div>`;
+}
+
+let headingRows = [];
+
+document.getElementById('headingReview')?.addEventListener('click', async () => {
+  const status = document.getElementById('headingStatus');
+  const list = document.getElementById('headingList');
+  list.innerHTML = '';
+  showNotice(status, '', 'info', 1);
+
+  const got = await readHeadingOutline();
+  if (!got || !got.rows.length) {
+    list.innerHTML = '<div class="map-mode-hint">No headings on this page at all — which is its own finding, and the scan reports it.</div>';
+    return;
+  }
+  headingRows = got.rows;
+  const broken = got.rows.filter((h) => h.problem).length;
+  list.innerHTML =
+    (got.noH1 ? '<div class="head-note">This page has no H1. That is a fact about the outline rather than about any one heading below.</div>' : '') +
+    `<div class="head-note">${got.rows.length} heading${got.rows.length === 1 ? '' : 's'}, ` +
+    `${broken || 'none'} with something to look at. Leaving a row alone changes nothing.</div>` +
+    got.rows.map(headingRowHtml).join('');
+});
+
+document.getElementById('headingList')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.head-change');
+  if (!btn) return;
+  const status = document.getElementById('headingStatus');
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — new work is paused.', 'error', 6000);
+    return;
+  }
+  const row = btn.closest('.head-row');
+  const h = headingRows[Number(btn.dataset.i)];
+  const level = Number(row.querySelector('.head-level').value) || 2;
+  if (!h) return;
+  if (h.level === level) {
+    showNotice(status, 'That is the level it already has — nothing to change.', 'info', 5000);
+    return;
+  }
+  try {
+    const tpl = buildTemplate('heading', h.selector, {}, { level });
+    await saveMappingEntry(tpl, { refreshUi: false });
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(status,
+      `"${h.text || h.selector}" is mapped as H${level}. The rest are untouched.`, 'success', 8000);
+  } catch (err) {
+    showNotice(status, 'Could not save it: ' + err.message, 'error', 9000);
+  }
+});
+
+let cardShapes = [];
+
+document.getElementById('descFind')?.addEventListener('click', async () => {
+  const found = document.getElementById('descFound');
+  const status = document.getElementById('descStatus');
+  showNotice(status, '', 'info', 1);
+  found.innerHTML = '';
+
+  const tab = await getTab();
+  if (!isInjectable(tab)) { found.textContent = 'Cannot read this page.'; return; }
+  let shapes = null;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+    shapes = await inPage(tab.id, () => {
+      const S = window.__u1SelectorIntel;
+      return S && S.cardDescriptions ? S.cardDescriptions() : null;
+    });
+  } catch { shapes = null; }
+
+  cardShapes = shapes || [];
+  if (!cardShapes.length) {
+    found.innerHTML = 'Nothing on this page repeats a link that says the same thing beside its own heading. ' +
+      'A single vague link is a rename by hand, not a pattern — this looks for the repeated kind.';
+    return;
+  }
+  found.innerHTML = cardShapes.map((c, i) => `
+    <div class="desc-row">
+      <div><strong>${c.count}</strong> links that all say “${escapeHtml(c.says)}”</div>
+      <div>each beside <code>${escapeHtml(c.heading)}</code></div>
+      <div class="head-suggest">e.g. “${escapeHtml(c.says)} about ${escapeHtml(c.example)}”</div>
+      <button class="btn-primary btn-xs desc-add" data-i="${i}">Name them after their headings</button>
+    </div>`).join('');
+});
+
+document.getElementById('descFound')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.desc-add');
+  if (!btn) return;
+  const status = document.getElementById('descStatus');
+  if (isReadonly()) {
+    showNotice(status, 'Licence expired — new work is paused.', 'error', 6000);
+    return;
+  }
+  const c = cardShapes[Number(btn.dataset.i)];
+  if (!c) return;
+  try {
+    // The mapping that already existed for this and had no way of being found:
+    // the link's own text, then "about", then the heading in its card.
+    const tpl = buildTemplate('aria-label', c.target, {},
+      { middleText: 'about', headingSelector: c.heading });
+    await saveMappingEntry(tpl, { refreshUi: false });
+    // Everything, not only the one just made. U1 decorates once per page load,
+    // so a mapping made earlier may never have met what has re-rendered since —
+    // which is the same reason the sweep applies the whole set, and there is a
+    // check that forbids narrowing it.
+    await applyAllMappings({ silent: true });
+    await loadMappingsList();
+    refreshExportInfo();
+    showNotice(status,
+      `Done. Those ${c.count} links now read “${c.says} about …” with each card's own heading.`,
+      'success', 9000);
+  } catch (err) {
+    showNotice(status, 'Could not save it: ' + err.message, 'error', 9000);
+  }
+});
+
 document.getElementById('filterFind')?.addEventListener('click', async () => {
   const found = document.getElementById('filterFound');
   const add = document.getElementById('filterAdd');
@@ -14163,7 +14432,8 @@ function qaCheckFor(m) {
 // Builds the full, self-contained script the implementer pastes into the site
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
-  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [], linkLists = [], statics = [];
+  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [],
+        linkLists = [], crumbs = [], statics = [];
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
@@ -14189,6 +14459,8 @@ async function buildDeployableCode(list, hostname) {
     else if (m.custom === 'keyboardTabs') tabStrips.push(m);
     // Same reason: the call needs its engine region shipped beside it.
     else if (m.custom === 'linkList') linkLists.push(m);
+    // Same reason: the breadcrumb call needs its engine shipped beside it.
+    else if (m.custom === 'breadcrumb') crumbs.push(m);
     // Declarations, not calls: a static fix switches on a corrector that lives
     // in the patch, so it has to be emitted BEFORE the patch runs.
     else if (m.custom === 'staticFix') { const c = mappingToCode(m); if (c) statics.push(header(m) + '\n' + c); }
@@ -14252,13 +14524,14 @@ async function buildDeployableCode(list, hostname) {
     fixesParts.push(`/* ---- Accessible names ---- */\n` +
       `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1ApplyNames();`);
   }
-  if (grids.length || clickables.length || tabStrips.length || linkLists.length) {
+  if (grids.length || clickables.length || tabStrips.length || linkLists.length || crumbs.length) {
     // Only the engines these mappings actually call.
     const kinds = [];
     if (grids.length) kinds.push('grid');
     if (clickables.length) kinds.push('clickable');
     if (tabStrips.length) kinds.push('tabs');
     if (linkLists.length) kinds.push('linklist');
+    if (crumbs.length) kinds.push('breadcrumb');
     // A hosted engine turns ~26KB of pasted code into one <script src> line,
     // and lets an engine fix reach every client without anyone re-pasting it.
     // Empty field → inline, exactly as before, so a client who will not load a
@@ -14272,9 +14545,11 @@ async function buildDeployableCode(list, hostname) {
       header(t) + `\nwindow.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${JSON.stringify(t.config, null, 2)});`
     )).concat(linkLists.map(l =>
       header(l) + `\nwindow.__u1FixLinkListFromMapping(${JSON.stringify(l.primary)}, ${JSON.stringify(l.config, null, 2)});`
+    )).concat(crumbs.map(b =>
+      header(b) + `\nwindow.__u1InstallBreadcrumbFromMapping(${JSON.stringify(b.primary)}, ${JSON.stringify(b.config, null, 2)});`
     )).join('\n\n');
     fixesParts.push(
-      `/* ---- Keyboard engines (grid / clickable / tab strip) ----\n` +
+      `/* ---- Engines (grid / clickable / tab strip / breadcrumb) ----\n` +
       ` * Adds the ARIA roles, names and states each pattern needs, roving\n` +
       ` * tabindex, arrow/Home/End/Enter/Space, a visible focus ring, and\n` +
       ` * re-applies itself on every re-render and each time a widget opens. */\n` +

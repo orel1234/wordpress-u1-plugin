@@ -155,6 +155,39 @@
     try { loc.replace = function (u) { note('location.replace', u); }; } catch (e) {}
     try { hist.pushState = function (s, t, u) { note('history.pushState', u); }; } catch (e) {}
     try { hist.replaceState = function (s, t, u) { note('history.replaceState', u); }; } catch (e) {}
+    // Nothing leaves over the NETWORK either, and this is what makes pressing a
+    // submit button defensible at all.
+    //
+    // Cancelling the submit event stops a form POSTing the old way. It does
+    // nothing about a form that sends itself with fetch from a click handler,
+    // which is how most of them are written now — and probing forms means
+    // deliberately pressing the one control on the page whose whole purpose is
+    // to send a stranger's data somewhere. An empty form usually fails its own
+    // validation before it gets that far; "usually" is not a guarantee anybody
+    // should be offering about somebody else's site.
+    //
+    // So: while the net is armed, requests do not go out. Each stub rejects or
+    // no-ops the way a blocked request would, so the page's own error handling
+    // runs rather than the page hanging on a promise that never settles.
+    var fetchWas = root.fetch;
+    var xhrWas = root.XMLHttpRequest && root.XMLHttpRequest.prototype.send;
+    var beaconWas = root.navigator && root.navigator.sendBeacon;
+    try {
+      if (fetchWas) {
+        root.fetch = function () {
+          return Promise.reject(new Error('blocked while U1 Studio is inspecting this page'));
+        };
+      }
+      if (xhrWas) {
+        root.XMLHttpRequest.prototype.send = function () {
+          var self = this;
+          setTimeout(function () {
+            try { self.dispatchEvent(new root.Event('error')); } catch (e) {}
+          }, 0);
+        };
+      }
+      if (beaconWas) root.navigator.sendBeacon = function () { return false; };
+    } catch (e) {}
 
     net = {
       // What was stopped, so a survey can say "this page tried to navigate
@@ -169,6 +202,11 @@
         try { if (replaceWas) loc.replace = replaceWas; } catch (e) {}
         try { if (pushWas) hist.pushState = pushWas; } catch (e) {}
         try { if (replStateWas) hist.replaceState = replStateWas; } catch (e) {}
+        try {
+          if (fetchWas) root.fetch = fetchWas;
+          if (xhrWas) root.XMLHttpRequest.prototype.send = xhrWas;
+          if (beaconWas) root.navigator.sendBeacon = beaconWas;
+        } catch (e) {}
         net = null;
       },
     };
@@ -183,6 +221,125 @@
   // disclosure actually does.
   var STATE_ATTRS = ['hidden', 'aria-expanded', 'aria-selected', 'aria-hidden',
                      'aria-current', 'open', 'checked'];
+
+  var FIELD_SEL = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]),select,textarea';
+
+  /**
+   * The classes on a set of elements, read separately from `fingerprint`.
+   *
+   * A class toggle is how most sites actually say open/closed — `.is-open`,
+   * `.active`, `.expanded` — and the state fingerprint above does not watch
+   * `class` at all, so a panel that changes nothing but its class was invisible
+   * to the whole behavioural layer.
+   *
+   * Kept OUT of the fingerprint on purpose rather than added to it. The
+   * fingerprint is what the run-wide restore check compares, and pages add and
+   * drop transition classes on their own — folding class into it would make
+   * "the page is back where it started" fail on animation, which stops probing
+   * and, worse, teaches us to distrust a check that exists for the client's
+   * sake.
+   */
+  function classesOf(all) {
+    var out = new Map();
+    for (var i = 0; i < all.length; i++) {
+      var c = all[i].className;
+      out.set(all[i], typeof c === 'string' ? c : '');
+    }
+    return out;
+  }
+
+  /** Which classes appeared on an element, and which went away. */
+  function classDelta(before, after, el) {
+    var was = (before.get(el) || '').split(/\s+/).filter(Boolean);
+    var now = (after.get(el) || '').split(/\s+/).filter(Boolean);
+    var added = now.filter(function (c) { return was.indexOf(c) === -1; });
+    var removed = was.filter(function (c) { return now.indexOf(c) === -1; });
+    return (added.length || removed.length) ? { added: added, removed: removed } : null;
+  }
+
+  /**
+   * Where things ARE, which is the half the visibility fingerprint cannot see.
+   *
+   * A rail that only scrolls hides nothing: every item keeps its box, and what
+   * moves is the window onto them. So the whole behavioural layer found
+   * NOTHING on a swipe gallery built the way swipe galleries are actually
+   * built — measured, both ways round: the same gallery written with hidden
+   * came back as a carousel and written as a scroller came back as an empty
+   * page.
+   *
+   * Kept out of `fingerprint` for the same reason `class` is: the restore check
+   * compares fingerprints, and a page that scrolls a pixel on its own would
+   * start reporting itself as never restored.
+   */
+  function geometry(all) {
+    var out = new Map();
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i], r = null;
+      try { r = el.getBoundingClientRect(); } catch (e) {}
+      out.set(el, r ? (Math.round(r.left) + '|' + Math.round(r.top)) : '');
+    }
+    return out;
+  }
+
+  /**
+   * What slid sideways.
+   *
+   * HORIZONTAL on purpose. Opening an accordion pushes everything below it
+   * down, and counting that as movement would make every accordion on the page
+   * a carousel — so a shift only counts when it is sideways and more sideways
+   * than it is vertical.
+   */
+  function shifted(before, after) {
+    var out = [];
+    after.forEach(function (now, el) {
+      var was = before.get(el);
+      if (!was || !now || was === now) return;
+      var a = was.split('|'), b = now.split('|');
+      var dx = Math.abs(Number(b[0]) - Number(a[0])), dy = Math.abs(Number(b[1]) - Number(a[1]));
+      if (dx > 8 && dx > dy) out.push(el);
+    });
+    return out;
+  }
+
+  /**
+   * What each watched element is SHOWING, in a few characters.
+   *
+   * The third thing the visibility fingerprint cannot see, after class and
+   * position: a region whose contents were REPLACED. Press page 3 of a product
+   * list and the grid still has two cards in it and is still on screen — same
+   * count, same visibility — so nothing anywhere registered that the whole page
+   * of products had changed. Measured: a pagination strip came back as an empty
+   * finding, and so does any strip that re-renders one region instead of
+   * swapping between several.
+   *
+   * Out of `fingerprint` for the third time and for the third same reason: the
+   * restore check compares fingerprints, and a page with a clock, a price
+   * ticker or a countdown would start reporting itself as never restored.
+   */
+  function contentOf(all) {
+    var out = new Map();
+    for (var i = 0; i < all.length; i++) {
+      var t = '';
+      try { t = (all[i].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120); } catch (e) {}
+      out.set(all[i], t);
+    }
+    return out;
+  }
+
+  /** Regions whose contents were swapped for different contents. */
+  function replaced(before, after) {
+    var out = [];
+    after.forEach(function (now, el) {
+      var was = before.get(el);
+      // Something has to have been there and something else has to be there
+      // now. An element that merely emptied has vanished, which is reported
+      // already, and one that filled from nothing is a reveal.
+      if (!was || !now || was === now) return;
+      if (was.length < 8 || now.length < 8) return;
+      out.push(el);
+    });
+    return outermost(out);
+  }
 
   function shown(el) {
     if (el.hasAttribute('hidden')) return false;
@@ -310,13 +467,58 @@
 
     var els = watched(scope, opts.limit);
     var before = fingerprint(els);
+    var classBefore = classesOf(els);
+    var whereBefore = geometry(els);
+    var textBefore = contentOf(els);
+    var focusBefore = doc.activeElement;
     try { el.click(); } catch (e) { return { skipped: true, why: 'could not be pressed' }; }
     await raf();
     if (settle) await wait(settle);
-    var d = diff(before, fingerprint(els));
+    var after = fingerprint(els);
+    var classAfter = classesOf(els);
+    var d = diff(before, after);
+    var slid = outermost(shifted(whereBefore, geometry(els)));
+    var swapped = replaced(textBefore, contentOf(els));
+
+    // Is what opened a LAYER OVER THE PAGE? Measured HERE, while it is open.
+    //
+    // This used to be asked in classify(), which runs after every press has
+    // been undone — so it measured a CLOSED panel, and a panel closed with
+    // `hidden` has no box at all. The test read `width >= 60% of the viewport`
+    // against a width of zero and answered no, every time. A modal was
+    // therefore reported as an accordion: "it revealed and hid a region", which
+    // is true, and useless.
+    //
+    // It only ever appeared to work on drawers that stay laid out while closed
+    // — translated off-screen rather than hidden — which is why it survived.
+    var panel = panelOf(d);
+    var isLayer = panel ? isOverlay(panel) : false;
+
+    // Did focus follow what opened?
+    //
+    // Recorded as a FINDING, never as a condition for recognising anything. A
+    // panel that covers the page is a dialog whether or not the site moved
+    // focus into it — and most sites do not, which is the entire reason the
+    // accessibility layer exists. Requiring correct focus behaviour before
+    // agreeing something is a dialog would mean the broken ones, the only ones
+    // worth mapping, are the ones we decline to find.
+    //
+    // So this answers "does this one already need the fix", which is the
+    // specialist's next question anyway.
+    var focusEntered = null;
+    if (panel) {
+      var landed = doc.activeElement;
+      focusEntered = !!(landed && landed !== focusBefore && panel.contains(landed));
+    }
+
 
     // Put it back before reporting, so a caller that stops reading here still
     // leaves the page as it found it.
+    //
+    // EVERYTHING about the OPEN state has to be measured above this line. Both
+    // things that ask "what was it like while it was open" — is it a layer over
+    // the page, did focus go into it — were written below it first, and both
+    // answered no every single time, because by then it was shut.
     var restored = false;
     try {
       el.click();
@@ -330,13 +532,35 @@
       }
     } catch (e) { restored = false; }
 
+    // The state class, which is the answer to "how does this page SAY open".
+    // Read off the trigger and off whatever it opened, because sites put it on
+    // either one and about as often on both.
+    var stateClass = null;
+    var onTrigger = classDelta(classBefore, classAfter, el);
+    var marked = panel || d.changed[0] || null;
+    var onPanel = marked ? classDelta(classBefore, classAfter, marked) : null;
+    if (onTrigger || onPanel) {
+      stateClass = { trigger: onTrigger, panel: onPanel };
+    }
+
     return {
       skipped: false,
       opened: outermost(d.appeared),
       closed: outermost(d.vanished),
+      moved: slid,
+      rerendered: swapped,
       touched: d.changed.length,
+      focusEntered: focusEntered,
+      overlay: isLayer,
+      stateClass: stateClass,
       restored: restored,
     };
+  }
+
+  /** The thing a press revealed, if it revealed one. */
+  function panelOf(d) {
+    var opened = outermost(d.appeared);
+    return opened.length ? opened[0] : null;
   }
 
   function same(a, b) {
@@ -425,6 +649,15 @@
     return out.slice(0, opts.max || 40);
   }
 
+  // Grouping by parent needs a key, and the parent element itself cannot be one
+  // in a plain object. A WeakMap-backed counter keeps it identity-based rather
+  // than depending on a selector that may not exist.
+  var keySeq = 0, keyed = new WeakMap();
+  var robustKey = function (el) {
+    if (!keyed.has(el)) keyed.set(el, 'p' + (++keySeq));
+    return keyed.get(el);
+  };
+
   var commonAncestor = function (els) {
     if (!els.length) return null;
     var a = els[0];
@@ -435,13 +668,145 @@
     return a;
   };
 
+  /**
+   * Is this panel nothing but links?
+   *
+   * The rule was "two or more links makes it a menu", and that is too crude:
+   * an FAQ answer with a "read more" link in it, or a product panel with a
+   * link at the bottom, was called a menu on the strength of the links while
+   * being mostly prose.
+   *
+   * What separates them is what is there BESIDES the links. A menu panel is
+   * links and whitespace. An accordion panel is text that happens to contain
+   * some. So the links' own text is subtracted and what is left is weighed.
+   */
+  var mostlyLinks = function (el) {
+    try {
+      var links = el.querySelectorAll('a[href]');
+      if (links.length < 2) return false;
+      var all = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      var inLinks = 0;
+      for (var i = 0; i < links.length; i++) {
+        inLinks += (links[i].textContent || '').replace(/\s+/g, ' ').trim().length;
+      }
+      // Forty characters is about a sentence. Below that, whatever is around
+      // the links is a heading or a "see all", not content.
+      return (all.length - inLinks) < 40;
+    } catch (e) { return true; }
+  };
+
+  /**
+   * The run of siblings a set of revealed elements belongs to.
+   *
+   * A carousel and a tab strip are the same observation up to here — press a
+   * control, something is shown and something else is hidden — and they were
+   * not being told apart at all: a hero carousel with prev/next arrows came
+   * back as a strip of two controls "each revealing the same region", which is
+   * a menu. Measured, not supposed.
+   *
+   * What separates them is COUNTING. A tab strip has as many panels as it has
+   * tabs, because each tab owns one. A carousel has two arrows and five slides:
+   * the controls cycle a set that is bigger than they are. So: find the run of
+   * siblings the revealed elements sit in, and compare its size to the number
+   * of controls.
+   */
+  var siblingRun = function (els, controls, touched) {
+    if (!els.length) return null;
+    var parent = els[0].parentElement;
+    if (!parent) return null;
+    for (var i = 1; i < els.length; i++) if (els[i].parentElement !== parent) return null;
+    var kids = Array.prototype.slice.call(parent.children);
+    // Only the ones that look like peers of what was revealed — a track with
+    // five slides and a stray caption should count five, not six.
+    var tag = els[0].tagName;
+    var peers = kids.filter(function (k) { return k.tagName === tag; });
+    var items = peers.length >= els.length ? peers : kids;
+
+    // Anything holding a CONTROL is not a slide.
+    //
+    // Slides are inert: a track holds pictures and text, and the arrows live
+    // outside it. So a peer that is, or contains, something this run pressed is
+    // another component's container and must not be counted.
+    //
+    // Excluding only the strip's own controls was not enough, and the case that
+    // proved it is worth keeping: on a page written flat — tab panels as direct
+    // children of the page, beside the nav and the accordion — the run came
+    // back as five, the strip had three controls, and an ordinary tab strip was
+    // reported as a carousel. It then stopped being pressed back afterwards,
+    // because only a strip gets pressed back, so the page was left on the wrong
+    // panel. A misread that also breaks the promise to put the page back is the
+    // expensive kind.
+    if (controls && controls.length) {
+      items = items.filter(function (k) {
+        for (var c = 0; c < controls.length; c++) {
+          if (k === controls[c] || k.contains(controls[c])) return false;
+        }
+        return true;
+      });
+    }
+    // Slides take TURNS. Whatever is showing and was never shown or hidden by
+    // anything this run did is not one of them — it is the caption beside the
+    // track, or the paragraph below it.
+    //
+    // The case that needed this: a two-control strip whose panels sat flat
+    // beside a paragraph of prose. The prose counted as a third item, three
+    // beat two controls, and the strip was called a carousel. A slide that has
+    // never once been hidden is not a slide.
+    //
+    // Slides not yet reached are kept — they are hidden, not showing, which is
+    // exactly what an untouched slide looks like. That is what lets two arrows
+    // over five slides still read as five.
+    if (touched && touched.length) {
+      items = items.filter(function (k) {
+        return !shown(k) || touched.indexOf(k) !== -1;
+      });
+    }
+    return items.length ? { parent: parent, items: items } : null;
+  };
+
+  /** Prev / next, when the control says so on its face. */
+  var arrowRole = function (el) {
+    var face = faceOf(el).toLowerCase() + ' ' +
+               ((el.getAttribute && el.getAttribute('class')) || '').toLowerCase();
+    if (/prev|back|◄|‹|«|←|הקודם|אחורה/.test(face)) return 'prevButton';
+    if (/next|forward|►|›|»|→|הבא|קדימה/.test(face)) return 'nextButton';
+    return null;
+  };
+
+  /**
+   * A layer over the page — which is what makes something a dialog.
+   *
+   * TWO shapes, because "covers most of the screen" was only one of them and
+   * the other is extremely common:
+   *
+   *   · a MODAL: a box over the middle of the page, most of the screen wide
+   *     and half of it tall.
+   *   · a BANNER: a cookie bar, a coupon strip, a consent notice. Pinned to the
+   *     top or bottom edge, nearly the full width, and DELIBERATELY short — it
+   *     covers a sliver, and the height test alone threw every one of them out.
+   *     Decided that these are dialogs like any other, which they are: they
+   *     appear over the page, they demand an answer, and the ones that trap you
+   *     without a reachable close button are a genuine trap.
+   *
+   * `fixed` is required for the banner and not for the modal. A short strip
+   * that merely happens to be absolutely positioned inside some section is
+   * ordinary page furniture; one pinned to the viewport edge is a layer.
+   */
   var isOverlay = function (el) {
     try {
       var pos = root.getComputedStyle(el).position;
       if (pos !== 'fixed' && pos !== 'absolute') return false;
       var r = el.getBoundingClientRect();
       var vw = root.innerWidth || 1024, vh = root.innerHeight || 768;
-      return r.width >= vw * 0.6 && r.height >= vh * 0.5;
+      if (r.width >= vw * 0.6 && r.height >= vh * 0.5) return true;
+
+      if (pos !== 'fixed') return false;
+      var wide = r.width >= vw * 0.8;
+      var atEdge = r.top <= 4 || Math.abs(r.bottom - vh) <= 4;
+      // Not a hairline: a progress bar and a coloured rule are also wide, fixed
+      // and against an edge, and neither is asking anybody anything.
+      var tall = r.height >= 40;
+      return wide && atEdge && tall;
     } catch (e) { return false; }
   };
 
@@ -477,7 +842,9 @@
 
     byParent.forEach(function (siblings) {
       if (siblings.length < 2) return;
-      var group = results.filter(function (r) { return siblings.indexOf(r.trigger) !== -1; });
+      var group = results.filter(function (r) {
+        return siblings.indexOf(r.trigger) !== -1 && r.opened.length;
+      });
       if (!group.length) return;
       // Siblings that each reveal something are not automatically a tab strip.
       // A header toolbar is exactly that shape — Search, Wishlist and Cart each
@@ -491,6 +858,34 @@
       var panels = [];
       group.forEach(function (r) { r.opened.forEach(function (el) { if (panels.indexOf(el) === -1) panels.push(el); }); });
       if (!panels.length) return;
+      // A CAROUSEL, if the controls are cycling a set bigger than themselves.
+      var revealed = [];
+      group.forEach(function (r) { r.opened.forEach(function (el) {
+        if (revealed.indexOf(el) === -1) revealed.push(el); }); });
+      var swapped = [];
+      group.forEach(function (r) {
+        r.opened.forEach(function (el) { if (swapped.indexOf(el) === -1) swapped.push(el); });
+        (r.closed || []).forEach(function (el) { if (swapped.indexOf(el) === -1) swapped.push(el); });
+      });
+      var run = siblingRun(revealed, pressed.concat(siblings), swapped);
+      if (run && run.items.length > siblings.length) {
+        group.forEach(function (r) { used.add(r.trigger); });
+        siblings.forEach(function (el) { used.add(el); });
+        var parts = { slide: run.items };
+        siblings.forEach(function (el) {
+          var role = arrowRole(el);
+          if (role && !parts[role]) parts[role] = [el];
+        });
+        comps.push({
+          type: 'carousel',
+          root: commonAncestor(siblings.concat(run.items)),
+          parts: parts,
+          why: siblings.length + ' controls cycling ' + run.items.length +
+               ' items — more items than controls, so they are not tabs',
+        });
+        return;
+      }
+
       group.forEach(function (r) { used.add(r.trigger); });
       // The tab that was ALREADY selected reveals nothing when pressed, so it
       // never appears in `results` — and a three-tab strip was reported as two
@@ -504,31 +899,713 @@
       tabs.sort(function (a, b) {
         return (a.compareDocumentPosition(b) & 4) ? -1 : 1;   // 4 = FOLLOWING
       });
+      // A MENU, not a tab strip. The two are one shape — several sibling
+      // controls, pressing one swaps what is shown — and detection stopped
+      // trying to tell them apart by which word the developer happened to use.
+      //
+      // `shape: 'strip'` is kept because the RESTORE below needs it, and that
+      // is a mechanical fact rather than a name: a control that cannot undo
+      // itself by being pressed again has to be pressed back deliberately.
+      // Keying the restore on the type name would have broken it the moment
+      // the name changed — silently, on somebody's live site.
+      //
+      // Rooted on the DIRECT PARENT of the controls, per the menu rules, not on
+      // the common ancestor of the controls AND their panels: that reaches up
+      // past the strip and u1.fix.menu walks the root's own children looking
+      // for items.
       comps.push({
-        type: 'tabs',
-        root: commonAncestor(tabs.concat(panels)),
-        parts: { tab: tabs, tabPanel: panels },
-        why: tabs.length + ' controls, each revealing ' +
+        type: 'menu',
+        shape: 'strip',
+        root: siblings[0].parentElement || commonAncestor(tabs.concat(panels)),
+        parts: { items: tabs, submenus: panels },
+        why: tabs.length + ' sibling controls, each revealing ' +
              (panels.length === 1 ? 'the same region' : 'a different panel'),
+      });
+    });
+
+    // A PAGE STRIP, told by counting rather than by naming — the same trick the
+    // calendar uses, and reliable for the same reason. Sibling controls whose
+    // faces are running numbers are page numbers; nothing else on a page is a
+    // row of controls that says 1, 2, 3.
+    //
+    // It has to come before the strip rule below, which would otherwise call it
+    // a menu: pressing one of these swaps what is shown, which is exactly the
+    // shape a menu has. And the difference matters — a menu leads to different
+    // places, page numbers lead to the same content cut into pieces.
+    var numbered = {};
+    pressed.forEach(function (el) {
+      var p = el.parentElement;
+      if (!p) return;
+      var key = robustKey(p);
+      if (!numbered[key]) numbered[key] = { parent: p, nums: [], all: [] };
+      numbered[key].all.push(el);
+      var face = faceOf(el);
+      if (/^\d{1,3}$/.test(face)) numbered[key].nums.push(el);
+    });
+    Object.keys(numbered).forEach(function (key) {
+      var g = numbered[key];
+      // Three numbers is the smallest strip worth the name; two is a pair of
+      // buttons that happen to say 1 and 2.
+      if (g.nums.length < 3) return;
+      if (g.nums.some(function (el) { return used.has(el); })) return;
+      var values = g.nums.map(function (el) { return Number(faceOf(el)); });
+      var rising = 0;
+      for (var i = 1; i < values.length; i++) if (values[i] === values[i - 1] + 1) rising++;
+      if (rising < values.length - 2) return;
+
+      g.all.forEach(function (el) { used.add(el); });
+      var parts = { pageButtons: g.nums };
+      g.all.forEach(function (el) {
+        var role = arrowRole(el);
+        if (role === 'prevButton' && !parts.prevButton) parts.prevButton = [el];
+        if (role === 'nextButton' && !parts.nextButton) parts.nextButton = [el];
+      });
+      comps.push({
+        type: 'pagination',
+        root: g.parent,
+        parts: parts,
+        why: g.nums.length + ' controls numbered in sequence',
+      });
+    });
+
+    // A rail that SLIDES. No counting needed and no hiding involved: if
+    // pressing a control moved a run of siblings sideways, that is a carousel,
+    // however many controls it has. A shelf of twenty products with two arrows
+    // is one; so is a swipe gallery with no arrows at all, found below by
+    // watching it move on its own.
+    results.forEach(function (r) {
+      if (used.has(r.trigger) || !r.moved || !r.moved.length) return;
+      var run = siblingRun(r.moved, pressed, r.moved);
+      if (!run || run.items.length < 2) return;
+      used.add(r.trigger);
+      var parts = { slide: run.items };
+      var role = arrowRole(r.trigger);
+      if (role) parts[role] = [r.trigger];
+      // The other arrow, when there is one: its sibling that was also pressed.
+      pressed.forEach(function (el) {
+        if (el === r.trigger || el.parentElement !== r.trigger.parentElement) return;
+        var other = arrowRole(el);
+        if (other && !parts[other]) { parts[other] = [el]; used.add(el); }
+      });
+      comps.push({
+        type: 'carousel',
+        root: commonAncestor([r.trigger].concat(run.items)),
+        parts: parts,
+        why: 'pressing it slid a rail of ' + run.items.length + ' items sideways',
       });
     });
 
     results.forEach(function (r) {
       if (used.has(r.trigger) || !r.opened.length) return;
       var panel = r.opened[0];
-      var type = isOverlay(panel) ? 'dialog'
-        : (panel.querySelectorAll('a[href]').length >= 2 ? 'menu' : 'accordion');
+      // `r.overlay` was measured while the panel was open. See probeOne.
+      var type = r.overlay ? 'dialog'
+        : (mostlyLinks(panel) ? 'menu' : 'accordion');
+      var why = type === 'dialog' ? 'it opened a layer over the page'
+        : type === 'menu' ? 'it revealed a panel of links and nothing else'
+        : 'it revealed and hid a region';
+      // How the page SAYS open, when it says it with a class. Worth reporting
+      // even for a dialog: it is the same answer to the same question, and a
+      // mapping that has it does not need a person to go and find it.
+      if (r.stateClass) {
+        var added = (r.stateClass.panel && r.stateClass.panel.added) ||
+                    (r.stateClass.trigger && r.stateClass.trigger.added) || [];
+        if (added.length) why += ', and marks it open with .' + added[0];
+      }
+      // The work this one needs, said plainly. Not a reason to doubt it is a
+      // dialog — the reason to map it.
+      if (type === 'dialog' && r.focusEntered === false) {
+        why += '. Focus stayed outside it when it opened';
+      }
       comps.push({
         type: type,
         root: type === 'dialog' ? panel : commonAncestor([r.trigger, panel]),
         parts: { trigger: [r.trigger], panel: [panel] },
-        why: type === 'dialog' ? 'it opened a layer over the page'
-          : type === 'menu' ? 'it revealed a panel of links'
-          : 'it revealed and hid a region',
+        stateClass: r.stateClass || null,
+        focusEntered: r.focusEntered,
+        why: why,
       });
     });
 
     return comps;
+  }
+
+  /**
+   * What the page does when nobody touches it.
+   *
+   * Everything else here presses something and watches. This watches while
+   * pressing NOTHING, and it answers two questions at once:
+   *
+   *   · a carousel that advances on its own is a carousel even when it has no
+   *     arrows to press — a swipe-only gallery announces itself no other way.
+   *   · a thing that moves by itself and cannot be stopped is a WCAG 2.2.2
+   *     failure in its own right, and it is the kind nobody reports because
+   *     nothing on the page looks broken.
+   *
+   * It costs real time — a slide sits for seconds — so the window is a
+   * parameter and the whole thing is skipped when it is zero.
+   */
+  async function watchIdle(scope, ms, limit) {
+    if (!ms) return null;
+    var els = watched(scope, limit);
+    var before = fingerprint(els);
+    var whereBefore = geometry(els);
+    // SAMPLED, not just start-and-end. A carousel of three slides on a cycle
+    // that divides the window lands back where it started and a two-point
+    // comparison sees nothing at all — found by a test whose timing happened
+    // to do exactly that, and reported as "no carousel here" with complete
+    // confidence. Any sample differing from the start is movement.
+    var step = Math.max(250, Math.round(ms / 4));
+    for (var waited = 0; waited < ms; waited += step) {
+      await wait(Math.min(step, ms - waited));
+      var d = diff(before, fingerprint(els));
+      var moved = outermost(d.appeared);
+      if (moved.length) return { moved: moved, gone: outermost(d.vanished), ms: waited + step };
+      // A ticker that scrolls itself hides nothing at all, so the visibility
+      // comparison above will never see it however long it watches.
+      var slid = outermost(shifted(whereBefore, geometry(els)));
+      if (slid.length) return { moved: slid, gone: [], slid: true, ms: waited + step };
+    }
+    return null;
+  }
+
+  /**
+   * Ask a form to validate itself, and read the answer off the page.
+   *
+   * A form mapping needs three things a person otherwise finds by hand: which
+   * fields are required, the class the page puts on a field it has rejected,
+   * and where the message goes. All three are written on the page the moment an
+   * EMPTY form is submitted — so the form is asked, rather than the specialist.
+   *
+   * Nothing is sent. The submit event is cancelled in the capture phase and
+   * fetch/XHR/sendBeacon are stubbed for the duration, so the page's own
+   * validation runs and its request does not. That is the whole reason this is
+   * defensible: pressing submit is otherwise the single most dangerous thing
+   * that could be done to somebody's site, and the blocklist refuses to do it.
+   *
+   * Nothing is filled in either. An empty submit is the one that produces the
+   * most errors and touches the least.
+   *
+   * WHAT IT LEAVES BEHIND: the form showing its validation errors. That is not
+   * undone — the classes belong to the page's own state and stripping them
+   * would leave its JavaScript believing something the DOM no longer says. It
+   * is reported instead, so a caller can say so rather than a person finding a
+   * red form they did not ask for.
+   */
+  async function probeForm(form, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 200 : opts.settle;
+    var fields = [];
+    try { fields = Array.prototype.slice.call(form.querySelectorAll(FIELD_SEL)); } catch (e) {}
+    if (!fields.length) return null;
+
+    var submit = null;
+    try {
+      var cands = form.querySelectorAll('button,input[type="submit"],[role="button"]');
+      for (var i = 0; i < cands.length; i++) {
+        var t = (cands[i].getAttribute('type') || '').toLowerCase();
+        // A reset button empties what somebody typed. Never that one.
+        if (t === 'reset' || t === 'button') continue;
+        if (/reset|clear|cancel|נקה|בטל/i.test(faceOf(cands[i]))) continue;
+        submit = cands[i];
+        break;
+      }
+    } catch (e) {}
+    if (!submit) return null;
+
+    // Anything already filled in is somebody's work in progress. Submitting a
+    // half-typed form is not a thing to do to a person, and a form that passes
+    // validation would tell us nothing anyway.
+    for (var f = 0; f < fields.length; f++) {
+      var v = fields[f].value;
+      if (typeof v === 'string' && v.trim()) return { skipped: true, why: 'somebody has typed in it' };
+      if (fields[f].checked) return { skipped: true, why: 'somebody has ticked something in it' };
+    }
+
+    var watchList = watched(form, opts.limit);
+    var before = fingerprint(watchList);
+    var classBefore = classesOf(watchList);
+    var invalidBefore = fields.map(function (el) { return el.getAttribute('aria-invalid'); });
+
+    try { submit.click(); } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var classAfter = classesOf(watchList);
+    var d = diff(before, fingerprint(watchList));
+
+    // Which fields the form rejected, and how it said so.
+    var rejected = [], marks = {};
+    fields.forEach(function (el, i) {
+      var said = false;
+      if (el.getAttribute('aria-invalid') === 'true' && invalidBefore[i] !== 'true') said = true;
+      var delta = classDelta(classBefore, classAfter, el);
+      if (delta && delta.added.length) {
+        said = true;
+        delta.added.forEach(function (c) { marks[c] = (marks[c] || 0) + 1; });
+      }
+      // A native control the browser itself refused.
+      try { if (el.willValidate && el.validity && !el.validity.valid) said = true; } catch (e) {}
+      if (said) rejected.push(el);
+    });
+
+    // The class the page uses for "this one is wrong".
+    //
+    // Counting alone is not enough and picked the wrong one first time: a field
+    // going from `class=""` to `class="field field--error"` has added BOTH, on
+    // exactly the same number of fields, and the tie broke on iteration order —
+    // so the answer was `field`, which is every field on the form including the
+    // valid ones. A mapping built on that marks the whole form as wrong.
+    //
+    // So a name that SAYS error wins, in either language, before any counting.
+    // When nothing says it, the candidates are all reported rather than one
+    // being picked by luck — a field left for a person to choose is honest, a
+    // wrong one filled in confidently is not.
+    var SAYS_ERROR = /error|invalid|danger|warn|fail|required|שגיא|שגוי|חוב/i;
+    var candidates = Object.keys(marks).sort(function (a, b) { return marks[b] - marks[a]; });
+    var named = candidates.filter(function (c) { return SAYS_ERROR.test(c); });
+    var invalidClass = named.length ? named[0] : (candidates.length === 1 ? candidates[0] : null);
+
+    return {
+      submit: submit,
+      fields: fields,
+      required: rejected,
+      invalidClass: invalidClass,
+      invalidCandidates: candidates,
+      messages: outermost(d.appeared),
+      leftShowingErrors: rejected.length > 0 || d.appeared.length > 0,
+    };
+  }
+
+  /**
+   * Type one letter into a field and watch what the list does.
+   *
+   * This settles an argument that cannot be settled by looking. A garage finder
+   * and an autocomplete are the same markup — a text field with a list of
+   * results beside it — and the two need OPPOSITE fixes:
+   *
+   *   · the list was already there and typing NARROWS it → a filter. What it
+   *     needs is a status message saying how many are left. Giving it combobox
+   *     roles describes a popup that does not exist and leaves a screen reader
+   *     waiting for one that never opens.
+   *   · the list was not there and typing REVEALED it → a combobox. It does not
+   *     have to float: a results container that goes from empty to populated is
+   *     a popup in every sense ARIA cares about.
+   *
+   * Nothing in the code told these apart. `comboboxShape` and `filterListShape`
+   * both match the same markup and whichever is asked first wins, while the
+   * real distinction lived only as prose in the rules file.
+   *
+   * Safer than pressing a submit — it is one character into a text box — and
+   * bounded the same way: never a password, never a field somebody has already
+   * typed in, and the value is put back with the events the page needs to see
+   * to undo its own work.
+   */
+  async function probeTyping(input, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 200 : opts.settle;
+    if (!input || input.nodeType !== 1) return null;
+
+    var type = (input.getAttribute('type') || '').toLowerCase();
+    if (type === 'password') return { skipped: true, why: 'a password field' };
+    if (input.disabled || input.readOnly) return { skipped: true, why: 'not editable' };
+    if (typeof input.value === 'string' && input.value.trim()) {
+      return { skipped: true, why: 'somebody has typed in it' };
+    }
+
+    var scope = opts.scope || input.closest('form,section,div') || doc.body;
+    var els = watched(scope, opts.limit);
+    var before = fingerprint(els);
+    var countBefore = listCounts(scope);
+
+    var fire = function (el) {
+      ['input', 'keyup', 'change'].forEach(function (name) {
+        try { el.dispatchEvent(new root.Event(name, { bubbles: true })); } catch (e) {}
+      });
+    };
+
+    // FIRST: touch it without typing.
+    //
+    // A popup does not have to open empty. Most of them open showing every
+    // option, and typing then narrows what is already in front of you — which
+    // from the typing alone is indistinguishable from a page filter, and was
+    // being called one. The difference is a step earlier: the page filter's
+    // list is part of the page and was on screen before anybody touched
+    // anything, and the popup's list was not there until the field was.
+    try { input.focus(); input.click(); } catch (e) {}
+    await raf();
+    if (settle) await wait(settle);
+    var onTouch = diff(before, fingerprint(els));
+    var countTouched = listCounts(scope);
+    var openedOnTouch = outermost(onTouch.appeared);
+    countBefore.forEach(function (was, el) {
+      var now = countTouched.get(el);
+      if (was === 0 && now > 0 && openedOnTouch.indexOf(el) === -1) openedOnTouch.push(el);
+    });
+
+    // The baseline for the typing step is the page as it stands NOW, with the
+    // popup open — otherwise the opening itself reads as the typing's doing.
+    var beforeTyping = fingerprint(els);
+    var countBeforeTyping = countTouched;
+
+    try {
+      input.value = opts.text || 'a';
+      fire(input);
+    } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var d = diff(beforeTyping, fingerprint(els));
+    var countAfter = listCounts(scope);
+
+    // Put the letter back before anything else. A field left with a stray
+    // character in it is the most visible thing this whole file could do.
+    try {
+      input.value = '';
+      fire(input);
+      // …and shut whatever the touch opened, the way a person would.
+      if (openedOnTouch.length) {
+        input.blur();
+        doc.dispatchEvent(new root.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
+    } catch (e) {}
+    await raf();
+    if (settle) await wait(settle);
+
+    var revealed = outermost(d.appeared);
+    var narrowed = [], filled = [];
+    countBeforeTyping.forEach(function (was, el) {
+      var now = countAfter.get(el);
+      if (now == null) return;
+      // The container was ALREADY THERE and EMPTY, and typing put results in
+      // it. That is the commonest autocomplete on the web and the first version
+      // of this missed all of them: the <ul> never appeared — it was visible
+      // the whole time — so "did anything appear" answered no while the page
+      // was visibly filling with matches.
+      if (was === 0 && now > 0) filled.push({ list: el, now: now });
+      else if (was > 0 && now < was) narrowed.push({ list: el, was: was, now: now });
+    });
+
+    return {
+      skipped: false,
+      openedOnTouch: openedOnTouch,
+      revealed: revealed,
+      filled: filled,
+      narrowed: narrowed,
+      // The whole point, in one word.
+      //
+      // Revealing beats narrowing when both happen: a page that hides its old
+      // results and builds new ones is doing the autocomplete thing, and the
+      // narrowing is a side effect of the same keystroke.
+      // Opening on touch settles it before the typing is even read: a list that
+      // was not on the page until the field was touched is a popup, however
+      // full it opens and whatever typing then does to it.
+      kind: openedOnTouch.length ? 'combobox'
+          : (revealed.length || filled.length) ? 'combobox'
+          : (narrowed.length ? 'filter' : null),
+    };
+  }
+
+  /**
+   * Pick a day, and read the mapping off what changes.
+   *
+   * The same idea as submitting an empty form: the answers a datepicker mapping
+   * needs are written on the page the moment a day is chosen, and nowhere
+   * before it. `days.selected` is a class the page toggles and there is no way
+   * to know which one without watching it happen — the alternative is a person
+   * opening devtools and comparing two screenshots.
+   *
+   * What it learns:
+   *   · the class that marks the CHOSEN day
+   *   · the class on days that cannot be chosen, which are the ones that did
+   *     not respond
+   *   · whether choosing writes into a field, and which field
+   *
+   * A day is a safe thing to press — it chooses a date, it does not buy
+   * anything — and the net is armed around it, so a page that fetches prices on
+   * a date change gets a rejected promise rather than a request.
+   *
+   * WHAT IT LEAVES BEHIND: a date chosen, when nothing was chosen before. The
+   * previously selected day is put back when there WAS one, which is the common
+   * case on a booking form; when there was none, that is reported rather than
+   * faked, because clearing it would mean guessing at the page's own idea of
+   * empty.
+   */
+  async function probeCalendar(grid, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 200 : opts.settle;
+    var days = [];
+    try {
+      days = Array.prototype.slice.call(grid.querySelectorAll('td,li,button,a,div,span'))
+        .filter(function (el) {
+          return /^([1-9]|[12][0-9]|3[01])$/.test((el.textContent || '').trim()) &&
+                 !el.querySelector('*');
+        });
+    } catch (e) {}
+    if (days.length < 20) return null;
+
+    var wasSelected = days.filter(function (el) {
+      return /select|active|chosen|current|today/i.test(el.className || '') ||
+             el.getAttribute('aria-selected') === 'true';
+    });
+
+    // Somewhere in the middle: the first of the month is often greyed out as
+    // part of the previous one, and the last few belong to the next.
+    var pick = null;
+    for (var i = Math.floor(days.length / 2); i < days.length; i++) {
+      if (wasSelected.indexOf(days[i]) !== -1) continue;
+      if (days[i].disabled || days[i].getAttribute('aria-disabled') === 'true') continue;
+      pick = days[i];
+      break;
+    }
+    if (!pick) return null;
+
+    var scope = opts.scope || grid;
+    var els = watched(scope, opts.limit);
+    var classBefore = classesOf(els);
+    var fieldsBefore = fieldValues(scope);
+
+    try { pick.click(); } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var classAfter = classesOf(els);
+    var delta = classDelta(classBefore, classAfter, pick);
+    var selectedClass = delta && delta.added.length ? delta.added[0] : null;
+
+    // Which field the date landed in, if any.
+    var wroteInto = null, wroteValue = null;
+    fieldValues(scope).forEach(function (now, el) {
+      if (wroteInto) return;
+      if (fieldsBefore.get(el) !== now && now) { wroteInto = el; wroteValue = now; }
+    });
+
+    // The days that could not be chosen, named the way the page names them.
+    var disabled = days.filter(function (el) {
+      return el.disabled || el.getAttribute('aria-disabled') === 'true' ||
+             /disabled|muted|other-month|outside/i.test(el.className || '');
+    });
+
+    // Put the previous choice back when there was one.
+    var restored = false;
+    if (wasSelected.length) {
+      try { wasSelected[0].click(); } catch (e) {}
+      await raf();
+      if (settle) await wait(settle);
+      restored = true;
+    }
+
+    return {
+      day: pick,
+      selectedClass: selectedClass,
+      selectedWas: wasSelected.length ? wasSelected[0] : null,
+      disabled: disabled,
+      wroteInto: wroteInto,
+      wroteValue: wroteValue,
+      restored: restored,
+      leftADateChosen: !restored,
+    };
+  }
+
+  /**
+   * Tick it, read BOTH states, untick it.
+   *
+   * A checkbox mapping requires `checkedState` AND `uncheckedState` — two
+   * selectors, and U1 will not maintain the announced state without both. They
+   * are classes the page swaps, and one press hands over both at once: what was
+   * ADDED is the state it went to, what was REMOVED is the state it came from.
+   *
+   * Without this a person opens devtools, ticks the box, and compares two class
+   * attributes by eye. Getting it backwards is silent and specific: the control
+   * then announces the opposite of what it is, every time.
+   *
+   * A radio cannot untick itself, so the one that WAS chosen is pressed back,
+   * the same way the calendar puts a date back.
+   */
+  async function probeToggle(el, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 120 : opts.settle;
+    if (!el || el.nodeType !== 1) return null;
+
+    var safe = safeToClick(el);
+    if (!safe.ok) return { skipped: true, why: safe.why };
+
+    var wasOn = isOn(el);
+    var scope = opts.scope || el.parentElement || doc.body;
+
+    // A radio's group, so the previous choice can be put back.
+    var groupWas = null;
+    try {
+      var group = Array.prototype.slice.call(scope.querySelectorAll('[role="radio"],input[type="radio"]'));
+      if (group.indexOf(el) !== -1) {
+        for (var i = 0; i < group.length; i++) if (group[i] !== el && isOn(group[i])) groupWas = group[i];
+      }
+    } catch (e) {}
+
+    var els = [el];
+    var classBefore = classesOf(els);
+
+    try { el.click(); } catch (e) { return null; }
+    await raf();
+    if (settle) await wait(settle);
+
+    var nowOn = isOn(el);
+    var delta = classDelta(classBefore, classesOf(els), el);
+    var added = (delta && delta.added) || [];
+    var removed = (delta && delta.removed) || [];
+
+    // Which way it went decides which list is which. Read from the state rather
+    // than assumed from the press: a page that was already ticked gives the
+    // lists the other way round, and assuming "added means checked" is exactly
+    // the mistake that makes a control announce backwards.
+    var checkedClasses = nowOn ? added : removed;
+    var uncheckedClasses = nowOn ? removed : added;
+
+    // Put it back.
+    var restored = false;
+    try {
+      if (groupWas) { groupWas.click(); restored = true; }
+      else if (nowOn !== wasOn) { el.click(); restored = isOn(el) === wasOn; }
+      else restored = true;
+    } catch (e) {}
+    await raf();
+    if (settle) await wait(settle);
+
+    // The real control hiding inside a styled one — `exclude` exists so it does
+    // not take focus of its own beside the thing standing in for it.
+    var hidden = null;
+    try {
+      var inner = el.querySelector('input[type="checkbox"],input[type="radio"]');
+      if (inner && !shown(inner)) hidden = inner;
+    } catch (e) {}
+
+    // A page can say "off" by having a class, or by NOT having one. The second
+    // is very common — `class="opt"` becomes `class="opt opt--on"` — and it
+    // matters more than it looks: U1 wants a selector for each state, and there
+    // is no U1-valid selector for the absence of a class. `:not()` is a
+    // pseudo-class and the engine rejects it.
+    //
+    // So this is reported as its own fact rather than as an empty field. An
+    // empty field reads as "nobody filled this in"; this is "there is nothing
+    // to fill it in WITH", which is a different conversation and one somebody
+    // has to have with the site's developers.
+    var byAbsence = !!checkedClasses.length && !uncheckedClasses.length;
+
+    return {
+      skipped: false,
+      wasOn: wasOn,
+      toggled: nowOn !== wasOn,
+      checkedClass: checkedClasses[0] || null,
+      uncheckedClass: uncheckedClasses[0] || null,
+      saysOffByAbsence: byAbsence,
+      hiddenInput: hidden,
+      restored: restored,
+    };
+  }
+
+  /** Is this control currently on, however the page says so? */
+  function isOn(el) {
+    try {
+      if (typeof el.checked === 'boolean') return el.checked;
+      var a = el.getAttribute('aria-checked');
+      if (a != null) return a === 'true';
+      return /(^|[^a-z])(checked|selected|active|on)([^a-z]|$)/i.test(el.className || '');
+    } catch (e) { return false; }
+  }
+
+  /** What every field in a scope currently holds. */
+  function fieldValues(scope) {
+    var out = new Map();
+    var fields;
+    try { fields = scope.querySelectorAll('input,select,textarea'); } catch (e) { return out; }
+    for (var i = 0; i < fields.length && i < 60; i++) {
+      out.set(fields[i], fields[i].value == null ? '' : String(fields[i].value));
+    }
+    return out;
+  }
+
+  /**
+   * Hover over it, and see what appears.
+   *
+   * The whole behavioural layer PRESSES, so anything that opens on hover was
+   * invisible to it: tooltips, and the very common nav whose drop-downs open on
+   * mouseover and do nothing at all when clicked. Such a menu came back as a
+   * flat row of links with no submenus, and the three fields that exist to
+   * describe exactly this — openByMouseover, openByMouseenter, openByFocus —
+   * sat empty, because nothing has ever measured which event it is. The tool's
+   * own note beside them says it: "whether that is HOVER or a click cannot be
+   * told from the markup".
+   *
+   * Safer than everything else in this file by a wide margin. Hovering
+   * activates nothing, sends nothing and changes no state — there is no
+   * blocklist case, because there is no button a pointer can ruin by passing
+   * over it.
+   *
+   * Each event is tried SEPARATELY, because the answer is which one to write in
+   * the mapping. Firing all three and reporting "it opens on hover" would leave
+   * the same guess the field already has.
+   */
+  async function probeHover(el, opts) {
+    opts = opts || {};
+    var settle = opts.settle == null ? 120 : opts.settle;
+    if (!el || el.nodeType !== 1) return null;
+
+    var scope = opts.scope || el.closest('li,div,nav,section') || doc.body;
+    var els = watched(scope, opts.limit);
+
+    var send = function (name, Ctor) {
+      try { el.dispatchEvent(new root[Ctor](name, { bubbles: true })); } catch (e) {
+        try { el.dispatchEvent(new root.Event(name, { bubbles: true })); } catch (e2) {}
+      }
+    };
+    var away = function () {
+      send('mouseleave', 'MouseEvent');
+      send('mouseout', 'MouseEvent');
+      try { el.blur(); } catch (e) {}
+    };
+
+    var attempts = [
+      { field: 'openByMouseover', fire: function () { send('mouseover', 'MouseEvent'); } },
+      { field: 'openByMouseenter', fire: function () { send('mouseenter', 'MouseEvent'); } },
+      { field: 'openByFocus', fire: function () { try { el.focus(); } catch (e) {} send('focus', 'FocusEvent'); } },
+    ];
+
+    for (var i = 0; i < attempts.length; i++) {
+      var before = fingerprint(els);
+      attempts[i].fire();
+      await raf();
+      if (settle) await wait(settle);
+      var appeared = outermost(diff(before, fingerprint(els)).appeared);
+
+      away();
+      await raf();
+      if (settle) await wait(settle);
+
+      if (appeared.length) {
+        return {
+          opensOn: attempts[i].field,
+          revealed: appeared,
+          restored: same(before, fingerprint(els)),
+        };
+      }
+    }
+    return { opensOn: null, revealed: [], restored: true };
+  }
+
+  /** How many children each list-shaped element is showing right now. */
+  function listCounts(scope) {
+    var out = new Map();
+    var lists;
+    try {
+      lists = scope.querySelectorAll('ul,ol,tbody,[role="listbox"],[class*="result" i],[class*="list" i]');
+    } catch (e) { return out; }
+    for (var i = 0; i < lists.length && i < 60; i++) {
+      var kids = Array.prototype.slice.call(lists[i].children).filter(function (c) {
+        return c.nodeType === 1 && shown(c);
+      });
+      out.set(lists[i], kids.length);
+    }
+    return out;
   }
 
   /**
@@ -559,21 +1636,90 @@
         if (r.skipped) { skipped++; continue; }
         everPressed.add(list[i]);
         pressed.push(list[i]);
-        if (r.opened.length) results.push({ trigger: list[i], opened: r.opened, closed: r.closed });
+        if (r.opened.length || r.moved.length || r.rerendered.length) {
+          results.push({ trigger: list[i], opened: r.opened, closed: r.closed,
+                         moved: r.moved, rerendered: r.rerendered,
+                         stateClass: r.stateClass,
+                         focusEntered: r.focusEntered, overlay: r.overlay });
+        }
       }
 
       // Put the whole scope back.
       //
-      // Only a TAB STRIP needs this. A toggle was already closed by probeOne —
+      // Only a STRIP needs this. A toggle was already closed by probeOne —
       // pressing it a second time is what closed it — so pressing the first
       // trigger of every group re-OPENED every menu and accordion on the page,
       // which is the exact opposite of restoring. Classify first, then press
       // back only the thing that cannot undo itself.
-      comps = classify(results, pressed);
+      // CONCAT, not assign. Twice now something pushed onto `comps` before this
+      // line was silently thrown away by it — the idle watch's carousel, then
+      // the self-opening dialog — each time looking exactly like "the detection
+      // does not work", each time costing a debugging session. Appending
+      // removes the trap rather than remembering to avoid it.
+      comps = comps.concat(classify(results, pressed));
+
+      // Something that put ITSELF over the page: a coupon, a cookie notice, a
+      // newsletter box that waits five seconds. Nobody pressed anything, so
+      // pressing can never find it. Decided that these are dialogs like any
+      // other, and they are the ones a person is most likely to be trapped by.
+      //
+      // Compared against the state at the START OF THE RUN, not against the
+      // start of the idle window. A watch that only sees what appears after it
+      // begins misses anything that arrived while the pressing was going on —
+      // which on a page whose coupon fires at three seconds is most of the
+      // time. Found by a test where the coupon appeared 60ms in and the watch,
+      // starting later, reported an empty page with complete confidence.
+      var opened = [];
+      results.forEach(function (r) { opened = opened.concat(r.opened); });
+      var uninvited = outermost(diff(start, fingerprint(wholeScope)).appeared)
+        .filter(function (el) { return opened.indexOf(el) === -1 && isOverlay(el); });
+      uninvited.forEach(function (el) {
+        comps.push({
+          type: 'dialog',
+          root: el,
+          parts: { panel: [el] },
+          openedItself: true,
+          why: 'it put itself over the page with nobody touching anything',
+        });
+      });
+
+
+
+      // What moves on its own. Done AFTER pressing, so a panel this run opened
+      // is closed again and cannot be mistaken for something that moved by
+      // itself — and so the cost is only paid on a section worth reading.
+      var idle = await watchIdle(scope, opts.idle == null ? 2000 : opts.idle, opts.limit);
+      if (idle) {
+        var run = siblingRun(idle.moved, pressed, idle.moved.concat(idle.gone || []));
+        if (run) {
+          var already = comps.some(function (c) {
+            return c.parts && c.parts.slide && c.parts.slide.indexOf(run.items[0]) !== -1;
+          });
+          if (already) {
+            // A carousel already found by its arrows. Say that it also moves on
+            // its own, which is the part with a WCAG requirement attached.
+            comps.forEach(function (c) {
+              if (c.type !== 'carousel') return;
+              c.autoAdvances = true;
+              c.why += ', and it advances on its own';
+            });
+          } else {
+            comps.push({
+              type: 'carousel',
+              root: run.parent.parentElement || run.parent,
+              parts: { slide: run.items },
+              autoAdvances: true,
+              why: 'it changed which of ' + run.items.length +
+                   ' items is showing with nobody touching it',
+            });
+          }
+        }
+      }
+
       if (!same(start, fingerprint(wholeScope))) {
         for (var g = 0; g < comps.length; g++) {
-          if (comps[g].type !== 'tabs') continue;
-          try { comps[g].parts.tab[0].click(); } catch (e) {}
+          if (comps[g].shape !== 'strip') continue;
+          try { comps[g].parts.items[0].click(); } catch (e) {}
         }
         await raf();
         if (!same(start, fingerprint(wholeScope))) {
@@ -599,6 +1745,11 @@
     probeAll: probeAll,
     pressable: pressable,
     classify: classify,
+    probeForm: probeForm,
+    probeTyping: probeTyping,
+    probeCalendar: probeCalendar,
+    probeToggle: probeToggle,
+    probeHover: probeHover,
     armNet: armNet,
     DANGER: DANGER,
   };

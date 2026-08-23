@@ -961,12 +961,29 @@
    * the caller: `.tab-content` matches /tab/ and is not a tab strip. This
    * proposes; the scan confirms.
    */
+  // `tablist` says MENU, and that is a decision rather than a mistake. A tab
+  // strip and a nav bar with drop-downs are the same shape by every test either
+  // layer applies — several sibling controls, pressing one swaps what is shown —
+  // and the tool was already half-agreeing: the class list checks "nav" before
+  // it checks "tabs", so `class="nav nav-tabs"`, the commonest tab markup on the
+  // web, has always come back as a menu. The separation existed on paper.
+  //
+  // The `tabs` TYPE still exists in the builder and still has its own engine.
+  // This is what detection SUGGESTS, which is a different question from what a
+  // specialist chooses to build.
   const COMPONENT_BY_ROLE = {
-    tablist: 'tabs', menu: 'menu', menubar: 'menu', navigation: 'menu',
+    tablist: 'menu', menu: 'menu', menubar: 'menu', navigation: 'menu',
     dialog: 'dialog', alertdialog: 'dialog', listbox: 'listbox',
     combobox: 'combobox', grid: 'grid', table: 'table', tree: 'menu',
-    radiogroup: 'radio group', toolbar: 'toolbar', search: 'form',
-    tabpanel: '', tab: '', option: '', menuitem: '',   // parts, not components
+    // `radio`, not "radio group". The builder's type is called `radio`, so the
+    // longer name matched no type at all and the label led nowhere — one of the
+    // four names the reader could produce that nothing could build.
+    radiogroup: 'radio', toolbar: 'toolbar', search: 'form',
+    // Parts, not components. `checkbox` and `radio` are named here explicitly
+    // rather than left to fall through: without them a `<div role="checkbox">`
+    // carrying a class like "switch-nav" was read by the class rules instead,
+    // and a checkbox came back as a menu.
+    tabpanel: '', tab: '', option: '', menuitem: '', checkbox: '', radio: '',
   };
   const COMPONENT_BY_TAG = {
     nav: 'menu', form: 'form', table: 'table', dialog: 'dialog',
@@ -989,7 +1006,7 @@
     [/datepicker|calendar/i, 'datepicker'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
-    [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
+    [/\btabs\b|tab-bar|tabbar|tablist/i, 'menu'],
     [/pagination|pager/i, 'pagination'],
     [/tooltip|popover/i, 'tooltip'],
     [/breadcrumb/i, 'breadcrumb'],
@@ -1013,7 +1030,7 @@
     // about what any individual element is.
     [/react-datepicker|mat-datepicker|\bdatepicker__|-datepicker\b/i, 'datepicker'],
     [/mat-autocomplete|downshift|react-select|select2|choices__/i, 'combobox'],
-    [/mat-tab\b|mat-tab-|data-reach-tab|react-tabs__/i, 'tabs'],
+    [/mat-tab\b|mat-tab-|data-reach-tab|react-tabs__/i, 'menu'],
     [/mat-expansion|MuiAccordion|chakra-accordion/i, 'accordion'],
     [/mat-menu|MuiMenu|headlessui-menu/i, 'menu'],
     [/mat-dialog|MuiDialog|headlessui-dialog|ReactModal/i, 'dialog'],
@@ -1042,16 +1059,263 @@
   // keeps `_ngcontent-` and `sc-` out of the class list above. An attribute
   // earns a place here only when it names one kind of thing.
   const COMPONENT_BY_ATTR = [
-    [/^data-reach-tab-list$|^data-reach-tabs$/i, 'tabs'],
+    [/^data-reach-tab-list$|^data-reach-tabs$/i, 'menu'],
   ];
 
   const FIELD = 'input:not([type="hidden"]),select,textarea';
 
+  // What a page draws between the steps of a trail. Kept to characters that
+  // mean "and then" — a comma or a bullet separates a LIST, which a row of tags
+  // or a byline is, and neither is a breadcrumb.
+  const SEPARATOR_RE = /^[\s>/\\|›»«‹→⟩›»\-–—]+$/;
+
+  /**
+   * A "you are here" trail, recognised by shape rather than by name.
+   *
+   * Two conditions, and BOTH are required:
+   *   1. something separates each pair of links
+   *   2. the text is smaller than the page's own body text
+   *
+   * Either alone matches far too much. Small text is everywhere, and a single
+   * "·" between two links is how a byline is written. Together they are close
+   * to specific: a short chain of links, in small type, with arrows in it.
+   *
+   * Cheap-first, because this runs on every collected element: the link count
+   * and the length gate are free, the separator scan is one shallow pass, and
+   * the computed style — the only expensive call — happens last and only for
+   * the handful of elements that got that far.
+   */
+  function looksLikeBreadcrumb(el) {
+    try {
+      var links = el.querySelectorAll('a[href]');
+      // Two is a real trail (Home › Shoes). More than eight is a nav, not a
+      // trail — nobody is nine levels deep and rendering all of it.
+      if (links.length < 2 || links.length > 8) return false;
+
+      // The links must be the element's own content, not something it happens
+      // to contain. Without this every wrapper up to <body> holds a trail.
+      var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text.length > 160) return false;
+
+      // A separator between the links: either an element whose entire text is
+      // one, or the text left over between two links once the links themselves
+      // are removed.
+      var separated = false;
+      for (var i = 0; i < el.children.length && !separated; i++) {
+        var kid = el.children[i];
+        if (kid.children.length || kid.matches('a,button')) continue;
+        var t = (kid.textContent || '').trim();
+        if (t && SEPARATOR_RE.test(t)) separated = true;
+      }
+      if (!separated) {
+        // The bare-text case: <a>Home</a> / <a>Shoes</a>, with the slash as a
+        // text node rather than an element of its own.
+        var between = text;
+        for (var j = 0; j < links.length; j++) {
+          between = between.replace((links[j].textContent || '').trim(), ' ');
+        }
+        var gaps = between.split(' ').filter(function (g) { return g.trim(); });
+        separated = gaps.length >= 1 && gaps.every(function (g) { return SEPARATOR_RE.test(g); });
+      }
+      if (!separated) return false;
+
+      // …and smaller than the page's body text. Read last, because this is the
+      // only call here that costs anything.
+      var size = parseFloat((getComputedStyle(el) || {}).fontSize) || 0;
+      var base = parseFloat((getComputedStyle(document.body) || {}).fontSize) || 16;
+      return !!size && size < base;
+    } catch (e) { return false; }
+  }
+
+  // Where a thing SITS, which detection had no notion of until now: it asked
+  // only what an element was CALLED. Both of these are structural first —
+  // jsdom has no layout, and neither does a page still painting — with the
+  // geometric answer as a fallback rather than the basis.
+  const HEADERISH = /(^|[^a-z])(header|masthead|topbar|top-bar)([^a-z]|$)/i;
+  const FOOTERISH = /(^|[^a-z])(footer|colophon|site-info)([^a-z]|$)/i;
+
+  function inRegion(el, tag, role, re) {
+    for (var p = el; p; p = p.parentElement) {
+      if (p.tagName === tag) return true;
+      var r = (p.getAttribute && p.getAttribute('role') || '').toLowerCase();
+      if (r === role) return true;
+      if (re.test(typeof p.className === 'string' ? p.className : '')) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The bar across the top of the page.
+   *
+   * Structural only — a <header>, role="banner", or a name that says so. A
+   * geometric test was written first and taken back out: "within 200px of the
+   * top of the document" is true of a footer on a short page, and it would have
+   * rescued exactly the elements the footer rule below exists to demote. A top
+   * bar that says nothing in its tag, its role OR its class is rare enough not
+   * to be worth a rule that fires on the wrong thing.
+   */
+  function inPageHeader(el) {
+    try { return inRegion(el, 'HEADER', 'banner', HEADERISH); } catch (e) { return false; }
+  }
+
+  function inPageFooter(el) {
+    try { return inRegion(el, 'FOOTER', 'contentinfo', FOOTERISH); } catch (e) { return false; }
+  }
+
+  /** Would anything below have called this a menu? Asked before location. */
+  function menuish(el) {
+    try {
+      var role = (el.getAttribute('role') || '').toLowerCase();
+      if (role === 'menu' || role === 'menubar' || role === 'navigation' || role === 'tablist') return true;
+      if (el.tagName === 'NAV') return true;
+      var cls = typeof el.className === 'string' ? el.className : '';
+      if (!cls) return false;
+      for (var i = 0; i < COMPONENT_BY_CLASS.length; i++) {
+        var rule = COMPONENT_BY_CLASS[i];
+        if (rule[0].test(cls) || rule[0].test(classWords(cls))) return rule[1] === 'menu';
+      }
+      return false;
+    } catch (e) { return false; }
+  }
+
+  /**
+   * A table used for LAYOUT, which is not a table at all.
+   *
+   * On an old site this is most of them: `<table>` as a positioning tool, with
+   * a logo in one cell, the nav in another and the sidebar in a third. Mapping
+   * one as a data table tells a screen reader there is a grid of records here
+   * and invites its user to read across rows that mean nothing — worse than
+   * leaving it alone, and the rules have said so all along. They said it only
+   * to the model: the code named every `<table>` a table, and named it SURE, so
+   * a page with forty layout tables produced forty rows to dismiss one by one.
+   *
+   * Deliberately conservative. Everything here is a reason to say NO — anything
+   * that cannot be ruled out stays a table, because a real data table that is
+   * skipped is a defect nobody is told about, while a layout table that slips
+   * through is one row somebody deletes.
+   */
+  function looksLikeLayoutTable(el) {
+    try {
+      var rows = el.querySelectorAll('tr');
+      // One row, or one column, is a strip. Nothing to read across or down.
+      if (rows.length < 2) return true;
+
+      var counts = [];
+      for (var i = 0; i < rows.length; i++) {
+        counts.push(rows[i].querySelectorAll('td,th').length);
+      }
+      var max = Math.max.apply(null, counts);
+      if (max < 2) return true;
+
+      // A cell holding a whole other part of the page. A data cell holds a
+      // value; a layout cell holds the navigation.
+      if (el.querySelector('table,nav,form,header,footer,aside')) return true;
+
+      // Rows that do not agree how many cells they have are a layout, or a
+      // table so broken that mapping it would be guesswork either way. One
+      // ragged row is ordinary (a colspan footer); half of them is not.
+      var ragged = counts.filter(function (n) { return n !== max; }).length;
+      if (ragged > counts.length / 2) return true;
+
+      return false;
+    } catch (e) { return false; }
+  }
+
+  /**
+   * A month of days, recognised by its shape rather than by its name.
+   *
+   * A datepicker was found by the words "datepicker" or "calendar" and by
+   * nothing else, which leaves two whole cases unfound: one written in a
+   * framework nobody named, and one that sits IN the page rather than opening
+   * from a field — an inline calendar has no trigger to press and no popup to
+   * watch, so neither the reader nor the behavioural layer had anything to go
+   * on.
+   *
+   * A month is unmistakable when counted: twenty-eight to thirty-one boxes
+   * whose entire text is a number between 1 and 31, sharing one parent, with
+   * the numbers running up. Nothing else on a page looks like that — a
+   * pagination strip is a dozen at most, and a price list does not start at 1
+   * and climb by one.
+   */
+  function looksLikeCalendar(el) {
+    try {
+      var kids = el.querySelectorAll('td,th,li,button,span,div,a');
+      var byParent = new Map();
+      for (var i = 0; i < kids.length; i++) {
+        var t = (kids[i].textContent || '').trim();
+        if (!/^([1-9]|[12][0-9]|3[01])$/.test(t)) continue;
+        var p = kids[i].parentElement;
+        if (!p) continue;
+        // The days of a month are usually a row of a table or a cell of a grid,
+        // so climb one level when the parent is plainly a row wrapper.
+        var key = /^(TR|LI)$/.test(p.tagName) && p.parentElement ? p.parentElement : p;
+        if (!byParent.has(key)) byParent.set(key, []);
+        byParent.get(key).push(Number(t));
+      }
+      var hit = false;
+      byParent.forEach(function (nums) {
+        if (hit || nums.length < 28 || nums.length > 62) return;   // 62: two months shown
+        // Running upwards, allowing the leading and trailing days of the
+        // neighbouring months that every calendar shows.
+        var rising = 0;
+        for (var j = 1; j < nums.length; j++) if (nums[j] === nums[j - 1] + 1) rising++;
+        if (rising >= nums.length * 0.7) hit = true;
+      });
+      return hit;
+    } catch (e) { return false; }
+  }
+
   function componentHint(el) {
+    // A menu is a menu by WHERE IT SITS, not only by what it is called — the
+    // rule agreed for this component. Five columns of links in the footer are
+    // ordinary links: they are already links, already in the tab order, and a
+    // menu mapping on them adds arrow-key navigation nobody is looking for and
+    // a role that says this is the site's navigation when it is not.
+    //
+    // Demoted rather than renamed: what a footer nav IS depends on where its
+    // links go, and that is the link/button rule's question, not this one's.
+    // Answering `menu` here was the only wrong answer available.
+    //
+    // The footer is the one place this fires. A menu in the header, a menu a
+    // hamburger opens and a vertical side menu are all menus, and between them
+    // that is everywhere else a menu is found.
+    if (menuish(el) && inPageFooter(el) && !inPageHeader(el)) return null;
+
     const role = (el.getAttribute('role') || '').toLowerCase();
     if (role && Object.prototype.hasOwnProperty.call(COMPONENT_BY_ROLE, role)) {
       return COMPONENT_BY_ROLE[role] ? { name: COMPONENT_BY_ROLE[role], sure: true } : null;
     }
+    // Ahead of the tag rule, and only for this one case.
+    //
+    // A breadcrumb is written `<nav aria-label="Breadcrumb">` — that IS the
+    // recommended markup — and `<nav>` means menu, decided and sure, before any
+    // class or label is read. So the one trail on the page that followed the
+    // pattern exactly was the one certain to be misnamed. Measured: a
+    // `<nav class="breadcrumb">` came back as `menu`.
+    //
+    // Kept to unambiguous evidence. "crumb" appears in no other component's
+    // vocabulary, so there is nothing for this to steal.
+    if (/crumb/i.test(el.className || '') ||
+        /crumb/i.test(el.getAttribute('aria-label') || '')) {
+      return { name: 'breadcrumb', sure: true };
+    }
+
+    // Ahead of the table rule and ahead of the class words: a calendar is very
+    // often a <table>, and answering "table" for a month of days is a mapping
+    // that decorates a grid of records nobody is reading.
+    if (looksLikeCalendar(el)) return { name: 'datepicker', sure: true };
+
+    if (el.tagName === 'TABLE') {
+      if (looksLikeLayoutTable(el)) return null;
+      // A data table with no header cells anywhere is still a data table, and
+      // the missing headers are the defect worth reporting rather than a reason
+      // to skip it. Marked as a guess, because "rows and columns of values with
+      // nothing naming them" is the one shape a layout table can still wear.
+      var headed = false;
+      try { headed = !!el.querySelector('th'); } catch (e) {}
+      return { name: 'table', sure: headed };
+    }
+
     const tag = el.tagName.toLowerCase();
     if (COMPONENT_BY_TAG[tag]) return { name: COMPONENT_BY_TAG[tag], sure: true };
 
@@ -1061,7 +1325,7 @@
     // was nothing here. The parts were seen; the thing they add up to was not.
     try {
       if (el.querySelectorAll(':scope > [role="tab"]').length >= 2) {
-        return { name: 'tabs', sure: true };
+        return { name: 'menu', sure: true };
       }
     } catch (e) { /* :scope is old enough to rely on, but never worth throwing for */ }
 
@@ -1088,19 +1352,32 @@
       }
     }
 
-    // Three or more fields gathered under one element is a form, whatever the
-    // tag says. The newsletter sign-up — name, email, phone, date, size, eight
-    // checkboxes and a submit — was reported as "14 inputs" and no component,
-    // which is exactly backwards: it is the most mappable thing on the page.
+    // A trail of links with something drawn between them, in small type, is a
+    // breadcrumb — whatever it is called.
     //
-    // Counting fields ALONE said every wrapper up to <body> was a form, because
-    // every one of them contains three inputs somewhere below. Two conditions
-    // narrow it to the thing a person would point at:
+    // The class patterns above already catch a trail whose author wrote
+    // "breadcrumb" somewhere. This is for the ones that did not, and it is a
+    // SHAPE test rather than a name test for the same reason the probe exists:
+    // a name can be absent, a shape cannot.
     //
-    //   · nothing INSIDE it already holds them all — otherwise the answer is
-    //     that tighter element, and this is just its packaging
-    //   · it is not mostly navigation — a form is fields with a few links in
-    //     it, not a page of links that happens to contain a search box
+    // Two conditions, both required, per the rule agreed for this component.
+    // Either alone is far too loose — every row of links has small text
+    // somewhere, and a "·" between two links is also how a byline is written.
+    if (looksLikeBreadcrumb(el)) return { name: 'breadcrumb', sure: false };
+
+    // A form is a real <form>, or a thing with more than one field and a way to
+    // send them. That is the whole rule, and it replaces a longer one.
+    //
+    // What it replaces: three-or-more fields, plus a "packaging" test that
+    // climbed for the tightest cluster, plus a links-versus-fields ratio. Those
+    // existed because there was no submit requirement, so every wrapper up to
+    // <body> qualified and the heuristics were there to pick which wrapper. Ask
+    // for the SUBMIT and the ambiguity mostly goes: a wrapper holding two forms
+    // holds two submits, and the tightest element holding both a field group and
+    // one submit is the form.
+    //
+    // Two fields rather than three, also decided: a login box is an email, a
+    // password and a button, and it was under the old floor.
     try {
       // A real <form> IS a form, and could never say so.
       //
@@ -1109,41 +1386,26 @@
       // itself, so a <form> matched its own guard — the one element on the page
       // that needs no heuristic at all was the only one the heuristic could not
       // name. Reported as, exactly: funny, it did not catch the form.
-      //
-      // No field threshold here. A search form is one input and a button and is
-      // still a form; the three-field rule exists to find forms built out of
-      // divs, where there is no tag to go on. A <form> inside a <form> is
-      // invalid HTML, so there is no nesting case to resolve.
       if (el.tagName === 'FORM') return { name: 'form', sure: true };
 
-      const fields = el.querySelectorAll(FIELD).length;
-      if (fields >= 3 && !el.closest('form')) {
-        // Descend to the tightest cluster. Asking only whether a child holds
-        // ALL of them is not enough: a page with three separate forms has them
-        // split across three children, so their common ancestor is the page —
-        // which is how "form?" ended up on twenty sections in a row. If ANY
-        // child is itself a group of fields, this element is packaging.
-        let packaging = Array.prototype.some.call(el.children,
-          (ch) => ch.querySelectorAll(FIELD).length >= 3);
-
-        // …unless there is exactly one way to submit all of it, in which case
-        // it is one form whose fields are laid out in rows.
-        //
-        // The shop's shoe finder is that shape: a row of five selects, a row of
-        // five checkboxes, and one "Find my shoe" button over both. The rule
-        // above called the panel packaging and named each row a form instead —
-        // two halves of one thing, and u1.fix.form applied to each decorates
-        // two halves.
-        //
-        // One submit is a form. Several means this really is the wrapper round
-        // several forms, and the tighter answer was right after all — which is
-        // the case the packaging rule was written for and still catches.
-        if (packaging && el.querySelectorAll(SUBMITISH).length === 1) packaging = false;
-
-        const links = el.querySelectorAll('a[href]').length;
-        if (!packaging && links <= fields) return { name: 'form', sure: false };
+      var fields = el.querySelectorAll(FIELD).length;
+      if (fields >= 2 && !el.closest('form')) {
+        var submits = el.querySelectorAll(SUBMITISH).length;
+        // No submit, no form. A row of filter selects that applies on change is
+        // a real thing and it is not this; it has no send.
+        if (submits >= 1) {
+          // Still the tightest answer: if a child already holds a whole form —
+          // its own fields AND its own submit — then this element is the
+          // wrapper around several, and each child is the form.
+          var packaging = Array.prototype.some.call(el.children, function (ch) {
+            return ch.querySelectorAll(FIELD).length >= 2 &&
+                   ch.querySelectorAll(SUBMITISH).length >= 1;
+          });
+          if (!packaging) return { name: 'form', sure: false };
+        }
       }
     } catch (e) {}
+
     return null;
   }
 
@@ -1214,9 +1476,19 @@
     '[role]', '[tabindex]', '[onclick]', '[contenteditable="true"]',
     'nav', 'form', 'table', 'dialog', 'iframe', 'video', 'audio',
     'img', 'svg[aria-label]', 'h1', 'h2', 'h3',
-    ...CLASS_HINTS.map(t => `[class*="${t}"]`),
-    // ` i` — case-insensitive. Without it MuiAccordion and ReactModal are
-    // collected by nothing, which is the whole reason these are a separate list.
+    // ` i` — case-insensitive, on BOTH lists.
+    //
+    // It used to be on the library list only, and that left half of the
+    // camelCase fix undone. `classWords` below teaches the NAMING stage to read
+    // `dealTabs` as "deal Tabs" — but naming never runs on an element this
+    // stage did not collect, and a CSS substring match is case-sensitive, so
+    // `[class*="tab"]` does not match `dealTabs`. The rule existed and could
+    // never fire, which is exactly the failure the two lists are supposed to be
+    // kept in step to prevent. Measured: `<div class="dealTabs">` was named
+    // nothing at all, while `<div class="tab-bar">` was named tabs.
+    ...CLASS_HINTS.map(t => `[class*="${t}" i]`),
+    // Without it MuiAccordion and ReactModal are collected by nothing, which is
+    // the whole reason these are a separate list.
     ...LIB_HINTS.map(t => `[class*="${t}" i]`),
     // Reach UI names its tabs with a data- attribute and no class at all, so a
     // class hint cannot see it however it is spelled.
@@ -1335,6 +1607,33 @@
     return out;
   }
 
+  /**
+   * Trails that hold a chain of links and announce nothing.
+   *
+   * The same gap `fieldClusters` fills for forms, for the same reason: the
+   * naming stage has a breadcrumb rule and it can never run, because a
+   * `<div class="crumbs">` matches no tag, no role and no class hint, so it is
+   * never collected. Measured before this existed — the rule was written, the
+   * test passed on paper, and every trail came back unnamed.
+   *
+   * Deliberately narrow: only elements whose OWN children are the links, so
+   * one trail yields one element rather than every wrapper above it.
+   */
+  function trailCandidates(scope) {
+    const out = [];
+    let links;
+    try { links = qsaDeep(scope, 'a[href]'); } catch (e) { return out; }
+    if (links.length < 2) return out;
+    const seen = new Set();
+    for (const a of links) {
+      const p = a.parentElement;
+      if (!p || seen.has(p) || p === document.body || p === document.documentElement) continue;
+      seen.add(p);
+      if (looksLikeBreadcrumb(p)) out.push(p);
+    }
+    return out;
+  }
+
   function candidateElements(scope) {
     const rec = root.__u1EventMap;
     let recorded = null;
@@ -1344,7 +1643,7 @@
     // merged in DOCUMENT ORDER below rather than appended — the collector's
     // "a component inside a component of the same kind is the same component"
     // rule reads the outermost first and depends on that order.
-    const clusters = fieldClusters(scope);
+    const clusters = fieldClusters(scope).concat(trailCandidates(scope));
     const merge = (base) => {
       if (!clusters.length) return base;
       const set = new Set(base);
@@ -2640,7 +2939,18 @@
     try { el = document.querySelector(rootSel); } catch (e) { return null; }
     if (!el) return null;
 
-    var TEXTY = 'input[type="search"],input[type="text"],input:not([type])';
+    // A FIELD, not only a text box.
+    //
+    // This required a text input, so a filter bar built out of five dropdowns —
+    // which is most of the filter bars there are — matched nothing and fell
+    // between every rule in the tool: not a form (no submit), not a combobox
+    // (no popup), and not this. Somebody picks "Haifa", four branches become
+    // one, and nothing says so.
+    //
+    // The need is identical whichever control does the narrowing; only the
+    // event differs, and the corrector listens for both now.
+    var TEXTY = 'input[type="search"],input[type="text"],input:not([type]),' +
+                'select,input[type="checkbox"],input[type="radio"]';
     var input = null, list = null, wrap = el;
 
     for (var up = 0; up < 5 && wrap; up++) {
@@ -2671,8 +2981,21 @@
 
     var items2 = Array.prototype.slice.call(list.children).filter(function (x) { return x.nodeType === 1; });
     var itemSel = commonSelectorFor(list, items2, robustSelector(list));
+    // Every control that narrows the list, not just the first one found. Five
+    // selects need five listeners; a selector matching one of them announces
+    // for one of them and stays silent for the other four.
+    var fieldSel = robustSelector(input);
+    try {
+      var siblings = Array.prototype.slice.call(wrap.querySelectorAll(TEXTY))
+        .filter(function (f) { return !list.contains(f); });
+      if (siblings.length > 1) {
+        var common = commonSelectorFor(wrap, siblings, robustSelector(wrap));
+        if (common && common.selector && isU1Valid(common.selector)) fieldSel = common.selector;
+      }
+    } catch (e) {}
+
     var sels = {
-      field: robustSelector(input),
+      field: fieldSel,
       results: robustSelector(list),
       item: (itemSel && itemSel.selector) || '',
     };
@@ -3112,6 +3435,136 @@
     return { role: have, willWrite: want };
   }
 
+  /**
+   * Every heading on the page, in reading order, with what is wrong beside it.
+   *
+   * For the review a person actually does: walk the outline, see each heading
+   * for what it is, and leave alone the ones that are right. Nothing here
+   * changes anything — it reports, and a level is only rewritten when somebody
+   * asks for one.
+   *
+   * `should` is the level the outline implies, and it is a SUGGESTION, never an
+   * action: a page's own author knows things about their structure that reading
+   * order does not show. The rules have always said not to renumber a page's
+   * headings to make them tidy, and this is the shape that keeps that true —
+   * the tool proposes, the specialist decides, and approving costs nothing
+   * because approving writes nothing.
+   */
+  function headingOutline() {
+    var out = [], prev = 0, seenH1 = false;
+    var nodes;
+    try {
+      nodes = qsaDeep(document, 'h1,h2,h3,h4,h5,h6,[role="heading"]');
+    } catch (e) { return out; }
+
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!visibleInViewport && !visible(el)) continue;
+      var tag = /^H([1-6])$/.exec(el.tagName);
+      var lvl = tag ? Number(tag[1])
+              : Number(el.getAttribute('aria-level')) || 0;
+      var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+
+      var problem = null, should = lvl;
+      if (!text) problem = 'empty';
+      else if (lvl === 1 && seenH1) problem = 'second h1';
+      else if (!lvl) { problem = 'no level'; should = prev ? prev + 1 : 2; }
+      else if (prev && lvl > prev + 1) { problem = 'skips ' + (lvl - prev - 1); should = prev + 1; }
+
+      if (lvl === 1) seenH1 = true;
+      if (lvl) prev = lvl;
+
+      out.push({
+        selector: robustSelector(el),
+        level: lvl || null,
+        text: text.slice(0, 80),
+        problem: problem,
+        should: problem && should !== lvl ? should : null,
+      });
+    }
+    // A page with no top-level heading at all is a fact about the OUTLINE
+    // rather than about any one heading, so it rides along rather than being
+    // pinned on whichever heading happens to be first.
+    out.noH1 = out.length > 0 && !seenH1;
+    return out;
+  }
+
+  // What a link says when it says nothing: the text that is identical on every
+  // card and describes none of them.
+  const VAGUE = /^(read|learn|find out|see|view|discover)\s*(more|all)?$|^(more|details|continue|go|here|click here)$|^(קרא|קראו)\s*עוד$|^(עוד|פרטים|המשך|לחצו כאן|לפרטים)$/i;
+
+  /**
+   * Cards: a heading, a picture, some text, and a link that says "Read more".
+   *
+   * Every one of those links is announced identically, so a screen reader's
+   * list of links on a news page reads "Read more, Read more, Read more" —
+   * twelve times, describing nothing. It is the commonest defect on any site
+   * with a grid of articles, and no scan rule finds it, because nothing is
+   * malformed: the markup is correct and the words are useless.
+   *
+   * The fix already exists in the builder — a name built from the link's own
+   * text plus the heading in its card. What was missing was finding them.
+   */
+  function cardDescriptions() {
+    var out = [];
+    var links;
+    try { links = qsaDeep(document, 'a[href],button'); } catch (e) { return out; }
+
+    var vague = links.filter(function (el) {
+      var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      return t && VAGUE.test(t);
+    });
+    // One "read more" on a page is a link somebody should rename by hand. A
+    // repeated one is a pattern, and a pattern is what a mapping is for.
+    if (vague.length < 2) return out;
+
+    // Group by the shape of the card each one sits in, so a page with articles
+    // AND products produces one row per KIND rather than one per card.
+    var groups = new Map();
+    vague.forEach(function (el) {
+      var card = null, heading = null;
+      for (var p = el.parentElement, up = 0; p && up < 5; p = p.parentElement, up++) {
+        var h = p.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+        if (h && (h.textContent || '').trim()) { card = p; heading = h; break; }
+      }
+      if (!card || !heading) return;
+      var key = (card.className || card.tagName) + '|' + heading.tagName;
+      if (!groups.has(key)) groups.set(key, { cards: [], links: [], headings: [] });
+      var g = groups.get(key);
+      g.cards.push(card); g.links.push(el); g.headings.push(heading);
+    });
+
+    groups.forEach(function (g) {
+      if (g.links.length < 2) return;
+      var linkSel = commonSelectorFor(document.body, g.links, null);
+      // Across ALL the headings, not the first card's.
+      //
+      // Taking it from one card produced `div>article:nth-child(1)>h3`, which
+      // is pinned to that card — and the code that applies this walks up from
+      // each link looking for the heading selector, falls back to the FIRST
+      // match in the document when it finds none, and would therefore have
+      // named every card on the page after the first one. Twelve links reading
+      // "Read more Winter boots" is worse than twelve reading "Read more",
+      // because it is confidently wrong instead of merely useless.
+      var headSel = commonSelectorFor(document.body, g.headings, null);
+      if (!linkSel || !linkSel.selector || !headSel || !headSel.selector) return;
+      if (!isU1Valid(linkSel.selector) || !isU1Valid(headSel.selector)) return;
+      // It has to reach every card's heading, or it is the same bug in a
+      // different shape.
+      var reaches = 0;
+      try { reaches = document.querySelectorAll(headSel.selector).length; } catch (e) { return; }
+      if (reaches < g.headings.length) return;
+      out.push({
+        target: linkSel.selector,
+        heading: headSel.selector,
+        count: g.links.length,
+        says: (g.links[0].textContent || '').replace(/\s+/g, ' ').trim(),
+        example: (g.headings[0].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+      });
+    });
+    return out;
+  }
+
   const api = {
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
@@ -3125,6 +3578,8 @@
     highlightSelector,
     // a human's answer, without a model
     describeComponent, elementForMark, elementsForMarks, commonAncestor, ITEM_FIELD,
+    // the headings review, and the "Read more" cards beside it
+    headingOutline, cardDescriptions,
   };
 
   root.__u1SelectorIntel = api;

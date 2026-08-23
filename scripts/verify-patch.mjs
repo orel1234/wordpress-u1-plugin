@@ -610,5 +610,127 @@ console.log('\nstatic corrections');
     w.document.getElementById('a').getAttribute('tabindex') === '0');
 }
 
+// ── Loading indicators ─────────────────────────────────────────────────────
+//
+// Fixing the role alone left it announced as "progress bar" and nothing else:
+// correct role, correct value, NO NAME. Two of 4.1.2's three parts in place and
+// the third — most of the information a spinner exists to carry — missing.
+console.log('\nloading');
+{
+  const spin = async (html, lang) => {
+    const dom = new JSDOM(`<!doctype html><html lang="${lang || 'en'}"><body>${html}</body></html>`,
+      { runScripts: 'outside-only', pretendToBeVisual: true });
+    const proto = dom.window.HTMLElement.prototype;
+    Object.defineProperty(proto, 'offsetWidth', { get() { return 40; }, configurable: true });
+    dom.window.eval(slice(['loading']));
+    await settle(dom);
+    return dom.window.document.getElementById('s');
+  };
+
+  let el = await spin(`<div id="s" role="meter"></div>`);
+  check('role="meter" becomes progressbar — meter without a value is invalid',
+    el.getAttribute('role') === 'progressbar', String(el.getAttribute('role')));
+  check('…and it is given a name, instead of announcing as an unnamed bar',
+    el.getAttribute('aria-label') === 'Loading', String(el.getAttribute('aria-label')));
+  check('…and an indeterminate one is announced when it appears',
+    el.getAttribute('aria-live') === 'polite', String(el.getAttribute('aria-live')));
+
+  el = await spin(`<div id="s" role="meter">Loading results…</div>`);
+  check('the page\'s own words always beat ours',
+    !el.hasAttribute('aria-label'), String(el.getAttribute('aria-label')));
+
+  el = await spin(`<div id="s" role="meter" aria-label="Uploading"></div>`);
+  check('a name the page already set is not replaced',
+    el.getAttribute('aria-label') === 'Uploading', String(el.getAttribute('aria-label')));
+
+  // With a value, aria-live would read out every tick — a download becomes a
+  // stream of interruptions, which is worse than silence.
+  el = await spin(`<div id="s" role="progressbar" aria-valuenow="40"></div>`);
+  check('a DETERMINATE bar is not made live', el.getAttribute('aria-live') === null,
+    String(el.getAttribute('aria-live')));
+
+  // A Hebrew page announcing "Loading" in English is a worse answer than the
+  // one it replaces.
+  el = await spin(`<div id="s" role="meter"></div>`, 'he');
+  check('the name is in the page\'s own language', el.getAttribute('aria-label') === 'טוען',
+    String(el.getAttribute('aria-label')));
+}
+
+// ── Tooltips, and WCAG 1.4.13 ──────────────────────────────────────────────
+//
+// Two defects were written into the tooltip region as prose and one and a half
+// were left standing. This is the half that mattered most: the previous version
+// RECORDED the pointer being over the tooltip in a data attribute and then did
+// nothing with it — a state nothing reads is the same as no fix.
+console.log('\ntooltips');
+{
+  const dom = boot(`<span id="trig">?</span><div id="tip" role="tooltip">Ships in two days</div>`,
+    ['tooltip']);
+  await settle(dom);
+  const d = dom.window.document;
+  const trig = d.getElementById('trig'), tip = d.getElementById('tip');
+
+  // 1. The library ties these together only inside its own onTooltipShow, so
+  //    the first time the trigger takes focus there is nothing to announce —
+  //    and the sentence the tooltip adds is the whole reason it exists.
+  check('the trigger is tied to its tooltip up front, not on first show',
+    trig.getAttribute('aria-describedby') === tip.id,
+    String(trig.getAttribute('aria-describedby')));
+  check('…and a tooltip on a non-focusable trigger becomes keyboard-reachable',
+    trig.getAttribute('tabindex') === '0', String(trig.getAttribute('tabindex')));
+
+  // 2. HOVERABLE. The library dismisses on the trigger's mouseout, which fires
+  //    the moment the pointer leaves the trigger — including when it is moving
+  //    ONTO the tooltip to read it. For somebody magnifying the screen that is
+  //    a tooltip which cannot be read at all.
+  // THE ORDER OF EVENTS IS THE WHOLE PROBLEM, and a first attempt at this
+  // check missed it by testing the arrival first. The real journey is:
+  //
+  //     pointer leaves trigger → mouseout → dismissed
+  //     pointer arrives at tooltip        → nothing there
+  //
+  // The dismissal always precedes the arrival. Any fix conditioned on having
+  // already arrived is inert in exactly the case it exists for — which is what
+  // the first one was, and it passed a test that dispatched them the other way
+  // round. Dispatched in the real order here.
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let dismissed = 0;
+  trig.addEventListener('mouseout', () => { dismissed++; });
+
+  trig.dispatchEvent(new dom.window.MouseEvent('mouseout', { bubbles: true }));
+  check('leaving the trigger does not dismiss it instantly', dismissed === 0, String(dismissed));
+
+  await wait(120);                                   // walking there
+  tip.dispatchEvent(new dom.window.MouseEvent('mouseenter', { bubbles: true }));
+  await wait(400);                                   // longer than the grace
+  check('…the pointer reaches the tooltip and it is still there, readable',
+    dismissed === 0, String(dismissed));
+
+  // …and everything else about dismissal is left exactly as it was.
+  tip.dispatchEvent(new dom.window.MouseEvent('mouseleave', { bubbles: true }));
+  await wait(20);
+  check('leaving the tooltip closes it', dismissed > 0, String(dismissed));
+
+  // A tooltip nobody walks to must not stay on screen following you around.
+  const lone = boot(`<span id="t2">?</span><div id="tip2" role="tooltip">x</div>`, ['tooltip']);
+  await settle(lone);
+  let gone = 0;
+  const t2 = lone.window.document.getElementById('t2');
+  t2.addEventListener('mouseout', () => { gone++; });
+  t2.dispatchEvent(new lone.window.MouseEvent('mouseout', { bubbles: true }));
+  await wait(400);
+  check('a tooltip nobody walks to closes on its own', gone > 0, String(gone));
+
+  // A page that already did it right is left alone.
+  const ok = boot(`<button id="b" aria-describedby="t2">?</button><div id="t2" role="tooltip">x</div>`,
+    ['tooltip']);
+  await settle(ok);
+  const b = ok.window.document.getElementById('b');
+  check('a trigger that was already tied is not given a second reference',
+    b.getAttribute('aria-describedby') === 't2', b.getAttribute('aria-describedby'));
+  check('…and a native button is not given a tabindex it does not need',
+    b.getAttribute('tabindex') === null, String(b.getAttribute('tabindex')));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

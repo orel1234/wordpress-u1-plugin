@@ -175,7 +175,8 @@ async function injectKeyboardGrids(tabId, grids) {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: (list) => {
-      if (!window.__u1InstallGridFromMapping || !window.__u1MakeClickable || !window.__u1InstallTabsFromMapping) {
+      if (!window.__u1InstallGridFromMapping || !window.__u1MakeClickable ||
+          !window.__u1InstallTabsFromMapping || !window.__u1InstallBreadcrumbFromMapping) {
         console.log('[U1 Studio] keyboard-grid: ENGINE NOT LOADED (grid-nav.js missing) for', list.length, 'mapping(s)');
         return;
       }
@@ -190,6 +191,8 @@ async function injectKeyboardGrids(tabId, grids) {
             ? window.__u1InstallTabsFromMapping(m.primary, m.config)
             : (m.custom === 'linkList')
             ? window.__u1FixLinkListFromMapping(m.primary, m.config)
+            : (m.custom === 'breadcrumb')
+            ? window.__u1InstallBreadcrumbFromMapping(m.primary, m.config)
             : window.__u1InstallGridFromMapping(m.primary, m.config);
           if (r && r.ok) n++; else errs.push((r && r.err) || 'unknown');
         } catch (e) { errs.push(e.message); }
@@ -232,7 +235,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     const early = earlyAll.filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
     if (early.length) { try { await injectMappings(tabId, early); } catch {} }
     // Arm the custom keyboard-grid engine early too (idempotent — it guards itself).
-    const earlyGrids = earlyAll.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList') && m.primary);
+    const earlyGrids = earlyAll.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList' || m.custom === 'breadcrumb') && m.primary);
     if (earlyGrids.length) { try { await injectKeyboardGrids(tabId, earlyGrids); } catch {} }
   }
 
@@ -249,7 +252,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     if (mappings.length) { try { await injectMappings(tabId, mappings); } catch {} }
 
     // Custom keyboard-grid mappings run our own engine — apply them too.
-    const grids = all.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList') && m.primary);
+    const grids = all.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList' || m.custom === 'breadcrumb') && m.primary);
     if (grids.length) { try { await injectKeyboardGrids(tabId, grids); } catch {} }
 
     const injectData = stored[`manualInject_${hostname}`];

@@ -697,6 +697,7 @@
         <option value="loading">loading</option>
         <option value="tooltip">tooltip</option>
         <option value="heading">heading</option>
+        <option value="breadcrumb">breadcrumb (custom — no U1)</option>
         <option value="aria-label">aria-label (custom description)</option>
         <option value="link-list">inline links (custom — parts touching links, names files)</option>
         <option value="keyboard-grid">keyboard grid (custom — arrow nav, no U1)</option>
@@ -864,6 +865,43 @@
       </div>
       <button class="btn-outline btn-sm" id="excludeAdd">Make it unreachable</button>
       <div class="map-mode-hint" id="excludeStatus"></div>
+    </details>
+
+    <!-- ── Static fixes ──────────────────────────────────────────────────────
+         Two things no scan rule finds, because nothing about them is
+         malformed. The headings are a REVIEW: approving writes nothing at all,
+         which is the point — a page's own author knows things about their
+         structure that reading order does not show. -->
+    <h3 class="section-sub" id="staticFixesTitle">Static fixes</h3>
+
+    <details class="scan-exclude" id="descBox">
+      <summary>Links that all say “Read more”</summary>
+      <p class="map-mode-hint">
+        A grid of cards, each with a heading and a link that says the same
+        thing. A screen reader’s list of links reads “Read more, Read more,
+        Read more” — describing none of them. Nothing here is malformed, so no
+        scan rule finds it: the markup is right and the words are useless.
+      </p>
+      <div class="btn-row">
+        <button class="btn-outline btn-sm" id="descFind">Find them on this page</button>
+      </div>
+      <div class="map-mode-hint" id="descFound"></div>
+      <div class="map-mode-hint" id="descStatus"></div>
+    </details>
+
+    <details class="scan-exclude" id="headingBox">
+      <summary>The headings on this page</summary>
+      <p class="map-mode-hint">
+        One heading per row, in reading order. <strong>Approving changes
+        nothing</strong> — no mapping is made and nothing is applied. A level is
+        only rewritten where you ask for one, because renumbering a page’s
+        headings to make them tidy is not a fix.
+      </p>
+      <div class="btn-row">
+        <button class="btn-outline btn-sm" id="headingReview">Review the headings</button>
+      </div>
+      <div class="map-mode-hint" id="headingStatus"></div>
+      <div id="headingList"></div>
     </details>
 
     <!-- A field that narrows a list already on the page — a branch locator, a

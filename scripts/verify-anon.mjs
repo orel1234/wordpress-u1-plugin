@@ -705,8 +705,10 @@ console.log('\na <form> is a form');
   check('…as ONE form, not one per row of fields',
     finder.name('.finder__row') !== 'form' && finder.name('.finder__opts') !== 'form',
     `${finder.name('.finder__row')} / ${finder.name('.finder__opts')}`);
-  check('…and the tab strip beside it is still its own component',
-    finder.name('.finder__tabs') === 'tabs', finder.name('.finder__tabs'));
+  // Still a component of its own — the point of this check — but named `menu`
+  // now that a strip and a nav bar are one component.
+  check('…and the strip beside it is still its own component',
+    finder.name('.finder__tabs') === 'menu', finder.name('.finder__tabs'));
 
   // The guard this replaces was written for a real case and still catches it.
   // One submit is a form whose fields are in rows; three submits is a page
@@ -721,23 +723,30 @@ console.log('\na <form> is a form');
     three.name('.page') !== 'form',
     `.page is ${three.name('.page')}`);
 
-  // A filter bar that applies on change has no submit anywhere. Still a form;
-  // there is simply nothing better to anchor on.
+  // No submit, no form — decided. A filter bar that applies on change is a real
+  // thing and it is not a form; it has no send. What it actually needs is a
+  // status message saying how many results are showing, which is the pattern
+  // `component-rules.md` describes and which has no type of its own yet.
   const bar = collectIn(`<div class="filters"><select id="a"></select><select id="b"></select><select id="c"></select></div>`);
-  check('a filter bar with no submit at all is still found',
-    bar.name('.filters') === 'form', bar.name('.filters'));
+  check('a filter bar with no submit is NOT a form',
+    bar.name('.filters') !== 'form', bar.name('.filters'));
 
-  // Two fields are not a form. Without a floor, every pair of inputs on a page
-  // becomes a component to map.
+  // Two fields are not a form on their own — without a floor every pair of
+  // inputs on a page becomes a component to map.
   const two = collectIn(`<div class="pair"><input><input></div>`);
-  check('two fields are not a form', two.name('.pair') !== 'form', two.name('.pair'));
+  check('two fields with nothing to send them are not a form', two.name('.pair') !== 'form', two.name('.pair'));
 
-  // Div-soup forms are what the three-field rule is for, and it is untouched.
-  // The wrapper has to be a candidate for any of this to reach it — a bare
-  // <div> with no tag, role, class or handler is not collected at all, and
-  // that is the pre-existing behaviour this change does not touch.
-  const e = collectIn(`<div id="soup" tabindex="-1"><input type="text"><input type="email"><select><option>A</option></select></div>`);
-  check('a form built out of divs is still found by counting fields',
+  // …but two fields AND a way to send them are. A login box is an email, a
+  // password and a button, and it sat under the old three-field floor.
+  const login = collectIn(`<div class="login" tabindex="-1"><input type="email"><input type="password"><button>Sign in</button></div>`);
+  check('two fields and a submit ARE a form — a login box is the case',
+    login.name('.login') === 'form', login.name('.login'));
+
+  // Div-soup forms are the point of having a rule at all. The wrapper has to be
+  // a candidate for any of this to reach it — a bare <div> with no tag, role,
+  // class or handler is not collected, which is pre-existing and untouched.
+  const e = collectIn(`<div id="soup" tabindex="-1"><input type="text"><input type="email"><select><option>A</option></select><button>Send</button></div>`);
+  check('a form built out of divs is found by its fields and its submit',
     e.name('#soup') === 'form', e.name('#soup'));
 }
 
@@ -786,6 +795,70 @@ console.log('\nfingerprints a framework left behind');
 {
   const named = (body, sel) => collectIn(body).name(sel);
 
+  // ── Where a menu SITS is part of what makes it one ────────────────────────
+  //
+  // Detection had no notion of location at all: it asked what an element was
+  // CALLED and never where it sat, so five columns of links in the footer came
+  // back as a menu exactly like the nav bar at the top. They are ordinary
+  // links — already links, already in the tab order — and a menu mapping on
+  // them adds arrow-key navigation nobody is looking for and a role claiming
+  // this is the site's navigation.
+  check('a nav in the HEADER is a menu',
+    named('<header><nav id="x" class="main-nav"><a href="/a">A</a><a href="/b">B</a></nav></header>', '#x') === 'menu',
+    named('<header><nav id="x" class="main-nav"><a href="/a">A</a><a href="/b">B</a></nav></header>', '#x'));
+  check('…the same nav in the FOOTER is not',
+    named('<footer><nav id="x" class="foot-nav"><a href="/a">A</a><a href="/b">B</a></nav></footer>', '#x') !== 'menu',
+    named('<footer><nav id="x" class="foot-nav"><a href="/a">A</a><a href="/b">B</a></nav></footer>', '#x'));
+  check('…nor are footer link columns, whatever the class says',
+    named('<div class="site-footer"><div id="x" class="menu"><a href="/a">A</a><a href="/b">B</a></div></div>', '#x') !== 'menu',
+    named('<div class="site-footer"><div id="x" class="menu"><a href="/a">A</a><a href="/b">B</a></div></div>', '#x'));
+  // The exceptions agreed alongside the rule: both are menus wherever they sit.
+  check('a vertical side menu is still a menu',
+    named('<aside class="sidebar"><nav id="x" class="side-menu"><a href="/a">A</a></nav></aside>', '#x') === 'menu',
+    named('<aside class="sidebar"><nav id="x" class="side-menu"><a href="/a">A</a></nav></aside>', '#x'));
+  check('a hamburger panel is still a menu, outside the header though it is',
+    named('<div id="x" class="mobile-menu"><a href="/a">A</a><a href="/b">B</a></div>', '#x') === 'menu',
+    named('<div id="x" class="mobile-menu"><a href="/a">A</a><a href="/b">B</a></div>', '#x'));
+  // Only MENUS are placed. A carousel in the footer is still a carousel — the
+  // rule is about what a row of links means, not about the footer being inert.
+  check('a carousel in the footer is untouched by the rule',
+    named('<footer><div id="x" class="carousel"><div class="slide">s</div></div></footer>', '#x') === 'carousel',
+    named('<footer><div id="x" class="carousel"><div class="slide">s</div></div></footer>', '#x'));
+
+  // ── A table used for LAYOUT is not a table ────────────────────────────────
+  //
+  // On an old site this is most of them: <table> as a positioning tool, a logo
+  // in one cell, the nav in another. Mapping one as a data table tells a screen
+  // reader there is a grid of records here and invites its user to read across
+  // rows that mean nothing. The rules have said so all along — and said it only
+  // to the model, while the code named every <table> a table and named it SURE.
+  // A page with forty layout tables produced forty rows to dismiss one by one.
+  const tbl = (inner) => named(`<table id="x">${inner}</table>`, '#x');
+
+  check('a data table with headers is a table',
+    tbl(`<thead><tr><th>Product</th><th>Price</th></tr></thead>
+         <tbody><tr><td>Runner</td><td>320</td></tr><tr><td>Trainer</td><td>410</td></tr></tbody>`) === 'table');
+  // Missing headers is the DEFECT, not a reason to skip it.
+  check('rows and columns with no headers are still a table',
+    tbl(`<tr><td>Runner</td><td>320</td></tr><tr><td>Trainer</td><td>410</td></tr>
+         <tr><td>Walker</td><td>280</td></tr>`) === 'table',
+    tbl(`<tr><td>Runner</td><td>320</td></tr><tr><td>Trainer</td><td>410</td></tr><tr><td>Walker</td><td>280</td></tr>`));
+
+  check('one row of a logo, a nav and a form is layout, not a table',
+    tbl(`<tr><td><img alt="logo"></td><td><nav><a href="/a">Shop</a></nav></td>
+         <td><form><input><button>Go</button></form></td></tr>`) !== 'table');
+  check('a table holding another table is layout',
+    tbl(`<tr><td><table><tr><td><a href="/x">One</a></td></tr></table></td></tr><tr><td>x</td></tr>`) !== 'table');
+  check('a single column is layout — nothing to read across',
+    tbl(`<tr><td>A</td></tr><tr><td>B</td></tr><tr><td>C</td></tr>`) !== 'table');
+  check('rows that disagree how many cells they have are layout',
+    tbl(`<tr><td>a</td><td>b</td><td>c</td></tr><tr><td>d</td></tr><tr><td>e</td></tr><tr><td>f</td></tr>`) !== 'table');
+  // …but ONE ragged row is ordinary. A totals row spanning the width is not a
+  // reason to throw a real table away.
+  check('a single colspan totals row does not make it layout',
+    tbl(`<tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr>
+         <tr><td colspan="2">total</td></tr>`) === 'table');
+
   check('a Material datepicker is a datepicker',
     named('<div id="x" class="mat-datepicker-content"><input></div>', '#x') === 'datepicker',
     named('<div id="x" class="mat-datepicker-content"><input></div>', '#x'));
@@ -813,7 +886,7 @@ console.log('\nfingerprints a framework left behind');
     named('<div id="x" class="ReactModal__Content"><a href="/">A</a></div>', '#x') === 'dialog',
     named('<div id="x" class="ReactModal__Content"><a href="/">A</a></div>', '#x'));
   check('Reach UI tabs are found by their data- attribute, having no class',
-    named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x') === 'tabs',
+    named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x') === 'menu',
     named('<div id="x" data-reach-tab-list><button>A</button><button>B</button></div>', '#x'));
 
   // A site that says "carousel" in its own words is read in its own words. The

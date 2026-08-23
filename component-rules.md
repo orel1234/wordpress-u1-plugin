@@ -143,6 +143,11 @@ beside it under a common parent. `.search-suggestions`, `.autocomplete__list`,
 A field that narrows a list which is **already on the page**: a branch locator,
 a "filter by city" box, a search that rewrites the results below it as you type.
 
+**The field does not have to be a text box.** A filter bar of five dropdowns, or
+a column of checkboxes, narrows the same list and needs the same thing. Somebody
+picks "Haifa", four branches become one, and nothing says so. `field` may be a
+selector matching every control that narrows the list.
+
 **Do not map this as a combobox, and do not give it `role="combobox"` or
 `aria-expanded`.** An ARIA combobox has a popup that opens and closes. This list
 is always there. Those roles describe a control that does not exist and leave a
@@ -165,8 +170,48 @@ The fix:
 3. never `aria-live` on the list itself — that re-reads every result on every
    keystroke, which is worse than silence
 
-Telling the two apart: if the list is visible before anyone types, it is this.
-If typing makes a list appear that was not there, it is a combobox.
+Telling the two apart — and it is NOT whether the list floats. A results
+container that goes from empty to populated is a popup in every sense ARIA cares
+about, even though it sits inline in the page and never overlays anything.
+
+The question is whether the list was on the page before anybody TOUCHED the
+field — which is a step earlier than typing, and that step is what decides:
+
+1. touch the field without typing. If a list appears that was not there, it is a
+   **combobox** — however full it opens, and whatever typing then does to it. A
+   popup showing every option, narrowing as you type, is still a popup.
+2. only if nothing appeared does the typing decide: the list gets SHORTER →
+   **filter**; an empty container FILLS → **combobox**.
+
+Neither can be told from the markup, because both are a text field with a list
+beside it. This is measured, not read.
+
+## breadcrumb
+
+The "you are here" trail. Not a u1.fix component — the extension ships its own
+engine — but it is mapped from the builder like any other type.
+
+Recognise it by TWO things together, never one alone: a separator between each
+pair of links (`/ › » → ·` or a small icon), and text noticeably smaller than the
+page's body text. A row of links with no separator is not a breadcrumb; in the
+header it is a menu, and anywhere else it is ordinary links.
+
+- `container` — the element wrapping the whole trail. It becomes the navigation
+  landmark, so it must be the wrapper, not the list inside it
+- `item` — each link. Leave empty and every link inside the container is used,
+  which is right for almost every trail
+- `current` — the item for the page you are on. Leave empty and the LAST item is
+  used, which is what a breadcrumb means. Fill it only when the trail ends in
+  something that is not the current page
+- `separator` — the `/` or `›` when it is written in the markup rather than
+  drawn in CSS. Leave empty and elements whose entire text is a separator
+  character are found and hidden
+
+`label` names the landmark and defaults to "Breadcrumb". A page that already
+labelled the trail in its own language keeps its label — do not overwrite it.
+
+The current item does NOT have to stop being a link. `aria-current="page"` is
+what marks it either way.
 
 ## link-list
 

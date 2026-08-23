@@ -1477,14 +1477,38 @@
 //#endregion
 
 //#region u1-patch:loading
-// role="meter" is wrong twice over. The spec requires aria-valuenow on it and
-// the library sets none, so the role is invalid as written. And meter describes
-// a static measurement within a known range — a progress indicator is
-// role="progressbar", which is also allowed to carry no value while
-// indeterminate.
+// ─────────────────────────────────────────────────────────────────────────────
+//  Loading indicators.
+//
+//  role="meter" is wrong twice over. The spec requires aria-valuenow on it and
+//  the library sets none, so the role is invalid as written. And meter
+//  describes a static measurement within a known range — a progress indicator
+//  is role="progressbar", which is also allowed to carry no value while it is
+//  indeterminate.
+//
+//  Fixing the role alone left it announced as "progress bar" and nothing else:
+//  correct role, correct value, NO NAME. Measured, not assumed. A person hears
+//  that something is in progress and never learns what — which is most of the
+//  information a spinner exists to carry, and is a plain 4.1.2 failure with
+//  two of its three parts already in place.
+//
+//  And a spinner that APPEARS says nothing at all unless something announces
+//  it. That is added only for the indeterminate kind: a progressbar with a
+//  value re-announces on every change of that value, which turns a download
+//  into a stream of interruptions and is worse than silence.
+// ─────────────────────────────────────────────────────────────────────────────
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
+
+  // The site's own language, because a Hebrew page announcing "Loading" in
+  // English is a worse answer than the one it replaces.
+  var loadingWord = function () {
+    var lang = (document.documentElement.getAttribute('lang') || '').toLowerCase();
+    if (lang.indexOf('he') === 0) return 'טוען';
+    if (lang.indexOf('ar') === 0) return 'جارٍ التحميل';
+    return 'Loading';
+  };
 
   P.correct(function () {
     u.qsa('[role="meter"]').forEach(function (el) {
@@ -1494,6 +1518,32 @@
       var now = u.get(el, 'aria-valuenow');
       if (now === null && el.hasAttribute('value')) {
         u.set(el, 'aria-valuenow', el.getAttribute('value'));
+      }
+    });
+
+    u.qsa('[role="progressbar"]').forEach(function (el) {
+      // ── A name ────────────────────────────────────────────────────────────
+      // Whatever the page already offers first: its own words always beat ours.
+      if (!u.named(el)) {
+        var own = (el.textContent || '').replace(/\s+/g, ' ').trim() ||
+                  (u.get(el, 'title') || '').trim();
+        if (!own) {
+          var img = el.querySelector('img[alt],svg title');
+          own = img ? ((img.getAttribute && img.getAttribute('alt')) || img.textContent || '').trim() : '';
+        }
+        u.set(el, 'aria-label', own || loadingWord());
+      }
+
+      // ── Announced when it appears ─────────────────────────────────────────
+      // Indeterminate only. With a value, every tick would be read out.
+      var hasValue = u.get(el, 'aria-valuenow') !== null;
+      if (!hasValue && u.get(el, 'aria-live') === null && !u.closest(el, '[aria-live]')) {
+        u.set(el, 'aria-live', 'polite');
+      }
+      // A determinate bar that was given a live region by an earlier pass — or
+      // by the page — is taken back out of it, for the same reason.
+      if (hasValue && u.get(el, 'aria-live') === 'polite' && el.hasAttribute('aria-label')) {
+        el.removeAttribute('aria-live');
       }
     });
   });
@@ -1534,30 +1584,144 @@
 //#endregion
 
 //#region u1-patch:tooltip
-// aria-describedby is attached only inside onTooltipShow, so the very first time
-// a trigger takes focus there is nothing to announce. And 1.4.13 is only half
-// met: the tooltip can be dismissed with Escape and on focusout, but it is not
-// hoverable — moving the pointer onto the tooltip makes it disappear, which
-// defeats reading it.
+// ─────────────────────────────────────────────────────────────────────────────
+//  Tooltips, and WCAG 1.4.13 Content on Hover or Focus (AA).
+//
+//  Two defects were written down here and one and a half were left standing.
+//  This closes both, and the note that described them is now a description of
+//  what is corrected rather than of what is missing.
+//
+//  1. THE NAME NEVER ARRIVES. The library attaches aria-describedby inside its
+//     own onTooltipShow, so the first time a trigger takes focus there is
+//     nothing tying the two together and a screen reader announces the control
+//     with no description at all. The whole point of a tooltip is the sentence
+//     it adds; a tooltip nobody hears is decoration. Tied up front here.
+//
+//  2. IT IS NOT HOVERABLE. 1.4.13 asks for three things and the library gives
+//     one and a half: dismissible with Escape — yes; persistent — mostly; and
+//     HOVERABLE — no. The library dismisses on the trigger's mouseout, which
+//     fires the moment the pointer leaves the trigger, including when it is
+//     moving onto the tooltip to read it. For somebody magnifying the screen,
+//     that is a tooltip that cannot be read at all: the text runs off the
+//     viewport and reaching for it makes it vanish.
+//
+//     This took two attempts and the first one is worth recording, because it
+//     looked right and did nothing. It recorded the pointer being over the
+//     tooltip in a data attribute; that was replaced with a check of the same
+//     thing at dismiss time — and the check always answers NO, because the
+//     order of events is
+//
+//         pointer leaves trigger → mouseout → dismissed
+//         pointer arrives at tooltip        → nothing there
+//
+//     The dismissal always precedes the arrival, and there is usually a gap of
+//     a few pixels to cross as well. A fix conditioned on having already
+//     arrived is inert in precisely the case it exists for.
+//
+//     What works is a GRACE PERIOD: hold the dismissal long enough to walk
+//     there. Landing on the tooltip cancels it; leaving the tooltip sends it at
+//     once; never arriving lets it through on its own.
+//
+//  Everything checks the current state first, so a library that ships its own
+//  fix and a page that was already correct are both left alone.
+// ─────────────────────────────────────────────────────────────────────────────
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var u = P.util;
+
+  // Long enough to cross the gap between a control and the bubble beside it,
+  // short enough that a tooltip left behind does not follow you around the
+  // page. The same figure the common tooltip libraries settle on.
+  var HOVER_GRACE_MS = 300;
 
   P.correct(function () {
     u.qsa('[role="tooltip"]').forEach(function (tip) {
       if (!tip.id) tip.id = 'u1p-tip-' + Math.random().toString(36).slice(2, 9);
 
-      // Keep the tooltip alive while the pointer is on it. The library dismisses
-      // on the trigger's mouseout, which fires the moment the pointer leaves the
-      // trigger — including when it moves onto the tooltip itself.
+      // ── 1. Tie it to its trigger, now, not on first show ──────────────────
+      //
+      // The trigger is whatever already points at this tooltip, or — the usual
+      // case, since the page has not been told to point at anything yet — the
+      // control it sits beside.
+      var trigger = document.querySelector('[aria-describedby~="' + tip.id + '"]');
+      if (!trigger) {
+        var near = tip.previousElementSibling || (tip.parentElement &&
+                   tip.parentElement.querySelector('button,a[href],input,[tabindex]'));
+        if (near && near !== tip && !tip.contains(near)) trigger = near;
+      }
+      if (trigger) {
+        var have = (u.get(trigger, 'aria-describedby') || '').split(/\s+/).filter(Boolean);
+        if (have.indexOf(tip.id) === -1) {
+          have.push(tip.id);
+          u.set(trigger, 'aria-describedby', have.join(' '));
+        }
+        // A tooltip on something a keyboard cannot reach is a tooltip only a
+        // mouse ever sees. 1.4.13 is about focus as much as hover.
+        if (!/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(trigger.tagName) &&
+            trigger.getAttribute('tabindex') === null) {
+          u.setTabIndex(trigger, 0);
+        }
+      }
+
+      // ── 2. Hoverable: a GRACE PERIOD, not a check ─────────────────────────
+      //
+      // The first version of this swallowed the dismiss only while the pointer
+      // was already ON the tooltip, and that is the one moment it cannot help:
+      // measured, the real sequence is
+      //
+      //   pointer leaves trigger  → mouseout fires → tooltip dismissed
+      //   pointer arrives at tooltip                → nothing there
+      //
+      // The dismissal happens BEFORE the arrival, always — and there is usually
+      // a gap of a few pixels to cross as well. Asking "is the pointer on the
+      // tooltip yet" at that instant always answers no, so the fix was inert in
+      // exactly the case it was written for.
+      //
+      // What actually works is holding the dismissal for long enough to walk
+      // there. The event is swallowed and re-sent after a pause; landing on the
+      // tooltip inside that pause cancels it, and leaving the tooltip sends it
+      // immediately. Nothing else about dismissal changes: Escape, focusout and
+      // every other path reach the library untouched.
       if (!tip.__u1pHover) {
         tip.__u1pHover = true;
+        var hovering = false, pending = null, passing = false;
+
+        var dismissNow = function () {
+          if (pending) { clearTimeout(pending); pending = null; }
+          if (!trigger) return;
+          try {
+            passing = true;    // so the re-sent event is not swallowed again
+            trigger.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+          } catch (e) {} finally { passing = false; }
+        };
+
         tip.addEventListener('mouseenter', function () {
-          tip.setAttribute('data-u1p-hovered', 'true');
+          hovering = true;
+          if (pending) { clearTimeout(pending); pending = null; }   // made it
         });
         tip.addEventListener('mouseleave', function () {
-          tip.removeAttribute('data-u1p-hovered');
+          hovering = false;
+          // Leaving the tooltip itself dismisses it, which is what a person
+          // expects and what "persistent until the trigger is left" means.
+          dismissNow();
         });
+
+        if (trigger && !trigger.__u1pHold) {
+          trigger.__u1pHold = true;
+          // Capture phase, so this runs before the library's own handler and
+          // can stop the event reaching it.
+          ['mouseout', 'mouseleave'].forEach(function (name) {
+            trigger.addEventListener(name, function (e) {
+              if (passing) return;                 // our own re-sent event
+              if (pending) { e.stopImmediatePropagation(); return; }
+              e.stopImmediatePropagation();
+              pending = setTimeout(function () {
+                pending = null;
+                if (!hovering) dismissNow();       // never got there — let it go
+              }, HOVER_GRACE_MS);
+            }, true);
+          });
+        }
       }
     });
   });
@@ -1774,7 +1938,13 @@
       // The status lives BESIDE the list, not on it. Making the list itself a
       // live region re-announces every result on every keystroke, which is
       // worse than silence — a count is the useful sentence.
-      var say = field.__u1pSay;
+      // Keyed on the LIST, not on the field. With one text box those are the
+      // same thing; with a filter bar of five selects, keying it on the field
+      // inserts five hidden status regions beside one list and every one of
+      // them announces on every change — so a screen reader hears the count
+      // five times. Found by extending this to selects, which is the first
+      // time more than one field ever pointed at the same list.
+      var say = list.__u1pSay;
       if (!say) {
         say = document.createElement('div');
         say.className = 'u1p-filter-status';
@@ -1784,7 +1954,7 @@
           'position:absolute;width:1px;height:1px;overflow:hidden;' +
           'clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap';
         list.parentNode.insertBefore(say, list);
-        field.__u1pSay = say;
+        list.__u1pSay = say;
       }
 
       var visible = function () {
@@ -1807,11 +1977,18 @@
 
       if (!field.__u1pFilter) {
         field.__u1pFilter = true;
-        // The page does its own filtering on input; this runs after it, so the
+        // The page does its own filtering first; this runs after it, so the
         // count is of what is left rather than what was there.
-        field.addEventListener('input', function () {
+        //
+        // BOTH events. `input` is what a text box fires and was all this
+        // listened for. A dropdown and a checkbox fire `change` and nothing
+        // else, so a filter bar built out of selects — which is most of the
+        // filter bars there are — announced nothing at all.
+        var after = function () {
           (W.requestAnimationFrame || setTimeout)(function () { report(); }, 0);
-        });
+        };
+        field.addEventListener('input', after);
+        field.addEventListener('change', after);
       }
       report();
     });

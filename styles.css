@@ -5092,3 +5092,76 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+
+/* ── Static fixes: the headings review and the "Read more" cards ────────────
+   One row per heading, scannable down the left edge: level, then text, then
+   what is wrong with it if anything. The controls sit at the end because the
+   common action is to read a row and do nothing — approving is the default and
+   it costs no click. */
+.section-sub {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--text);
+}
+.head-note {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.head-row:last-child { border-bottom: 0; }
+.head-lvl {
+  flex: 0 0 auto;
+  min-width: 46px;
+  font-family: var(--u1-font-mono);
+  font-weight: 600;
+  color: var(--brand);
+}
+.head-text {
+  flex: 1 1 140px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.head-problem {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--warn-bg, rgba(220, 150, 30, .14));
+  color: var(--warn-fg, #b5761a);
+  font-size: 11px;
+}
+.head-sel {
+  flex: 1 1 100%;
+  font-family: var(--u1-font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.head-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.head-suggest { font-size: 11px; color: var(--text-dim); }
+.head-level { font-size: 11px; padding: 2px 4px; }
+.desc-row {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
