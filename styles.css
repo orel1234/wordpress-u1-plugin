@@ -5191,3 +5191,17 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   text-indent: -14px;
   line-height: 1.5;
 }
+
+
+/* Which engines flagged a finding. Agreement between independent rulesets is
+   the strongest signal in the scan list, so it is on the row itself rather than
+   folded away in the detail. */
+.engine-chip {
+  display: inline-block; margin-inline-start: 6px; padding: 1px 6px;
+  border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  border: 1px solid var(--border); color: var(--text-muted); background: transparent;
+  vertical-align: middle;
+}
+.engine-chip.engine-u1  { color: var(--brand); border-color: var(--brand-border); }
+.engine-chip.engine-axe { color: #1a7f5a; border-color: #1a7f5a55; }
+.engine-chip.engine-ibm { color: #0f62fe; border-color: #0f62fe55; }

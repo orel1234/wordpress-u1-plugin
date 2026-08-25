@@ -12363,6 +12363,7 @@ document.getElementById('resetPickerBtn').addEventListener('click', resetPicker)
 //  TAB — SCAN (static content audit: headings, descriptions, alts, labels…)
 // ─────────────────────────────────────────────────────────────────────────────
 
+let scanEnginesRan = [];   // which third-party engines actually answered
 let scanResults = [];      // enriched findings [{ruleId, cat, severity, wcag, why, fix, issue, text, selector, detail}]
 let scanActiveCat = '*';   // current category filter
 let scanActiveSev = '*';   // current severity filter
@@ -12406,6 +12407,134 @@ const SCAN_RULES = {
   'aria-ref-broken':      { title: 'ARIA reference points to a missing id', wcag: '1.3.1', severity: 'Medium', category: 'Screen Reader Support', why: 'aria-labelledby / describedby / controls references an element that does not exist.', fix: 'Point the reference at a real element id.' },
   'target-size-small':    { title: 'Touch target too small', wcag: '2.5.8', severity: 'Medium', category: 'Custom Components', why: 'Users miss taps and hit the wrong item.', fix: 'Increase target size (~24px) or add spacing around targets.' },
 };
+
+// ── Equivalent findings across engines ───────────────────────────────────────
+//
+// axe, IBM and our own rules all flag a missing lang attribute, and they call
+// it html-has-lang, html_lang_exists and lang-missing. Shown as three rows that
+// is one fault reported three times, and the list stops being countable — which
+// is what a client is actually doing with it.
+//
+// So known equivalents collapse onto a shared concept. A hand-kept table rather
+// than fuzzy text matching, because a wrong merge HIDES a finding: two genuinely
+// different faults on one element would become one, and the one that disappears
+// is the one nobody knows to look for. Anything not in the table keeps its own
+// identity, which is the safe direction to be wrong in.
+const SCAN_CONCEPTS = {
+  'lang-missing': 'lang', 'axe.html-has-lang': 'lang', 'axe.html-lang-valid': 'lang',
+  'ibm.html_lang_exists': 'lang', 'ibm.html_lang_valid': 'lang',
+
+  'title-missing': 'doc-title', 'axe.document-title': 'doc-title',
+  'ibm.page_title_exists': 'doc-title', 'ibm.page_title_valid': 'doc-title',
+
+  'img-alt-missing': 'img-alt', 'axe.image-alt': 'img-alt', 'axe.input-image-alt': 'img-alt',
+  'ibm.img_alt_valid': 'img-alt', 'ibm.img_alt_null': 'img-alt',
+
+  'button-noname': 'button-name', 'axe.button-name': 'button-name',
+  'ibm.aria_accessiblename_exists': 'button-name',
+
+  'link-empty': 'link-name', 'axe.link-name': 'link-name', 'ibm.a_text_purpose': 'link-name',
+
+  'input-nolabel': 'input-label', 'axe.label': 'input-label',
+  'axe.form-field-multiple-labels': 'input-label', 'ibm.input_label_exists': 'input-label',
+
+  'dup-ids': 'dup-id', 'axe.duplicate-id': 'dup-id', 'axe.duplicate-id-active': 'dup-id',
+  'axe.duplicate-id-aria': 'dup-id', 'ibm.element_id_unique': 'dup-id',
+
+  'heading-skip': 'heading-order', 'axe.heading-order': 'heading-order',
+  'ibm.heading_level_valid': 'heading-order',
+  'heading-empty': 'heading-empty', 'axe.empty-heading': 'heading-empty',
+
+  'iframe-notitle': 'frame-title', 'axe.frame-title': 'frame-title',
+  'ibm.frame_title_exists': 'frame-title',
+
+  'zoom-disabled': 'zoom', 'axe.meta-viewport': 'zoom', 'ibm.meta_viewport_zoomable': 'zoom',
+
+  'landmarks-missing': 'landmarks', 'axe.region': 'landmarks',
+  'skip-link-missing': 'skip-link', 'ibm.skip_main_exists': 'skip-link',
+  'ibm.html_skipnav_exists': 'skip-link',
+
+  'table-noheaders': 'table-headers', 'axe.th-has-data-cells': 'table-headers',
+  'ibm.table_headers_exists': 'table-headers',
+
+  'tabindex-positive': 'tabindex', 'axe.tabindex': 'tabindex',
+};
+
+const SEVERITY_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+
+// Shown on every finding. Two engines agreeing is the strongest signal in the
+// list — it is what separates "a ruleset has an opinion" from "this is broken".
+const ENGINE_LABEL = { u1: 'U1', axe: 'axe', ibm: 'IBM' };
+
+/**
+ * One row per real fault, carrying the engines that found it.
+ *
+ * Agreement between independent engines is worth showing: it is the difference
+ * between "axe has an opinion" and "three rulesets say this is broken", and it
+ * is the first thing a specialist uses to decide what to fix first.
+ *
+ * Our own finding wins the visible text where there is one, because it is
+ * written for this audience — axe's failureSummary is written for the person
+ * who wrote the HTML.
+ */
+function mergeScanFindings(findings) {
+  const byKey = new Map();
+  for (const f of findings) {
+    if (!f || !f.ruleId) continue;
+    const concept = SCAN_CONCEPTS[f.ruleId] || f.ruleId;
+    // Same element, same concept — the selector matters, or every missing alt
+    // on the page would fold into one row.
+    const key = concept + '\u0000' + (f.selector || '') + '\u0000' + (f.detail || '');
+    const seen = byKey.get(key);
+    if (!seen) {
+      byKey.set(key, { ...f, engines: [f.engine || 'u1'] });
+      continue;
+    }
+    if (seen.engines.indexOf(f.engine || 'u1') === -1) seen.engines.push(f.engine || 'u1');
+    // The most severe verdict wins: engines disagree about impact, and quietly
+    // taking the milder one is how a critical fault gets sorted to the bottom.
+    if ((SEVERITY_RANK[f.severity] ?? 9) < (SEVERITY_RANK[seen.severity] ?? 9)) seen.severity = f.severity;
+    // Prefer a rule that carries a WCAG reference over one that does not.
+    if (!seen.wcag && f.wcag) seen.wcag = f.wcag;
+    // Our own wording is written for whoever reads the report.
+    if ((f.engine || 'u1') === 'u1') {
+      seen.issue = f.issue || seen.issue;
+      seen.why = f.why || seen.why;
+      seen.fix = f.fix || seen.fix;
+      seen.cat = f.cat || seen.cat;
+    }
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Run the third-party engines in the page and hand back normalised findings.
+ *
+ * Injected as files, into the ISOLATED world: full DOM access, and out of reach
+ * of the client site's Content-Security-Policy — which matters, because the
+ * sites most in need of a scan are the ones most likely to forbid a script.
+ *
+ * A failure here never fails the scan. Our own rules are the part that always
+ * works, and losing them because a 540KB bundle would not load on one page is a
+ * bad trade — but the caller is told which engines answered, so a half-run is
+ * never presented as a clean page.
+ */
+async function runScanEngines(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['vendor/axe.min.js', 'vendor/ace.js', 'scan-engines.js'],
+    });
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => (window.__u1ScanEngines ? window.__u1ScanEngines() : { findings: [], ran: [] }),
+    });
+    return (res && res.result) || { findings: [], ran: [] };
+  } catch (e) {
+    console.warn('[U1 Studio] scan engines could not run:', e);
+    return { findings: [], ran: [], err: String((e && e.message) || e) };
+  }
+}
 
 async function scanPageStatic() {
   const tab = await getTab();
@@ -12786,6 +12915,7 @@ function renderScanResults() {
         <span class="scan-sev-badge sev-${(r.severity || '').toLowerCase()}">${escapeHtml(r.severity || '')}</span>
         <span class="scan-issue-title">${escapeHtml(r.issue || '')}</span>
         ${r.wcag ? `<span class="wcag-chip">WCAG ${escapeHtml(r.wcag)}</span>` : ''}
+        ${(r.engines || []).map(e => `<span class="engine-chip engine-${e}">${escapeHtml(ENGINE_LABEL[e] || e)}</span>`).join('')}
         ${r.selector ? `<button class="btn-ghost btn-xs scan-hl" title="Highlight on page">🔍</button>` : ''}
       </div>
       <div class="scan-context">${escapeHtml(r.cat)}${r.text ? ` · ${escapeHtml(r.text)}` : ''}${r.detail ? ` <span class="scan-detail">(${escapeHtml(r.detail)})</span>` : ''}</div>
@@ -13187,17 +13317,33 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
   btn.textContent = 'Scanning…';
   showNotice(status, 'Analyzing the page for accessibility faults…', 'info', 0);
   const res = await scanPageStatic();
+  if (res.err) { btn.textContent = '🔎 Scan this page'; showNotice(status, res.err, 'error', 4000); return; }
+
+  btn.textContent = 'Running axe + IBM…';
+  const tab = await getTab();
+  const ext = tab ? await runScanEngines(tab.id) : { findings: [], ran: [] };
   btn.textContent = '🔎 Scan this page';
-  if (res.err) { showNotice(status, res.err, 'error', 4000); return; }
+
   // Enrich each raw finding with its catalog rule (title/why/fix/severity/wcag/category).
-  scanResults = (res.results || []).map(f => {
+  const ours = (res.results || []).map(f => {
     const rule = SCAN_RULES[f.ruleId] || {};
     return {
+      engine: 'u1',
       ruleId: f.ruleId, selector: f.selector, text: f.text, detail: f.detail,
       issue: rule.title || f.ruleId, why: rule.why || '', fix: rule.fix || '',
       severity: rule.severity || 'Medium', wcag: rule.wcag || '', cat: rule.category || 'Other',
     };
-  }).sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
+  });
+  const theirs = (ext.findings || []).map(f => ({
+    engine: f.engine, ruleId: f.ruleId, selector: f.selector, text: '', detail: f.detail,
+    issue: f.issue, why: f.why, fix: f.fix, severity: f.severity, wcag: f.wcag,
+    cat: f.engine === 'axe' ? 'axe-core' : 'IBM Equal Access', helpUrl: f.helpUrl,
+  }));
+  // Ours first, so that where an engine agrees with a rule we wrote, the wording
+  // the client reads is the one written for them.
+  scanResults = mergeScanFindings([...ours, ...theirs])
+    .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
+  scanEnginesRan = ext.ran || [];
   scanActiveCat = '*'; scanActiveSev = '*';
   status.style.display = 'none';
   document.getElementById('scanClearBtn').style.display = scanResults.length ? '' : 'none';
@@ -13214,7 +13360,17 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
   document.getElementById('scanCount').textContent =
     scanResults.length ? `${scanResults.length} issues${crit ? ` · ${crit} critical` : ''}${high ? ` · ${high} high` : ''}` : '';
   document.getElementById('scanReportRow').style.display = scanResults.length ? 'flex' : 'none';
-  if (!scanResults.length) showNotice(status, 'No automatic faults found on this page. 🎉', 'success', 4000);
+  if (!scanResults.length) {
+    // Which engines answered, not just the count. "No faults" from one engine
+    // and "no faults" from three are different claims, and the difference is
+    // invisible unless it is written down.
+    const ran = ['U1'].concat(scanEnginesRan.map(e => ENGINE_LABEL[e] || e));
+    showNotice(status, `No automatic faults found on this page (${ran.join(' + ')}). 🎉`, 'success', 5000);
+  } else if (scanEnginesRan.length < 2) {
+    const missing = ['axe', 'ibm'].filter(e => !scanEnginesRan.includes(e)).map(e => ENGINE_LABEL[e]);
+    showNotice(status, `${missing.join(' and ')} could not run on this page — these results are from ${
+      ['U1'].concat(scanEnginesRan.map(e => ENGINE_LABEL[e] || e)).join(' + ')} only.`, 'warn', 8000);
+  }
   renderScanFilters();
   renderScanResults();
 });

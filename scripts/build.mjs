@@ -32,6 +32,11 @@ const FILES = [
   // event-recorder.js is registered dynamically when precise event detection
   // is switched on. Both are read from the package, so both must ship.
   'selector-intel.js', 'event-recorder.js',
+  // The third-party scan engines, injected into the page on a scan. Vendored
+  // rather than fetched: the extension CSP allows 'self' only, and a scan that
+  // depended on a CDN would fail on exactly the locked-down sites that most
+  // need scanning.
+  'scan-engines.js', 'vendor/axe.min.js', 'vendor/ace.js',
   // ai-advisor.js talks to api.anthropic.com — which must stay listed in the
   // manifest's connect-src, or every review dies at the CSP.
   'ai-advisor.js',
