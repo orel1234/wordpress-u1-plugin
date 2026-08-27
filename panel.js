@@ -2409,6 +2409,12 @@ U1Store.onSiteWrite = async (keys, items) => {
     // here for a colleague either. Per-machine, three people on one large site
     // each waded through the same forty rejected items.
     if (parsed.prefix === 'dismissed') await U1Sync.pushSettings(currentHostname, { dismissed: value || [] });
+    // Same reasoning, and the owner asked for it in exactly these words: if it
+    // was deleted in the plugin it is deleted on the server too. A refusal to
+    // adopt the site's own fixes that lived only on this machine would be
+    // re-offered to every colleague, and one of them would eventually say yes
+    // to the thing you had already thrown out.
+    if (parsed.prefix === 'declined')  await U1Sync.pushSettings(currentHostname, { declined: value || [] });
   }
 };
 
@@ -2557,6 +2563,7 @@ async function pullSiteFromServer() {
     if (data.settings.skipLinks) writes[storageKey('skipLinks', currentHostname)] = data.settings.skipLinks;
     if (data.settings.u1Links)   writes[storageKey('u1Links', currentHostname)] = data.settings.u1Links;
     if (data.settings.dismissed) writes[storageKey('dismissed', currentHostname)] = data.settings.dismissed;
+    if (data.settings.declined)  writes[storageKey('declined', currentHostname)]  = data.settings.declined;
   }
   await U1Store.setLocalOnly(writes);
 
@@ -2617,7 +2624,7 @@ async function pushImportedSites(data, statusEl) {
         await U1Sync.pushMappings(host, list.map((m) => ({ key: mappingKey(m), payload: m })));
       }
       const fields = {};
-      for (const name of ['config', 'skipLinks', 'u1Links', 'dismissed']) {
+      for (const name of ['config', 'skipLinks', 'u1Links', 'dismissed', 'declined']) {
         const v = got[storageKey(name, host)];
         if (v) fields[name] = v;
       }
@@ -2641,7 +2648,7 @@ async function pushImportedSites(data, statusEl) {
 
 /** This machine's config, skip links and library URLs, on their way up. */
 async function pushLocalSettings() {
-  const names = ['config', 'skipLinks', 'u1Links', 'dismissed'];
+  const names = ['config', 'skipLinks', 'u1Links', 'dismissed', 'declined'];
   const keys = names.map((p) => storageKey(p, currentHostname));
   const got = await U1Store.get(keys);
   const fields = {};
@@ -7489,6 +7496,10 @@ document.getElementById('deleteAllBtn')?.addEventListener('click', async () => {
     // Through set(), not setLocalOnly: the server has to be told, or the next
     // pull brings every one of them straight back.
     await U1Store.set({ [key]: [] });
+    // Same as deleting one: any of these the site ALSO runs would be offered
+    // back for adoption the moment the list is drawn empty, which is the one
+    // moment the offer is loudest.
+    await rememberDeclinedFixes(list.filter((m) => m && typeof m === 'object').map(mappingKey));
     showNotice(status, `${list.length} mapping${list.length === 1 ? '' : 's'} deleted. ` +
       `Reload the page to see it without them.`, 'success', 8000);
   } catch (err) {
@@ -15686,6 +15697,43 @@ function mappingFromRecordedCall(call) {
  * exactly this elsewhere). So the offer says so, and the intended use is that
  * the adopted mappings REPLACE the old deployment rather than sit beside it.
  */
+/**
+ * Offers of the site's own fixes that have been turned down on this site.
+ *
+ * Kept as mapping keys, per site, and shared — see SITE_PREFIXES in store.js
+ * for why this is not the `dismissed` list.
+ */
+async function declinedFixKeys() {
+  try {
+    const key = storageKey('declined', currentHostname);
+    const v = (await U1Store.get([key]))[key];
+    return new Set(Array.isArray(v) ? v.filter((k) => typeof k === 'string') : []);
+  } catch { return new Set(); }
+}
+
+/**
+ * Remember that these offers were turned down.
+ *
+ * Written through U1Store.set, never setLocalOnly: that is what carries it to
+ * the server, which is the whole point — a refusal that lived on one machine
+ * would be re-offered to every colleague on the site.
+ */
+async function rememberDeclinedFixes(keys) {
+  const add = (keys || []).filter(Boolean);
+  if (!add.length) return 0;
+  try {
+    const key = storageKey('declined', currentHostname);
+    const have = await declinedFixKeys();
+    const before = have.size;
+    for (const k of add) have.add(k);
+    if (have.size === before) return 0;
+    // Bounded like the dismissed list, and for the same reason: it rides in
+    // every settings push.
+    await U1Store.set({ [key]: [...have].slice(-500) });
+    return have.size - before;
+  } catch { return 0; }
+}
+
 async function renderExistingFixes() {
   const box = document.getElementById('importExisting');
   if (!box) return;
@@ -15694,17 +15742,37 @@ async function renderExistingFixes() {
 
   const key = storageKey('mappings', currentHostname);
   const have = new Set(((await U1Store.get([key]))[key] || []).map(mappingKey));
+  // Offers already turned down. Read here rather than filtered at the source
+  // because the count in the heading has to be the count of what is actually
+  // being offered — "83 fixes" above a list of nine is worse than no heading.
+  const declined = await declinedFixKeys();
   const fresh = [];
   const seen = new Set();
+  let refused = 0;
   for (const c of calls) {
     const tpl = mappingFromRecordedCall(c);
     if (!tpl) continue;
     const k = mappingKey(tpl);
     if (have.has(k) || seen.has(k)) continue;   // already ours, or the page ran it twice
     seen.add(k);
+    if (declined.has(k)) { refused++; continue; }
     fresh.push(tpl);
   }
-  if (!fresh.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  if (!fresh.length) {
+    // Not silence. The site is still running them, and a person who cannot
+    // remember saying no has no way to find out otherwise.
+    box.style.display = refused ? '' : 'none';
+    box.className = 'advisor-note';
+    box.innerHTML = refused
+      ? `<strong>${refused} fix${refused === 1 ? '' : 'es'} the site runs ${refused === 1 ? 'is' : 'are'} set aside</strong> — ` +
+        `you turned ${refused === 1 ? 'it' : 'them'} down, here or on another machine, and ` +
+        `${refused === 1 ? 'it is' : 'they are'} not being offered again. The site still runs ` +
+        `${refused === 1 ? 'it' : 'them'}; only the offer is gone.` +
+        `<div class="btn-row"><button class="btn-outline btn-xs" id="restoreDeclinedBtn">` +
+        `Offer ${refused === 1 ? 'it' : 'them'} again</button></div>`
+      : '';
+    return;
+  }
 
   existingFixTemplates = fresh;
   const byType = {};
@@ -15720,12 +15788,47 @@ async function renderExistingFixes() {
     `and covered by monitoring. Your exported file will then call the same fixes the site's current ` +
     `deployment calls, so it is meant to REPLACE that deployment — two calls on the same elements fight.</div>` +
     `<div class="btn-row"><button class="btn-outline btn-sm" id="adoptExistingBtn">` +
-    `Adopt ${fresh.length === 1 ? 'it' : 'all ' + fresh.length} into my mappings</button></div>`;
+    `Adopt ${fresh.length === 1 ? 'it' : 'all ' + fresh.length} into my mappings</button>` +
+    // The offer is read from the live page, so saying nothing is not an answer
+    // that sticks — the page runs the same fixes tomorrow and asks again. Skip
+    // is the answer that sticks, and it travels to the server with everything
+    // else, so a colleague is not asked what you already decided.
+    `<button class="btn-outline btn-sm" id="skipExistingBtn" ` +
+    `title="Stop offering these. The site keeps running them; only the offer goes away.">` +
+    `Skip ${fresh.length === 1 ? 'it' : 'all ' + fresh.length}</button></div>` +
+    (refused ? `<div class="input-hint" style="display:block;">${refused} more ${refused === 1 ? 'was' : 'were'} ` +
+               `skipped earlier and ${refused === 1 ? 'is' : 'are'} not counted above.</div>` : '');
 }
 
 // The templates renderExistingFixes last offered, so Adopt saves exactly what
 // was described rather than re-reading a page that may have moved on.
 let existingFixTemplates = [];
+
+document.addEventListener('click', async (e) => {
+  const skip = e.target.closest('#skipExistingBtn');
+  if (skip) {
+    const status = document.getElementById('mappingsStatus');
+    skip.disabled = true;
+    const n = await rememberDeclinedFixes(existingFixTemplates.map(mappingKey));
+    existingFixTemplates = [];
+    await renderExistingFixes();
+    showNotice(status,
+      `${n} set aside. The site still runs them — nothing on the page changed — but they will not ` +
+      `be offered here again, on this machine or a colleague's. Take it back from the note that ` +
+      `replaces the offer.`, 'success', 9000);
+    return;
+  }
+
+  const restore = e.target.closest('#restoreDeclinedBtn');
+  if (restore) {
+    restore.disabled = true;
+    // Emptied rather than pruned: there is one offer and this puts it back.
+    await U1Store.set({ [storageKey('declined', currentHostname)]: [] });
+    await renderExistingFixes();
+    showNotice(document.getElementById('mappingsStatus'),
+      'Back on the list — for everyone on this site, not only here.', 'success', 6000);
+  }
+});
 
 document.addEventListener('click', async (e) => {
   if (!e.target.closest('#adoptExistingBtn')) return;
@@ -16020,6 +16123,21 @@ async function loadMappingsList() {
       const gone = list[i];
       list.splice(i, 1);
       await U1Store.set({ [key]: list });
+
+      // Deleting a mapping the SITE also runs is an answer to the adoption
+      // offer, not just a removal from the list.
+      //
+      // Without this, deleting the eighty-three you had just adopted put all
+      // eighty-three straight back into "this site is already running 83 U1
+      // fixes that are not in your list" — the offer is read from the live
+      // page, and the page still runs them. The list emptied and the offer
+      // refilled, on a loop, with no way out of it but adopting again.
+      //
+      // It goes to the server for the same reason every other decision does:
+      // deleted in the plugin means deleted there too, or a colleague is
+      // offered what you threw away.
+      if (gone && typeof gone === 'object') await rememberDeclinedFixes([mappingKey(gone)]);
+
       loadMappingsList();
       refreshExportInfo();
 

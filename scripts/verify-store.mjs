@@ -384,5 +384,53 @@ console.log('\n  Delete all mappings:');
         !/listSites|SITE_PREFIXES/.test(block[0]));
 }
 
+// ── Turning down the site's own fixes sticks, and it sticks for everyone ────
+//
+// The adoption offer is read from the LIVE page, so it is not answerable by
+// doing nothing: delete the mappings and the page still runs the same fixes,
+// so the offer refills with all of them. Saying no has to be recorded, and —
+// the owner was explicit about this — recorded on the server, not on one
+// machine, or the next colleague is offered exactly what was thrown out.
+{
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const storeSrc = readFileSync(join(ROOT, 'store.js'), 'utf8');
+
+  check("'declined' is a site key, so it syncs like the rest",
+        /SITE_PREFIXES = \[[^\]]*'declined'/.test(storeSrc));
+
+  const remember = /async function rememberDeclinedFixes[\s\S]*?\n\}/.exec(panelSrc);
+  check('…written through set(), which is what carries it off this machine',
+        !!remember && /await U1Store\.set\(/.test(remember[0]) &&
+        !/setLocalOnly/.test(remember[0]));
+  check('…and pushed as a setting, like the dismissed list beside it',
+        /parsed\.prefix === 'declined'\)\s*await U1Sync\.pushSettings\(currentHostname, \{ declined/.test(panelSrc));
+  check('…and read back on the next pull',
+        /data\.settings\.declined\)\s*writes\[storageKey\('declined', currentHostname\)\]/.test(panelSrc));
+  check('…and carried by an imported backup and by a first push',
+        /'u1Links', 'dismissed', 'declined'/.test(panelSrc));
+
+  check('the offer skips what was turned down',
+        /const declined = await declinedFixKeys\(\);/.test(panelSrc) &&
+        /if \(declined\.has\(k\)\) \{ refused\+\+; continue; \}/.test(panelSrc));
+  check('…and there is a Skip beside Adopt, not only Adopt',
+        /id="skipExistingBtn"/.test(panelSrc) && /#skipExistingBtn/.test(panelSrc));
+  check('…and a way to take that back',
+        /id="restoreDeclinedBtn"/.test(panelSrc) && /#restoreDeclinedBtn/.test(panelSrc));
+
+  // The loop the owner hit: adopt 83, delete 83, be offered 83 again.
+  const delBtn = /container\.querySelectorAll\('\.del-btn'\)[\s\S]*?\n  \}\);/.exec(panelSrc);
+  check('deleting one is an ANSWER to the offer, not just a removal',
+        !!delBtn && /rememberDeclinedFixes\(\[mappingKey\(gone\)\]\)/.test(delBtn[0]));
+  const delAll = /document\.getElementById\('deleteAllBtn'\)[\s\S]*?\n\}\);/.exec(panelSrc);
+  check('…and so is deleting all of them, which is when the offer is loudest',
+        !!delAll && /rememberDeclinedFixes\(/.test(delAll[0]));
+
+  // The two lists must not become one. A dismissal hides an element from the
+  // SCAN, and the panel promises elsewhere that deleting a mapping brings it
+  // back — filing deletions under 'dismissed' would quietly break that.
+  check("a declined offer is not filed as a scan dismissal",
+        !!delBtn && !/rememberDismissed/.test(delBtn[0]));
+}
+
 console.log(failures === 0 ? '\n✅ The store keeps every stored key intact.\n' : `\n❌ ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

@@ -26,7 +26,16 @@
   // 'dismissed' holds selectors the specialist skipped in a scan, so scanning
   // the same page again — which is the normal way to reach things that only
   // exist while open — does not put them straight back on the list.
-  const SITE_PREFIXES = ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject', 'u1Links', 'dismissed'];
+  //
+  // 'declined' is the same idea for a different offer, and deliberately NOT the
+  // same list. The site's own running fixes are offered for adoption every time
+  // the panel opens, because they are read from the live page and the page
+  // keeps running them however many times you say no. Turning that offer down —
+  // or deleting a mapping that came from it — is a decision that has to be
+  // remembered somewhere, and it must not be remembered in 'dismissed': a
+  // dismissal hides an element from the SCAN, and "delete the mapping to see it
+  // again" is behaviour the panel promises elsewhere and has to keep.
+  const SITE_PREFIXES = ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject', 'u1Links', 'dismissed', 'declined'];
 
   // Session and scratch data. The "__" prefix is load-bearing: sanitizeImport()
   // rejects it and the backup export strips it, so a credential can never ride
