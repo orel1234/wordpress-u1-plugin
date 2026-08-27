@@ -1388,14 +1388,39 @@ async function applyMappingsBatch(items) {
         // Set and stamps u1st-avoid-change-detection). So measure the DOM: snap
         // the attributes U1 writes before and after, and report what changed.
         const U1_ATTR = /^(role|tabindex)$|^aria-|^u1st-/;
+        // ── Bookkeeping is not decoration ───────────────────────────────────
+        //
+        // Two of the attributes U1 writes mean only "I have been here":
+        // `u1st-avoid-change-detection`, its handled-marker, and
+        // aria-hidden="false", which is the default and announces nothing to
+        // anyone. Counting them made a fix that emitted ZERO roles come back
+        // as "U1 decorated the container and left those fields alone" — the
+        // report was pointing at the mapping's fields while the truth was
+        // that U1 had done nothing at all.
+        //
+        // Seen on molinahealthcare.com: menu .mainNav and menu .signin both
+        // reported that, and the same run then advised removing
+        // u1st-avoid-change-detection from the site's markup. The served HTML
+        // there contains no u1st-* attribute anywhere (checked) — U1 itself
+        // had written the marker. Both halves of that message came from
+        // treating the marker as a change.
+        //
+        // aria-hidden is excluded only at the value "false": true → false is
+        // a real repair and still registers, because the old signature held
+        // `aria-hidden=true` and the new one holds nothing.
+        const meaningful = (a) =>
+          U1_ATTR.test(a.name) &&
+          a.name !== 'u1st-avoid-change-detection' &&
+          !(a.name === 'aria-hidden' && a.value === 'false');
+        const sig = (el) => {
+          let s = '';
+          for (const a of el.attributes) if (meaningful(a)) s += a.name + '=' + a.value + '|';
+          return s;
+        };
         const snap = (root) => {
           const m = new Map();
           const els = [root].concat(Array.from(root.querySelectorAll('*')).slice(0, 800));
-          for (const el of els) {
-            let s = '';
-            for (const a of el.attributes) if (U1_ATTR.test(a.name)) s += a.name + '=' + a.value + '|';
-            m.set(el, s);
-          }
+          for (const el of els) m.set(el, sig(el));
           return m;
         };
         const changedCount = (before, after) => {
@@ -1568,7 +1593,27 @@ async function applyMappingsBatch(items) {
             // Tell them apart by whether U1 left its fingerprints: it assigns
             // generated u1st-<uuid> ids to what it decorates.
             const preStamped = target.hasAttribute('u1st-avoid-change-detection');
-            const u1Touched = /^u1st-/.test(target.id || '') || !!target.querySelector('[id^="u1st-"]');
+            // Did U1 write this marker, or did the site's author?
+            //
+            // The old test was "does anything here carry a generated u1st-<uuid>
+            // id". That misses the component this matters most for: fix.menu
+            // writes the marker, aria-hidden and tabindex and no ids at all, so
+            // every menu U1 had already handled was classified as the site
+            // opting out — and the panel told people to edit markup that, on
+            // molinahealthcare.com, does not contain the attribute at all.
+            //
+            // Three signals now, cheapest first. The registry is the only exact
+            // one: it lives in the page, so it is emptied by the reload that is
+            // the remedy, and if the selector is in it then WE put the marker
+            // there on an earlier Apply this page load.
+            const applyLog = (window.__u1StudioApplied = window.__u1StudioApplied || {});
+            const u1Touched =
+              applyLog[sel] === true ||
+              /^u1st-/.test(target.id || '') ||
+              !!target.querySelector('[id^="u1st-"]') ||
+              !!target.querySelector('[data-u1-revert]') ||
+              Array.from(target.attributes).some(
+                (a) => /^u1st-/.test(a.name) && a.name !== 'u1st-avoid-change-detection');
 
             // Lift it before the call — but ONLY when it is the site's own.
             //
@@ -1607,9 +1652,10 @@ async function applyMappingsBatch(items) {
               try { els = Array.from(document.querySelectorAll(fsel)); } catch { continue; }
               for (const el of els.slice(0, 200)) {
                 fieldEls++;
-                for (const a of el.attributes) {
-                  if (U1_ATTR.test(a.name)) { fieldElsTouched++; break; }
-                }
+                // sig(), not U1_ATTR: an element carrying nothing but the
+                // handled-marker was not decorated, and counting it as
+                // decorated hid the rebuilt-after-U1 case it is here to find.
+                if (sig(el)) fieldElsTouched++;
               }
             }
             const rebuiltAfterU1 = preStamped && fieldEls > 0 && fieldElsTouched === 0;
@@ -1638,11 +1684,7 @@ async function applyMappingsBatch(items) {
               try { els = Array.from(document.querySelectorAll(fsel)); } catch { continue; }
               if (!els.length) continue;
               const m = new Map();
-              for (const el of els.slice(0, 300)) {
-                let s = '';
-                for (const a of el.attributes) if (U1_ATTR.test(a.name)) s += a.name + '=' + a.value + '|';
-                m.set(el, s);
-              }
+              for (const el of els.slice(0, 300)) m.set(el, sig(el));
               fieldSnaps[field] = m;
             }
 
@@ -1657,6 +1699,7 @@ async function applyMappingsBatch(items) {
               } catch {}
             }
             const vBefore = visualSnap();
+            applyLog[sel] = true;   // read on the NEXT Apply, before any reload
             raw.fix[it.type](sel, it.config);
 
             // U1 decorates asynchronously (RxJS + MutationObserver), and how
@@ -1725,11 +1768,7 @@ async function applyMappingsBatch(items) {
             const fieldsNoEffect = [];
             for (const [field, m] of Object.entries(fieldSnaps)) {
               let moved = 0;
-              for (const [el, v] of m) {
-                let s = '';
-                for (const a of el.attributes) if (U1_ATTR.test(a.name)) s += a.name + '=' + a.value + '|';
-                if (s !== v) moved++;
-              }
+              for (const [el, v] of m) if (sig(el) !== v) moved++;
               if (!moved) fieldsNoEffect.push(field);
             }
 
@@ -14388,7 +14427,7 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
       const stale = details.some(d => d.reason === 'already-processed');
       let msg;
       if (optOut.length) {
-        msg = `Nothing changed: ${optOut.map(d => d.sel).join(', ')} carries u1st-avoid-change-detection in the page's own HTML, which tells U1 to skip that element entirely. Reloading will not help — the attribute has to come out of the site's markup.`;
+        msg = `Nothing changed: ${optOut.map(d => d.sel).join(', ')} already carried u1st-avoid-change-detection before the fix ran, which tells U1 to skip that element entirely. Reload the page and press Apply All once — if it says this again on a clean load, the attribute is in the site's own HTML and has to come out there.`;
       } else if (stale) {
         msg = `Nothing changed: U1 had already processed ${noEffect === 1 ? 'this element' : 'these elements'} on this page load. Reload the page, then apply again.`;
       } else {
@@ -14414,24 +14453,30 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
       const unblocked = details.filter(d => d.unblocked);
 
       // What to say about ONE mapping, gathered from wherever it was recorded.
+      //
+      // Ask describeApply for EVERY line, not only the half-applied ones.
+      //
+      // It was called only when `fieldsNoEffect` was set, so a mapping that
+      // changed nothing at all — the one case where the person has no other
+      // way to find out why — printed as a bare "✗ dialog #MedicareAlert"
+      // with not one word of explanation, while describeApply had the reason
+      // ready ("U1 had already processed this element this page load. Reload
+      // the page and press Apply All."). It is the same question for every
+      // status; there was never a reason to answer it for one of them.
       const notesFor = (d) => {
         const out = [];
-        if (d.fieldsNoEffect && d.fieldsNoEffect.length) {
-          const m = fixes.find(f => (f.firstArg || f.primary) === d.sel);
-          const said = describeApply({ ok: true, applied: 1, details: [d] }, m).msg
-            .replace(/^Applied — \d+ elements? changed on the page\. /, '');
-          if (said) out.push(said);
-        }
-        if (d.roleClash) {
+        const m = fixes.find(f => (f.firstArg || f.primary) === d.sel);
+        const said = describeApply({ ok: true, applied: 1, details: [d], errs: engineErrs, u1State }, m).msg
+          .replace(/^Applied — \d+ elements? changed on the page\.\s*/, '');
+        if (said) out.push(said);
+        if (d.roleClash && !said.includes('role="' + d.roleClash.role + '"')) {
           out.push(`The site's own HTML gives it role="${d.roleClash.role}". U1 will not write ` +
                    `role="${d.roleClash.willWrite}" over an author's role, so this cannot land ` +
                    `while that attribute is there.`);
         }
-        if (d.unblocked) {
-          out.push(`The markup carries u1st-avoid-change-detection. It was lifted here so the fix ` +
-                   `could run, but it must come out of the site's HTML or this will not work in ` +
-                   `production.`);
-        }
+        // No separate opt-out sentence. describeApply already ends the `ok`
+        // message with it, and pushing a second copy here is what printed the
+        // same warning twice in a row on every affected line.
         return out;
       };
 
@@ -14447,7 +14492,16 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
       // U1's own words are the most useful sentence available and must never be
       // dropped. They arrive without a mapping attached, so they get their own
       // lines rather than being appended to somebody else's.
-      for (const e of engineErrs) lines.push(`✗ ${e}`);
+      //
+      // Except the ones that DO have a mapping attached. A selector matching
+      // nothing is recorded twice — once as a detail, once here — and printed
+      // as "✗ dialog .caption-learn-more" immediately followed by "✗ dialog:
+      // nothing on the page matches .caption-learn-more". Six unmatched
+      // selectors became twelve lines saying six things. The detail line now
+      // carries the sentence, so the echo goes.
+      const echoed = new Set(details.filter(d => d.status === 'no-match')
+                                    .map(d => `${d.type}: nothing on the page matches ${d.sel}`));
+      for (const e of engineErrs) if (!echoed.has(e)) lines.push(`✗ ${e}`);
 
       // A fixer this build of U1 does not have, which the patch supplied. The
       // mapping works — and it works BECAUSE of the patch, which the client's
@@ -14653,7 +14707,13 @@ function describeApplyResult(res, m, i = 0) {
     }
     if (d.unblocked) {
       v.ok = false;
-      v.msg += ` Note: ${d.sel} carries u1st-avoid-change-detection in the site's HTML. It was lifted here so the fix could run — remove it from the markup or this will not work in production.`;
+      // Careful about whose attribute this is. U1 stamps the same marker on
+      // everything it has handled, and the panel cannot tell the two apart
+      // from the DOM alone once U1 has run — so this used to send people to
+      // edit markup that did not contain it (molinahealthcare.com serves no
+      // u1st-* attribute at all, and got this note on two menus). Say what is
+      // measured, and name the one test that settles it.
+      v.msg += ` Note: ${d.sel} already carried u1st-avoid-change-detection. It was lifted here so the fix could run. Reload and Apply once: if it comes back on a clean load the attribute is in the site's HTML and must be removed there, or this will not work in production.`;
     }
     return v;
   }
@@ -14668,7 +14728,7 @@ function describeApplyResult(res, m, i = 0) {
   }
   if (d && d.status === 'no-match') return { ok: false, msg: `Nothing on the page matches ${d.sel}.` };
   if (d && d.reason === 'source-opt-out') {
-    return { ok: false, msg: `${d.sel} carries u1st-avoid-change-detection in the site's own HTML — U1 skips it.` };
+    return { ok: false, msg: `${d.sel} already carried u1st-avoid-change-detection before the fix ran — U1 skips such an element. Reload the page and Apply once; if it says this again on a clean load, the attribute is in the site's own HTML and has to be removed there.` };
   }
   if (d && d.reason === 'already-processed') {
     return { ok: false, msg: 'U1 had already processed this element this page load. Reload the page and press Apply All.' };

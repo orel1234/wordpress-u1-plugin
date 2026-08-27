@@ -549,6 +549,67 @@ const rebuiltDetected = rb.detail.rebuilt === true;
 const ct = await rebuildCase(false);
 const controlLeftAlone = ct.detail.rebuilt !== true;
 
+// ── A fix that wrote only its own bookkeeping is not a fix ─────────────────
+//
+// On molinahealthcare.com u1.fix.menu came back having written
+// u1st-avoid-change-detection and aria-hidden="false" on the container, and
+// nothing whatsoever anywhere else — no role, no aria-haspopup, no tabindex.
+// The panel reported "Applied", then blamed the mapping's fields: "items,
+// submenus, triggers changed nothing — U1 decorated the container and left
+// those fields alone." It had not decorated anything; those two attributes
+// mean only "U1 has been here".
+//
+// The same run went on to advise removing u1st-avoid-change-detection from
+// the site's markup. That site serves no u1st-* attribute at all.
+async function bookkeepingOnlyCase() {
+  const dom = new JSDOM(`<!doctype html><body><nav id="nav">
+    <div class="it"><a class="lk" href="/">Home</a></div>
+    <div class="it"><button class="tg">Shop</button><div class="dd"><a class="ddlk" href="/a">All</a></div></div>
+    </nav></body>`);
+  const d = dom.window.document;
+  dom.window.u1 = { fix: { menu: (first, cfg) => {
+    const el = d.querySelector(cfg.selectors.menu);
+    if (!el) return undefined;
+    setTimeout(() => {
+      el.setAttribute('aria-hidden', 'false');
+      el.setAttribute('u1st-avoid-change-detection', 'true');
+    }, 60);
+  } } };
+  global.window = dom.window; global.document = d;
+  const cfg = { menubar: false, selectors: {
+    menu: '#nav', items: '.lk,.ddlk', triggers: '.tg', submenus: '.dd' } };
+  const res = await eval('(' + applyFnSrc + ')')([
+    { type: 'menu', primary: '#nav', firstArg: '#nav', config: cfg }]);
+  return { res, detail: (res.details || [])[0] || {} };
+}
+const bk = await bookkeepingOnlyCase();
+const bookkeepingNotCounted = bk.detail.status === 'no-effect' && bk.res.applied === 0;
+
+// And the line the person reads has to say something. A mapping that changed
+// nothing printed as a bare "✗ dialog #MedicareAlert" — mark, type, selector,
+// no reason — because the report only asked describeApply about half-applied
+// mappings, and this is the case with no other way to find out why.
+const noEffectExplained = (() => {
+  const msg = describeApply({ ok: true, applied: 0, details: [
+    { type: 'dialog', sel: '#MedicareAlert', status: 'no-effect', changed: 0,
+      reason: 'already-processed' }] }, { type: 'dialog' }).msg;
+  return /reload/i.test(msg) && msg.length > 30;
+})();
+
+// The opt-out note must not assert whose attribute it is: U1 stamps the same
+// marker on everything it handles, so "it is in the site's HTML" is a guess,
+// and it was being printed as a fact next to a demand to edit that HTML.
+const optOutHonest = (() => {
+  const msg = describeApply({ ok: true, applied: 1, details: [
+    { type: 'menu', sel: '.mainNav', status: 'ok', changed: 2, unblocked: true }] },
+    { type: 'menu' }).msg;
+  return /reload/i.test(msg) && !/carries u1st-avoid-change-detection in the site's HTML/.test(msg);
+})();
+
+// One line per unmatched selector, not two. Every no-match was recorded both
+// as a detail and as an engine error, and the report printed both.
+const noMatchOnce = /details\.filter\(d => d\.status === 'no-match'\)[\s\S]{0,200}?echoed\.has\(e\)/.test(panelSrc);
+
 // ── The vendor's own documented selector must validate ─────────────────────
 // U1's fix.menu docs use a pseudo-class:
 //   items: 'a.menu-item:not(.has-submenu), li.has-submenu'
@@ -1621,6 +1682,14 @@ console.log(`  ${rebuiltDetected ? '✅' : '❌'} a nav rebuilt by the site AFTE
 if (!rebuiltDetected) failed++;
 console.log(`  ${controlLeftAlone ? '✅' : '❌'} …and a nav that was NOT rebuilt is not re-applied`);
 if (!controlLeftAlone) failed++;
+console.log(`  ${bookkeepingNotCounted ? '✅' : '❌'} a fix that wrote only u1st-avoid-change-detection + aria-hidden=false counts as NOTHING applied`);
+if (!bookkeepingNotCounted) failed++;
+console.log(`  ${noEffectExplained ? '✅' : '❌'} …and a mapping that changed nothing says why, instead of printing a bare ✗`);
+if (!noEffectExplained) failed++;
+console.log(`  ${optOutHonest ? '✅' : '❌'} …and the opt-out note stops claiming the attribute is in the site's HTML`);
+if (!optOutHonest) failed++;
+console.log(`  ${noMatchOnce ? '✅' : '❌'} …and an unmatched selector is reported once, not as two lines saying the same thing`);
+if (!noMatchOnce) failed++;
 console.log(`  ${selOk ? '✅' : '❌'} the selector in U1's own menu docs validates, and descendant spaces still do not`);
 if (!selOk) failed++;
 console.log(`  ${selFast ? '✅' : '❌'} …and validation is linear — no catastrophic backtracking on a long non-match`);
@@ -1632,6 +1701,6 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 105;
+const total = results.length + 109;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);
