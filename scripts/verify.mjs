@@ -377,11 +377,30 @@ console.log('\nAI modes are gated on the key, at the door:');
   // page this tool exists for. The labelling pause off means paying for a
   // section you could have named for free.
   const noPrecise = !/preciseEventsToggle/.test(panel) && !/preciseEventsToggle/.test(html);
-  const alwaysPrecise = /if \(!existing\.length\) await setPreciseEvents\(true\)/.test(panel);
+  const alwaysPrecise = /await ensureRecorderForHost\(currentHostname\)/.test(panel);
   if (noPrecise && alwaysPrecise) {
     pass('precise event detection is on always, with no checkbox to forget');
   } else {
     fail(`precise events wrong — checkboxGone:${noPrecise} alwaysOn:${alwaysPrecise}`);
+  }
+
+  // ── …and on the site being worked on, not on everything else ─────────────
+  //
+  // <all_urls> put a MAIN-world patch of EventTarget.prototype on the
+  // specialist's mail and bank for the rest of the day. Two consequences, both
+  // on the extension's Errors page: our wrapper is the caller of the native
+  // addEventListener so the PAGE's permissions-policy violations are filed
+  // against us ("unload is not allowed in this document", at the line that
+  // calls the original), and a MAIN-world script is subject to the page's CSP
+  // so a strict site refuses the injection and logs that too.
+  const recorderBlock = panel.slice(panel.indexOf('const RECORDER_ID'),
+                                    panel.indexOf('const RECORDER_ID') + 4000);
+  const notEverywhere = !/matches: \['<all_urls>'\]/.test(recorderBlock);
+  const perHost = /recorderMatchesFor/.test(panel) && /\*:\/\/\$\{host\}\/\*/.test(panel);
+  if (notEverywhere && perHost) {
+    pass('the recorder is registered per client site, never for <all_urls>');
+  } else {
+    fail(`the recorder is too widely registered — allUrlsGone:${notEverywhere} perHost:${perHost}`);
   }
 
   const noTick = !/sweepLabelTick/.test(panel) && !/sweepLabelTick/.test(html);

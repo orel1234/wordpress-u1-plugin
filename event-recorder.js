@@ -1,10 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  event-recorder.js — OPT-IN precise event detection.
 //
-//  Registered dynamically (NOT in manifest.json) by panel.js:
-//    chrome.scripting.registerContentScripts([{ id:'u1-event-recorder',
-//      matches:['<all_urls>'], js:['event-recorder.js'],
-//      runAt:'document_start', world:'MAIN' }])
+//  Registered dynamically (NOT in manifest.json) by panel.js, and only for the
+//  client sites the panel has been opened on — see ensureRecorderForHost there
+//  for why it is not <all_urls>: this file wraps EventTarget.prototype in the
+//  MAIN world, so on every page it is present it becomes the caller of the
+//  native addEventListener and inherits the blame for that page's own console
+//  violations.
 //
 //  addEventListener registrations are invisible after the fact — DevTools'
 //  getEventListeners is not available to extensions. The only way to know which

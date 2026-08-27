@@ -3024,6 +3024,22 @@ async function init() {
   // hostname. Now that we strip "www.", move that data to the new key so saved
   // mappings / config / skip links aren't lost.
   await migrateWwwHostname(currentHostname);
+
+  // The event recorder follows the site the panel is open on, and goes nowhere
+  // else. Here rather than at file scope because it needs a hostname, and this
+  // is the first point at which there is one. It also narrows an <all_urls>
+  // registration left behind by an older build — see ensureRecorderForHost.
+  {
+    const firstTime = await ensureRecorderForHost(currentHostname);
+    if (firstTime) {
+      showNotice(document.getElementById('applyStatus'),
+        `Event detection is now on for ${currentHostname}. It has to be in place before the ` +
+        `page's own scripts run, so reload this tab once — after that every visit is covered. ` +
+        `It runs on this site only, not on everything else you have open.`,
+        'warn', 12000);
+    }
+  }
+
   try {
     const repaired = await migrateFatalMenubar(currentHostname);
     if (repaired) {
@@ -11730,55 +11746,126 @@ document.getElementById('aiMappings')?.addEventListener('click', async (e) => {
   }
 });
 
-// ── Precise event detection (opt-in) ────────────────────────────────────────
-// Registered dynamically rather than in manifest.json so the recorder only runs
-// on pages when the specialist has asked for it. `scripting` + <all_urls> are
-// already granted, so no manifest change is needed.
+// ── Precise event detection ─────────────────────────────────────────────────
+//
+// Registered dynamically rather than in manifest.json, and — this is the part
+// that matters — only for the sites this specialist actually works on.
+//
+// It used to be registered for <all_urls>. That put a MAIN-world patch of
+// EventTarget.prototype on every page the person opened for the rest of the
+// day: their mail, their bank, the CRM. Two things came of that, both visible
+// on the extension's own Errors page:
+//
+//   1. Our wrapper is the immediate caller of the native addEventListener, so
+//      any violation the PAGE commits in registering a listener is filed
+//      against us. Gmail's document forbids `unload` listeners and something
+//      on it registers one anyway; the error reads "Permissions policy
+//      violation: unload is not allowed in this document" at
+//      event-recorder.js:48, which is the line that calls the original. Not
+//      our listener, not our policy, and reported as our error every time.
+//   2. A MAIN-world content script is subject to the PAGE's CSP, unlike an
+//      isolated-world one. On any site with a strict script-src the injection
+//      is refused outright and logged — noise on a page where the recorder was
+//      never going to run in the first place.
+//
+// Neither is a bug in the recorder. Both are the cost of being somewhere it
+// has no business being, so the fix is to be there only for the client sites
+// the panel has been opened on. The list is device-local and bounded.
 const RECORDER_ID = 'u1-event-recorder';
 // A device-local preference, not project data: the `__` prefix keeps it out of
 // exported backups (U1Store.getExportable strips private keys).
 const PRECISE_EVENTS_KEY = U1Store.PRIVATE_PREFIX + 'preciseEvents';
+const RECORDER_HOSTS_KEY = U1Store.PRIVATE_PREFIX + 'recorderHosts';
+// Enough for every client a specialist touches in a year, and still a bound —
+// a match list is re-registered on every panel open and must not grow forever.
+const MAX_RECORDER_HOSTS = 60;
 
-async function setPreciseEvents(on) {
+/**
+ * The two patterns that cover a hostname: the host itself and its subdomains.
+ *
+ * currentHostname has already had "www." stripped, so a site stored as
+ * example.com must still match www.example.com — which the subdomain pattern
+ * does. Both schemes, because a client's staging site is often plain http.
+ */
+function recorderMatchesFor(host) {
+  return [`*://${host}/*`, `*://*.${host}/*`];
+}
+
+/** Hosts the recorder is registered for, newest first. */
+async function loadRecorderHosts() {
   try {
-    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [RECORDER_ID] });
-    if (on && !existing.length) {
-      await chrome.scripting.registerContentScripts([{
+    const v = (await U1Store.get([RECORDER_HOSTS_KEY]))[RECORDER_HOSTS_KEY];
+    return Array.isArray(v) ? v.filter((h) => typeof h === 'string' && h && h !== 'unknown') : [];
+  } catch { return []; }
+}
+
+/**
+ * Make sure the recorder is registered for this site, and only for sites like
+ * it.
+ *
+ * Called on every panel open. Re-registering the whole list each time is what
+ * narrows an old <all_urls> registration left behind by a previous version —
+ * there is no separate migration, because the correct match list is computed
+ * from scratch anyway.
+ *
+ * The one real cost is unchanged and still worth saying in Setup: the recorder
+ * has to be installed BEFORE the page's own script runs, so the first time the
+ * panel is opened on a new client site that page needs one reload before
+ * precise detection has anything to report. Every visit after that is covered,
+ * because the host stays on the list.
+ */
+async function ensureRecorderForHost(host) {
+  if (!host || host === 'unknown') return false;
+  try {
+    const hosts = await loadRecorderHosts();
+    const known = hosts.includes(host);
+    const next = known ? hosts : [host, ...hosts].slice(0, MAX_RECORDER_HOSTS);
+
+    const matches = [];
+    for (const h of next) matches.push(...recorderMatchesFor(h));
+
+    const [existing] = await chrome.scripting.getRegisteredContentScripts({ ids: [RECORDER_ID] });
+    const same = existing && existing.matches &&
+                 existing.matches.length === matches.length &&
+                 existing.matches.every((m, i) => m === matches[i]);
+    if (!same) {
+      const script = {
         id: RECORDER_ID,
-        matches: ['<all_urls>'],
+        matches,
         js: ['event-recorder.js'],
         runAt: 'document_start',
         world: 'MAIN',
         allFrames: false,
-      }]);
-    } else if (!on && existing.length) {
-      await chrome.scripting.unregisterContentScripts({ ids: [RECORDER_ID] });
+      };
+      if (existing) await chrome.scripting.updateContentScripts([script]);
+      else await chrome.scripting.registerContentScripts([script]);
     }
-    await U1Store.set({ [PRECISE_EVENTS_KEY]: !!on });
-    return true;
+    // setLocalOnly: which machine has watched which site is a fact about this
+    // computer, not about the client's site, and it must not travel.
+    if (!known) await U1Store.setLocalOnly({ [RECORDER_HOSTS_KEY]: next });
+    await U1Store.setLocalOnly({ [PRECISE_EVENTS_KEY]: true });
+    return !known;                 // true when this site was only just added
   } catch (err) {
-    showNotice(document.getElementById('applyStatus'), 'Could not change event detection: ' + err.message, 'error', 4000);
+    showNotice(document.getElementById('applyStatus'),
+      'Could not set up event detection: ' + err.message, 'error', 4000);
     return false;
   }
 }
 
-// Precise event detection, always on.
-//
-// It was a checkbox in Setup, defaulting to off. Off, a trigger is guessed from
-// its tag, role and aria/data attributes — and on a page written with none of
-// those, that guess finds nothing at all, which is the exact page this tool
-// exists for. Switching it on only ever made the answers better; the only thing
-// the choice bought was a way to have the scan quietly underperform.
-//
-// The one real cost is that the recorder must be installed BEFORE the page's
-// own script runs, so a page already open when it is first registered needs one
-// reload. That is said in Setup rather than asked about.
-(async () => {
+/**
+ * Stop recording anywhere. Not wired to a control — precise detection is not a
+ * choice any more — but the registration must still be removable, or a stale
+ * <all_urls> one from an older build has no way out of an install where the
+ * panel is never opened on a site.
+ */
+async function clearRecorder() {
   try {
     const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [RECORDER_ID] });
-    if (!existing.length) await setPreciseEvents(true);
-  } catch {}
-})();
+    if (existing.length) await chrome.scripting.unregisterContentScripts({ ids: [RECORDER_ID] });
+    await U1Store.setLocalOnly({ [RECORDER_HOSTS_KEY]: [], [PRECISE_EVENTS_KEY]: false });
+    return true;
+  } catch { return false; }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Smart Advisor — inspect the selected element on the live page and recommend

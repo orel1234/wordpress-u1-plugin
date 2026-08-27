@@ -286,8 +286,16 @@
 
   <!-- Precise event detection used to be a checkbox here. It is not a choice:
        with it off, a trigger is guessed from tag/role/aria/data, and on a page
-       written without any of those that guess finds nothing. It is on always,
-       registered at boot, and there is nothing to decide. -->
+       written without any of those that guess finds nothing. It is on always
+       and there is nothing to decide.
+
+       WHERE it is on is a different question, and the answer is: the sites the
+       panel has been opened on, and nowhere else. It was registered for
+       <all_urls>, which left a MAIN-world patch of EventTarget.prototype on
+       the specialist's mail and bank all day and filed those pages' own
+       console violations against this extension. The panel says so, once, the
+       first time it covers a new site — because that is also the one visit
+       that needs a reload before the recorder has anything to report. -->
 
   <!-- 1.2 SKIP LINKS ──────────────────────────────────────────────── -->
   <div class="section">
