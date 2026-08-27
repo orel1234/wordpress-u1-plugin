@@ -16277,6 +16277,16 @@ document.getElementById('finishProjectBtn')?.addEventListener('click', async () 
     const args = [currentHostname, cssLink, jsLink, built,
                   stored[sKey] || [], stored[cKey], platform, pdf];
     const files = buildHandoverFiles(...args);
+    // Both forms go into the folder, on purpose.
+    //
+    // Loose files are what makes a handover folder readable: the client opens
+    // the guide and the close-out report in Drive without downloading
+    // anything. But taking the code away means clicking every file in turn —
+    // and Chrome names the second copy of one "u1-patch (1).js", so a folder
+    // fetched twice is a folder nobody can tell apart afterwards. The zip is
+    // the whole handover in one click, beside the files it contains.
+    const zip = buildHandoverZip(...args);
+    files.push({ name: zip.name, mime: 'application/zip', data: zip.bytes });
 
     const lines = [];
     if (pdf) lines.push('Close-out report included as a PDF.');
@@ -16324,7 +16334,7 @@ document.getElementById('finishProjectBtn')?.addEventListener('click', async () 
       // Never leave the specialist with nothing. The bundle is produced and
       // downloaded whatever the server did, and the reason is stated rather
       // than swallowed.
-      const { bytes, name } = buildHandoverZip(...args);
+      const { bytes, name } = zip;
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
       const a = document.createElement('a');
       a.href = url; a.download = name;
