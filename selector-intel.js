@@ -1690,9 +1690,11 @@
     // model's whole list on them.
     const HIDDEN_CAP = 12;
     let hiddenUsed = 0;
+    let offscreen = 0, looked = 0;
     // Names seen on the page, for telling a real selector from an invented one.
     const pageTokens = new Set();
     for (const el of candidateElements(scope)) {
+      looked++;
       if (out.length >= max) break;
       if (seen.has(el)) continue;
       // Never mark our own overlay — either of them.
@@ -1712,6 +1714,12 @@
       let r = visibleInViewport(el);
       let closed = false;
       if (!r) {
+        // Why it was dropped, counted separately, because "nothing here" and
+        // "nothing ON THIS SCREEN" are completely different answers and were
+        // indistinguishable from the outside. A page whose header is a hero
+        // image returns an empty list that looks exactly like a page with
+        // nothing on it — and the second is a bug while the first is a scroll.
+        offscreen++;
         if (scope === document || hiddenUsed >= HIDDEN_CAP || el === scope) continue;
         r = el.getBoundingClientRect();
         closed = true;
@@ -1826,6 +1834,10 @@
       // from the outside, and they mean very different things — one is a count,
       // the other is "there was more and you cannot see it". Say which.
       truncated: out.length >= max,
+      // What was on the page versus what was on the SCREEN. An empty answer is
+      // only worth acting on once you know which of the two it is.
+      looked,
+      offscreen,
       headings,
       scopedTo: within || null,
       viewport: { w: vw(), h: vh() },

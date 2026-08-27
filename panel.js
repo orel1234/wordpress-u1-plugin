@@ -5906,10 +5906,18 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     const collected = await collectRegion(tab, scopeSel, handled);
     if (collected.err) { showNotice($aiStatus, collected.err, 'error', 5000); return; }
     if (!collected.candidates.length) {
+      // Say which kind of empty this is. A page whose top is a hero image
+      // returns the same empty list as a page with nothing on it, and the two
+      // need opposite things done about them — one is a scroll, the other is
+      // worth reporting as a fault.
+      const off = collected.offscreen || 0;
       showNotice($aiStatus, scopeSel
         ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
-        : 'Nothing reviewable on screen that has not already been mapped or skipped. Scroll to the part you want, or name a container above.',
-        'success', 7000);
+        : off
+          ? `Nothing on THIS SCREEN — but ${off} element${off === 1 ? '' : 's'} on the page ` +
+            `${off === 1 ? 'is' : 'are'} outside it. Scroll to the part you want, or run a sweep to walk the whole page.`
+          : 'Nothing reviewable on this page that has not already been mapped or skipped.',
+        'success', 8000);
       return;
     }
 
@@ -6053,7 +6061,10 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     (n, within) => window.__u1SelectorIntel.collectCandidates(n, within), [limit, scopeSel || null]);
   if (!context) return { err: 'Could not read the page.' };
   if (!context.candidates || !context.candidates.length) {
-    return { candidates: [], headings: [], skipped: 0 };
+    // Empty, and WHY it is empty. "Nothing here" and "nothing on this screen"
+    // read identically to a person and mean opposite things.
+    return { candidates: [], headings: [], skipped: 0,
+             looked: context.looked || 0, offscreen: context.offscreen || 0 };
   }
 
   const drop = (opts && opts.drop) || null;
@@ -6068,7 +6079,10 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     return !(drop && drop(c));
   });
   const skipped = before - candidates.length;
-  if (!candidates.length) return { candidates: [], headings: [], skipped, dismissed: dismissedOut };
+  if (!candidates.length) {
+    return { candidates: [], headings: [], skipped, dismissed: dismissedOut,
+             looked: context.looked || 0, offscreen: context.offscreen || 0 };
+  }
 
   // The survey's own picture, with a labelled box round each component that was
   // recognised. It is what the sections list is chosen from, so it shows the

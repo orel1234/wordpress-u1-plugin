@@ -1702,6 +1702,50 @@ console.log('\nthe hints, on the markup they were written for');
   w.__u1SelectorIntel.clearMarks();
 }
 
+// ── An empty answer has to say WHICH empty ─────────────────────────────────
+//
+// The reader only ever sees the current screenful — that is by design, and it
+// is what the sweep exists to walk around. But an empty list from a page whose
+// top is a hero image is indistinguishable from an empty list from a page with
+// nothing on it, and those need opposite things done about them: one is a
+// scroll, the other is worth reporting as a fault.
+//
+// Raised by a real report of "I scanned a site and it found nothing".
+console.log('\nan empty read says which kind of empty');
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const build = (headerOnScreen) => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <header class="site-header"><nav class="main-nav"><a href="/a">Members</a></nav></header>
+      <main><form class="finder"><input id="zip"><select id="p"></select><button>Find</button></form>
+      </main></body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    Object.defineProperty(w, 'innerHeight', { value: 768, configurable: true });
+    Object.defineProperty(w, 'innerWidth', { value: 1280, configurable: true });
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      const isHeader = this.closest && this.closest('header');
+      const top = isHeader && headerOnScreen ? 20 : 5000;
+      return { top, left: 10, right: 400, bottom: top + 60, width: 390, height: 60, x: 10, y: top };
+    };
+    Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return 390; }, configurable: true });
+    w.getComputedStyle = () => ({ position: 'static', visibility: 'visible', display: 'block', opacity: '1' });
+    w.eval(INTEL);
+    return w.__u1SelectorIntel.collectCandidates(200, null);
+  };
+
+  const partial = build(true);
+  check('what is on screen is collected', partial.candidates.length > 0, String(partial.candidates.length));
+  check('…and what is not is counted rather than dropped silently',
+    partial.offscreen > 0, `offscreen ${partial.offscreen} of ${partial.looked}`);
+
+  const scrolled = build(false);
+  check('a page scrolled past everything finds nothing',
+    scrolled.candidates.length === 0, String(scrolled.candidates.length));
+  check('…and says the page was not empty, the SCREEN was',
+    scrolled.offscreen === scrolled.looked && scrolled.looked > 0,
+    `offscreen ${scrolled.offscreen} of ${scrolled.looked}`);
+}
+
 // ── Boxes on the picture, select-all, and elements cut in half ──────────────
 console.log('\nthe annotated survey picture');
 {
