@@ -262,7 +262,9 @@ console.log('\n  A pull against unpushed local work:');
   check('an empty server does not empty this machine', r4.merged.length === 24);
 
   check('the pull actually uses the rule, rather than replacing wholesale',
-        /const \{ merged, stranded \} = reconcilePulled\(data\.mappings, localNow, everPushed\);/.test(panelSrc) &&
+        // let, not const, since the pull now also drops U1's own bootstrap rows
+        // out of the reconciled list before writing it.
+        /(const|let) \{ merged, stranded \} = reconcilePulled\(data\.mappings, localNow, everPushed\);/.test(panelSrc) &&
         /\[storageKey\('mappings', currentHostname\)\]: merged/.test(panelSrc));
   check('…and only server-confirmed keys are remembered as pushed',
         /await rememberPushedKeys\(currentHostname, out\.keys \|\| \[\]\);/.test(panelSrc));

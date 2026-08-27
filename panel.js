@@ -2505,7 +2505,48 @@ async function pullSiteFromServer() {
   const localNow = (await U1Store.get([storageKey('mappings', currentHostname)]))
     [storageKey('mappings', currentHostname)] || [];
   const everPushed = await loadPushedKeys(currentHostname);
-  const { merged, stranded } = reconcilePulled(data.mappings, localNow, everPushed);
+  let { merged, stranded } = reconcilePulled(data.mappings, localNow, everPushed);
+
+  // ── U1's own bootstrap table, thrown out on the way in ───────────────────
+  //
+  // migrateDropU1Internal cleans what is in storage when the panel opens, and
+  // then this runs and pulls the same rows back down: they are on the SERVER,
+  // put there by whichever machine adopted them first, so a local-only clean
+  // is undone every time anybody opens the site. That is why the deletion is
+  // pushed rather than just applied here — otherwise each colleague keeps
+  // clearing the same twenty rows for the others to re-download.
+  //
+  // isU1InternalSelector decides. It only ever matches a primary built purely
+  // from u1-owned tokens, which is the library's marker sweep and never a
+  // deployment a person wrote against the site's own markup.
+  const junk = merged.filter((m) => m && typeof m === 'object' && m.primary &&
+                                    isU1InternalSelector(m.primary));
+  if (junk.length) {
+    const junkKeys = new Set(junk.map(mappingKey));
+    merged = merged.filter((m) => !(m && typeof m === 'object' && junkKeys.has(mappingKey(m))));
+    // Only rows the server actually holds — a tombstone for a key it has never
+    // seen creates the row it is trying to bury.
+    const onServer = [...junkKeys].filter((k) => serverMappingKeys.has(k));
+    let cleared = false;
+    if (onServer.length) {
+      try {
+        await U1Sync.pushMappings(currentHostname,
+          onServer.map((key) => ({ key, payload: {}, deleted: true })));
+        for (const k of onServer) serverMappingKeys.delete(k);
+        cleared = true;
+      } catch {
+        // The local list is clean either way and the next pull tries again.
+        // Not worth failing a whole site's load over.
+      }
+    }
+    showNotice(document.getElementById('applyAllStatus'),
+      `Dropped ${junk.length} mapping${junk.length === 1 ? '' : 's'} that came from U1's own ` +
+      `bootstrap scan — selectors like [u1-button],[data-u1-button] are the markers the ` +
+      `library looks for in itself, so they decorated nothing. ` +
+      (cleared ? 'Removed on the server too, so they stay gone for everyone. '
+               : 'Removed here; the server still has them and this will try again. ') +
+      `Your own mappings are untouched.`, 'success', 14000);
+  }
 
   // setLocalOnly, not set: going through set() would fire onSiteWrite and push
   // what we just pulled straight back at the server, stamping this machine's
@@ -15511,10 +15552,19 @@ async function findExistingFixes() {
 function isU1InternalSelector(sel) {
   const v = String(sel || '').trim();
   if (!v) return false;
-  // Every simple token in it belongs to U1: [u1-*], .u1_*, .u1st-*, #u1st-*.
+  // Every simple token in it belongs to U1: [u1-*], [data-u1-*], .u1_*,
+  // .u1st-*, #u1st-*.
+  //
+  // The data- form is not a nicety. The current library's bootstrap table
+  // spells every entry as BOTH — U1_SELECTOR.BUTTON is
+  // '[u1-button],[data-u1-button]' — and a predicate that only knew the bare
+  // attribute judged that pair "not internal" on the strength of its second
+  // half. So the whole table came through as real mappings: BUTTON, LINK,
+  // TOOLTIP, LOADING, DIALOG, HEADING, one per component type, decorating
+  // nothing, saved to the server and pulled down by everyone on the site.
   const tokens = v.match(/#[\w-]+|\.[\w-]+|\[[^\]]+\]|[a-z][\w-]*/gi) || [];
   if (!tokens.length) return false;
-  return tokens.every((t) => /^\[\s*u1[-_]/i.test(t) || /^[.#]u1(st)?[-_]/i.test(t));
+  return tokens.every((t) => /^\[\s*(data-)?u1(st)?[-_]/i.test(t) || /^[.#]u1(st)?[-_]/i.test(t));
 }
 
 function mappingFromRecordedCall(call) {
