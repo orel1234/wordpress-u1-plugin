@@ -5677,6 +5677,12 @@ async function confirmedToMapping(pick, stop, tab) {
       p.parts && (p.parts.trigger === sel || p.root === sel) && p.parts.panel);
     container = (seen && seen.parts.panel) ||
       (await inPage(tab.id, (x) => window.__u1SelectorIntel.openedBy(x), [sel])) || '';
+    // Neither the sweep nor the markup knows the other half: press the trigger
+    // and read what appears, the same way the card route does.
+    if (!container) {
+      const cap = await autoOpenCapture(tab, sel, pick.type);
+      container = (cap && (cap.root || cap.stated)) || '';
+    }
   }
   const built = rowFromParts({
     type: pick.type, found: sel, container, label: sel, compIndex: undefined,
@@ -6833,7 +6839,9 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // left data-u1-mark attributes scattered across the site's DOM, which both
     // pollutes what the specialist is inspecting and lands in any markup they
     // copy out of DevTools.
-    aiFound = { ...out, context };
+    const audit = await auditSurveyComponents(out.components, tab);
+    out.components = audit.comps;
+    aiFound = { ...out, context, audit: { dropped: audit.dropped, retyped: audit.retyped } };
     // Stamp the site these selectors came from. onTabChanged clears the
     // workspace on a switch, but the panel can also be looking at a tab that
     // changed under it — so the act of saving checks this again.
@@ -7322,6 +7330,60 @@ function markScreenReading(n) {
 
 // The inventory. Every row's component type and container selector are inputs,
 // not labels — a wrong guess is corrected here rather than worked around later.
+/**
+ * What the survey answered, checked against the page before anyone sees it.
+ *
+ * Two corrections, both mechanical, both of things the prompt has asked the
+ * model for in plain words and not got:
+ *
+ *   1. A native <a href> or <button> with a name is ALREADY a link or a button.
+ *      u1.fix.link on one re-announces an element that announces itself — the
+ *      double-fixing a specialist would never do by hand. The prompt has said
+ *      so for a long time and link/button rows are still the commonest thing on
+ *      the list, which is the signature of a question that should be measured.
+ *
+ *   2. `role="menu"` on a button-and-a-flat-list is a listbox. u1 draws that
+ *      line by behaviour, not by the word in the markup, and fix.menu on that
+ *      shape decorates nothing.
+ *
+ * Returns { comps, dropped, retyped } — the caller reports the counts, because
+ * a row silently disappearing is its own kind of wrong.
+ */
+async function auditSurveyComponents(comps, tab) {
+  const list = (comps || []).filter((c) => c && c.containerSelector);
+  if (!list.length || !isInjectable(tab)) return { comps: list, dropped: [], retyped: [] };
+
+  let verdicts = null;
+  try {
+    verdicts = await inPage(tab.id, (rows) => rows.map(([sel, type]) => {
+      const S = window.__u1SelectorIntel;
+      const out = { native: null, listbox: null };
+      try { if (type === 'link' || type === 'button') out.native = S.alreadyNative(sel); } catch (e) {}
+      try { if (type === 'menu') out.listbox = S.menuIsReallyListbox(sel); } catch (e) {}
+      return out;
+    }), [list.map((c) => [c.containerSelector, c.u1Type])]);
+  } catch (e) { verdicts = null; }
+  if (!verdicts || verdicts.length !== list.length) return { comps: list, dropped: [], retyped: [] };
+
+  const dropped = [], retyped = [], kept = [];
+  list.forEach((c, i) => {
+    const v = verdicts[i] || {};
+    if (v.native) {
+      dropped.push({ label: c.label || c.containerSelector, tag: v.native.tag, name: v.native.name });
+      return;
+    }
+    if (v.listbox) {
+      retyped.push({ label: c.label || c.containerSelector, from: c.u1Type });
+      c.u1Type = 'listbox';
+      c.containerSelector = v.listbox.listbox;
+      c.triggerSelector = v.listbox.trigger;
+      c.why = (c.why ? c.why + ' ' : '') + v.listbox.why;
+    }
+    kept.push(c);
+  });
+  return { comps: kept, dropped, retyped };
+}
+
 function renderAiComponents(found) {
   const list = document.getElementById('aiComponentList');
   const comps = found.components || [];
@@ -7348,6 +7410,20 @@ function renderAiComponents(found) {
       yet — open one and use <strong>⏱ Scan in 5s</strong>, or name it in the container box.` +
     (found.skipped ? ` <strong>${found.skipped}</strong> already mapped or skipped on this site were left out —
       <button class="btn-ghost btn-xs" id="aiResetDismissed">show them again</button>.` : '') +
+    // A row vanishing without a word is its own kind of wrong, even when the
+    // reason is good. These two say what was decided and why, so the reading
+    // can be argued with rather than just trusted.
+    (((found.audit && found.audit.dropped) || []).length
+      ? `<div class="ai-hint-line"><strong>${found.audit.dropped.length}</strong> left out for needing no fix:
+         ${found.audit.dropped.map((d) => `<code>&lt;${escapeHtml(d.tag)}&gt;</code> “${escapeHtml(d.name)}”`).join(', ')}.
+         The browser already gives a named &lt;a href&gt; and &lt;button&gt; their role and their tab stop —
+         mapping one announces it twice.</div>`
+      : '') +
+    (((found.audit && found.audit.retyped) || []).length
+      ? `<div class="ai-hint-line">${found.audit.retyped.map((r) =>
+           `<strong>${escapeHtml(r.label)}</strong> reads as ${escapeHtml(r.from)} in the markup and is mapped as a listbox`).join('; ')} —
+         one control opening one flat list is a listbox whatever the role attribute says.</div>`
+      : '') +
     `</div></details>`;
 
   const typeOptions = (sel) => U1AI.U1_TYPES
@@ -7397,7 +7473,8 @@ function renderAiComponents(found) {
         <div class="ai-comp-trigger" id="aiCompTrig${i}" style="display:none;">
           <label class="ai-comp-cont-label" for="aiCompCont${i}"></label>
           <div class="ai-comp-cont-line">
-            <input type="text" class="ai-comp-cont" id="aiCompCont${i}" placeholder="#help-panel, .modal…">
+            <input type="text" class="ai-comp-cont" id="aiCompCont${i}" placeholder="#help-panel, .modal…"
+                   value="${escapeHtml(triggerRequired(c.u1Type) ? '' : (c.triggerSelector || ''))}">
             <button class="btn-ghost btn-sm ai-comp-conteye" title="Show it on the page">👁</button>
           </div>
           <div class="input-hint ai-comp-cont-hint" style="display:block;"></div>
@@ -7914,7 +7991,27 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   if (!aiWorkspaceMatchesSite()) { warnWrongSite(status); return; }
 
   const comp = btn.closest('.ai-comp');
-  const built = rowFromCompCard(comp);
+  let built = rowFromCompCard(comp);
+  if (built.err && built.focusTrigger) {
+    // The missing half is missing because the thing is CLOSED. Before sending
+    // the specialist off to open it by hand, press the trigger from inside the
+    // page and read what appears — the machine's version of the hint text.
+    const openTab = await getTab();
+    if (isInjectable(openTab)) {
+      showNotice(status, 'Opening it on the page to find the other half…', 'warn', 4000);
+      const found = (comp.querySelector('.ai-comp-sel')?.value || '').trim();
+      const type = comp.querySelector('.ai-comp-type')?.value || '';
+      const cap = found ? await autoOpenCapture(openTab, found, type) : null;
+      const got = (cap && (cap.root || cap.stated)) || '';
+      if (got) {
+        // Written into the card, not smuggled past it — the specialist sees
+        // the selector, can correct it, and Approve shows what will be saved.
+        const contInput = comp.querySelector('.ai-comp-cont');
+        if (contInput) contInput.value = got;
+        built = rowFromCompCard(comp);
+      }
+    }
+  }
   if (built.err) {
     showNotice(status, built.err, 'error', built.focusTrigger ? 6000 : 4000);
     if (built.focusTrigger) comp.querySelector('.ai-comp-cont')?.focus();
@@ -7973,6 +8070,140 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
 });
 
 /**
+ * Press a widget's trigger ON THE PAGE, read what the mapping needs off the
+ * OPEN state, and put the page back — the machine doing what the hint text
+ * used to ask of the specialist: "Open it on the page first — a closed panel
+ * is not there to point at."
+ *
+ * Pressing from the panel is what makes this work at all: a click in the
+ * panel's own UI moves focus off the page and closes exactly the widgets this
+ * is trying to catch, but probe.js clicks from inside the page, under its own
+ * safety net (no navigation, no submit, no network), and restores afterwards.
+ *
+ * What comes back is already selectors and serialisable facts — the elements
+ * themselves never cross the executeScript boundary:
+ *   { root, shape, markup, stated, opened, overlay, stateClass, restored }
+ * for an open/close widget, { toggle: { checkedClass, uncheckedClass, … } }
+ * for a checkbox/radio/switch, or { err } when nothing could be pressed.
+ */
+async function autoOpenCapture(tab, triggerSel, type) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, files: ['selector-intel.js', 'probe.js'] });
+  } catch (e) { return { err: e.message }; }
+  let res = null;
+  try {
+    res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async (trigSel, u1Type) => {
+        const S = window.__u1SelectorIntel, P = window.__u1Probe;
+        if (!S || !P) return { err: 'The page helpers did not load.' };
+        let trigger = null;
+        try { trigger = document.querySelector(trigSel); }
+        catch (e) { return { err: 'Bad trigger selector: ' + e.message }; }
+        if (!trigger) return { err: 'The trigger is not on the page right now.' };
+
+        // What the markup already states (aria-controls, a data-* id, a role
+        // in the neighbourhood) — costs nothing and needs no restore.
+        const stated = S.openedBy(trigSel) || null;
+
+        // A toggle has no panel to open; its two states are read off one
+        // press, and probeToggle presses back so the box ends as it started.
+        if (u1Type === 'checkbox' || u1Type === 'radio' || u1Type === 'switch') {
+          const net = P.armNet();
+          try {
+            const t = await P.probeToggle(trigger);
+            if (!t || t.skipped) return { err: (t && t.why) || 'This one could not be pressed.' };
+            return { toggle: {
+              checkedClass: t.checkedClass || null,
+              uncheckedClass: t.uncheckedClass || null,
+              saysOffByAbsence: !!t.saysOffByAbsence,
+              hiddenInput: t.hiddenInput ? S.robustSelector(t.hiddenInput) : null,
+              toggled: !!t.toggled,
+              restored: !!t.restored,
+            } };
+          } finally { net.disarm(); }
+        }
+
+        const net = P.armNet();
+        let r = null;
+        try {
+          r = await P.probeOne(trigger, {
+            whileOpen: (panel) => {
+              let target = panel;
+              if (!target && stated) {
+                try { target = document.querySelector(stated); } catch (e) {}
+              }
+              if (!target) return null;
+              const rootSel = S.robustSelector(target);
+              if (!rootSel) return null;
+              const cap = { root: rootSel, shape: null, markup: null };
+
+              // The smallest element holding both the trigger and what it
+              // opened — the natural container for a combobox, and the scope
+              // the listbox reader expects.
+              let wrap = trigger.parentElement;
+              while (wrap && wrap !== document.body && !wrap.contains(target)) {
+                wrap = wrap.parentElement;
+              }
+              if (wrap === document.body) wrap = null;
+
+              try {
+                if (u1Type === 'dialog') {
+                  cap.shape = S.dialogShape(rootSel);
+                } else if (u1Type === 'combobox') {
+                  cap.shape = S.comboboxShape(rootSel) ||
+                              (wrap ? S.comboboxShape(S.robustSelector(wrap)) : null);
+                } else if (u1Type === 'listbox' && wrap) {
+                  cap.shape = S.listboxShape(S.robustSelector(wrap));
+                }
+                if ((u1Type === 'listbox' || u1Type === 'combobox') && !cap.shape) {
+                  // A <select> swapped for a div has no text input, so the
+                  // combobox reader refuses it — but OPEN, it is a list with
+                  // rows, and the visible toggle stands where the textbox
+                  // would. Read the list off what actually appeared.
+                  const rows = Array.prototype.slice.call(target.children)
+                    .filter((c) => c.nodeType === 1);
+                  const optSel = rows.length >= 2
+                    ? S.commonSelectorFor(target, rows, rootSel) : null;
+                  cap.shape = {
+                    combobox: wrap ? S.robustSelector(wrap) : rootSel,
+                    listbox: rootSel,
+                    trigger: trigSel,
+                    textbox: trigSel,
+                    options: (optSel && optSel.selector) || '',
+                  };
+                }
+              } catch (e) { /* the markup below still comes back */ }
+              try { cap.markup = S.extractComponent(cap.root); } catch (e) {}
+              return cap;
+            },
+          });
+        } finally { net.disarm(); }
+
+        if (!r || r.skipped) {
+          return { err: (r && r.why) || 'This one could not be pressed.', stated };
+        }
+        const held = r.held || null;
+        return {
+          stated,
+          root: (held && held.root) || stated || null,
+          shape: (held && held.shape) || null,
+          markup: (held && held.markup) || null,
+          opened: (r.opened || []).length,
+          overlay: !!r.overlay,
+          focusEntered: r.focusEntered,
+          stateClass: r.stateClass || null,
+          restored: !!r.restored,
+        };
+      },
+      args: [triggerSel, type],
+    });
+  } catch (e) { return { err: e.message }; }
+  return (res && res[0] && res[0].result) || { err: 'The page gave no answer.' };
+}
+
+/**
  * Turns one discovery row into a mapping card: reads the element's markup, asks
  * the model to fill the component's fields, and renders the card.
  *
@@ -8021,7 +8252,29 @@ async function prepareOne(row, tab) {
           window.__u1SelectorIntel.robustSelector(up)) : null;
       }, [row.sel]);
     }
+    // Still no shape, and the reason is almost always that the list is CLOSED
+    // — a closed list has no rows to read. So open it: press the trigger from
+    // inside the page, read the shape off the open state, press it shut.
+    if (!lbShape && (row.trigger || row.sel)) {
+      const cap = await autoOpenCapture(tab, row.trigger || row.sel, 'listbox');
+      if (cap && cap.shape && cap.shape.listbox) lbShape = cap.shape;
+    }
     if (lbShape) { row.sel = lbShape.listbox; row.trigger = lbShape.trigger; }
+  }
+
+  // The same move for a form, and for the same reason. u1.fix.form will not run
+  // without submitButton, inputField and invalidField, and a model reading a
+  // screenshot cannot supply any of the three: which control submits is a type
+  // attribute, and what marks a bad field is a CSS rule. Asked anyway, it
+  // returned three empty strings on a search box with a Go button in the
+  // markup, and the save guard refused the whole component.
+  //
+  // Read, not overridden: whatever the model did answer is kept if it resolves.
+  // invalidField is exempt from that test on purpose — it is SUPPOSED to match
+  // nothing until a field goes bad.
+  let fmShape = null;
+  if (row.type === 'form') {
+    fmShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.formShape(s), [row.sel]);
   }
 
   // An accordion is rooted on its HEADER BUTTON — headerSelector is the PRIMARY
@@ -8049,6 +8302,17 @@ async function prepareOne(row, tab) {
   let cbShape = null;
   if (row.type === 'combobox') {
     cbShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.comboboxShape(s), [row.sel]);
+    // No shape while closed is the ordinary case, not a dead end — the list
+    // half of a combobox only exists open, and a native <select> swapped for a
+    // styled div has no text input for the reader to find at all. Open it and
+    // read what actually appears; the visible toggle stands in for the
+    // textbox when there is no real one.
+    if (!cbShape) {
+      const cap = await autoOpenCapture(tab, row.trigger || row.sel, 'combobox');
+      if (cap && cap.shape && cap.shape.listbox) {
+        cbShape = Object.assign({ combobox: row.sel }, cap.shape);
+      }
+    }
     if (cbShape) row.sel = cbShape.combobox;
   }
 
@@ -8063,7 +8327,30 @@ async function prepareOne(row, tab) {
   if (row.type === 'dialog') {
     dlgShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.dialogShape(s), [row.sel]);
   }
-  const markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
+
+  // A checkbox mapping needs checkedState and uncheckedState — the class the
+  // page adds when it goes on and the one it drops — and until now the only
+  // way to get them was devtools, a press, and comparing two class attributes
+  // by eye. Getting it backwards is silent and specific: the control announces
+  // the opposite of what it is, every time. So it is pressed HERE, both
+  // states read off the one press, and pressed back.
+  let tgShape = null;
+  if (row.type === 'checkbox') {
+    const cap = await autoOpenCapture(tab, row.sel, 'checkbox');
+    if (cap && cap.toggle && cap.toggle.toggled) tgShape = cap.toggle;
+  }
+  let markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
+  // Not on the page, but its opener is: a component built on demand — a modal
+  // assembled at click time, a menu rendered on first open. Press the trigger,
+  // read the markup while the thing exists, put the page back.
+  if ((!markup || markup.error || markup.notFound) && row.trigger) {
+    const cap = await autoOpenCapture(tab, row.trigger, row.type);
+    if (cap && cap.markup && !cap.markup.error && !cap.markup.notFound) {
+      if (cap.root) row.sel = cap.root;
+      markup = cap.markup;
+      if (row.type === 'dialog' && cap.shape && !dlgShape) dlgShape = cap.shape;
+    }
+  }
   if (!markup || markup.error || markup.notFound) {
     // Almost always the same cause: the scan was taken on one section and the
     // page has since moved on — another tab, a closed dialog, a re-render.
@@ -8178,6 +8465,30 @@ async function prepareOne(row, tab) {
     out.primary = lbShape.listbox;
   }
 
+  // Fill, don't override. The model may well have named the right submit
+  // button from the picture; what it cannot do is invent one when it could not
+  // see one, and that is the case this covers. A field it answered is replaced
+  // only when the answer resolves to nothing on the page — except invalidField,
+  // which is meant to.
+  if (fmShape) {
+    const already = new Map((out.fields || []).map((f) => [f.key, f]));
+    for (const key of ['inputField', 'submitButton', 'invalidField', 'errorMsg', 'requiredField']) {
+      const got = fmShape[key];
+      if (!got || !got.selector) continue;
+      const had = already.get(key);
+      const hadValue = had && String(had.value || '').trim();
+      if (hadValue && key === 'invalidField') continue;
+      if (hadValue) {
+        const n = await inPage(tab.id, (sel) => {
+          try { return document.querySelectorAll(sel).length; } catch (e) { return -1; }
+        }, [had.value]);
+        if (n > 0) continue;
+      }
+      out.fields = (out.fields || []).filter((f) => f.key !== key);
+      out.fields.push({ key, value: got.selector, why: 'Read off the page. ' + got.why });
+    }
+  }
+
   // Same rule for the accordion, and for the same reason: which element is the
   // header, which region it opens, and what level the heading is, are all
   // readable off the page. The model's answer here was a container in the
@@ -8223,6 +8534,95 @@ async function prepareOne(row, tab) {
         why: key === 'closeBtn'
           ? 'The dialog\'s own close control, read off the markup. Without it there is nothing for U1 to bind closing to.'
           : 'The dialog\'s heading — this is what a screen reader announces it as.' });
+    }
+  }
+
+  // Measured beats read-by-eye. The state classes came off an actual press,
+  // which is stronger evidence than a model reading a closed markup — so they
+  // replace the model's answer the way the listbox shape does. Appending the
+  // class to the element's own selector keeps it pointing at the same element
+  // in the same words: `.opt` becomes `.opt.opt--on`. A comma-selector cannot
+  // take that suffix as one string, so it is left to the model's answer.
+  if (tgShape && !/,/.test(row.sel)) {
+    const put = (key, cls, why) => {
+      if (!cls) return;
+      out.fields = (out.fields || []).filter((f) => f.key !== key);
+      out.fields.push({ key, value: row.sel + '.' + cls, why });
+    };
+    put('checkedState', tgShape.checkedClass,
+      'Pressed once and watched: this is the class the page adds when it goes on.');
+    put('uncheckedState', tgShape.uncheckedClass,
+      'The class the page drops when it goes on — how it says "off".');
+    if (tgShape.saysOffByAbsence) {
+      out.notes = (out.notes || []).concat(
+        'This page says "off" by the ABSENCE of a class, and there is no U1-valid selector for an absence — the off state needs a class of its own from the site\'s developers.');
+    }
+    if (tgShape.hiddenInput) {
+      const had = (out.fields || []).find((f) => f.key === 'exclude' && String(f.value || '').trim());
+      if (!had) {
+        out.fields.push({ key: 'exclude', value: tgShape.hiddenInput,
+          why: 'The real <input> hiding inside the styled box, found while pressing — excluded so it does not take focus beside the thing standing in for it.' });
+      }
+    }
+  }
+
+  // The description is announced. It should be what the PAGE calls the thing.
+  //
+  // `menuDescription: "Sign in options"` was composed by a model looking at a
+  // picture, and it is read out to a screen reader user as the name of the
+  // component. The button next to it says "Sign In". The page has already
+  // named this, in its own words, and those are the words the user will hear
+  // spoken elsewhere on the site — so they are the ones to use. Composed prose
+  // is kept only where the page offers nothing.
+  {
+    const descKey = Object.keys((COMPONENT_SCHEMAS[row.type] || {}).rootFields || {})
+      .find((k) => /description$/i.test(k));
+    if (descKey) {
+      const words = await inPage(tab.id,
+        (c, t) => window.__u1SelectorIntel.componentWording(c, t),
+        [out.primary || row.sel, row.trigger || '']);
+      if (words) {
+        out.fields = (out.fields || []).filter((f) => f.key !== descKey);
+        out.fields.push({ key: descKey, value: words,
+          why: 'What the page itself calls this — the same words a person sees, so a screen reader says the same thing.' });
+      }
+    }
+  }
+
+  // Rename anything U1 cannot resolve, here, before the card is drawn.
+  //
+  // The save gate repairs this too, and has to — it is the one place every
+  // route passes through. But by the time the save gate runs, the specialist
+  // has already been shown the code, ticked it, and pressed Approve, and what
+  // they were shown said `heading: "#siteLeavingAlert h3"` while a red banner
+  // above the card explained that U1 refuses a descendant space. The card
+  // should never have been able to show a name the engine cannot use.
+  {
+    const cand = [];
+    if (out.primary && !isU1ValidSelector(out.primary)) cand.push(['', out.primary]);
+    for (const f of (out.fields || [])) {
+      if (typeof f.value === 'string' && f.value.trim() && !isU1ValidSelector(f.value)) {
+        cand.push([f.key, f.value]);
+      }
+    }
+    if (cand.length) {
+      let fixed = null;
+      try {
+        fixed = await inPage(tab.id, (list) => list.map(([k, v]) => {
+          try { return [k, v, window.__u1SelectorIntel.repairForU1(v) || '']; }
+          catch (e) { return [k, v, '']; }
+        }), [cand]);
+      } catch (e) { fixed = null; }
+      for (const [k, was, now] of fixed || []) {
+        if (!now || !isU1ValidSelector(now)) continue;
+        if (!k) { out.primary = now; continue; }
+        const f = (out.fields || []).find((x) => x.key === k && x.value === was);
+        if (f) {
+          f.value = now;
+          f.why = (f.why ? f.why + ' ' : '') +
+            `Renamed from "${was}" — U1 resolves selectors through jQuery, which refuses a descendant space and a pseudo-class silently. Same element, name it can use.`;
+        }
+      }
     }
   }
 
@@ -8291,8 +8691,27 @@ document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
   const cards = [...document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])')];
   const rows = [];
   const blocked = [];
+  // Only on the run that was paid for. The first press exists to show a cost
+  // estimate, and pressing widgets open all over the page during it would be a
+  // side effect nobody asked for; on the armed press it is the work itself.
+  let openTab = null;
   for (const comp of cards) {
-    const built = rowFromCompCard(comp);
+    let built = rowFromCompCard(comp);
+    if (built.err && built.focusTrigger && aiBulk.armed) {
+      if (openTab === null) {
+        const t = await getTab();
+        openTab = isInjectable(t) ? t : undefined;
+      }
+      const found = (comp.querySelector('.ai-comp-sel')?.value || '').trim();
+      const type = comp.querySelector('.ai-comp-type')?.value || '';
+      const cap = (openTab && found) ? await autoOpenCapture(openTab, found, type) : null;
+      const got = (cap && (cap.root || cap.stated)) || '';
+      if (got) {
+        const contInput = comp.querySelector('.ai-comp-cont');
+        if (contInput) contInput.value = got;
+        built = rowFromCompCard(comp);
+      }
+    }
     if (built.err) blocked.push({ comp, err: built.err });
     else rows.push({ comp, row: built.row });
   }
@@ -10895,7 +11314,16 @@ async function scanPickedScreens(numbers) {
       // and was actually a way to return nothing: the model is conservative with
       // that flag, so a page whose markup reads as broadly reasonable came back
       // empty even though every component on it still needed mapping.
-      const found = (part.components || []).filter(c => c && c.containerSelector);
+      const audit = await auditSurveyComponents(part.components, tab);
+      const found = audit.comps;
+      for (const d of audit.dropped) {
+        sweepLog(stop.n, `left out ${d.label} — a <${d.tag}> named “${d.name}” is already ` +
+          `a ${d.tag === 'a' ? 'link' : 'button'}; mapping it would announce it twice`, 'info');
+      }
+      for (const r of audit.retyped) {
+        sweepLog(stop.n, `${r.label} read as ${r.from} in the markup, mapped as a listbox — ` +
+          `one control opening one flat list is a listbox whatever the role says`, 'info');
+      }
       let seenAgain = 0;
       // Keep what you named. This used to be `stop.found = []`, which is right
       // when the model is the only source and wrong the moment it is not —
@@ -10912,6 +11340,11 @@ async function scanPickedScreens(numbers) {
           label: c.label || c.containerSelector,
           type: c.u1Type,
           sel: c.containerSelector,
+          // What the survey said opens this. For a dialog it is the ONLY way
+          // the trigger ever gets filled: a dialog's trigger is optional, so
+          // nothing downstream goes looking for one, and the mapping ships
+          // with a modal that U1 never learns to wait for.
+          trigger: c.triggerSelector || '',
           why: c.why || '',
           needsWork: c.needsWork !== false,
         });
@@ -11164,14 +11597,38 @@ async function buildPickedComponents() {
       // PRESSED it and watched what came out; that is not a guess. Failing
       // that, it is read off the page the same way every other selector is.
       let container = '';
+      let found = f.sel;
       if (triggerRequired(f.type) || triggerFirstType(f.type)) {
         const seen = (stop.probed || []).find(p =>
           p.parts && (p.parts.trigger === f.sel || p.root === f.sel) && p.parts.panel);
         container = (seen && seen.parts.panel) ||
           (await inPage(tab.id, (s) => window.__u1SelectorIntel.openedBy(s), [f.sel])) || '';
+        // Both of those need f.sel to BE the trigger. The survey names the
+        // component, which for a sign-in dropdown is the wrapper holding the
+        // button and the closed list together — so both came back empty and the
+        // whole component was refused with "open it on the page, then paste its
+        // selector", addressed to nobody, in an unattended sweep.
+        //
+        // listboxShape does not care which of the three you point at. It reads
+        // the wrapper, the button or the list and returns all three. It was
+        // already being called one step later, in prepareOne — one step after
+        // the refusal that made sure prepareOne was never reached.
+        if (!container && f.type === 'listbox') {
+          const lb = await inPage(tab.id,
+            (s) => window.__u1SelectorIntel.listboxShape(s), [f.sel]);
+          if (lb && lb.listbox) { container = lb.listbox; found = lb.trigger || f.sel; }
+        }
+      } else if (acceptsTrigger(f.type) && f.trigger) {
+        // The third source, and the one that reaches the types the two above
+        // never ran for. A dialog, a tooltip, a collapsible grid: their trigger
+        // is OPTIONAL, so neither the probe nor openedBy was ever asked, and
+        // the field stayed empty on every single one. The page declared the
+        // relationship in its own markup, the survey copied it through, and
+        // this is where it lands in the mapping.
+        container = f.trigger;
       }
       const built = rowFromParts({
-        type: f.type, found: f.sel, container, label: f.label, compIndex: undefined,
+        type: f.type, found, container, label: f.label, compIndex: undefined,
       });
       if (built.err) {
         aiBulk.failed.push({ label: f.label, err: built.err });
@@ -14382,6 +14839,47 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   // path, which is where the required-field refusal already lives.
   if (template && template.type) {
     const sels = (template.config && template.config.selectors) || {};
+
+    // Rename before refusing.
+    //
+    // The refusal below is correct and stays. What was wrong was that it was
+    // the FIRST thing tried on a selector that resolves perfectly well in the
+    // browser and points at exactly the right element — two dialogs on a live
+    // site were refused over `#state-select-modal h2`, with the advice "give
+    // the element a class", addressed to a person, about a heading the tool was
+    // looking straight at.
+    //
+    // repairForU1 resolves it and names the same element again with the
+    // builder every other selector here comes from, which cannot emit an
+    // invalid name. It refuses to answer unless the new name points at exactly
+    // the same elements, so nothing is silently widened. Whatever it cannot
+    // repair falls through to the refusal unchanged.
+    const invalid = [];
+    if (template.primary && !isU1ValidSelector(template.primary)) invalid.push(['', template.primary]);
+    for (const [k, v] of Object.entries(sels)) {
+      if (typeof v === 'string' && v.trim() && !isU1ValidSelector(v)) invalid.push([k, v]);
+    }
+    const repairs = [];
+    if (invalid.length) {
+      const tab = await getTab();
+      if (isInjectable(tab)) {
+        let fixed = null;
+        try {
+          fixed = await inPage(tab.id, (list) => list.map(([k, v]) => {
+            try { return [k, v, window.__u1SelectorIntel.repairForU1(v) || '']; }
+            catch (e) { return [k, v, '']; }
+          }), [invalid]);
+        } catch (e) { fixed = null; }
+        for (const [k, was, now] of fixed || []) {
+          if (!now || !isU1ValidSelector(now)) continue;
+          if (k) setDeep(template.config.selectors, k, now);
+          else template.primary = now;
+          repairs.push({ field: k || template.type, was, now });
+        }
+      }
+      if (repairs.length) template.code = mappingToCode(template);
+    }
+
     const bad = [];
     if (template.primary && !isU1ValidSelector(template.primary)) {
       bad.push(template.primary);
@@ -16286,6 +16784,11 @@ async function refreshExportInfo() {
     sel.value = detected;
     if (detectedLabel) detectedLabel.textContent = ` — detected: ${detected}`;
   }
+
+  // The backup picker lists every site with saved work, not just this one, so
+  // it has to be rebuilt here rather than once at start-up: a site joins the
+  // list the moment its first mapping is saved.
+  await refreshBackupSites();
 }
 
 // Persist a manual platform override per site.
@@ -16572,7 +17075,91 @@ document.getElementById('closeOutBtn').addEventListener('click', async () => {
   }
 });
 
-// ── Backup / transfer (Export & Import all data) ────────────────────────────
+// ── Backup / transfer (Export & Import) ─────────────────────────────────────
+
+/**
+ * Fill the "Project to export" picker with every site that has saved work.
+ *
+ * The site in front of you is preselected when it has any, because that is the
+ * one being exported nine times out of ten — but the list is deliberately not
+ * limited to it. A finished project is often handed over from a tab that is no
+ * longer on the client's site.
+ */
+async function refreshBackupSites() {
+  const sel = document.getElementById('exportSiteSelect');
+  if (!sel) return;
+  const previous = sel.value;
+  let sites = [];
+  try {
+    sites = await U1Store.listSites();
+  } catch { /* an unreadable store is reported by the buttons, not the picker */ }
+
+  sel.innerHTML = '';
+  if (!sites.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'No saved work yet';
+    sel.appendChild(opt);
+    sel.disabled = true;
+    document.getElementById('exportSiteBtn').disabled = true;
+    return;
+  }
+  for (const host of sites) {
+    const opt = document.createElement('option');
+    opt.value = host;
+    opt.textContent = host;
+    sel.appendChild(opt);
+  }
+  sel.disabled = false;
+  document.getElementById('exportSiteBtn').disabled = false;
+  // Keep an explicit choice across a refresh; otherwise fall back to this site.
+  if (previous && sites.includes(previous)) sel.value = previous;
+  else if (sites.includes(currentHostname)) sel.value = currentHostname;
+}
+
+document.getElementById('exportSiteBtn').addEventListener('click', async () => {
+  const status = document.getElementById('backupStatus');
+  const host = document.getElementById('exportSiteSelect').value || currentHostname;
+  if (!host) {
+    showNotice(status, 'Pick a project to export first.', 'error', 4000);
+    return;
+  }
+  try {
+    // Per-site, and per-site only: the store filters by hostname and drops the
+    // private ("__") keys and the global ones alike, so neither the signed-in
+    // session nor another client's bundle URLs can ride inside this file.
+    const data = await U1Store.getExportableForSite(host);
+    if (!Object.keys(data).length) {
+      showNotice(status, `Nothing saved for ${host} yet.`, 'error', 4500);
+      return;
+    }
+    // Same envelope as the all-sites backup, so the existing importer takes it
+    // with no changes — it merges, so restoring one project leaves the other
+    // sites on the receiving machine untouched. `site` is a label for whoever
+    // finds the file later; the importer keys off the data, not off it.
+    const payload = {
+      __u1helper: true,
+      version: 1,
+      site: host,
+      exportedAt: new Date().toISOString(),
+      data,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `u1-helper-backup-${host.replace(/[^A-Za-z0-9.-]/g, '-')}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    const count = (data[storageKey('mappings', host)] || []).length;
+    showNotice(status, `Exported ${host} — ${count} mapping${count !== 1 ? 's' : ''}.`, 'success', 3500);
+  } catch (err) {
+    showNotice(status, 'Export failed: ' + err.message, 'error', 4500);
+  }
+});
+
 document.getElementById('exportDataBtn').addEventListener('click', async () => {
   const status = document.getElementById('backupStatus');
   try {

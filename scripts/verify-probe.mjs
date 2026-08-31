@@ -131,6 +131,57 @@ console.log('\nleaving the page as it was found');
   check('and the probe says so', res.restored === true);
 }
 
+// ── 3b. Reading the OPEN state is the caller's one chance, and whileOpen is it
+//
+// Everything a mapping needs from the open state — selectors, a shape, markup
+// — has the same deadline as the overlay and focus measurements: after the
+// restore there is nothing left to read. The hook runs while the widget is
+// open, its answer rides back on the report, and the restore stays
+// unconditional — a hook that throws must not leave the page open.
+console.log('\nreading the open state through whileOpen');
+{
+  const w = page(`
+    <div id="wrap">
+      <button id="t">Sign In</button>
+      <ul id="menu" hidden><li>Profile</li><li>Log out</li></ul>
+    </div>`);
+  const d = w.document;
+  d.getElementById('t').addEventListener('click', () => {
+    const m = d.getElementById('menu');
+    m.hidden = !m.hidden;
+  });
+  const res = await w.__u1Probe.probeOne(d.getElementById('t'), {
+    scope: d.getElementById('wrap'), settle: 0,
+    whileOpen: (panel) => ({ id: panel && panel.id, wasOpen: panel && !panel.hidden,
+                             rows: panel ? panel.children.length : 0 }),
+  });
+  check('the hook is handed the panel while it is OPEN', res.held && res.held.wasOpen === true,
+    JSON.stringify(res.held));
+  check('and it is the right panel', res.held && res.held.id === 'menu');
+  check('what it read rides back on the report', res.held && res.held.rows === 2);
+  check('the page is still put back afterwards', d.getElementById('menu').hidden === true);
+  check('and the probe still says so', res.restored === true);
+}
+{
+  const w = page(`
+    <div id="wrap">
+      <button id="t">Sign In</button>
+      <ul id="menu" hidden><li>Profile</li></ul>
+    </div>`);
+  const d = w.document;
+  d.getElementById('t').addEventListener('click', () => {
+    const m = d.getElementById('menu');
+    m.hidden = !m.hidden;
+  });
+  const res = await w.__u1Probe.probeOne(d.getElementById('t'), {
+    scope: d.getElementById('wrap'), settle: 0,
+    whileOpen: () => { throw new Error('reader blew up'); },
+  });
+  check('a hook that throws does not stop the restore', d.getElementById('menu').hidden === true);
+  check('and the failure is reported, not swallowed silently',
+    res.held && /reader blew up/.test(res.held.error || ''), JSON.stringify(res.held));
+}
+
 // ── 4. Only now: does it actually learn anything ────────────────────────────
 console.log('\nwhat pressing it reveals');
 {

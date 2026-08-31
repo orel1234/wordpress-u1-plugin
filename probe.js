@@ -512,6 +512,18 @@
     }
 
 
+    // Anything a caller needs read off the OPEN state beyond what is measured
+    // above — selectors for a mapping, a shape, markup — has the same deadline
+    // as the two measurements that got moved up here: it can only be read now.
+    // `whileOpen` runs with the widget still open and its answer rides back on
+    // the report, so the caller never holds the page open itself and the
+    // restore below stays unconditional.
+    var held = null;
+    if (typeof opts.whileOpen === 'function') {
+      try { held = await opts.whileOpen(panel, d); }
+      catch (e) { held = { error: String((e && e.message) || e) }; }
+    }
+
     // Put it back before reporting, so a caller that stops reading here still
     // leaves the page as it found it.
     //
@@ -554,6 +566,7 @@
       overlay: isLayer,
       stateClass: stateClass,
       restored: restored,
+      held: held,
     };
   }
 
