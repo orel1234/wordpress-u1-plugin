@@ -2376,6 +2376,21 @@ console.log('\na running scan owns the panel');
     /probeHover\(trigger, \{\}\)/.test(panelSrc) && /opensOn: hov\.opensOn/.test(panelSrc));
   check('…and walks back a script navigation that slipped past the net',
     /chrome\.tabs\.update\(tab\.id, \{ url: urlBefore \}\)/.test(panelSrc));
+
+  // "Read more" cards: the aria-label mapping existed, the detector existed,
+  // and the button joining them lived three tabs away — so a run that
+  // promises "make everything accessible on its own" walked right past
+  // twelve identical links. The run saves them itself now, and a single
+  // ambiguous link the AI picked out becomes the same mapping via
+  // ambiguousLink, no model asked either way.
+  check('the do-not-stop run names the "read more" cards after their headings',
+    /await saveCardDescriptionMappings\(tab\)/.test(panelSrc) &&
+    /function saveCardDescriptionMappings\(tab\)/.test(panelSrc));
+  check('…skipping targets already mapped, so a re-run does not double up',
+    /stored\.some\(\(m\) => m && typeof m === 'object' && m\.primary === c\.target\)/.test(panelSrc));
+  check('a lone ambiguous link becomes the aria-label mapping, no model asked',
+    /__u1SelectorIntel\.ambiguousLink\(s\), \[row\.sel\]/.test(panelSrc) &&
+    /row\.type = 'aria-label';/.test(panelSrc));
   // ── Pressing things can still navigate the page ──────────────────────────
   // The probe cancels link clicks, submits, beforeunload and window.open, but
   // `location.href = '/search'` runs as the page's OWN handler rather than as

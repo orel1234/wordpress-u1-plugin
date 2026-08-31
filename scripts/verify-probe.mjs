@@ -182,6 +182,29 @@ console.log('\nreading the open state through whileOpen');
     res.held && /reader blew up/.test(res.held.error || ''), JSON.stringify(res.held));
 }
 
+// ── A background tab never fires an animation frame ─────────────────────────
+//
+// Chrome freezes rAF in hidden tabs. raf() waited on it unconditionally, so a
+// probe pressed on a pinned background tab hung forever mid-press — and the
+// finally that disarms the net never ran, leaving every link click on the
+// site cancelled: reported as "the extension froze the site".
+console.log('\na hidden tab still finishes');
+{
+  const w = page(`<div id="wrap"><button id="t">Menu</button><div id="p" hidden>x</div></div>`);
+  w.requestAnimationFrame = () => 0;   // queued, never fired — a hidden tab
+  const d = w.document;
+  d.getElementById('t').addEventListener('click', () => {
+    const p = d.getElementById('p'); p.hidden = !p.hidden;
+  });
+  const res = await Promise.race([
+    w.__u1Probe.probeOne(d.getElementById('t'), { scope: d.getElementById('wrap'), settle: 0 }),
+    new Promise((r) => setTimeout(() => r({ hung: true }), 2000)),
+  ]);
+  check('probeOne completes without a single animation frame',
+    !res.hung && res.skipped === false, JSON.stringify(res));
+  check('…and the page is still put back', d.getElementById('p').hidden === true);
+}
+
 // ── Trust: a targeted open may press what a sweep must not ──────────────────
 //
 // The sweep presses strangers, and for strangers the label is the only

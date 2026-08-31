@@ -438,8 +438,17 @@
 
   var raf = function () {
     return new Promise(function (r) {
-      if (root.requestAnimationFrame) root.requestAnimationFrame(function () { root.requestAnimationFrame(r); });
-      else setTimeout(r, 32);
+      var done = false;
+      var fire = function () { if (!done) { done = true; r(); } };
+      if (root.requestAnimationFrame) {
+        root.requestAnimationFrame(function () { root.requestAnimationFrame(fire); });
+      }
+      // Not a fallback for old browsers — the only path that runs while the
+      // tab is HIDDEN. Chrome freezes rAF in background tabs, so on a pinned
+      // background tab every await on this promise hung forever, the finally
+      // that disarms the net never ran, and the net went on cancelling every
+      // link click on the page: reported as "the extension froze the site".
+      setTimeout(fire, 64);
     });
   };
   var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };

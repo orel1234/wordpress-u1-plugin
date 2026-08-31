@@ -4171,7 +4171,9 @@
 
   // What a link says when it says nothing: the text that is identical on every
   // card and describes none of them.
-  const VAGUE = /^(read|learn|find out|see|view|discover)\s*(more|all)?$|^(more|details|continue|go|here|click here)$|^(קרא|קראו)\s*עוד$|^(עוד|פרטים|המשך|לחצו כאן|לפרטים)$/i;
+  // Trailing punctuation is part of the pattern, not a disqualifier — the
+  // Molina cards write "Learn more." with the full stop in the anchor.
+  const VAGUE = /^(?:(?:read|learn|find out|see|view|discover)\s*(?:more|all)?|more|details|continue|go|here|click here|(?:קרא|קראו)\s*עוד|עוד|פרטים|המשך|לחצו כאן|לפרטים)\s*[.…!]?$/i;
 
   /**
    * Cards: a heading, a picture, some text, and a link that says "Read more".
@@ -4245,6 +4247,47 @@
     return out;
   }
 
+  /**
+   * ONE ambiguous link, worked out for the aria-label mapping.
+   *
+   * cardDescriptions handles the repeated kind — two or more alike links,
+   * grouped by card shape. But by the time the AI has picked out a single
+   * "Learn more" as a component, "rename it by hand" is the wrong answer:
+   * the page already wrote the name on the card's own heading, and every
+   * field of the mapping is measurable. The heading selector is the GENERIC
+   * form (tag, or tag.class) because the apply engine climbs from each
+   * target to the nearest ancestor that holds a match — an absolute path
+   * would name every card after this one.
+   */
+  function ambiguousLink(sel) {
+    var el;
+    try { el = document.querySelector(sel); } catch (e) { return null; }
+    if (!el) return null;
+    var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text || !VAGUE.test(text)) return null;
+
+    var node = el.parentElement, guard = 0;
+    while (node && node !== document.body && guard++ < 6) {
+      var h = null;
+      try { h = node.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]'); } catch (e) {}
+      if (h && !h.contains(el) && (h.textContent || '').trim()) {
+        var tag = h.tagName.toLowerCase();
+        var cls = Array.prototype.slice.call(h.classList || []).filter(function (c) {
+          return /^[A-Za-z][\w-]*$/.test(c) && !/^(js-|is-|has-)/.test(c) && !NOISE.test(c);
+        })[0];
+        var hSel = cls ? tag + '.' + cls : tag;
+        try { if (!node.querySelector(hSel)) hSel = tag; } catch (e) { hSel = tag; }
+        return {
+          text: text,
+          headingSelector: hSel,
+          headingText: (h.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+        };
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
   const api = {
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
@@ -4260,7 +4303,7 @@
     // a human's answer, without a model
     describeComponent, elementForMark, elementsForMarks, commonAncestor, ITEM_FIELD,
     // the headings review, and the "Read more" cards beside it
-    headingOutline, cardDescriptions,
+    headingOutline, cardDescriptions, ambiguousLink,
   };
 
   root.__u1SelectorIntel = api;

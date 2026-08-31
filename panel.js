@@ -8459,6 +8459,20 @@ async function prepareOne(row, tab) {
     const cap = await autoOpenCapture(tab, row.sel, 'checkbox');
     if (cap && cap.toggle && cap.toggle.toggled) tgShape = cap.toggle;
   }
+
+  // A link whose whole text is "Learn more" is a real link and a useless name
+  // — in a screen reader's links list every card on the page reads
+  // identically. u1.fix.link cannot rename anything; the aria-label custom
+  // mapping exists precisely for this and had no way of being proposed. When
+  // the card's own heading is there to read, the component IS that mapping.
+  if (row.type === 'link') {
+    const amb = await inPage(tab.id,
+      (s) => window.__u1SelectorIntel.ambiguousLink(s), [row.sel]);
+    if (amb && amb.headingSelector) {
+      row.type = 'aria-label';
+      row.ambiguousLink = amb;
+    }
+  }
   let markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
   // Not on the page, but its opener is: a component built on demand — a modal
   // assembled at click time, a menu rendered on first open. Press the trigger,
@@ -8500,6 +8514,14 @@ async function prepareOne(row, tab) {
   if (!needsModelToMap(row.type)) {
     const primaryKey = primaryKeyOf(schema);
     const fields = [];
+    // The converted ambiguous link: every field measured, none asked for.
+    if (row.type === 'aria-label' && row.ambiguousLink) {
+      fields.push(
+        { key: 'middleText', value: 'about',
+          why: 'Joins the link\'s own words to the heading\'s.' },
+        { key: 'headingSelector', value: row.ambiguousLink.headingSelector,
+          why: `The card's own heading — "${row.ambiguousLink.headingText}" — so "${row.ambiguousLink.text}" finally says what it is about.` });
+    }
     // The one measurable extra. u1.fix.heading needs a level, and the element
     // says what it is.
     if (row.type === 'heading') {
@@ -9737,6 +9759,24 @@ async function runSweep(tab) {
     // element once per page load, so a mapping made early in a run may never
     // have met the elements a later section re-rendered.
     //
+    // The "Read more" cards, saved by the run itself. The mapping existed and
+    // the headings-review button that proposes it lives three tabs away, so
+    // it was never made — while a run that promises "make everything
+    // accessible on its own" walked right past twelve identical links. Every
+    // field is measured (cardDescriptions only reports the repeated kind and
+    // validates the heading selector across every card), no model is
+    // involved, and the guard below keeps a re-run from saving it twice.
+    // Only in the do-not-stop mode: "show me, let me build" means exactly
+    // that, and it still has the headings-review button.
+    if (!sweepPause.on) {
+      try {
+        const named = await saveCardDescriptionMappings(tab);
+        if (named) sweepLog(0, `${named} kind${named === 1 ? '' : 's'} of "read more" links named after their card headings`, '');
+      } catch (err) {
+        sweepLog(0, 'card descriptions: ' + err.message, 'err');
+      }
+    }
+
     // Silent: the run reports its own outcome below, and two verdicts about
     // one press is how neither gets read.
     try {
@@ -11704,6 +11744,38 @@ document.getElementById('sweepPicksList')?.addEventListener('click', async (e) =
  * obvious button moved on with eight found and none made. The drawer then read
  * "8 COMPONENTS FOUND" beside "No mappings yet", which is exactly what it was.
  */
+/**
+ * Save an aria-label mapping for every repeated "Read more"-style card
+ * pattern on the page — the same construction the headings-review button
+ * makes by hand, minus the hand. Returns how many kinds were saved; skips
+ * any target already mapped so a re-run does not double up.
+ */
+async function saveCardDescriptionMappings(tab) {
+  let shapes = null;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, files: ['selector-intel.js'] });
+    shapes = await inPage(tab.id, () => {
+      const S = window.__u1SelectorIntel;
+      return S && S.cardDescriptions ? S.cardDescriptions() : null;
+    });
+  } catch { shapes = null; }
+  if (!shapes || !shapes.length) return 0;
+
+  const key = storageKey('mappings', currentHostname);
+  const stored = (await U1Store.get([key]))[key] || [];
+  let made = 0;
+  for (const c of shapes) {
+    if (stored.some((m) => m && typeof m === 'object' && m.primary === c.target)) continue;
+    const tpl = buildTemplate('aria-label', c.target, {},
+      { middleText: 'about', headingSelector: c.heading });
+    await saveMappingEntry(tpl, { refreshUi: false });
+    made++;
+  }
+  if (made) { loadMappingsList(); refreshExportInfo(); }
+  return made;
+}
+
 async function buildPickedComponents() {
   const btn = document.getElementById('sweepMakeBtn');
   const status = document.getElementById('sweepPicksStatus');
