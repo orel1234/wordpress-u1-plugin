@@ -5670,7 +5670,7 @@ function labelScreen(stop, collected, tab) {
  */
 async function confirmedToMapping(pick, stop, tab) {
   const cand = (sweepCands.get(stop && stop.n) || []).find((c) => c.mark === pick.mark);
-  const sel = pick.sel || (cand && cand.selector) || '';
+  let sel = pick.sel || (cand && cand.selector) || '';
   if (!sel) return { err: 'That row has no selector to build on.' };
 
   // A dialog, listbox, datepicker or tooltip is rooted on the thing that
@@ -5689,8 +5689,10 @@ async function confirmedToMapping(pick, stop, tab) {
       const cap = await autoOpenCapture(tab, sel, pick.type);
       if (cap && cap.shape && cap.shape.listbox) {
         container = cap.shape.listbox;
+        if (cap.shape.trigger) sel = cap.shape.trigger;
       } else {
         container = (cap && (cap.root || cap.stated)) || '';
+        if (container && cap && cap.pressed) sel = cap.pressed;
       }
       if (!container && cap) {
         openWhy = cap.err ||
@@ -8200,6 +8202,34 @@ async function autoOpenCapture(tab, triggerSel, type) {
               if (!el || el === namedEl || el.contains(namedEl)) continue;
               const sel = S.robustSelector(el);
               if (sel && S.isU1Valid(sel)) { stated = sel; break; }
+            }
+          } catch (e) {}
+        }
+
+        // The wrapper that BUNDLES trigger and options — the survey's own
+        // words: "no separate list element exposed, only the wrapper". The
+        // list is right there, closed, INSIDE the named element, and closed
+        // is fine: structure reads do not care about display. This also
+        // covers the widget nothing synthetic can open — a menu that opens
+        // on CSS :hover alone ignores clicks and dispatched hover events
+        // both, and the only way in is to read it shut.
+        if (!stated) {
+          try {
+            const OPT = 'li,[role="option"],[role="menuitem"],a[href],button';
+            const queue = Array.prototype.slice.call(namedEl.children);
+            let seen = 0;
+            while (queue.length && seen++ < 200) {
+              const node = queue.shift();
+              if (node === trigger || node.contains(trigger)) continue;
+              let hits = 0;
+              for (const k of Array.prototype.slice.call(node.children)) {
+                if (k.matches && k.matches(OPT)) hits++;
+              }
+              if (hits >= 2) {
+                const sel = S.robustSelector(node);
+                if (sel && S.isU1Valid(sel)) { stated = sel; break; }
+              }
+              for (const k of Array.prototype.slice.call(node.children)) queue.push(k);
             }
           } catch (e) {}
         }
@@ -11749,6 +11779,26 @@ async function scanPickedScreens(numbers) {
       showNotice(status, head + ' ' +
         empty.map(s => `Section ${s.n}: ${s.outcome || 'nothing found'}`).join('. ') + '.', 'warn', 14000);
     }
+    // "Do not stop — make everything accessible on its own" also means no
+    // review screen afterwards. The specialist checks the MAPPINGS, in their
+    // own words — a list of triage cards after a run that already built and
+    // saved everything buildable is noise standing where the result should
+    // be. What remains is a sentence: how many landed, how many could not be
+    // built (their reasons are already in the run log, one line each), and
+    // the drawer below holding the mappings themselves. The components view
+    // still exists — it is the workflow of "stop at each section", and the
+    // way back in after a pressed Stop.
+    if (!sweepPause.on) {
+      const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
+      const failedC = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done && f.failed).length), 0);
+      aiSweep.phase = 'screens';
+      renderSweepScreens();
+      showNotice(status,
+        head + ` ${done} made accessible and saved to Mappings.` +
+        (failedC ? ` ${failedC} could not be built — each one's reason is one line in the run log above.` : ''),
+        failedC ? 'warn' : 'success', 20000);
+      return;
+    }
     aiSweep.phase = 'components';
     renderSweepPicks();
     return;
@@ -11924,6 +11974,9 @@ async function buildPickedComponents() {
             if (cap.shape.trigger) found = cap.shape.trigger;
           } else if (cap && (cap.root || cap.stated)) {
             container = cap.root || cap.stated;
+            // The mapping's trigger is the button that was actually pressed,
+            // not the wrapper the survey named around it.
+            if (cap.pressed) found = cap.pressed;
           } else if (cap && cap.err) {
             // The refusal below says only "open it on the page" — which reads
             // as nothing was even attempted. It was; say what stopped it, or
