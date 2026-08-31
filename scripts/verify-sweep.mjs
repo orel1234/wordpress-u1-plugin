@@ -2366,6 +2366,16 @@ console.log('\na running scan owns the panel');
   // the card must say what stopped the machine's own attempt.
   check('a failed self-open says WHY, in every build path',
     (panelSrc.match(/Tried to open it myself: /g) || []).length >= 2);
+  // Every excuse gets an automatic answer: an action-looking label is pressed
+  // anyway under the armed net (the mapping already names a disclosure), a
+  // click that reveals nothing is retried as hover/focus, and a script
+  // navigation that slips past the net is walked back.
+  check('the opener presses with trust — the mapping already names a disclosure',
+    /probeOne\(trigger, \{\s*\n\s*trust: true,/.test(panelSrc));
+  check('…falls back to hover and focus when the click reveals nothing',
+    /probeHover\(trigger, \{\}\)/.test(panelSrc) && /opensOn: hov\.opensOn/.test(panelSrc));
+  check('…and walks back a script navigation that slipped past the net',
+    /chrome\.tabs\.update\(tab\.id, \{ url: urlBefore \}\)/.test(panelSrc));
   // ── Pressing things can still navigate the page ──────────────────────────
   // The probe cancels link clicks, submits, beforeunload and window.open, but
   // `location.href = '/search'` runs as the page's OWN handler rather than as

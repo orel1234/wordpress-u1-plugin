@@ -182,6 +182,41 @@ console.log('\nreading the open state through whileOpen');
     res.held && /reader blew up/.test(res.held.error || ''), JSON.stringify(res.held));
 }
 
+// ── Trust: a targeted open may press what a sweep must not ──────────────────
+//
+// The sweep presses strangers, and for strangers the label is the only
+// evidence — "Register" reads as an action and is rightly refused. A caller
+// opening ONE named component holds better evidence: the mapping calls it a
+// disclosure widget, and the net is armed. The Molina sign-in wrapper carries
+// exactly this face and was refused run after run.
+console.log('\ntrust for a targeted open');
+{
+  const w = page(`
+    <div id="wrap">
+      <div id="t">Sign In Register</div>
+      <ul id="menu" hidden><li>Member</li><li>Broker</li></ul>
+    </div>`);
+  const d = w.document;
+  d.getElementById('t').addEventListener('click', () => {
+    const m = d.getElementById('menu'); m.hidden = !m.hidden;
+  });
+  const cold = await w.__u1Probe.probeOne(d.getElementById('t'),
+    { scope: d.getElementById('wrap'), settle: 0 });
+  check('a sweep still refuses a label that reads as an action',
+    cold.skipped === true && /action/.test(cold.why), JSON.stringify(cold));
+  const warm = await w.__u1Probe.probeOne(d.getElementById('t'),
+    { scope: d.getElementById('wrap'), settle: 0, trust: true });
+  check('a targeted open presses it anyway', warm.skipped === false && warm.opened.length === 1,
+    JSON.stringify({ skipped: warm.skipped, opened: warm.opened && warm.opened.length }));
+  check('…and still puts the page back',
+    warm.restored === true && d.getElementById('menu').hidden === true);
+  // What trust does NOT cover: the refusals the net cannot contain.
+  const w2 = page('<div id="s"><button id="d" disabled>Menu</button></div>');
+  const still = await w2.__u1Probe.probeOne(w2.document.getElementById('d'),
+    { scope: w2.document.getElementById('s'), settle: 0, trust: true });
+  check('trust does not press a disabled control', still.skipped === true && /disabled/.test(still.why));
+}
+
 // ── 4. Only now: does it actually learn anything ────────────────────────────
 console.log('\nwhat pressing it reveals');
 {

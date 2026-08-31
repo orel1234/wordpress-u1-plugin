@@ -64,19 +64,37 @@
    * May this element be pressed? Returns a reason when not, so a component that
    * is skipped can say why rather than silently going missing.
    */
-  function safeToClick(el) {
+  function safeToClick(el, opts) {
+    opts = opts || {};
     if (!el || el.nodeType !== 1) return { ok: false, why: 'not an element' };
     var tag = el.tagName.toLowerCase();
+
+    // A TARGETED open trusts its caller. The sweep presses strangers, and for
+    // strangers the label and the href are the only evidence there is. But a
+    // caller opening ONE named component already holds better evidence: the
+    // mapping calls it a disclosure widget — a listbox, a menu, a dialog
+    // trigger — and the net is armed, which cancels navigation, submits and
+    // the network. Under those two facts "Register" on a sign-in drop-down is
+    // a misread, not a danger, and refusing it is how the same card comes
+    // back unmappable run after run. The refusals that stay are the ones the
+    // net cannot contain: a file picker's native dialog, a download, a
+    // disabled control.
+    var trusted = !!opts.trustDisclosure;
 
     if (tag === 'a') {
       var href = el.getAttribute('href') || '';
       // An in-page anchor or a JS hook is fine. A real destination is not: the
       // net below would cancel it, but a link is a link and there is nothing
-      // to learn by pressing one.
-      if (href && !/^#/.test(href) && !/^javascript:/i.test(href)) {
+      // to learn by pressing one — unless the caller says this link is a
+      // drop-down trigger wearing an href, which is the ordinary way sites
+      // build them.
+      if (!trusted && href && !/^#/.test(href) && !/^javascript:/i.test(href)) {
         return { ok: false, why: 'a link to another page' };
       }
-      if (el.hasAttribute('download') || el.getAttribute('target') === '_blank') {
+      if (el.hasAttribute('download')) {
+        return { ok: false, why: 'opens or downloads elsewhere' };
+      }
+      if (!trusted && el.getAttribute('target') === '_blank') {
         return { ok: false, why: 'opens or downloads elsewhere' };
       }
     }
@@ -86,14 +104,15 @@
       return { ok: false, why: 'a ' + type + ' control' };
     }
     // A <button> inside a form with no type IS a submit — the default nobody
-    // remembers, and the single likeliest way to post a stranger's form.
-    if (tag === 'button' && !type && el.closest && el.closest('form')) {
+    // remembers, and the single likeliest way to post a stranger's form. The
+    // armed net cancels the submit event, so a trusted open may press it.
+    if (!trusted && tag === 'button' && !type && el.closest && el.closest('form')) {
       return { ok: false, why: 'an untyped button in a form, which submits' };
     }
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') {
       return { ok: false, why: 'disabled' };
     }
-    if (DANGER.test(faceOf(el))) {
+    if (!trusted && DANGER.test(faceOf(el))) {
       return { ok: false, why: 'its label reads as an action, not a disclosure' };
     }
     return { ok: true, why: '' };
@@ -462,7 +481,7 @@
     var scope = opts.scope || doc.body;
     var settle = opts.settle == null ? 120 : opts.settle;
 
-    var safe = safeToClick(el);
+    var safe = safeToClick(el, { trustDisclosure: !!opts.trust });
     if (!safe.ok) return { skipped: true, why: safe.why };
 
     var els = watched(scope, opts.limit);

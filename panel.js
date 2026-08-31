@@ -8123,6 +8123,11 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
  * for a checkbox/radio/switch, or { err } when nothing could be pressed.
  */
 async function autoOpenCapture(tab, triggerSel, type) {
+  // The net cancels link defaults, submits, window.open and location.assign,
+  // but `location.href = …` is a host setter nothing can stub — a handler
+  // that navigates in script still gets through. So the URL is noted here
+  // and put back below, the same recovery the sweep uses.
+  const urlBefore = ((await chrome.tabs.get(tab.id).catch(() => null))?.url || '').split('#')[0];
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id }, files: ['selector-intel.js', 'probe.js'] });
@@ -8187,64 +8192,101 @@ async function autoOpenCapture(tab, triggerSel, type) {
           } finally { net.disarm(); }
         }
 
+        // Read everything the mapping needs off one open target. Shared by
+        // the click path — called while the widget is genuinely open — and
+        // the hover path, which reads just after the close: the elements
+        // persist, and structure reads do not care about visibility.
+        const readOpen = (target) => {
+          if (!target) return null;
+          const rootSel = S.robustSelector(target);
+          if (!rootSel) return null;
+          const cap = { root: rootSel, shape: null, markup: null };
+
+          // The smallest element holding both the trigger and what it
+          // opened — the natural container for a combobox, and the scope
+          // the listbox reader expects.
+          let wrap = trigger.parentElement;
+          while (wrap && wrap !== document.body && !wrap.contains(target)) {
+            wrap = wrap.parentElement;
+          }
+          if (wrap === document.body) wrap = null;
+
+          try {
+            if (u1Type === 'dialog') {
+              cap.shape = S.dialogShape(rootSel);
+            } else if (u1Type === 'combobox') {
+              cap.shape = S.comboboxShape(rootSel) ||
+                          (wrap ? S.comboboxShape(S.robustSelector(wrap)) : null);
+            } else if (u1Type === 'listbox' && wrap) {
+              cap.shape = S.listboxShape(S.robustSelector(wrap));
+            }
+            if ((u1Type === 'listbox' || u1Type === 'combobox') && !cap.shape) {
+              // A <select> swapped for a div has no text input, so the
+              // combobox reader refuses it — but OPEN, it is a list with
+              // rows, and the visible toggle stands where the textbox
+              // would. Read the list off what actually appeared. The
+              // trigger is named by what was actually PRESSED — the
+              // descended-to button, not the wrapper it was found in.
+              const rows = Array.prototype.slice.call(target.children)
+                .filter((c) => c.nodeType === 1);
+              const optSel = rows.length >= 2
+                ? S.commonSelectorFor(target, rows, rootSel) : null;
+              const pressedSel = S.robustSelector(trigger) || trigSel;
+              cap.shape = {
+                combobox: wrap ? S.robustSelector(wrap) : rootSel,
+                listbox: rootSel,
+                trigger: pressedSel,
+                textbox: pressedSel,
+                options: (optSel && optSel.selector) || '',
+              };
+            }
+          } catch (e) { /* the markup below still comes back */ }
+          try { cap.markup = S.extractComponent(cap.root); } catch (e) {}
+          return cap;
+        };
+
         const net = P.armNet();
         let r = null;
         try {
+          // trust: this call opens ONE named component the mapping already
+          // calls a disclosure widget, under the armed net — so a label like
+          // "Register" or an href on the trigger is a misread, not a reason.
           r = await P.probeOne(trigger, {
+            trust: true,
             whileOpen: (panel) => {
               let target = panel;
               if (!target && stated) {
                 try { target = document.querySelector(stated); } catch (e) {}
               }
-              if (!target) return null;
-              const rootSel = S.robustSelector(target);
-              if (!rootSel) return null;
-              const cap = { root: rootSel, shape: null, markup: null };
-
-              // The smallest element holding both the trigger and what it
-              // opened — the natural container for a combobox, and the scope
-              // the listbox reader expects.
-              let wrap = trigger.parentElement;
-              while (wrap && wrap !== document.body && !wrap.contains(target)) {
-                wrap = wrap.parentElement;
-              }
-              if (wrap === document.body) wrap = null;
-
-              try {
-                if (u1Type === 'dialog') {
-                  cap.shape = S.dialogShape(rootSel);
-                } else if (u1Type === 'combobox') {
-                  cap.shape = S.comboboxShape(rootSel) ||
-                              (wrap ? S.comboboxShape(S.robustSelector(wrap)) : null);
-                } else if (u1Type === 'listbox' && wrap) {
-                  cap.shape = S.listboxShape(S.robustSelector(wrap));
-                }
-                if ((u1Type === 'listbox' || u1Type === 'combobox') && !cap.shape) {
-                  // A <select> swapped for a div has no text input, so the
-                  // combobox reader refuses it — but OPEN, it is a list with
-                  // rows, and the visible toggle stands where the textbox
-                  // would. Read the list off what actually appeared. The
-                  // trigger is named by what was actually PRESSED — the
-                  // descended-to button, not the wrapper it was found in.
-                  const rows = Array.prototype.slice.call(target.children)
-                    .filter((c) => c.nodeType === 1);
-                  const optSel = rows.length >= 2
-                    ? S.commonSelectorFor(target, rows, rootSel) : null;
-                  const pressedSel = S.robustSelector(trigger) || trigSel;
-                  cap.shape = {
-                    combobox: wrap ? S.robustSelector(wrap) : rootSel,
-                    listbox: rootSel,
-                    trigger: pressedSel,
-                    textbox: pressedSel,
-                    options: (optSel && optSel.selector) || '',
-                  };
-                }
-              } catch (e) { /* the markup below still comes back */ }
-              try { cap.markup = S.extractComponent(cap.root); } catch (e) {}
-              return cap;
+              return target ? readOpen(target) : null;
             },
           });
         } finally { net.disarm(); }
+
+        // The click gave nothing — refused, or pressed with nothing new
+        // appearing. The commonest honest reason is that the widget opens on
+        // HOVER or focus: tooltips, and nav drop-downs that ignore clicks
+        // entirely. Hovering is harmless, so it is always the next try, and
+        // it also learns WHICH event opens — an answer the mapping records.
+        if (!r || r.skipped || !(r.held && r.held.root)) {
+          let hov = null;
+          try { hov = await P.probeHover(trigger, {}); } catch (e) {}
+          if (hov && hov.revealed && hov.revealed.length) {
+            const cap = readOpen(hov.revealed[0]) || {};
+            return {
+              stated,
+              root: cap.root || stated || null,
+              shape: cap.shape || null,
+              markup: cap.markup || null,
+              opensOn: hov.opensOn,
+              opened: hov.revealed.length,
+              overlay: false,
+              focusEntered: null,
+              stateClass: null,
+              restored: !!hov.restored,
+            };
+          }
+        }
 
         if (!r || r.skipped) {
           return { err: (r && r.why) || 'This one could not be pressed.', stated };
@@ -8265,7 +8307,20 @@ async function autoOpenCapture(tab, triggerSel, type) {
       args: [triggerSel, type],
     });
   } catch (e) { return { err: e.message }; }
-  return (res && res[0] && res[0].result) || { err: 'The page gave no answer.' };
+  const out = (res && res[0] && res[0].result) || { err: 'The page gave no answer.' };
+  // Pressed, and the page LEFT despite the net — put it back before anything
+  // else runs against the wrong page. What was captured before the jump is
+  // still good: the selectors were read while the right page was up.
+  const nowTab = await chrome.tabs.get(tab.id).catch(() => null);
+  const urlAfter = ((nowTab && nowTab.url) || '').split('#')[0];
+  if (urlBefore && urlAfter && urlAfter !== urlBefore) {
+    try {
+      await chrome.tabs.update(tab.id, { url: urlBefore });
+      await new Promise((r) => setTimeout(r, 1500));
+      out.navigatedBack = true;
+    } catch { /* the tab may be gone; the caller's next read will say so */ }
+  }
+  return out;
 }
 
 /**
