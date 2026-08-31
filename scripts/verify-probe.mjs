@@ -205,6 +205,111 @@ console.log('\na hidden tab still finishes');
   check('…and the page is still put back', d.getElementById('p').hidden === true);
 }
 
+// ── The open-state signals that used to be thrown away ──────────────────────
+//
+// Stage 2 of the audit: aria-hidden/inert on everything ELSE, the scroll
+// lock, the backdrop, focus landing inside — each measured while open, each
+// returned as itself rather than squashed into an anonymous count.
+console.log('\nthe open-state signals are handed back');
+{
+  const w = page(`
+    <div id="w">
+      <main id="mainC">page content</main>
+      <button id="t">Terms</button>
+      <div id="box" hidden><p>Please read.</p><button id="okBtn">OK</button></div>
+      <div id="veil" hidden></div>
+    </div>`);
+  const d = w.document;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    if (this.id === 'veil') return { top: 0, left: 0, right: 1024, bottom: 768, width: 1024, height: 768 };
+    return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+  };
+  w.getComputedStyle = (el) => ({
+    position: el && el.id === 'veil' ? 'fixed' : 'static',
+    overflow: el === d.body && d.body.dataset.lock ? 'hidden' : 'visible',
+    backgroundColor: el && el.id === 'veil' ? 'rgba(0,0,0,0.45)' : 'rgb(255,255,255)',
+    opacity: '1', visibility: 'visible', display: 'block',
+  });
+  d.getElementById('t').addEventListener('click', () => {
+    const open = d.getElementById('box').hidden;
+    d.getElementById('box').hidden = !open ? true : false;
+    d.getElementById('veil').hidden = d.getElementById('box').hidden;
+    if (!d.getElementById('box').hidden) {
+      d.getElementById('mainC').setAttribute('aria-hidden', 'true');
+      d.getElementById('mainC').setAttribute('inert', '');
+      d.body.dataset.lock = '1';
+      d.getElementById('okBtn').focus();
+    } else {
+      d.getElementById('mainC').removeAttribute('aria-hidden');
+      d.getElementById('mainC').removeAttribute('inert');
+      delete d.body.dataset.lock;
+    }
+  });
+  const res = await w.__u1Probe.probeOne(d.getElementById('t'),
+    { scope: d.getElementById('w'), settle: 0 });
+  check('hidOthers names WHO was shut out, not how many',
+    (res.hidOthers || []).length === 1 && res.hidOthers[0].id === 'mainC',
+    JSON.stringify((res.hidOthers || []).map((e) => e.id)));
+  check('the scroll lock is measured while open', res.scrollLocked === true);
+  check('the backdrop beside the panel is identified',
+    !!res.backdrop && res.backdrop.id === 'veil', res.backdrop && res.backdrop.id);
+  check('focus landing inside is recorded', res.focusEntered === true && res.activeInside === true);
+  check('…and the page is still put back', d.getElementById('box').hidden === true &&
+    !d.getElementById('mainC').hasAttribute('aria-hidden'));
+}
+
+// ── What was stopped is finally handed back ─────────────────────────────────
+console.log('\nblocked navigations are reported');
+{
+  // history.pushState, not location.assign: jsdom's Location methods are not
+  // writable, so the net's stub cannot take there — in a real browser it can,
+  // and both routes share the same `note()`.
+  const w = page(`<div id="w"><button id="go">More info</button></div>`);
+  const d = w.document;
+  d.getElementById('go').addEventListener('click', () => {
+    w.history.pushState({}, '', '/somewhere-else');
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, repeat: true });
+  check('probeAll returns the navigations its net stopped',
+    Array.isArray(out.blocked) && out.blocked.length >= 1 && /history\.pushState/.test(out.blocked[0]),
+    JSON.stringify(out.blocked));
+  const net = w.__u1Probe.armNet();
+  const back = net.disarm();
+  check('disarm() hands the list back instead of undefined', Array.isArray(back));
+}
+
+// ── The press budget goes to the loudest claims first ───────────────────────
+//
+// Twelve presses per section, and blind document order spent them on whatever
+// buttons came first — the finder's Go buttons ate the budget and its tab
+// strip, which classifies perfectly when pressed, was never pressed at all.
+// Ranked now: declared disclosures (aria-expanded/haspopup/controls-to-hidden)
+// before plain buttons before pointer-cursor divs; document order within.
+console.log('\nranking the press budget');
+{
+  const w = page(`
+    <div id="w">
+      <button id="p1">Plain one</button>
+      <button id="p2">Plain two</button>
+      <button id="p3">Plain three</button>
+      <button id="d1" aria-expanded="false">Opens A</button>
+      <button id="d2" aria-haspopup="true">Opens B</button>
+      <div id="c1" style="cursor:pointer">bare div</div>
+      <button id="d3" aria-controls="hiddenPanel">Opens C</button>
+      <div id="hiddenPanel" hidden>x</div>
+    </div>`);
+  const got = w.__u1Probe.pressable(w.document.getElementById('w'), { max: 3, repeat: true });
+  check('with a budget of 3, the three DECLARED openers are the three pressed',
+    got.length === 3 && got.every((el) => ['d1', 'd2', 'd3'].includes(el.id)),
+    got.map((e) => e.id).join());
+  check('…in document order among themselves',
+    got.map((e) => e.id).join() === 'd1,d2,d3', got.map((e) => e.id).join());
+  const all = w.__u1Probe.pressable(w.document.getElementById('w'), { max: 40, repeat: true });
+  check('with room, the plain buttons follow and the bare div is last',
+    all.map((e) => e.id).join() === 'd1,d2,d3,p1,p2,p3,c1', all.map((e) => e.id).join());
+}
+
 // ── Trust: a targeted open may press what a sweep must not ──────────────────
 //
 // The sweep presses strangers, and for strangers the label is the only

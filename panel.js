@@ -9763,6 +9763,12 @@ async function runSweep(tab) {
         }
         await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
         if (!probed) sweepLog(n, 'the probe could not run on this page', 'err');
+        if (probed && probed.blocked && probed.blocked.length) {
+          // "This page tried to navigate seven times" — finally said.
+          sweepLog(n, `the page tried to navigate ${probed.blocked.length} time${probed.blocked.length === 1 ? '' : 's'} ` +
+            `while being pressed — blocked (${probed.blocked[0].split(' ')[0]}…)`, 'err');
+        }
+        if (!probed) { /* handled above */ }
         else if (!probed.pressed) {
           sweepLog(n, 'nothing here could be pressed' +
             (probed.skipped ? ` — ${probed.skipped} were refused as unsafe` : ''), 'skip');
@@ -10097,6 +10103,9 @@ async function probeScreen(tab) {
       };
       return {
         restored: out.restored, pressed: out.pressed, skipped: out.skipped,
+        // Script navigations the net stopped during the presses — the report
+        // the armNet comment promised and nothing ever surfaced.
+        blocked: (out.blocked || []).slice(0, 20),
         components: out.components.map((c) => {
           const parts = {};
           for (const k of Object.keys(c.parts)) parts[k] = nameFor(c.root, c.parts[k]);

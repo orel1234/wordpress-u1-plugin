@@ -227,6 +227,11 @@
           if (beaconWas) root.navigator.sendBeacon = beaconWas;
         } catch (e) {}
         net = null;
+        // What was stopped, handed back at last. The comment beside `blocked`
+        // promised "this page tried to navigate seven times" and for a year
+        // nothing ever read it — disarm returned undefined and the report
+        // did not exist.
+        return blocked;
       },
     };
     return net;
@@ -239,7 +244,7 @@
   // animation frame; this flags appearing and disappearing, which is what a
   // disclosure actually does.
   var STATE_ATTRS = ['hidden', 'aria-expanded', 'aria-selected', 'aria-hidden',
-                     'aria-current', 'open', 'checked'];
+                     'aria-current', 'open', 'checked', 'inert'];
 
   var FIELD_SEL = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]),select,textarea';
 
@@ -499,6 +504,14 @@
     var whereBefore = geometry(els);
     var textBefore = contentOf(els);
     var focusBefore = doc.activeElement;
+    // Who was shut out. aria-hidden and inert on everything ELSE is the most
+    // diagnostic modal signal there is — "it hid the rest of the page" — and
+    // it used to be squashed into an anonymous `touched` count nobody read.
+    var hiddenBefore = new Map();
+    els.forEach(function (el) {
+      hiddenBefore.set(el, (el.getAttribute('aria-hidden') || '') + '|' +
+                           (el.hasAttribute('inert') ? '1' : '0'));
+    });
     try { el.click(); } catch (e) { return { skipped: true, why: 'could not be pressed' }; }
     await raf();
     if (settle) await wait(settle);
@@ -553,6 +566,55 @@
     if (panel) {
       var landed = doc.activeElement;
       focusEntered = !!(landed && landed !== focusBefore && panel.contains(landed));
+    }
+    var activeInside = !!(panel && doc.activeElement && panel.contains(doc.activeElement));
+
+    // The rest of the open-state measurements, same deadline as the two
+    // above: a closed page has none of this to read.
+    //
+    // hidOthers — which elements OUTSIDE the panel were aria-hidden'd or
+    // inert'ed by this press. The list itself, not a count.
+    var hidOthers = [];
+    if (panel) {
+      els.forEach(function (el) {
+        var now = (el.getAttribute('aria-hidden') || '') + '|' +
+                  (el.hasAttribute('inert') ? '1' : '0');
+        if (hiddenBefore.get(el) === now) return;
+        var offNow = el.getAttribute('aria-hidden') === 'true' || el.hasAttribute('inert');
+        if (!offNow) return;
+        if (el === panel || panel.contains(el) || el.contains(panel)) return;
+        hidOthers.push(el);
+      });
+    }
+    // scrollLocked — the page behind cannot scroll while this is open.
+    var scrollLocked = false;
+    try {
+      var bodyStyle = root.getComputedStyle(doc.body);
+      var htmlStyle = root.getComputedStyle(doc.documentElement);
+      scrollLocked = bodyStyle.overflow === 'hidden' || htmlStyle.overflow === 'hidden' ||
+                     bodyStyle.position === 'fixed';
+    } catch (e) {}
+    // backdrop — a fixed, page-covering, see-through layer beside or around
+    // the panel. Measured as a NEIGHBOUR of the panel: a veil is a sibling or
+    // the wrapper, never a stranger.
+    var backdrop = null;
+    if (panel) {
+      try {
+        var vwB = root.innerWidth || 1024, vhB = root.innerHeight || 768;
+        var nearby = [panel.previousElementSibling, panel.nextElementSibling, panel.parentElement];
+        for (var bi = 0; bi < nearby.length; bi++) {
+          var cand = nearby[bi];
+          if (!cand || cand === doc.body || cand === doc.documentElement) continue;
+          var cs = root.getComputedStyle(cand);
+          if (cs.position !== 'fixed') continue;
+          var br = cand.getBoundingClientRect();
+          if (br.width < vwB * 0.95 || br.height < vhB * 0.95) continue;
+          var alpha = 1;
+          var m = /rgba?\([^)]*?,\s*([\d.]+)\)$/.exec(cs.backgroundColor || '');
+          if (m) alpha = parseFloat(m[1]);
+          if (alpha < 1 || parseFloat(cs.opacity) < 1) { backdrop = cand; break; }
+        }
+      } catch (e) {}
     }
 
 
@@ -609,6 +671,10 @@
       focusEntered: focusEntered,
       overlay: isLayer,
       floating: isFloating,
+      hidOthers: hidOthers,
+      scrollLocked: scrollLocked,
+      backdrop: backdrop,
+      activeInside: activeInside,
       stateClass: stateClass,
       restored: restored,
       held: held,
@@ -641,7 +707,7 @@
 
   function pressable(scope, opts) {
     opts = opts || {};
-    var out = [], seen = new Set();
+    var seen = new Set();
     // A sweep probes one screenful at a time, so the question is not "is it on
     // the page" but "is it on THIS screen". Without this the same menu is
     // pressed again at every scroll position.
@@ -653,23 +719,49 @@
         return r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
       } catch (e) { return false; }
     };
-    var add = function (el) {
+    // RANKED, then cut — not collected in source order and cut blind. The
+    // budget is 12 presses per section, and blind document order spent them
+    // on whatever buttons came first: the finder's five selects and Go
+    // buttons ate the budget and its tab strip — which classifies perfectly
+    // when pressed — was never pressed at all. Rank by how loudly a control
+    // says "I open something":
+    //   0  the event recorder saw a real handler — an observation, not a hint
+    //   1  aria-expanded / aria-haspopup, or aria-controls naming a HIDDEN
+    //      element — the page declaring a disclosure outright
+    //   2  button / role=button / role=tab / summary / [tabindex] — pressable
+    //      by vocation, silent about what pressing does
+    //   3  cursor:pointer on a bare div — the one signal a page cannot help
+    //      giving, and the weakest
+    // Document order within each rank, so a strip's siblings stay together.
+    var buckets = [[], [], [], []];
+    var add = function (el, rank) {
       if (!el || seen.has(el) || !scope.contains(el)) return;
       if (!opts.repeat && everPressed.has(el)) return;
       if (!shown(el) || !onScreen(el)) return;
       if (!safeToClick(el).ok) return;
-      seen.add(el); out.push(el);
+      seen.add(el); buckets[rank].push(el);
+    };
+    var declares = function (el) {
+      try {
+        if (el.hasAttribute('aria-expanded') || el.hasAttribute('aria-haspopup')) return true;
+        var id = el.getAttribute('aria-controls');
+        if (id) {
+          var t = doc.getElementById(id);
+          if (t && !shown(t)) return true;
+        }
+      } catch (e) {}
+      return false;
     };
 
     var rec = root.__u1EventMap;
     if (rec && typeof rec.all === 'function') {
-      try { rec.all().forEach(add); } catch (e) {}
+      try { rec.all().forEach(function (el) { add(el, 0); }); } catch (e) {}
     }
-    // Plus the ones that announce themselves, for pages that do.
+    // The ones that announce themselves, split by how much they announce.
     try {
       scope.querySelectorAll(
-        'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],summary,[tabindex]'
-      ).forEach(add);
+        'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],[aria-controls],summary,[tabindex]'
+      ).forEach(function (el) { add(el, declares(el) ? 1 : 2); });
     } catch (e) {}
 
     // And, when neither of those found anything, the one signal a page cannot
@@ -687,10 +779,12 @@
     // elements on a page were enough to make `out` non-empty, and the sweep
     // that finds the ACTUAL controls never ran — the probe reported nothing on
     // the one kind of page it was written for.
-    if (out.length < (opts.max || 40)) {
+    var haveSoFar = buckets[0].length + buckets[1].length + buckets[2].length;
+    if (haveSoFar < (opts.max || 40)) {
       try {
         var all = scope.querySelectorAll('div,span,li,td');
-        for (var i = 0; i < all.length && out.length < (opts.max || 40) * 3; i++) {
+        var room = (opts.max || 40) * 3;
+        for (var i = 0; i < all.length && buckets[3].length < room; i++) {
           var el = all[i];
           if (seen.has(el) || !onScreen(el)) continue;
           // A pointer cursor INHERITED from a clickable ancestor is that
@@ -700,10 +794,11 @@
           var mine = root.getComputedStyle(el).cursor === 'pointer';
           if (!mine) continue;
           if (p && root.getComputedStyle(p).cursor === 'pointer') continue;
-          add(el);
+          add(el, 3);
         }
       } catch (e) {}
     }
+    var out = buckets[0].concat(buckets[1], buckets[2], buckets[3]);
     return out.slice(0, opts.max || 40);
   }
 
@@ -1095,9 +1190,11 @@
                     (r.stateClass.trigger && r.stateClass.trigger.added) || [];
         if (added.length) why += ', and marks it open with .' + added[0];
       }
-      // The work this one needs, said plainly. Not a reason to doubt it is a
-      // dialog — the reason to map it.
-      if (type === 'dialog' && r.focusEntered === false) {
+      // The work this one needs, said plainly. Not a reason to doubt the
+      // type — the reason to map it. A menu or an accordion that drops focus
+      // needed the note as much as a dialog and never got it.
+      if (r.focusEntered === false &&
+          (type === 'dialog' || type === 'menu' || type === 'accordion')) {
         why += '. Focus stayed outside it when it opened';
       }
       comps.push({
@@ -1715,7 +1812,12 @@
         // page — see localScope. The run-wide restore check below still uses
         // the full scope, because that is a guarantee about the page.
         var near = localScope(list[i], scope, opts.near);
+        // Which press tried to LEAVE. The net counts what it stops; growth
+        // across one press pins the attempt on that press, and a press that
+        // navigated is not a press that revealed something.
+        var navBefore = net.blocked.length;
         var r = await probeOne(list[i], { scope: near, settle: opts.settle, limit: opts.limit });
+        r.navigated = net.blocked.length > navBefore;
         if (r.skipped) { skipped++; continue; }
         everPressed.add(list[i]);
         pressed.push(list[i]);
@@ -1724,7 +1826,9 @@
                          moved: r.moved, rerendered: r.rerendered,
                          stateClass: r.stateClass,
                          focusEntered: r.focusEntered, overlay: r.overlay,
-                         floating: r.floating });
+                         floating: r.floating, navigated: r.navigated,
+                         hidOthers: r.hidOthers, scrollLocked: r.scrollLocked,
+                         backdrop: r.backdrop, activeInside: r.activeInside });
         }
       }
 
@@ -1817,7 +1921,8 @@
       net.disarm();
     }
     var restored = same(start, fingerprint(wholeScope));
-    return { components: comps, pressed: pressed.length, skipped: skipped, restored: restored };
+    return { components: comps, pressed: pressed.length, skipped: skipped,
+             restored: restored, blocked: net.blocked.slice() };
   }
 
   root.__u1Probe = {

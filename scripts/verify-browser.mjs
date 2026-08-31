@@ -246,12 +246,17 @@ async function runVariant(browser, variant) {
       return { ...base, typed };
     })();
 
-    // The closed half, for the record: labels with hidden:true, found by edges.
-    let openFound = 0;
+    // The closed half: found (collected or observed at all), and NAMED — did
+    // any source put the right type on it. Naming the hidden components is
+    // the whole promise of the behavioural layer on a hint-free page.
+    let openFound = 0, openNamed = 0;
     const openable = positives.filter((p) => p.label.hidden);
-    for (const { el } of openable) {
-      if (el && hintByEl.has(el)) openFound++;
-      else if (el && unionDetections.some((d) => touches(d.el, el))) openFound++;
+    for (const { label, el } of openable) {
+      if (!el) continue;
+      const found = hintByEl.has(el) || unionDetections.some((d) => touches(d.el, el));
+      if (found) openFound++;
+      const hit = bestMatch(unionDetections, el);
+      if (hit && typeOk(label.type, hit.type)) openNamed++;
     }
 
     // builtByJs sanity — the reason jsdom's hostile run was not a measurement.
@@ -269,7 +274,7 @@ async function runVariant(browser, variant) {
       hint: score(hintDetections),
       classify: score(classifyLive),
       union,
-      openFound, openTotal: openable.length,
+      openFound, openNamed, openTotal: openable.length,
       builtProbes, pressedTotal, observedList,
     };
   }, { labels, OVERLAP, PROBE_OPTS });
@@ -299,7 +304,8 @@ for (const variant of ONLY) {
   } else if (VERBOSE) {
     console.log('  Built by the page\'s own JavaScript: ' + r.builtProbes.map((b) => `${b.sel}=${b.n}`).join(' · '));
   }
-  console.log(`  ${r.pressedTotal} presses across the walk · ${r.openTotal ? `closed collected ${r.openFound}/${r.openTotal}` : ''}`);
+  console.log(`  ${r.pressedTotal} presses across the walk · ` +
+    (r.openTotal ? `closed collected ${r.openFound}/${r.openTotal} · closed NAMED right ${r.openNamed}/${r.openTotal}` : ''));
 
   for (const [title, m] of [['(a) hint — markup read', r.hint], ['(b) classify — behaviour', r.classify], ['(c) union — the pipeline', r.union]]) {
     console.log(`\n  ${title}`);
