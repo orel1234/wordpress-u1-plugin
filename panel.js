@@ -7393,6 +7393,50 @@ function markScreenReading(n) {
  * Returns { comps, dropped, retyped } — the caller reports the counts, because
  * a row silently disappearing is its own kind of wrong.
  */
+/**
+ * Stage 3.1: what the probe OBSERVED becomes proposed rows, beside the
+ * model's — source:'observed', so every later surface can say which voice
+ * said what. Stage 3.3: merged by root selector; agreement folds into one
+ * dual-source row, disagreement keeps BOTH rows flagged mismatch — no voice
+ * wins silently.
+ */
+function observedRowsFor(stop) {
+  return ((stop && stop.probed) || [])
+    .filter((c) => c && c.root && c.type)
+    .map((c) => ({
+      label: `${c.type} (observed): ${c.root}`,
+      u1Type: c.type,
+      containerSelector: c.root,
+      triggerSelector: (c.parts && c.parts.trigger) || '',
+      needsWork: true,
+      source: 'observed',
+      why: 'Pressed and watched: ' + (c.why || ''),
+    }));
+}
+
+function mergeObservedRows(modelRows, obsRows) {
+  const out = (modelRows || []).map((r) => ({ ...r, source: r.source || 'model' }));
+  for (const obs of obsRows || []) {
+    const same = out.find((r) => r.containerSelector === obs.containerSelector);
+    if (!same) { out.push(obs); continue; }
+    if (same.u1Type === obs.u1Type) {
+      same.source = 'model+observed';
+      same.why = (same.why ? same.why + ' ' : '') + '(Confirmed by pressing.)';
+      if (!same.triggerSelector && obs.triggerSelector) same.triggerSelector = obs.triggerSelector;
+      continue;
+    }
+    // Two voices, two answers: both rows stay, both say so. Silence is how
+    // the probe's verdicts were thrown away for a year.
+    same.mismatch = true;
+    same.why = (same.why ? same.why + ' ' : '') +
+      `⚠ Pressing said ${obs.u1Type}, the reading says ${same.u1Type} — decide.`;
+    obs.mismatch = true;
+    obs.why += ` ⚠ The reading says ${same.u1Type} — decide.`;
+    out.push(obs);
+  }
+  return out;
+}
+
 async function auditSurveyComponents(comps, tab) {
   const list = (comps || []).filter((c) => c && c.containerSelector);
   if (!list.length || !isInjectable(tab)) return { comps: list, dropped: [], retyped: [] };
@@ -9682,6 +9726,35 @@ async function runSweep(tab) {
         `their contents cannot be scanned or mapped from outside`, 'err');
     }
   } catch { /* the survey itself is unaffected */ }
+  // F-lite + D for the real walk, exactly as measured in verify-browser: one
+  // snapshot decides press membership (live-rect membership was a coin flip —
+  // the hero advances on its own clock), and the hint layer's strips are
+  // seeded so a strip the markup announces always gets its presses.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, files: ['selector-intel.js', 'probe.js'] });
+    await inPage(tab.id, () => {
+      const P = window.__u1Probe;
+      if (!P || !P.planRun) return 0;
+      P.resetRun();
+      const seeds = [];
+      try {
+        for (const rootEl of document.querySelectorAll(
+          '[role="tablist"],[class*="tab" i],[class*="menu" i],[class*="nav" i]')) {
+          if (seeds.length >= 60) break;
+          const kids = [...rootEl.children].map((k) => {
+            try {
+              return k.matches('button,[role="button"],[role="tab"],summary') ? k
+                : k.querySelector('button,[role="button"],[role="tab"],summary');
+            } catch (e) { return null; }
+          }).filter(Boolean);
+          if (kids.length >= 2) for (const k of kids) { if (seeds.length < 60) seeds.push(k); }
+        }
+      } catch (e) {}
+      window.scrollTo(0, 0);
+      return P.planRun(document.body, { seeds });
+    });
+  } catch { /* the walk still runs, on live rects */ }
   if (log) { log.innerHTML = ''; log.style.display = 'none'; }
   btn.disabled = true;
   stopBtn.style.display = '';
@@ -9745,7 +9818,14 @@ async function runSweep(tab) {
       {
         showSweepBusy(`Section ${n}`, 'Opening each component to see what it is.',
           pos && pos.height ? Math.min(100, ((pos.y + pos.view) / pos.height) * 100) : undefined);
-        const probed = await probeScreen(tab);
+        // F-lite: this section presses whoever the run's snapshot put in its
+        // band; to:null means "to the end of the page" across the arg channel.
+        const bandStep = pos && pos.view ? Math.round(pos.view * SWEEP_OVERLAP) : 0;
+        const band = pos ? {
+          from: pos.y,
+          to: (!bandStep || pos.y + bandStep >= (pos.height || 0)) ? null : pos.y + bandStep,
+        } : null;
+        const probed = await probeScreen(tab, band);
         // Pressing things can still take the page somewhere, however careful
         // the probe is: it cancels link clicks and form submits, but a site
         // whose own handler does `location.href = '/search'` navigates as its
@@ -9904,6 +9984,42 @@ async function runSweep(tab) {
     // element once per page load, so a mapping made early in a run may never
     // have met the elements a later section re-rendered.
     //
+    // The run-level pass (3.5): one classify over the whole walk's ledger,
+    // with the sibling climb. Its answer REPLACES the per-section fragments
+    // in stop.probed, so every later consumer — the typing merge, the
+    // panel-recovery lookups — reads whole components instead of shards.
+    try {
+      const finalObs = await inPage(tab.id, () => {
+        const P = window.__u1Probe, S = window.__u1SelectorIntel;
+        if (!P || !P.classifyRun || !S) return null;
+        const sy = window.scrollY || 0;
+        return P.classifyRun().map((c) => {
+          const parts = {};
+          for (const k of Object.keys(c.parts || {})) {
+            const sels = (c.parts[k] || []).map((e) => {
+              try { return S.robustSelector(e); } catch (e2) { return ''; }
+            }).filter(Boolean);
+            if (sels.length) parts[k] = sels.length === 1 ? sels[0] : sels.join(',');
+          }
+          let rootSel = '', docY = 0;
+          try { rootSel = S.robustSelector(c.root) || ''; } catch (e) {}
+          try { docY = c.root.getBoundingClientRect().top + sy; } catch (e) {}
+          return { type: c.type, root: rootSel, why: c.why, parts, docY };
+        }).filter((c) => c.root);
+      });
+      if (finalObs && finalObs.length) {
+        aiSweep.finalObserved = finalObs;
+        const byY = [...aiSweep.stops].sort((a, b) => (a.scrollY || 0) - (b.scrollY || 0));
+        for (let si = 0; si < byY.length; si++) {
+          const from = byY[si].scrollY || 0;
+          const to = si + 1 < byY.length ? (byY[si + 1].scrollY || 0) : Infinity;
+          const mine = finalObs.filter((c) => c.docY >= from && c.docY < to);
+          if (mine.length) byY[si].probed = mine;
+        }
+        sweepLog(0, `run-level pass: ${finalObs.length} whole component${finalObs.length === 1 ? '' : 's'} from the presses, fragments replaced`, '');
+      }
+    } catch { /* per-section observations stand */ }
+
     // The "Read more" cards, saved by the run itself. The mapping existed and
     // the headings-review button that proposes it lives three tabs away, so
     // it was never made — while a run that promises "make everything
@@ -10072,12 +10188,12 @@ async function sweepBackIfNavigated(tab, n) {
   return false;
 }
 
-async function probeScreen(tab) {
+async function probeScreen(tab, band) {
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['probe.js'] });
   } catch { return null; }
   try {
-    return await inPage(tab.id, async () => {
+    return await inPage(tab.id, async (sectionBand) => {
       const P = window.__u1Probe, S = window.__u1SelectorIntel;
       if (!P || !S) return null;
       // `idle` buys the two findings a press cannot make: a gallery you swipe,
@@ -10090,8 +10206,14 @@ async function probeScreen(tab) {
       // defaulted into silently. Two seconds is under the shortest auto-advance
       // worth calling one (a slide nobody could read faster than that), and the
       // watch samples inside the window rather than only at its ends.
+      // Infinity does not survive the executeScript argument channel, so an
+      // open-ended band arrives as to:null and is widened back here.
+      const sectionY = sectionBand
+        ? { from: sectionBand.from || 0,
+            to: sectionBand.to == null ? Infinity : sectionBand.to }
+        : undefined;
       const out = await P.probeAll(document.body,
-        { inViewport: true, settle: 80, max: 12, limit: 2500, idle: 2000 });
+        { inViewport: true, settle: 80, max: 12, limit: 2500, idle: 2000, sectionY });
       // Selectors are worked out HERE, where the elements are. The panel never
       // handles a node — only a selector produced by the same code that
       // produces every other selector in the tool.
@@ -10122,7 +10244,7 @@ async function probeScreen(tab) {
           return out;
         }),
       };
-    });
+    }, [band || null]);
   } catch { return null; }
 }
 
@@ -11620,6 +11742,12 @@ async function scanPickedScreens(numbers) {
             headings: collected.headings,
             title: collected.title,
             url: collected.url,
+            // 3.2: what pressing found, in the model's brief. It may
+            // disagree, with a reason — never ignore.
+            observations: ((stop.probed || []).slice(0, 12)).map((c) => ({
+              trigger: (c.parts && c.parts.trigger) || '',
+              root: c.root, type: c.type, why: (c.why || '').slice(0, 140),
+            })),
           },
           // The definitive answer to "is it stuck?": bytes of the actual
           // answer, counted as they land. Silence is what the idle clock
@@ -11660,7 +11788,11 @@ async function scanPickedScreens(numbers) {
       // and was actually a way to return nothing: the model is conservative with
       // that flag, so a page whose markup reads as broadly reasonable came back
       // empty even though every component on it still needed mapping.
-      const audit = await auditSurveyComponents(part.components, tab);
+      // 3.1 + 3.3: the probe's observations join the model's rows before the
+      // audit, merged by root — so menuIsReallyListbox and alreadyNative
+      // finally run on the one detector that works on hint-free pages.
+      const merged = mergeObservedRows(part.components, observedRowsFor(stop));
+      const audit = await auditSurveyComponents(merged, tab);
       const found = audit.comps;
       for (const d of audit.dropped) {
         sweepLog(stop.n, `left out ${d.label} — a <${d.tag}> named “${d.name}” is already ` +

@@ -419,7 +419,10 @@ for (const variant of ONLY) {
   console.log(`  ${r.pressedTotal} presses across the walk · ` +
     (r.openTotal ? `closed collected ${r.openFound}/${r.openTotal} · closed NAMED right ${r.openNamed}/${r.openTotal}` : ''));
 
-  for (const [title, m] of [['(a) hint — markup read', r.hint], ['(b) classify — behaviour', r.classify], ['(c) union — the pipeline', r.union]]) {
+  // (c) is THE reported number from stage 3.4 on: it is the by-root merge of
+  // both voices, which is exactly what the panel's typing pipeline now feeds
+  // to the model and the audit.
+  for (const [title, m] of [['(a) hint — markup read', r.hint], ['(b) classify — behaviour', r.classify], ['(c) union — the pipeline (REPORTED)', r.union]]) {
     console.log(`\n  ${title}`);
     line('found at all', m.found, m.denom);
     line('named correctly', m.typed, m.denom);

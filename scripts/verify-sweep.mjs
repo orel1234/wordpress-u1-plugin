@@ -273,7 +273,7 @@ console.log('\nwhat comes back from a section');
   // Anchored to the `stop.scanned` that FOLLOWS the loop, not the first one in
   // the file — the early-skip path sets it too, and slicing to that gave an
   // empty string that failed both checks while the code was perfectly fine.
-  const loopStart = panelSrc.indexOf('const audit = await auditSurveyComponents(part.components, tab);');
+  const loopStart = panelSrc.indexOf('const audit = await auditSurveyComponents(merged, tab);');
   const loop = panelSrc.slice(loopStart, panelSrc.indexOf('stop.scanned = true;', loopStart));
   // The only filter on the way in is "does it name an element". needsWork is a
   // LABEL — dropping the rows it marks false looked like a saving and was a way
@@ -2435,6 +2435,29 @@ console.log('\na running scan owns the panel');
   check('…and the self-applied note stays off the server and out of backups',
     /'__selfApplied_' \+ currentHostname/.test(panelSrc) &&
     /setLocalOnly\(\{ \[key\]: \[\.\.\.have\]\.slice\(-800\) \}\)/.test(panelSrc));
+
+  // Stage 3: the probe's voice reaches typing. Observed rows merge with the
+  // model's by root BEFORE the audit (so menuIsReallyListbox finally runs on
+  // the detector that works on hint-free pages), disagreement flags BOTH
+  // rows instead of one voice winning silently, the observations enter the
+  // model's brief, the real walk plans its presses off one snapshot with the
+  // hint layer's strips seeded, and the run-level pass replaces per-section
+  // fragments in stop.probed at walk end.
+  check('observed rows join the model\'s before the audit',
+    /mergeObservedRows\(part\.components, observedRowsFor\(stop\)\)/.test(panelSrc) &&
+    /auditSurveyComponents\(merged, tab\)/.test(panelSrc));
+  check('…and a type disagreement flags BOTH rows, silencing neither',
+    /same\.mismatch = true;/.test(panelSrc) && /obs\.mismatch = true;/.test(panelSrc) &&
+    /Pressing said \$\{obs\.u1Type\}/.test(panelSrc));
+  check('the observations enter the model\'s brief',
+    /observations: \(\(stop\.probed \|\| \[\]\)/.test(panelSrc) &&
+    /BEHAVIOURAL OBSERVATIONS/.test(readFileSync(join(ROOT, 'ai-advisor.js'), 'utf8')));
+  check('the real walk presses off the snapshot, strips seeded',
+    /P\.planRun\(document\.body, \{ seeds \}\)/.test(panelSrc) &&
+    /probeScreen\(tab, band\)/.test(panelSrc));
+  check('the run-level pass replaces the per-section fragments',
+    /P\.classifyRun\(\)\.map/.test(panelSrc) &&
+    /byY\[si\]\.probed = mine;/.test(panelSrc));
 
   check('turning the bypass on arms the persistent injection',
     /if \(SAFE\(cssLink\) && SAFE\(jsLink\)\) \{\s*\n\s*await U1Store\.set\(\{ \[`manualInject_\$\{host\}`\]: \{ cssLink, jsLink \} \}\);/.test(panelSrc));

@@ -753,8 +753,11 @@ const repairsBeforeCard = (() => {
 // of links that were already links, a role="menu" drop-down mapped with
 // fix.menu, and a description composed for a component the page had already
 // named. Asking again was not going to work.
+// The sweep route now audits the MERGED rows — model plus the probe's
+// observed rows (stage 3.1/3.3) — which is more than this check asked for,
+// not less.
 const auditRuns = /auditSurveyComponents\(out\.components, tab\)/.test(panelSrc) &&
-  /auditSurveyComponents\(part\.components, tab\)/.test(panelSrc);
+  /auditSurveyComponents\(merged, tab\)/.test(panelSrc);
 const auditReports = /left out for needing no fix/.test(panelSrc) &&
   /left out \$\{d\.label\}/.test(panelSrc);
 const descFromPage = /componentWording/.test(panelSrc) &&

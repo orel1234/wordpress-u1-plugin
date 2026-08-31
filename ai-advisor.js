@@ -183,6 +183,14 @@ Some entries carry "openedBy" — a selector — and "openedVia" — the attribu
             `even then put the one they pointed at first.\n`
           : '') +
         `\nThe numbered elements in the screenshot:\n${JSON.stringify(compactList(context.candidates))}` +
+        (context.observations && context.observations.length
+          ? `\n\nBEHAVIOURAL OBSERVATIONS — the tool PRESSED these and watched what happened:\n` +
+            context.observations.map((o) =>
+              `- pressing ${o.trigger || 'it'} revealed ${o.root}, classified as ${o.type} because ${o.why}`).join('\n') +
+            `\nAn observation outranks anything read off a picture. You may DISAGREE with a ` +
+            `classification — say so in "why", with a reason — but never ignore an observation ` +
+            `or leave its component out.`
+          : '') +
         (context.headings && context.headings.length
           ? `\n\nThe page's heading outline, in document order (for the heading-order rule):\n` +
             JSON.stringify(context.headings)
