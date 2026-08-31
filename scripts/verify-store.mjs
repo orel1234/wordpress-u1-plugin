@@ -112,6 +112,54 @@ console.log('\nBackups carry work, never credentials:');
     JSON.stringify(Object.keys((await store.get(null))).sort()) === JSON.stringify(Object.keys(SAMPLE).sort()));
 }
 
+console.log('\nA one-project backup carries that project and nothing else:');
+{
+  const { store } = loadStore(SAMPLE);
+  const one = await store.getExportableForSite('example.com');
+
+  check('every key of that site is there',
+    JSON.stringify(Object.keys(one).sort()) === JSON.stringify([
+      'autoApply_example.com', 'config_example.com', 'manualInject_example.com',
+      'mappings_example.com', 'platform_example.com', 'skipLinks_example.com',
+    ]), JSON.stringify(Object.keys(one).sort()));
+
+  // The whole point of the button: the colleague who receives one client's
+  // project must not receive every other client on the machine with it.
+  check('no other site rides along', !Object.keys(one).some((k) => k.endsWith('shop.co.il')));
+  check('the refresh token is gone', !JSON.stringify(one).includes('SECRET-MUST-NOT-LEAVE'));
+  // Global cssLink/jsLink belong to whichever site was set up last. Putting
+  // them inside a named site's export is how one client's bundle URLs reached
+  // another client's handover.
+  check('global keys stay out', !('cssLink' in one) && !('jsLink' in one));
+
+  check('contents are untouched',
+    JSON.stringify(one['mappings_example.com']) === JSON.stringify(SAMPLE['mappings_example.com']));
+
+  const none = await store.getExportableForSite('never-worked-on.com');
+  check('a site with no work exports nothing', Object.keys(none).length === 0);
+
+  // A hostname is matched whole. 'ample.com' is a suffix of 'example.com', and
+  // a suffix/substring match here would hand out the wrong client's work.
+  const suffix = await store.getExportableForSite('ample.com');
+  check('a partial hostname matches nothing', Object.keys(suffix).length === 0,
+    JSON.stringify(Object.keys(suffix)));
+
+  check('exporting does not mutate storage',
+    JSON.stringify(Object.keys((await store.get(null))).sort()) === JSON.stringify(Object.keys(SAMPLE).sort()));
+}
+
+// The picker decides what gets exported; the button must honour it rather than
+// silently exporting the site the browser happens to be on.
+{
+  const panelSrc = readFileSync(join(ROOT, 'panel.js'), 'utf8');
+  const block = /document\.getElementById\('exportSiteBtn'\)[\s\S]*?\n\}\);/.exec(panelSrc);
+  check('the per-project export reads the picker', !!block &&
+    /getElementById\('exportSiteSelect'\)\.value/.test(block[0]));
+  check('…and goes through the per-site export, not the all-sites one', !!block &&
+    /U1Store\.getExportableForSite\(host\)/.test(block[0]) &&
+    !/getExportable\(\)/.test(block[0]));
+}
+
 console.log('\nKey parsing matches the names already on disk:');
 {
   const { store } = loadStore({});

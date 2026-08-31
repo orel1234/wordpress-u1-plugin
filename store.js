@@ -171,6 +171,30 @@
       return all;
     },
 
+    /**
+     * ONE site's work, in the same shape getExportable() returns.
+     *
+     * A backup is usually taken to move a single client's project — to another
+     * machine, or to a colleague picking the site up. The all-sites file drags
+     * every other client along with it, which is both more than was asked for
+     * and more than the recipient should hold.
+     *
+     * Global keys are deliberately left out as well as private ones. The
+     * legacy top-level `cssLink`/`jsLink` pair belongs to whichever site was
+     * set up last, and carrying it inside a named site's export is exactly how
+     * one client's bundle URLs reached another client's handover.
+     */
+    async getExportableForSite(hostname) {
+      const all = await chrome.storage.local.get(null);
+      const out = {};
+      for (const key of Object.keys(all)) {
+        if (isPrivate(key)) continue;
+        const parsed = parseKey(key);
+        if (parsed && parsed.hostname === hostname) out[key] = all[key];
+      }
+      return out;
+    },
+
     /** Hostnames that have any saved work, newest-agnostic, sorted. */
     async listSites() {
       const all = await chrome.storage.local.get(null);
