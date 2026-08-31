@@ -705,6 +705,33 @@
   // opening. A component only has to be operated once.
   var everPressed = new WeakSet();
 
+  // The run's ledger. A strip pressed half in one section and half in the
+  // next produced two fragments, and each section's classify saw singleton
+  // groups — the strip that classifies perfectly when pressed together
+  // reported as nothing in the walk. Every probeAll press is recorded here,
+  // and classifyRun() reads the WHOLE ledger once, with the sibling climb,
+  // when the walk is done. Its answer REPLACES the fragments.
+  var runResults = [], runPressed = [], runExtras = [];
+  function resetRun() {
+    runResults = []; runPressed = []; runExtras = [];
+    everPressed = new WeakSet();
+  }
+  function classifyRun() {
+    var comps = classify(runResults, runPressed, { climb: true });
+    // The observations nobody pressed for — the idle-watch's carousels and
+    // the overlays that opened themselves — are not in the press ledger, and
+    // the first run-level pass silently dropped every one of them. They ride
+    // along, deduped by type + root containment.
+    runExtras.forEach(function (c) {
+      var dup = comps.some(function (o) {
+        return o.type === c.type && !!o.root && !!c.root &&
+          (o.root === c.root || o.root.contains(c.root) || c.root.contains(o.root));
+      });
+      if (!dup) comps.push(c);
+    });
+    return comps;
+  }
+
   function pressable(scope, opts) {
     opts = opts || {};
     var seen = new Set();
@@ -971,10 +998,36 @@
    * same code answers correctly on a page built with role="tablist" and on the
    * same page with every attribute stripped, because it never looked at either.
    */
-  function classify(results, pressed) {
+  /**
+   * The element whose SIBLINGS a strip's triggers really are.
+   *
+   * ul>li>button is the commonest strip markup on the web, and grouping by
+   * parentElement put every trigger in its own <li> — seven singleton groups,
+   * no strip, and the mega-nav filed as seven accordions. Climb through <li>
+   * and through wrappers holding exactly one child, then group by what is
+   * left. Used only by the RUN-level pass; the per-section classify keeps its
+   * literal parents, because this climb is part of the stage-3 decision and
+   * the section pass is a live preview.
+   */
+  function stripAnchor(el) {
+    var node = el;
+    for (var i = 0; i < 4 && node.parentElement; i++) {
+      var p = node.parentElement;
+      if (p === doc.body || p === doc.documentElement) break;
+      if (p.tagName === 'LI' || p.children.length === 1) { node = p; continue; }
+      break;
+    }
+    return node;
+  }
+
+  function classify(results, pressed, opts) {
+    opts = opts || {};
     pressed = pressed || [];
     var comps = [];
     var used = new Set();
+    var anchorOf = opts.climb
+      ? function (el) { return stripAnchor(el).parentElement; }
+      : function (el) { return el.parentElement; };
 
     // Siblings that each reveal a DIFFERENT panel are a tab strip. One panel
     // shared between them is the same thing — a strip over one re-rendered
@@ -987,13 +1040,13 @@
     // one is a member of it.
     var byParent = new Map();
     pressed.forEach(function (el) {
-      var p = el.parentElement;
+      var p = anchorOf(el);
       if (!p) return;
       if (!byParent.has(p)) byParent.set(p, []);
       byParent.get(p).push(el);
     });
 
-    byParent.forEach(function (siblings) {
+    byParent.forEach(function (siblings, groupKey) {
       if (siblings.length < 2) return;
       var group = results.filter(function (r) {
         return siblings.indexOf(r.trigger) !== -1 && r.opened.length;
@@ -1069,7 +1122,11 @@
       comps.push({
         type: 'menu',
         shape: 'strip',
-        root: siblings[0].parentElement || commonAncestor(tabs.concat(panels)),
+        // Under the run-level climb the group key IS the strip — the <ul>
+        // whose children are the <li> rows. The literal parent would be one
+        // trigger's own <li>.
+        root: (opts.climb ? groupKey : siblings[0].parentElement) ||
+              commonAncestor(tabs.concat(panels)),
         parts: { items: tabs, submenus: panels },
         why: tabs.length + ' sibling controls, each revealing ' +
              (panels.length === 1 ? 'the same region' : 'a different panel'),
@@ -1821,14 +1878,17 @@
         if (r.skipped) { skipped++; continue; }
         everPressed.add(list[i]);
         pressed.push(list[i]);
+        runPressed.push(list[i]);
         if (r.opened.length || r.moved.length || r.rerendered.length) {
-          results.push({ trigger: list[i], opened: r.opened, closed: r.closed,
-                         moved: r.moved, rerendered: r.rerendered,
-                         stateClass: r.stateClass,
-                         focusEntered: r.focusEntered, overlay: r.overlay,
-                         floating: r.floating, navigated: r.navigated,
-                         hidOthers: r.hidOthers, scrollLocked: r.scrollLocked,
-                         backdrop: r.backdrop, activeInside: r.activeInside });
+          var entry = { trigger: list[i], opened: r.opened, closed: r.closed,
+                        moved: r.moved, rerendered: r.rerendered,
+                        stateClass: r.stateClass,
+                        focusEntered: r.focusEntered, overlay: r.overlay,
+                        floating: r.floating, navigated: r.navigated,
+                        hidOthers: r.hidOthers, scrollLocked: r.scrollLocked,
+                        backdrop: r.backdrop, activeInside: r.activeInside };
+          results.push(entry);
+          runResults.push(entry);
         }
       }
 
@@ -1862,13 +1922,16 @@
       var uninvited = outermost(diff(start, fingerprint(wholeScope)).appeared)
         .filter(function (el) { return opened.indexOf(el) === -1 && isOverlay(el); });
       uninvited.forEach(function (el) {
-        comps.push({
+        var selfComp = {
           type: 'dialog',
           root: el,
           parts: { panel: [el] },
           openedItself: true,
           why: 'it put itself over the page with nobody touching anything',
-        });
+        };
+        comps.push(selfComp);
+        // Not a press, so not in the ledger — carried to the run pass apart.
+        runExtras.push(selfComp);
       });
 
 
@@ -1892,14 +1955,17 @@
               c.why += ', and it advances on its own';
             });
           } else {
-            comps.push({
+            var idleComp = {
               type: 'carousel',
               root: run.parent.parentElement || run.parent,
               parts: { slide: run.items },
               autoAdvances: true,
               why: 'it changed which of ' + run.items.length +
                    ' items is showing with nobody touching it',
-            });
+            };
+            comps.push(idleComp);
+            // Not a press, so not in the ledger — carried to the run pass apart.
+            runExtras.push(idleComp);
           }
         }
       }
@@ -1934,6 +2000,8 @@
     probeAll: probeAll,
     pressable: pressable,
     classify: classify,
+    classifyRun: classifyRun,
+    resetRun: resetRun,
     probeForm: probeForm,
     probeTyping: probeTyping,
     probeCalendar: probeCalendar,

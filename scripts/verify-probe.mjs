@@ -279,6 +279,53 @@ console.log('\nblocked navigations are reported');
   check('disarm() hands the list back instead of undefined', Array.isArray(back));
 }
 
+// ── Fragments become the strip: the run-level pass ──────────────────────────
+//
+// A strip pressed half in one section and half in the next classified as
+// nothing twice: each probeAll call saw singleton groups. classifyRun() reads
+// the whole run's ledger once, climbs through <li> and single-child wrappers
+// (ul>li>button is the commonest strip markup there is), and its one answer
+// replaces the fragments — rooted on the <ul>, not on anybody's <li>.
+console.log('\nthe run-level pass merges what the sections split');
+{
+  const w = page(`
+    <div id="w">
+      <ul id="strip">
+        <li><button id="t1">One</button></li>
+        <li><button id="t2">Two</button></li>
+        <li><button id="t3">Three</button></li>
+        <li><button id="t4">Four</button></li>
+      </ul>
+      <div id="p1" hidden>panel one</div>
+      <div id="p2" hidden>panel two</div>
+      <div id="p3" hidden>panel three</div>
+      <div id="p4" hidden>panel four</div>
+    </div>`);
+  const d = w.document;
+  for (const n of [1, 2, 3, 4]) {
+    d.getElementById('t' + n).addEventListener('click', () => {
+      for (const m of [1, 2, 3, 4]) d.getElementById('p' + m).hidden = m !== n;
+    });
+  }
+  w.__u1Probe.resetRun();
+  const first = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 2 });
+  const second = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 4 });
+  check('each half-budget section sees only fragments',
+    !first.components.some((c) => c.type === 'menu' && c.parts.items.length === 4) &&
+    !second.components.some((c) => c.type === 'menu' && c.parts.items.length === 4),
+    [first.components.map((c) => c.type).join(), second.components.map((c) => c.type).join()].join(' / '));
+  const run = w.__u1Probe.classifyRun();
+  const strip = run.find((c) => c.type === 'menu' && c.shape === 'strip');
+  check('the run pass sees ONE strip across both sections',
+    !!strip && strip.parts.items.length === 4,
+    JSON.stringify(run.map((c) => ({ t: c.type, n: c.parts.items ? c.parts.items.length : 0 }))));
+  check('…rooted on the <ul>, climbed through the <li> rows',
+    !!strip && strip.root === d.getElementById('strip'),
+    strip && (strip.root.id || strip.root.tagName));
+  w.__u1Probe.resetRun();
+  check('resetRun clears the ledger for the next run', w.__u1Probe.classifyRun().length === 0);
+}
+
 // ── The press budget goes to the loudest claims first ───────────────────────
 //
 // Twelve presses per section, and blind document order spent them on whatever

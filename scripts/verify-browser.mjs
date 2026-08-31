@@ -117,6 +117,7 @@ async function runVariant(browser, variant) {
     }
 
     // ── Pass 1: the sweep's walk — hint collection + probe per section ─────
+    try { P.resetRun && P.resetRun(); } catch (e) {}
     const vh = window.innerHeight;
     const total = Math.max(document.documentElement.scrollHeight, vh);
     const hintByEl = new Map();     // el → {component, maybe, nested, selector}
@@ -144,6 +145,11 @@ async function runVariant(browser, variant) {
       }
     }
     window.scrollTo(0, 0);
+    // ── The run-level pass (stage 3.5): one classify over the whole ledger,
+    // with the sibling climb. Its answer REPLACES the per-section fragments —
+    // the sections' own comps are kept only for the verbose observation list.
+    let finalComps = [];
+    try { finalComps = P.classifyRun ? P.classifyRun() : []; } catch (e) { finalComps = []; }
 
     // ── Scoring helpers ────────────────────────────────────────────────────
     const touches = (a, b) => !!a && !!b && (a === b || a.contains(b) || b.contains(a));
@@ -222,7 +228,7 @@ async function runVariant(browser, variant) {
     const hintDetections = live([...hintByEl.entries()]
       .filter(([, h]) => !h.nested)
       .map(([el, h]) => ({ el, type: h.component, selector: h.selector })));
-    const classifyDetections = observed
+    const classifyDetections = finalComps
       .filter((c) => c && c.root && c.type)
       // A detection rooted on <body> or <html> is not a detection of anything
       // — it is the idle-watch or a commonAncestor climb losing its grip, and
