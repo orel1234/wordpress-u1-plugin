@@ -2338,6 +2338,26 @@ console.log('\na running scan owns the panel');
     /renderBulkReview\(\);\s*\n[\s\S]{0,700}?if \(!aiBulk\.abort && aiMapped\.length\) \{\s*\n\s*document\.getElementById\('aiBulkApproveBtn'\)\?\.click\(\);/.test(panelSrc));
   check('…but a pressed Stop withdraws that authorisation',
     /if \(!aiBulk\.abort && aiMapped\.length\)/.test(panelSrc));
+
+  // The sweep's build path had three ways to find "the element it opens" —
+  // what the probe saw, what the markup states, the closed shape — and the
+  // Molina sign-in defeated all three: closed, silent markup, never pressed.
+  // The fourth source is the machine pressing it now. Order matters: opening
+  // a widget is the last resort, after every free read has had its turn.
+  const buildFn = /let container = '';\s*\n\s*let found = f\.sel;[\s\S]{0,4000}?rowFromParts\(\{/.exec(panelSrc);
+  check('the sweep build opens the widget itself when nothing else finds the other half',
+    !!buildFn && /if \(!container\) \{\s*\n\s*const cap = await autoOpenCapture\(tab, found, f\.type\);/.test(buildFn[0]));
+  check('…after the probe, the markup and the closed shape have all had their turn',
+    !!buildFn &&
+    buildFn[0].indexOf('stop.probed') < buildFn[0].indexOf('openedBy') &&
+    buildFn[0].indexOf('openedBy') < buildFn[0].indexOf('listboxShape') &&
+    buildFn[0].indexOf('listboxShape') < buildFn[0].indexOf('autoOpenCapture'));
+  // The survey names the COMPONENT — the wrapper holding button and list —
+  // and clicking a wrapper fires no handler. The opener descends to the
+  // pressable thing inside before pressing, and reports THAT as the trigger.
+  check('the opener presses the button inside a wrapper, not the wrapper',
+    /if \(!trigger\.matches\('button,a\[href\],\[role="button"\],\[aria-haspopup\],\[tabindex\],input,summary'\)\) \{/.test(panelSrc) &&
+    /const pressedSel = S\.robustSelector\(trigger\) \|\| trigSel;/.test(panelSrc));
   // ── Pressing things can still navigate the page ──────────────────────────
   // The probe cancels link clicks, submits, beforeunload and window.open, but
   // `location.href = '/search'` runs as the page's OWN handler rather than as

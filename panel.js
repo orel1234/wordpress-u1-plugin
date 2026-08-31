@@ -8128,6 +8128,16 @@ async function autoOpenCapture(tab, triggerSel, type) {
         catch (e) { return { err: 'Bad trigger selector: ' + e.message }; }
         if (!trigger) return { err: 'The trigger is not on the page right now.' };
 
+        // A survey names the COMPONENT, which for a sign-in dropdown is the
+        // wrapper holding the button and the closed list together. Clicking
+        // the wrapper fires no handler — the listener lives on the button —
+        // so descend to the pressable thing inside before pressing.
+        if (!trigger.matches('button,a[href],[role="button"],[aria-haspopup],[tabindex],input,summary')) {
+          const inner = trigger.querySelector(
+            'button,[role="button"],a[href],[aria-haspopup],summary,[tabindex]');
+          if (inner) trigger = inner;
+        }
+
         // What the markup already states (aria-controls, a data-* id, a role
         // in the neighbourhood) — costs nothing and needs no restore.
         const stated = S.openedBy(trigSel) || null;
@@ -8186,16 +8196,19 @@ async function autoOpenCapture(tab, triggerSel, type) {
                   // A <select> swapped for a div has no text input, so the
                   // combobox reader refuses it — but OPEN, it is a list with
                   // rows, and the visible toggle stands where the textbox
-                  // would. Read the list off what actually appeared.
+                  // would. Read the list off what actually appeared. The
+                  // trigger is named by what was actually PRESSED — the
+                  // descended-to button, not the wrapper it was found in.
                   const rows = Array.prototype.slice.call(target.children)
                     .filter((c) => c.nodeType === 1);
                   const optSel = rows.length >= 2
                     ? S.commonSelectorFor(target, rows, rootSel) : null;
+                  const pressedSel = S.robustSelector(trigger) || trigSel;
                   cap.shape = {
                     combobox: wrap ? S.robustSelector(wrap) : rootSel,
                     listbox: rootSel,
-                    trigger: trigSel,
-                    textbox: trigSel,
+                    trigger: pressedSel,
+                    textbox: pressedSel,
                     options: (optSel && optSel.selector) || '',
                   };
                 }
@@ -11685,6 +11698,20 @@ async function buildPickedComponents() {
           const lb = await inPage(tab.id,
             (s) => window.__u1SelectorIntel.listboxShape(s), [f.sel]);
           if (lb && lb.listbox) { container = lb.listbox; found = lb.trigger || f.sel; }
+        }
+        // Fourth source, for the component that defeats all three reads: it
+        // is CLOSED and its markup states nothing — no aria-controls, no list
+        // shape while shut, and the survey's probe never pressed it. So press
+        // it now, read what appears while it is open, and put it back. This
+        // is the same open-and-read every interactive path already gets.
+        if (!container) {
+          const cap = await autoOpenCapture(tab, found, f.type);
+          if (cap && cap.shape && cap.shape.listbox) {
+            container = cap.shape.listbox;
+            if (cap.shape.trigger) found = cap.shape.trigger;
+          } else if (cap && (cap.root || cap.stated)) {
+            container = cap.root || cap.stated;
+          }
         }
       } else if (acceptsTrigger(f.type) && f.trigger) {
         // The third source, and the one that reaches the types the two above
