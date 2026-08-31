@@ -834,8 +834,15 @@
   // the sections and the budget do not change — only "who belongs where" is
   // decided once.
   var runPlan = null;   // [{ el, docY, rank, seeded }]
+  // Spillover: a planned candidate its band's budget starved goes to the
+  // HEAD of the next band's queue — once. A candidate starved twice is not
+  // dragged forever; it is recorded here, so the report can say who the
+  // budget actually cost.
+  var runCarry = [];    // [{ el, docY, rank }]
+  var runStarved = [];  // same shape — starved twice, given up on
   function resetRun() {
     runResults = []; runPressed = []; runExtras = []; runPlan = null;
+    runCarry = []; runStarved = [];
     everPressed = new WeakSet();
   }
   function classifyRun() {
@@ -2088,13 +2095,27 @@
         // re-checked; membership is not re-litigated.
         usedPlan = true;
         list = [];
+        // Last band's starved candidates first — each gets exactly one
+        // second chance. Starved AGAIN here means the page is denser than
+        // the budget everywhere it lives; recorded, not carried on.
+        var carryIn = runCarry;
+        runCarry = [];
+        for (var ki = 0; ki < carryIn.length; ki++) {
+          var ce = carryIn[ki];
+          if (!ce.el.isConnected) continue;
+          if (!opts.repeat && everPressed.has(ce.el)) continue;
+          if (!shown(ce.el) || !safeToClick(ce.el).ok) continue;
+          if (list.length >= (opts.max || 40)) { runStarved.push(ce); continue; }
+          list.push(ce.el);
+        }
         for (var pi = 0; pi < runPlan.length; pi++) {
           var pe = runPlan[pi];
           if (pe.docY < opts.sectionY.from || pe.docY >= opts.sectionY.to) continue;
           if (!pe.el.isConnected) { planMissing++; continue; }
           if (!opts.repeat && everPressed.has(pe.el)) continue;
           if (!shown(pe.el) || !safeToClick(pe.el).ok) continue;
-          if (list.length >= (opts.max || 40)) break;
+          if (list.length >= (opts.max || 40)) { runCarry.push(pe); continue; }
+          if (list.indexOf(pe.el) !== -1) continue;
           list.push(pe.el);
         }
         // Arrivals since the snapshot — a panel a press just built — are
@@ -2309,6 +2330,15 @@
     planSnapshot: function () {
       return (runPlan || []).map(function (p) {
         return { docY: Math.round(p.docY), rank: p.rank, seeded: p.seeded,
+                 id: p.el.id || '',
+                 cls: String(p.el.className || '').split(' ')[0] || p.el.tagName };
+      });
+    },
+    // Who the budget actually cost: starved twice, plus anyone still waiting
+    // for a second chance when the walk ran out of bands.
+    starvedSnapshot: function () {
+      return runStarved.concat(runCarry).map(function (p) {
+        return { docY: Math.round(p.docY), rank: p.rank,
                  id: p.el.id || '',
                  cls: String(p.el.className || '').split(' ')[0] || p.el.tagName };
       });

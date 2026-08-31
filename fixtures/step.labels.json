@@ -190,6 +190,15 @@
     },
     {
       "type": "dialog",
+      "root": "#chatWindow",
+      "why": "The live-chat panel: fixed, floating over the page, opened by the FAB. A real openable component the corpus simply had no label for — it was counted as a false positive in every build until this entry (owner decision, 4.2 era: corpus change, not code).",
+      "fields": {
+        "trigger": "#chatToggle"
+      },
+      "hidden": true
+    },
+    {
+      "type": "dialog",
       "root": "#auditLeaveDialog",
       "why": "A 420px fixed confirm box with a backdrop and NO role anywhere — the small dialog the overlay size test cannot see. Declared via data-panel-target on its trigger.",
       "fields": {

@@ -453,6 +453,49 @@ console.log('\nthe plan decides who belongs where');
     JSON.stringify({ pressed: out.pressed, comps: out.components.map((c) => c.type) }));
 }
 
+// ── Spillover: the budget starves nobody silently ───────────────────────────
+//
+// A planned candidate its band's budget starved goes to the HEAD of the next
+// band's queue, once. max per band does not change. Starved twice — or still
+// waiting when the walk runs out of bands — is recorded, not dragged forever.
+console.log('\na starved candidate gets one second chance, then a name');
+{
+  const w = page(`
+    <div id="w">
+      <div><button id="b1">One</button><span>x</span></div>
+      <div><button id="b2">Two</button><span>x</span></div>
+      <div><button id="b3">Three</button><span>x</span></div>
+      <div><button id="b4">Four</button><span>x</span></div>
+      <div><button id="b5">Five</button><span>x</span></div>
+    </div>`);
+  const d = w.document;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    const tops = { b1: 100, b2: 110, b3: 120, b4: 130, b5: 140 };
+    const t = tops[this.id] != null ? tops[this.id] : 10;
+    return { top: t, bottom: t + 20, left: 10, right: 110, width: 100, height: 20 };
+  };
+  const hits = {};
+  ['b1', 'b2', 'b3', 'b4', 'b5'].forEach((id) => {
+    hits[id] = 0;
+    d.getElementById(id).addEventListener('click', () => { hits[id]++; });
+  });
+  w.__u1Probe.resetRun();
+  w.__u1Probe.planRun(d.getElementById('w'));
+  await w.__u1Probe.probeAll(d.getElementById('w'),
+    { settle: 0, idle: 0, max: 2, sectionY: { from: 0, to: 1000 } });
+  check('the band presses its budget and no more',
+    hits.b1 > 0 && hits.b2 > 0 && !hits.b3 && !hits.b4 && !hits.b5,
+    JSON.stringify(hits));
+  await w.__u1Probe.probeAll(d.getElementById('w'),
+    { settle: 0, idle: 0, max: 2, sectionY: { from: 1000, to: 2000 } });
+  check('the starved candidates head the NEXT band\'s queue',
+    hits.b3 > 0 && hits.b4 > 0 && !hits.b5, JSON.stringify(hits));
+  const starved = w.__u1Probe.starvedSnapshot();
+  check('starved twice is recorded by name, not dragged forever',
+    starved.length === 1 && starved[0].id === 'b5', JSON.stringify(starved));
+}
+
 // ── An incomplete restore names its leftovers ───────────────────────────────
 console.log('\nrestore residue is recorded, not shrugged at');
 {

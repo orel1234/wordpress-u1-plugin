@@ -332,6 +332,7 @@ async function runVariant(browser, variant) {
       openFound, openNamed, openTotal: openable.length, openDetail,
       builtProbes, pressedTotal, observedList,
       plannedCount: planned, planSections,
+      starved: P.starvedSnapshot ? P.starvedSnapshot() : [],
     };
   }, { labels, OVERLAP, PROBE_OPTS });
 
@@ -425,6 +426,10 @@ for (const variant of ONLY) {
   for (const d of r.openDetail || []) {
     console.log(`    ${d.found ? (d.named ? ' ok ' : ' ~~ ') : 'MISS'}  ${d.type.padEnd(10)} ${d.root}` +
       (d.found && !d.named ? `  — collected, named ${d.got || '(nothing)'}` : ''));
+  }
+  if ((r.starved || []).length) {
+    console.log(`  starved (budget cost them their press, even with one spillover): ` +
+      r.starved.map((s) => (s.id ? '#' + s.id : s.cls) + '@' + s.docY).join(' · '));
   }
 
   // (c) is THE reported number from stage 3.4 on: it is the by-root merge of
