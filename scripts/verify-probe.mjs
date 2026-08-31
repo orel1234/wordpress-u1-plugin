@@ -259,6 +259,142 @@ console.log('\nthe open-state signals are handed back');
     !d.getElementById('mainC').hasAttribute('aria-hidden'));
 }
 
+// ── 4.1: the signals become the verdict ─────────────────────────────────────
+//
+// Stage 2 measured them; stage 4.1 finally lets them DECIDE. Any one dialog
+// tell suffices — the scroll lock, shutting the rest of the page out, a
+// backdrop — and the one veto: small-and-at-the-trigger beats a "modal"
+// class name.
+console.log('\n4.1 — each dialog signal convicts on its own');
+{
+  const mk = (panelAttrs, opener) => {
+    const w = page(`
+      <div id="w">
+        <main id="mainC">page content</main>
+        <button id="t">Terms</button>
+        <div id="box" ${panelAttrs} hidden><p>Please read this before you go on.</p><button>OK</button></div>
+      </div>`);
+    const d = w.document;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+    };
+    w.getComputedStyle = (el) => ({
+      position: 'static',
+      overflow: el === d.body && d.body.dataset.lock ? 'hidden' : 'visible',
+      backgroundColor: 'rgb(255,255,255)',
+      opacity: '1', visibility: 'visible', display: 'block', cursor: 'auto',
+    });
+    d.getElementById('t').addEventListener('click', () => {
+      const box = d.getElementById('box');
+      box.hidden = !box.hidden;
+      opener(d, !box.hidden);
+    });
+    return w;
+  };
+
+  // The scroll lock ALONE — panel sits in the flow, nothing else changes.
+  const lock = mk('', (d, open) => {
+    if (open) d.body.dataset.lock = '1'; else delete d.body.dataset.lock;
+  });
+  let out = await lock.__u1Probe.probeAll(lock.document.getElementById('w'), { settle: 0 });
+  check('a reveal that locks the page scroll is a dialog',
+    out.components.some((c) => c.type === 'dialog' && /scroll/.test(c.why)),
+    out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+
+  // Shutting the rest of the page out ALONE.
+  const shut = mk('', (d, open) => {
+    if (open) d.getElementById('mainC').setAttribute('aria-hidden', 'true');
+    else d.getElementById('mainC').removeAttribute('aria-hidden');
+  });
+  out = await shut.__u1Probe.probeAll(shut.document.getElementById('w'), { settle: 0 });
+  check('a reveal that aria-hides the rest of the page is a dialog',
+    out.components.some((c) => c.type === 'dialog' && /hid the rest/.test(c.why)),
+    out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+}
+
+console.log('\n4.1 — the veil is the backdrop, its neighbour is the dialog');
+{
+  const w = page(`
+    <div id="w">
+      <button id="t">Leave</button>
+      <div id="veil" hidden></div>
+      <div id="box" hidden><p>You are about to leave.</p><button>Stay</button></div>
+    </div>`);
+  const d = w.document;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    if (this.id === 'veil') return { top: 0, left: 0, right: 1024, bottom: 768, width: 1024, height: 768 };
+    if (this.id === 'box') return { top: 284, left: 312, right: 712, bottom: 484, width: 400, height: 200 };
+    return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+  };
+  w.getComputedStyle = (el) => ({
+    position: el && (el.id === 'veil' || el.id === 'box') ? 'fixed' : 'static',
+    overflow: 'visible',
+    backgroundColor: el && el.id === 'veil' ? 'rgba(0,0,0,0.45)' : 'rgb(255,255,255)',
+    opacity: '1', visibility: 'visible', display: 'block', cursor: 'auto',
+  });
+  d.getElementById('t').addEventListener('click', () => {
+    const open = d.getElementById('box').hidden;
+    d.getElementById('box').hidden = !open;
+    d.getElementById('veil').hidden = !open;
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0 });
+  const dlg = out.components.find((c) => c.type === 'dialog');
+  check('the component is a dialog', !!dlg,
+    out.components.map((c) => c.type).join() || '(nothing)');
+  check('…rooted on the BOX, never on the veil beside it',
+    dlg && dlg.root === d.getElementById('box'),
+    dlg && (dlg.root.id || '(no id)'));
+}
+
+console.log('\n4.1 — a drawer is a dialog with an edge, a dropdown is not a modal');
+{
+  const mk = (attrs, rects, positions) => {
+    const w = page(`
+      <div id="w">
+        <button id="t">Open</button>
+        <div id="box" ${attrs} hidden><p>Some longer prose content sits here for reading.</p><button>OK</button></div>
+      </div>`);
+    const d = w.document;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      if (rects[this.id]) return rects[this.id];
+      return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+    };
+    w.getComputedStyle = (el) => ({
+      position: (el && positions[el.id]) || 'static',
+      overflow: 'visible', backgroundColor: 'rgb(255,255,255)',
+      opacity: '1', visibility: 'visible', display: 'block', cursor: 'auto',
+    });
+    d.getElementById('t').addEventListener('click', () => {
+      d.getElementById('box').hidden = !d.getElementById('box').hidden;
+    });
+    return w;
+  };
+
+  // Fixed, nearly full height, hugging the left edge, under half the width.
+  const drawer = mk('', {
+    box: { top: 0, left: 0, right: 300, bottom: 760, width: 300, height: 760 },
+  }, { box: 'fixed' });
+  let out = await drawer.__u1Probe.probeAll(drawer.document.getElementById('w'), { settle: 0 });
+  let c = out.components.find((x) => x.type === 'dialog');
+  check('an edge-hugging full-height panel is a dialog', !!c,
+    out.components.map((x) => x.type).join() || '(nothing)');
+  check('…and carries the drawer subtype', c && c.subtype === 'drawer' && /DRAWER/.test(c.why),
+    c && (c.subtype + ' / ' + c.why));
+
+  // Absolute, right at its trigger, barely bigger than it — and the class
+  // SAYS "modal". The geometry outranks the word.
+  const near = mk('class="modal"', {
+    box: { top: 52, left: 10, right: 310, bottom: 152, width: 300, height: 100 },
+  }, { box: 'absolute' });
+  out = await near.__u1Probe.probeAll(near.document.getElementById('w'), { settle: 0 });
+  check('a small panel AT its trigger is not a dialog, whatever its class says',
+    out.components.length && out.components.every((x) => x.type !== 'dialog'),
+    out.components.map((x) => x.type + ':' + x.why).join(' | ') || '(nothing)');
+}
+
 // ── What was stopped is finally handed back ─────────────────────────────────
 console.log('\nblocked navigations are reported');
 {

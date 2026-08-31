@@ -509,6 +509,8 @@
     var whereBefore = geometry(els);
     var textBefore = contentOf(els);
     var focusBefore = doc.activeElement;
+    var expandedBefore = null;
+    try { expandedBefore = el.getAttribute('aria-expanded'); } catch (e) {}
     // Who was shut out. aria-hidden and inert on everything ELSE is the most
     // diagnostic modal signal there is — "it hid the rest of the page" — and
     // it used to be squashed into an anonymous `touched` count nobody read.
@@ -575,6 +577,34 @@
         }
       } catch (e) {}
     }
+    // 4.1's shape extras, same deadline as everything above this line.
+    // A DRAWER: fixed, nearly full height, under half the width, hugging an
+    // edge. And the anti-rule's measurement: a panel that is absolute, opens
+    // right at its trigger and is no more than ~4× its size is a dropdown
+    // whatever its class says — "modal" in a class name must not outrank
+    // that geometry.
+    var isDrawer = false, nearSmall = false;
+    if (panel) {
+      try {
+        var dcs = root.getComputedStyle(panel);
+        var dR = panel.getBoundingClientRect();
+        var vwD = root.innerWidth || 1024, vhD = root.innerHeight || 768;
+        if (dcs.position === 'fixed' && dR.height >= vhD * 0.9 && dR.width < vwD * 0.5 &&
+            (dR.left <= 4 || Math.abs(vwD - dR.right) <= 4)) isDrawer = true;
+        var tR = el.getBoundingClientRect();
+        var nearTrig = Math.abs(dR.top - tR.bottom) <= Math.max(tR.height, 8) ||
+                       Math.abs(tR.top - dR.bottom) <= Math.max(tR.height, 8);
+        var smallish = dR.width * dR.height <= Math.max(1, tR.width * tR.height) * 4;
+        nearSmall = dcs.position === 'absolute' && nearTrig && smallish;
+      } catch (e) {}
+    }
+    // Did the trigger's own aria-expanded FLIP with the press — the page
+    // keeping honest disclosure state. Read for 4.2's evidence rules.
+    var expandedFlipped = false;
+    try {
+      expandedFlipped = el.getAttribute('aria-expanded') !== expandedBefore &&
+                        el.getAttribute('aria-expanded') != null;
+    } catch (e) {}
 
     // Did focus follow what opened?
     //
@@ -703,6 +733,9 @@
 
     return {
       skipped: false,
+      // The panel AS MEASURED while open — veil skipped. classify cannot
+      // re-derive it: a closed panel has no box for looksLikeVeil to read.
+      panel: panel,
       opened: outermost(d.appeared),
       closed: outermost(d.vanished),
       moved: slid,
@@ -712,6 +745,9 @@
       overlay: isLayer,
       floating: isFloating,
       headerDropdown: headerDropdown,
+      drawer: isDrawer,
+      nearSmall: nearSmall,
+      expandedFlipped: expandedFlipped,
       hidOthers: hidOthers,
       scrollLocked: scrollLocked,
       backdrop: backdrop,
@@ -723,10 +759,44 @@
     };
   }
 
-  /** The thing a press revealed, if it revealed one. */
+  /** Does this look like a VEIL — fixed, page-covering, see-through? */
+  function looksLikeVeil(el) {
+    try {
+      var cs = root.getComputedStyle(el);
+      if (cs.position !== 'fixed' && cs.position !== 'absolute') return false;
+      var r = el.getBoundingClientRect();
+      var vw = root.innerWidth || 1024, vh = root.innerHeight || 768;
+      if (r.width < vw * 0.95 || r.height < vh * 0.95) return false;
+      var alpha = 1;
+      var m = /rgba?\([^)]*?,\s*([\d.]+)\)$/.exec(cs.backgroundColor || '');
+      if (m) alpha = parseFloat(m[1]);
+      return alpha < 1 || parseFloat(cs.opacity) < 1;
+    } catch (e) { return false; }
+  }
+
+  /**
+   * The thing a press revealed. When the FIRST thing that appeared is a veil
+   * and something else appeared beside it, the something else is the panel —
+   * rooting the dialog on its own backdrop is how #auditLeaveBackdrop became
+   * a false positive while the real box went unmatched.
+   */
   function panelOf(d) {
     var opened = outermost(d.appeared);
-    return opened.length ? opened[0] : null;
+    if (!opened.length) return null;
+    if (opened.length > 1 && looksLikeVeil(opened[0])) {
+      for (var i = 1; i < opened.length; i++) {
+        if (!looksLikeVeil(opened[i])) return opened[i];
+      }
+    }
+    return opened[0];
+  }
+
+  // A carousel is a component, and <body>, <html> and <main> are not
+  // components — a "carousel" rooted there is a layout artefact wearing the
+  // name, and one such phantom swallowed every hidden component's match.
+  function badCarouselRoot(el) {
+    return !el || el === doc.body || el === doc.documentElement ||
+           (el.tagName === 'MAIN') || !!(el.matches && el.matches('main'));
   }
 
   function same(a, b) {
@@ -1210,14 +1280,17 @@
           var role = arrowRole(el);
           if (role && !parts[role]) parts[role] = [el];
         });
-        comps.push({
-          type: 'carousel',
-          root: commonAncestor(siblings.concat(run.items)),
-          parts: parts,
-          why: siblings.length + ' controls cycling ' + run.items.length +
-               ' items — more items than controls, so they are not tabs',
-        });
-        return;
+        var groupCarRoot = commonAncestor(siblings.concat(run.items));
+        if (!badCarouselRoot(groupCarRoot)) {
+          comps.push({
+            type: 'carousel',
+            root: groupCarRoot,
+            parts: parts,
+            why: siblings.length + ' controls cycling ' + run.items.length +
+                 ' items — more items than controls, so they are not tabs',
+          });
+          return;
+        }
       }
 
       group.forEach(function (r) { used.add(r.trigger); });
@@ -1323,9 +1396,11 @@
         var other = arrowRole(el);
         if (other && !parts[other]) { parts[other] = [el]; used.add(el); }
       });
+      var slideRoot = commonAncestor([r.trigger].concat(run.items));
+      if (badCarouselRoot(slideRoot)) { used.delete(r.trigger); return; }
       comps.push({
         type: 'carousel',
-        root: commonAncestor([r.trigger].concat(run.items)),
+        root: slideRoot,
         parts: parts,
         why: 'pressing it slid a rail of ' + run.items.length + ' items sideways',
       });
@@ -1333,7 +1408,7 @@
 
     results.forEach(function (r) {
       if (used.has(r.trigger) || !r.opened.length) return;
-      var panel = r.opened[0];
+      var panel = r.panel || r.opened[0];
       // `r.overlay` was measured while the panel was open. See probeOne.
       //
       // But a dialog does not have to be BIG. The overlay test asks "does it
@@ -1348,26 +1423,38 @@
       // The name survives closing — role and class are attributes, not
       // layout — so it may be read here. The FLOAT was measured while the
       // panel was open (see probeOne), for the same reason the overlay was.
+      // 4.1: a dialog announces itself in MANY ways, and any one suffices —
+      // covering the page, saying the word, a backdrop, shutting the rest of
+      // the page out (aria-hidden/inert), locking the scroll, or floating
+      // free of the flow. The one veto: a panel that opens small and right at
+      // its trigger is a dropdown whatever its class says.
       var saysDialog = false;
       try {
         saysDialog = !!(panel.closest &&
           panel.closest('dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"]')) ||
           /(^|[\s_-])(modal|lightbox|dialog)([\s_-]|$)/i.test(String(panel.className || ''));
       } catch (e) {}
-      var type = r.overlay ? 'dialog'
-        : saysDialog ? 'dialog'
-        : mostlyLinks(panel) ? 'menu'
+      if (r.nearSmall) saysDialog = false;
+      var linksPanel = mostlyLinks(panel);
+      var dialogBy = r.overlay ? 'it opened a layer over the page'
+        : saysDialog ? 'it opened a panel the page itself calls a dialog'
+        : r.backdrop ? 'it opened behind a backdrop — a veil over the rest of the page'
+        : (r.hidOthers && r.hidOthers.length) ? 'it hid the rest of the page from assistive tech (aria-hidden/inert)'
+        : r.scrollLocked ? 'it locked the page’s scroll while open'
+        : (r.floating && !linksPanel && !r.nearSmall) ? 'it opened a panel that floats over the page'
+        : null;
+      var type = dialogBy ? 'dialog'
+        : linksPanel ? 'menu'
         : r.headerDropdown ? 'menu'
-        : r.floating ? 'dialog'
         : 'accordion';
-      var why = type === 'dialog'
-        ? (r.overlay ? 'it opened a layer over the page'
-           : saysDialog ? 'it opened a panel the page itself calls a dialog'
-           : 'it opened a panel that floats over the page')
+      var why = type === 'dialog' ? dialogBy
         : type === 'menu'
-        ? (r.headerDropdown ? 'it dropped a panel across its own header bar'
-           : 'it revealed a panel of links and nothing else')
+        ? (linksPanel ? 'it revealed a panel of links and nothing else'
+           : 'it dropped a panel across its own header bar')
         : 'it revealed and hid a region';
+      if (type === 'dialog' && r.drawer) {
+        why += '. It is a DRAWER: full height, hugging the edge';
+      }
       // How the page SAYS open, when it says it with a class. Worth reporting
       // even for a dialog: it is the same answer to the same question, and a
       // mapping that has it does not need a person to go and find it.
@@ -1385,6 +1472,7 @@
       }
       comps.push({
         type: type,
+        subtype: type === 'dialog' && r.drawer ? 'drawer' : undefined,
         root: type === 'dialog' ? panel : commonAncestor([r.trigger, panel]),
         parts: { trigger: [r.trigger], panel: [panel] },
         stateClass: r.stateClass || null,
@@ -2091,12 +2179,14 @@
         runPressed.push(list[i]);
         finishFamily(list[i]);
         if (r.opened.length || r.moved.length || r.rerendered.length) {
-          var entry = { trigger: list[i], opened: r.opened, closed: r.closed,
+          var entry = { trigger: list[i], panel: r.panel,
+                        opened: r.opened, closed: r.closed,
                         moved: r.moved, rerendered: r.rerendered,
                         stateClass: r.stateClass,
                         focusEntered: r.focusEntered, overlay: r.overlay,
                         floating: r.floating, navigated: r.navigated,
-                        headerDropdown: r.headerDropdown,
+                        headerDropdown: r.headerDropdown, drawer: r.drawer,
+                        nearSmall: r.nearSmall, expandedFlipped: r.expandedFlipped,
                         hidOthers: r.hidOthers, scrollLocked: r.scrollLocked,
                         backdrop: r.backdrop, activeInside: r.activeInside };
           results.push(entry);
@@ -2166,7 +2256,7 @@
               c.autoAdvances = true;
               c.why += ', and it advances on its own';
             });
-          } else {
+          } else if (!badCarouselRoot(run.parent.parentElement || run.parent)) {
             var idleComp = {
               type: 'carousel',
               root: run.parent.parentElement || run.parent,

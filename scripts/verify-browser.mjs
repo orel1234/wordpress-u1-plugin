@@ -301,13 +301,17 @@ async function runVariant(browser, variant) {
     // any source put the right type on it. Naming the hidden components is
     // the whole promise of the behavioural layer on a hint-free page.
     let openFound = 0, openNamed = 0;
+    const openDetail = [];
     const openable = positives.filter((p) => p.label.hidden);
     for (const { label, el } of openable) {
-      if (!el) continue;
+      if (!el) { openDetail.push({ root: label.root, type: label.type, found: false, named: false }); continue; }
       const found = hintByEl.has(el) || unionDetections.some((d) => touches(d.el, el));
       if (found) openFound++;
       const hit = bestMatch(unionDetections, el);
-      if (hit && typeOk(label.type, hit.type)) openNamed++;
+      const named = !!(hit && typeOk(label.type, hit.type));
+      if (named) openNamed++;
+      openDetail.push({ root: label.root, type: label.type, found, named,
+                        got: hit ? hit.type : null });
     }
 
     // builtByJs sanity — the reason jsdom's hostile run was not a measurement.
@@ -325,7 +329,7 @@ async function runVariant(browser, variant) {
       hint: score(hintDetections),
       classify: score(classifyLive),
       union,
-      openFound, openNamed, openTotal: openable.length,
+      openFound, openNamed, openTotal: openable.length, openDetail,
       builtProbes, pressedTotal, observedList,
       plannedCount: planned, planSections,
     };
@@ -418,6 +422,10 @@ for (const variant of ONLY) {
   }
   console.log(`  ${r.pressedTotal} presses across the walk · ` +
     (r.openTotal ? `closed collected ${r.openFound}/${r.openTotal} · closed NAMED right ${r.openNamed}/${r.openTotal}` : ''));
+  for (const d of r.openDetail || []) {
+    console.log(`    ${d.found ? (d.named ? ' ok ' : ' ~~ ') : 'MISS'}  ${d.type.padEnd(10)} ${d.root}` +
+      (d.found && !d.named ? `  — collected, named ${d.got || '(nothing)'}` : ''));
+  }
 
   // (c) is THE reported number from stage 3.4 on: it is the by-root merge of
   // both voices, which is exactly what the panel's typing pipeline now feeds
