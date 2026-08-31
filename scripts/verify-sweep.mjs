@@ -849,8 +849,10 @@ console.log('\napplying is part of the run');
   const src = panelSrc;
   // The run's own tail — the finally that ends scanPickedScreens.
   const tail = /\/\/ ── And put it on the page[\s\S]*?await followPendingSiteSwitch\(\);/.exec(src);
+  // …and to the SWEEP's tab, not whichever tab is in front. The run is pinned;
+  // finishing it while another tab was active used to apply the fixes there.
   check('the run applies everything to the page when it ends',
-    !!tail && /await applyAllMappings\(\{ silent: true \}\)/.test(tail[0]));
+    !!tail && /await applyAllMappings\(\{ silent: true, tab: await sweepTab\(\) \}\)/.test(tail[0]));
   check('…and says how many landed, or why they did not',
     !!tail && /applied to the page —/.test(tail[0]) &&
     /could not be applied to the page: /.test(src));
@@ -860,7 +862,7 @@ console.log('\napplying is part of the run');
     /applyAllMappings\(\{ silent: true \}\)/.test(src) &&
     !/applyAllMappings\(\{ silent: true, only:/.test(src));
   check('confirming a section applies as you go, not only at the end',
-    /let put = null;\s*\n\s*try \{ put = await applyAllMappings\(\{ silent: true \}\); \} catch \(e\) \{\}/.test(src) &&
+    /let put = null;\s*\n\s*try \{ put = await applyAllMappings\(\{ silent: true, tab: await sweepTab\(\) \}\); \} catch \(e\) \{\}/.test(src) &&
     /now applied on the page/.test(src));
   // Silent, because the run reports its own outcome — two verdicts about one
   // press is how neither gets read.
@@ -2305,6 +2307,37 @@ console.log('\na running scan owns the panel');
     /if \(aiScanHold && !aiSweep\.running\) \{[\s\S]{0,400}?return;/.test(panelSrc));
   check('…and before the other site\'s survey is pulled over the top',
     hold > 0 && hold < otc.indexOf('restoreSweep()'));
+
+  // A bulk build is the same shape of run as a sweep — a loop of model calls
+  // writing cards into the workspace — and it had no hold at all: a tab
+  // switch mid-loop parked the workspace while prepareOne was still appending
+  // to it, and the approve that followed filed the batch under the front tab's
+  // site. Reported as: I'm mid-scan, I switch tabs, and it all falls apart.
+  const bulkHold = otc.indexOf('if (aiBulk.running && await bulkTab()) {');
+  check('a bulk build holds the panel like a sweep does',
+    bulkHold > 0 && bulkHold < otc.indexOf('currentHostname = newHostname'));
+  check('…pinned to the tab it started on, not the tab in front',
+    /aiBulk = \{ running: true, abort: false, failed: \[\], armed: false,\s*\n\s*tabId: tab\.id, host: getHostname\(tab\) \};/.test(panelSrc));
+  check('…and the approve phase keeps the hold, because saving takes seconds too',
+    /const wasRunning = aiBulk\.running;\s*\n\s*aiBulk\.running = true;/.test(panelSrc) &&
+    /aiBulk\.running = wasRunning;/.test(panelSrc));
+  check('an element scan holds the panel too',
+    otc.indexOf('if (elemScanRunning) {') > 0);
+  // The apply sink itself: every write path drains through applyMappingsBatch,
+  // and it used to ask for the ACTIVE tab on every call — the widest leak.
+  check('a pinned run\'s apply lands on the pinned tab, not the front one',
+    /async function applyMappingsBatch\(items, forTab\) \{/.test(panelSrc) &&
+    /const tab = forTab \|\| await getTab\(\);/.test(panelSrc) &&
+    /\(await bulkTab\(\)\) \|\| undefined/.test(panelSrc));
+  check('…and the test engine drives the pinned page, not the front one',
+    /async function callTestEngine\(fnName, args, forTab\) \{/.test(panelSrc) &&
+    /callTestEngine\('runTest', \[m\.type, m\.primary \|\| m\.firstArg \|\| '',\s*\n\s*\(m\.config && typeof m\.config === 'object'\) \? m\.config : \{ selectors: \{\} \}\], tab\)/.test(panelSrc));
+  // "Make all of these accessible" means MAKE them accessible: the armed press
+  // authorises save-and-apply, not "prepare a list and wait to be asked again".
+  check('the bulk run proceeds to approve on its own after preparing',
+    /renderBulkReview\(\);\s*\n[\s\S]{0,700}?if \(!aiBulk\.abort && aiMapped\.length\) \{\s*\n\s*document\.getElementById\('aiBulkApproveBtn'\)\?\.click\(\);/.test(panelSrc));
+  check('…but a pressed Stop withdraws that authorisation',
+    /if \(!aiBulk\.abort && aiMapped\.length\)/.test(panelSrc));
   // ── Pressing things can still navigate the page ──────────────────────────
   // The probe cancels link clicks, submits, beforeunload and window.open, but
   // `location.href = '/search'` runs as the page's OWN handler rather than as

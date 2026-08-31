@@ -1354,8 +1354,13 @@ async function applyFix(type, primary, config, owner) {
   }
 }
 
-async function applyMappingsBatch(items) {
-  const tab = await getTab();
+async function applyMappingsBatch(items, forTab) {
+  // Every write path drains through here, and it used to ask for the ACTIVE
+  // tab on every call — so a pinned run (sweep, bulk approve) that finished
+  // while another tab was in front applied the fixes to the innocent page in
+  // front. A caller that owns a pinned tab passes it; the active tab is only
+  // the answer when nobody knows better.
+  const tab = forTab || await getTab();
   if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
   const structured = items.filter(x => x && typeof x === 'object' && x.type && x.primary);
   if (structured.length === 0) {
@@ -5576,7 +5581,7 @@ function labelScreen(stop, collected, tab) {
           // may never have met what this section re-rendered — and the whole
           // point of confirming a section is to look at the page afterwards.
           let put = null;
-          try { put = await applyAllMappings({ silent: true }); } catch (e) {}
+          try { put = await applyAllMappings({ silent: true, tab: await sweepTab() }); } catch (e) {}
           showNotice(status,
             `${ok} saved to Mappings` +
             (put ? ` · ${put.applied} of ${put.applied + put.failed} now applied on the page` : '') + '.',
@@ -6665,14 +6670,28 @@ document.getElementById('aiDelayedBtn')?.addEventListener('click', async (e) => 
   aiDelayedPollActive = true;
   btn.classList.add('is-polling');
   const MAX_MS = 60000, TICK_MS = 1200;
-  const started = Date.now();
+  let started = Date.now();
   try {
     const tab = await getTab();
     if (!isInjectable(tab)) { showNotice($aiStatus, 'Cannot read this page.', 'error', 4000); return; }
     const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
     const handled = await alreadyHandled();
 
+    let idleSince = null;
     while (aiDelayedPollActive && Date.now() - started < MAX_MS) {
+      // Collection captures a screenshot, and a screenshot of a background
+      // tab blocks inside captureScreen until the tab is visible again — for
+      // up to ten minutes, breakable only by a sweep's abort flag this flow
+      // never sets. So the tick is skipped while the tab is hidden, and the
+      // sixty-second clock stops with it: time spent on another tab is not
+      // time the dialog failed to open.
+      if (!(await pinnedTabIsVisible(tab))) {
+        if (idleSince == null) idleSince = Date.now();
+        btn.textContent = '⏱ Paused — come back to the page’s tab (click to cancel)';
+        await new Promise(r => setTimeout(r, TICK_MS));
+        continue;
+      }
+      if (idleSince != null) { started += Date.now() - idleSince; idleSince = null; }
       const elapsed = Math.round((Date.now() - started) / 1000);
       btn.textContent = `⏱ Looking… open it now (${elapsed}s, click to cancel)`;
       const collected = await collectRegion(tab, scopeSel, handled);
@@ -6851,6 +6870,10 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   } catch (err) {
     showNotice($aiStatus, 'Failed: ' + err.message, 'error', 6000);
   } finally {
+    // The tab that was SCANNED, read before the hold comes down — the front
+    // tab is not it if the user wandered off mid-call, and clearing marks on
+    // the front tab left them standing on the scanned one.
+    const heldTabId = aiScanHold && aiScanHold.tabId;
     aiScanHold = null;
     clearSweepHoldsPanel();
     clearAiBusy();
@@ -6859,8 +6882,10 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // Belt and braces: never leave our own attributes on the site's DOM, even
     // if something threw between stamping and the capture's own cleanup.
     try {
-      const t = await getTab();
-      if (isInjectable(t)) await inPage(t.id, () => window.__u1SelectorIntel.clearMarks());
+      const t = heldTabId != null
+        ? await chrome.tabs.get(heldTabId).catch(() => null)
+        : await getTab();
+      if (t && isInjectable(t)) await inPage(t.id, () => window.__u1SelectorIntel.clearMarks());
     } catch {}
     // The panel was held on the scanned site while the call ran; whatever tab
     // is in front now decides what it shows next.
@@ -8643,7 +8668,18 @@ async function prepareOne(row, tab) {
 //  named, previewed and individually un-tickable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-let aiBulk = { running: false, abort: false, failed: [], armed: false };
+let aiBulk = { running: false, abort: false, failed: [], armed: false, tabId: null, host: '' };
+
+// The bulk run's own tab, the way sweepTab() is the sweep's. A run of model
+// calls is pinned to the tab it started on; which tab happens to be in FRONT
+// while it runs is not information about it.
+async function bulkTab() {
+  if (aiBulk.tabId == null) return null;
+  try {
+    const t = await chrome.tabs.get(aiBulk.tabId);
+    return isInjectable(t) ? t : null;
+  } catch { return null; }   // closed or navigated away
+}
 
 const chunksOf = (arr, n) => {
   const out = [];
@@ -8744,7 +8780,8 @@ document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
   clearApproved();   // this list is the batch, not the session
-  aiBulk = { running: true, abort: false, failed: [], armed: false };
+  aiBulk = { running: true, abort: false, failed: [], armed: false,
+             tabId: tab.id, host: getHostname(tab) };
   btn.disabled = true;
   stopBtn.style.display = '';
   setStage('cards');
@@ -8777,6 +8814,17 @@ document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
   }
 
   renderBulkReview();
+
+  // "Make all of these accessible" means MAKE them accessible — not "prepare
+  // a list and wait to be asked a third time". The second press of the button
+  // was the authorisation (the first showed the cost), and the sweep's build
+  // route has auto-approved through this same button since it existed. The
+  // review list still renders first, so what proceeds is exactly what it
+  // shows: rows the model called low-confidence stay unticked and wait for a
+  // person, and a pressed Stop withdraws the authorisation entirely.
+  if (!aiBulk.abort && aiMapped.length) {
+    document.getElementById('aiBulkApproveBtn')?.click();
+  }
 });
 
 document.getElementById('aiMapAllStopBtn')?.addEventListener('click', () => {
@@ -8917,6 +8965,14 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
   btn.disabled = true;
   const original = btn.textContent;
 
+  // The approve is part of the run: saving and applying take real seconds,
+  // and a tab switch in the middle used to re-point the panel — park the
+  // workspace mid-save, move currentHostname, and file the tail of the batch
+  // under the site in front. The same hold that protects the prepare loop
+  // holds here; the tabId pinned by that loop is still in aiBulk.
+  const wasRunning = aiBulk.running;
+  aiBulk.running = true;
+
   try {
     // ── Phase A: save, strictly one at a time ────────────────────────────────
     // saveMappingEntry reads the list, mutates it and writes it back with no
@@ -8987,7 +9043,7 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
       const res = await applyMappingsBatch(chunk.map(x => ({
         type: x.tpl.type, primary: x.tpl.primary, firstArg: x.tpl.firstArg,
         config: x.tpl.config, overwriteRole: x.tpl.overwriteRole,
-      })));
+      })), (await bulkTab()) || undefined);
       chunk.forEach((x, j) => details.push({ x, verdict: describeApply(res, x.tpl, j) }));
       // Saving succeeded even when applying could not run, and the panel
       // re-applies everything on open — so this is not work to do again.
@@ -9024,8 +9080,15 @@ document.getElementById('aiBulkApproveBtn')?.addEventListener('click', async () 
   } catch (err) {
     setBulkStatus('Failed: ' + err.message, 'error', 8000);
   } finally {
+    aiBulk.running = wasRunning;
     btn.disabled = false;
     btn.textContent = original;
+    // The hold is over; whatever tab is in front now decides what the panel
+    // shows next — the same hand-back the single-scan flow does.
+    if (!aiBulk.running) {
+      const front = await getTab().catch(() => null);
+      if (front) await onTabChanged(front);
+    }
   }
 });
 
@@ -9582,7 +9645,7 @@ async function runSweep(tab) {
     // Silent: the run reports its own outcome below, and two verdicts about
     // one press is how neither gets read.
     try {
-      const put = await applyAllMappings({ silent: true });
+      const put = await applyAllMappings({ silent: true, tab: await sweepTab() });
       if (put && (put.applied || put.failed)) {
         sweepLog(0, `applied to the page — ${put.applied} of ${put.applied + put.failed}` +
           (put.failed ? `, ${put.failed} could not be` : ''), put.failed ? 'err' : '');
@@ -11557,7 +11620,11 @@ async function buildPickedComponents() {
   }
   if (!aiWorkspaceMatchesSite()) { warnWrongSite(status); return; }
 
-  const tab = await getTab();
+  // Every job below comes from aiSweep.stops, so the tab is the SWEEP's tab,
+  // not whichever one is in front — asking getTab() here meant a build kicked
+  // off and then a glance at another tab sent every in-page read, every
+  // prepareOne and the final apply to the innocent page in front.
+  const tab = (await sweepTab()) || (await getTab());
   if (!isInjectable(tab)) { showNotice(status, 'Cannot read this page.', 'error', 4000); return; }
 
   const jobs = [];
@@ -11566,7 +11633,8 @@ async function buildPickedComponents() {
   }
 
   clearApproved();   // this list is the batch, not the session
-  aiBulk = { running: true, abort: false, failed: [], armed: false };
+  aiBulk = { running: true, abort: false, failed: [], armed: false,
+             tabId: tab.id, host: getHostname(tab) };
   btn.disabled = true;
   const original = btn.textContent;
   const stopBtn = document.getElementById('buildStopBtn');
@@ -12504,8 +12572,10 @@ function recommendComponent(p) {
 // ── In-page test engine bridge ──────────────────────────────────────────────
 // Injects test-engine.js into the page (idempotent) then calls one of its
 // exported functions. Runs in the isolated content-script world (shared DOM).
-async function callTestEngine(fnName, args) {
-  const tab = await getTab();
+async function callTestEngine(fnName, args, forTab) {
+  // Same rule as applyMappingsBatch: a pinned run passes its own tab, or the
+  // engine ends up driving keyboard tests on whatever page is in front.
+  const tab = forTab || await getTab();
   if (!isInjectable(tab)) return null;
   try {
     // selector-intel.js first: test-engine.js delegates robustSelector to it.
@@ -14255,7 +14325,7 @@ async function runElementScan(onlyKey) {
         // own waits are per-assertion; this is the ceiling for the mapping.
         res = await Promise.race([
           callTestEngine('runTest', [m.type, m.primary || m.firstArg || '',
-            (m.config && typeof m.config === 'object') ? m.config : { selectors: {} }]),
+            (m.config && typeof m.config === 'object') ? m.config : { selectors: {} }], tab),
           new Promise(r => setTimeout(() => r({ __timeout: true }), 30000)),
         ]);
       } catch (e) {
@@ -14287,7 +14357,7 @@ async function runElementScan(onlyKey) {
       // Leave the page as we found it before the next mapping. The dialog branch
       // closes what it opens, but menu/listbox/combobox can leave a popup open —
       // and an open menu swallows the next mapping's key presses.
-      await callTestEngine('removeHud', []).catch(() => {});
+      await callTestEngine('removeHud', [], tab).catch(() => {});
       await inPage(tab.id, () => {
         const el = document.activeElement;
         if (el) {
@@ -14306,7 +14376,7 @@ async function runElementScan(onlyKey) {
     stopBtn.textContent = '■ Stop';
     progress.style.display = 'none';
     progress.innerHTML = '';
-    await callTestEngine('removeHud', []).catch(() => {});
+    await callTestEngine('removeHud', [], tab).catch(() => {});
   }
 
   elemScanResults = results;
@@ -14323,6 +14393,12 @@ async function runElementScan(onlyKey) {
     ? `Tested ${tested} mapping${tested === 1 ? '' : 's'}. ${failed} need${failed === 1 ? 's' : ''} work.`
     : 'Nothing could be tested on this page — see the list below for why.',
     failed ? 'warn' : 'success', 6000);
+
+  // The hold is over and the results are painted; the front tab decides what
+  // the panel shows next. Done AFTER the rendering above, or the hand-back's
+  // own redraw would be painted over with the old site's results.
+  const front = await getTab().catch(() => null);
+  if (front) await onTabChanged(front);
 }
 
 // The fields the element scan carries forward from a saved mapping.
@@ -15016,7 +15092,7 @@ function showNarrowed(status, narrowed) {
 // "Applied on page." while the identical mapping under Apply All was measured,
 // diagnosed and told you what was in the way. Two answers to the same question,
 // and the reassuring one was the one attached to the single-mapping button.
-async function applyAllMappings({ silent = false, only = null } = {}) {
+async function applyAllMappings({ silent = false, only = null, tab = null } = {}) {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const all = stored[key] || [];
@@ -15033,7 +15109,7 @@ async function applyAllMappings({ silent = false, only = null } = {}) {
   let applied = 0, failed = 0, noEffect = 0, u1Missing = false, err = null, u1State = null;
   let details = [], engineErrs = [], filledIn = [], hidContent = [];
   if (fixes.length) {
-    const result = await applyMappingsBatch(fixes);
+    const result = await applyMappingsBatch(fixes, tab || undefined);
     if (result.ok) {
       applied += result.applied;
       failed += result.failed;
@@ -17396,6 +17472,15 @@ function noteSweepHoldsPanel(tab) {
       `Nothing here is about ${here} yet.`;
     return;
   }
+  // A bulk build or an element scan: same hold, but the leave button below
+  // drives aiSweep.abort, which these runs do not read — offering it would be
+  // a button that does nothing. Their own Stop button is the way out.
+  if ((aiBulk.running || elemScanRunning) && !aiSweep.running) {
+    host.textContent =
+      `Working on ${currentHostname} — the panel stays with the run until it finishes. ` +
+      `Nothing here is about ${here} yet. The run's own ■ Stop is the way out.`;
+    return;
+  }
   host.innerHTML =
     `Still scanning <strong>${escapeHtml(currentHostname)}</strong> — this panel stays with ` +
     `the scan until it finishes. Nothing here is about ${escapeHtml(here)}.` +
@@ -17475,6 +17560,23 @@ async function onTabChanged(tab) {
     const alive = await chrome.tabs.get(aiScanHold.tabId).catch(() => null);
     if (alive) { noteSweepHoldsPanel(tab); return; }
     aiScanHold = null;
+  }
+  // And for a bulk build. It is the same shape of run as a sweep — a loop of
+  // model calls writing cards into the workspace — and re-pointing the panel
+  // mid-loop parked that workspace WHILE prepareOne was still appending to
+  // it: cards landed in an emptied list at indexes the DOM no longer agreed
+  // with, currentHostname moved, and the approve that followed would have
+  // filed the whole batch under whichever site happened to be in front.
+  if (aiBulk.running && await bulkTab()) {
+    noteSweepHoldsPanel(tab);
+    return;
+  }
+  // An element scan drives the pinned page mapping by mapping; everything
+  // below would re-point the panel and file its results under the front
+  // site's name. The flag always clears in the scan's own finally.
+  if (elemScanRunning) {
+    noteSweepHoldsPanel(tab);
+    return;
   }
   clearSweepHoldsPanel();
 
