@@ -413,8 +413,11 @@ if (STABILITY) {
   process.exit(failed ? 1 : 0);
 }
 for (const variant of ONLY) {
+  const t0 = Date.now();
   const r = await runVariant(browser, variant);
+  const walkSecs = ((Date.now() - t0) / 1000).toFixed(1);
   console.log(`\n══ ${NAMES[variant]} — real Chromium, the sweep's own walk ══`);
+  console.log(`  walk time: ${walkSecs}s`);
   if (r.err) { console.error('  ' + r.err); failed = true; continue; }
 
   const none = r.builtProbes.every((b) => b.n === 0);

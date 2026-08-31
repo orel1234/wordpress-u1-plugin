@@ -695,6 +695,146 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 5.4: hidden is what the rects SAY, not what an attribute declares ───────
+//
+// The chat window on the realistic build: hidden by `class="is-hidden"` that
+// the stylesheet turns into display:none, sitting at body level far from its
+// FAB. watched() far-reached only [hidden]/[aria-hidden]/dialog — DECLARED
+// hidden — so the press opened the panel and the diff never saw it.
+console.log('\n5.4 — a class-hidden panel at body level is still watched');
+{
+  const w = page(`
+    <div id="stack"><button id="fab">Chat</button></div>
+    <div id="chatWin" class="chat-window is-hidden"><p>Hi! How can we help?</p><button>Send</button></div>`);
+  const d = w.document;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.id === 'chatWin' && /is-hidden/.test(this.className)) {
+      return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    }
+    return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+  };
+  d.getElementById('fab').addEventListener('click', () => {
+    d.getElementById('chatWin').classList.toggle('is-hidden');
+  });
+  // The NARROW scope of the walk: the FAB's own stack, not the body.
+  const res = await w.__u1Probe.probeOne(d.getElementById('fab'),
+    { scope: d.getElementById('stack'), settle: 0 });
+  check('the class-hidden panel outside the scope is seen appearing',
+    (res.opened || []).some((e) => e.id === 'chatWin'),
+    JSON.stringify((res.opened || []).map((e) => e.id)));
+  check('…and put back hidden', /is-hidden/.test(d.getElementById('chatWin').className));
+}
+
+// ── 5.3: a strip pressed half in one band finishes in the next ──────────────
+//
+// The original everPressed debt, pinned: members already pressed (by the
+// family completion, past the budget) must be SKIPPED in their own band —
+// and members the completion's +8 cap could not reach must still be pressed
+// there, not dropped because "the strip was seen already". One strip, one
+// classification, every member pressed exactly once.
+console.log('\n5.3 — the second band finishes the strip, presses nobody twice');
+{
+  let html = '<div id="w"><ul id="strip">';
+  for (let n = 1; n <= 12; n++) html += `<li><button id="s${n}">S${n}</button></li>`;
+  html += '</ul><div id="panes">';
+  for (let n = 1; n <= 12; n++) html += `<div id="q${n}"${n === 1 ? '' : ' hidden'}>p</div>`;
+  html += '</div></div>';
+  const w = page(html);
+  const d = w.document;
+  const hits = {};
+  for (let n = 1; n <= 12; n++) {
+    hits['s' + n] = 0;
+    d.getElementById('s' + n).addEventListener('click', function () {
+      hits[this.id]++;
+      for (let m = 1; m <= 12; m++) d.getElementById('q' + m).hidden = ('s' + m) !== this.id;
+    });
+  }
+  // The strip straddles the band boundary: 8 members in band 1, 4 in band 2.
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    const m = /^s(\d+)$/.exec(this.id || '');
+    const t = m ? (Number(m[1]) <= 8 ? 100 + Number(m[1]) : 1100 + Number(m[1])) : 50;
+    return { top: t, bottom: t + 20, left: 10, right: 110, width: 100, height: 20 };
+  };
+  w.__u1Probe.resetRun();
+  w.__u1Probe.planRun(d.getElementById('w'));
+  await w.__u1Probe.probeAll(d.getElementById('w'),
+    { settle: 0, idle: 0, max: 1, sectionY: { from: 0, to: 1000 } });
+  await w.__u1Probe.probeAll(d.getElementById('w'),
+    { settle: 0, idle: 0, max: 4, sectionY: { from: 1000, to: 2000 } });
+  const once = Object.values(hits).filter((n) => n >= 1).length;
+  check('every member of the straddling strip was pressed', once === 12,
+    JSON.stringify(hits));
+  // Extra clicks from the strip put-back are the RESTORE working, not a
+  // double probe. What must never happen is the same member entering the
+  // press ledger twice.
+  const strips = w.__u1Probe.classifyRun().filter((c) => c.shape === 'strip');
+  check('…and the run pass reports ONE strip with all 12',
+    strips.length === 1 && (strips[0].parts.tab || strips[0].parts.items).length === 12,
+    JSON.stringify(strips.map((c) => ({ t: c.type, n: (c.parts.tab || c.parts.items || []).length }))));
+}
+
+// ── 5.2: the budget grows with what the page DECLARES ───────────────────────
+//
+// Base 12, +1 for every candidate in the band that declares an openable
+// (aria-expanded / aria-haspopup / aria-controls to something hidden),
+// capped at 24. Derived from the SNAPSHOT, never from live state — the
+// stability gate demands the same budget on every run.
+console.log('\n5.2 — a declaring candidate buys its own press');
+{
+  // 16 buttons in one band: 13 declare aria-expanded, 3 are plain.
+  // Old budget: 12 pressed, 4 starved into the carry. Adaptive: 12+13 → 24
+  // capped… 12 base + 13 declaring = 25 → 24; 16 ≤ 24 so ALL are pressed.
+  let html = '<div id="w">';
+  for (let n = 1; n <= 13; n++) {
+    html += `<div><button id="d${n}" aria-expanded="false">D${n}</button><i>x</i></div>`;
+  }
+  for (let n = 1; n <= 3; n++) html += `<div><button id="p${n}">P${n}</button><i>x</i></div>`;
+  html += '</div>';
+  const w = page(html);
+  const d = w.document;
+  const hits = {};
+  for (const b of d.querySelectorAll('button')) {
+    hits[b.id] = 0;
+    b.addEventListener('click', () => { hits[b.id]++; });
+  }
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { top: 100, left: 10, right: 110, bottom: 120, width: 100, height: 20 };
+  };
+  w.__u1Probe.resetRun();
+  w.__u1Probe.planRun(d.getElementById('w'));
+  const snap = w.__u1Probe.planSnapshot();
+  check('the snapshot records who declares',
+    snap.filter((p) => p.dec).length === 13, String(snap.filter((p) => p.dec).length));
+  await w.__u1Probe.probeAll(d.getElementById('w'),
+    { settle: 0, idle: 0, max: 12, sectionY: { from: 0, to: 1000 } });
+  const pressedCount = Object.values(hits).filter((n) => n > 0).length;
+  check('13 declaring + 3 plain in one band are ALL pressed (12+13 → cap 24 ≥ 16)',
+    pressedCount === 16, String(pressedCount));
+  check('…and nothing was starved into the carry',
+    w.__u1Probe.starvedSnapshot().length === 0);
+}
+{
+  // The cap is real: 30 declaring candidates still press only 24.
+  let html = '<div id="w">';
+  for (let n = 1; n <= 30; n++) {
+    html += `<div><button id="c${n}" aria-haspopup="true">C${n}</button><i>x</i></div>`;
+  }
+  html += '</div>';
+  const w = page(html);
+  const d = w.document;
+  const touched = new Set();
+  for (const b of d.querySelectorAll('button')) b.addEventListener('click', function () { touched.add(this.id); });
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { top: 100, left: 10, right: 110, bottom: 120, width: 100, height: 20 };
+  };
+  w.__u1Probe.resetRun();
+  w.__u1Probe.planRun(d.getElementById('w'));
+  await w.__u1Probe.probeAll(d.getElementById('w'),
+    { settle: 0, idle: 0, max: 12, sectionY: { from: 0, to: 1000 } });
+  check('the adaptive budget is capped at 24', touched.size === 24, String(touched.size));
+}
+
 // ── Spillover: the budget starves nobody silently ───────────────────────────
 //
 // A planned candidate its band's budget starved goes to the HEAD of the next

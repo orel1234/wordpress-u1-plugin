@@ -397,6 +397,25 @@
         if (els.indexOf(far[i]) === -1) els.push(far[i]);
       }
     } catch (e) {}
+    // 5.4: hidden is what the RECTS say, not what an attribute declares. A
+    // chat window hidden by class="is-hidden" — display:none from the
+    // stylesheet, nothing on the element itself — matched none of the
+    // selectors above, so the press opened it and the diff never saw it.
+    // The anatomy bounds the cost: modals, drawers and chat windows live at
+    // body level or one wrapper deep, so only there is measured.
+    try {
+      var top = doc.body ? doc.body.children : [];
+      var farAdded = 0;
+      var consider = function (el) {
+        if (farAdded >= 100 || !el || el.nodeType !== 1) return;
+        if (!shown(el) && els.indexOf(el) === -1) { els.push(el); farAdded++; }
+      };
+      for (var ti = 0; ti < top.length && farAdded < 100; ti++) {
+        consider(top[ti]);
+        var kids = top[ti].children;
+        for (var tj = 0; tj < kids.length && farAdded < 100; tj++) consider(kids[tj]);
+      }
+    } catch (e) {}
     return els;
   }
 
@@ -914,7 +933,11 @@
       var y;
       try { y = el.getBoundingClientRect().top + sy; } catch (e) { return; }
       known.add(el);
-      plan.push({ el: el, docY: y, rank: rank, seeded: !!seeded });
+      // `dec` feeds 5.2's adaptive budget, and it is measured HERE, at
+      // snapshot time — the budget must be a function of the plan alone,
+      // or the stability gate's "identical every run" promise dies.
+      plan.push({ el: el, docY: y, rank: rank, seeded: !!seeded,
+                  dec: !!declaresOpen(el) });
     };
     (opts.seeds || []).forEach(function (el) { push(el, 1, true); });
     var rec = root.__u1EventMap;
@@ -2280,7 +2303,25 @@
     var start = fingerprint(wholeScope);
     try {
       var list, planMissing = 0, usedPlan = false;
+      // 5.2: the budget adapts to what the page DECLARES. Base opts.max,
+      // +1 for every candidate in this band whose SNAPSHOT said it opens
+      // something (aria-expanded / haspopup / controls-to-hidden), capped
+      // at 24. Snapshot-derived only — the same walk gives the same budget
+      // every run. Spillover and starved stay as they are: the adaptive
+      // budget should make them rare, not replace them.
+      var budgetMax = opts.max || 40;
       if (opts.sectionY && runPlan) {
+        if (budgetMax < 24) {
+          var decInBand = 0;
+          for (var di = 0; di < runPlan.length; di++) {
+            var de = runPlan[di];
+            if (de.docY >= opts.sectionY.from) {
+              if (de.docY >= opts.sectionY.to) continue;
+              if (de.dec) decInBand++;
+            }
+          }
+          budgetMax = Math.min(24, budgetMax + decInBand);
+        }
         // F-lite: this section's candidates are the ones whose SNAPSHOT Y
         // fell in its band, whatever their live rects say now. Gates that
         // are about the moment of pressing — still here, still safe — are
@@ -2297,7 +2338,7 @@
           if (!ce.el.isConnected) continue;
           if (!opts.repeat && everPressed.has(ce.el)) continue;
           if (!shown(ce.el) || !safeToClick(ce.el).ok) continue;
-          if (list.length >= (opts.max || 40)) { runStarved.push(ce); continue; }
+          if (list.length >= budgetMax) { runStarved.push(ce); continue; }
           list.push(ce.el);
         }
         for (var pi = 0; pi < runPlan.length; pi++) {
@@ -2306,14 +2347,14 @@
           if (!pe.el.isConnected) { planMissing++; continue; }
           if (!opts.repeat && everPressed.has(pe.el)) continue;
           if (!shown(pe.el) || !safeToClick(pe.el).ok) continue;
-          if (list.length >= (opts.max || 40)) { runCarry.push(pe); continue; }
+          if (list.length >= budgetMax) { runCarry.push(pe); continue; }
           if (list.indexOf(pe.el) !== -1) continue;
           list.push(pe.el);
         }
         // Arrivals since the snapshot — a panel a press just built — are
         // measured and assigned at run time, as before.
         var fresh = pressable(scope, opts);
-        for (var fi2 = 0; fi2 < fresh.length && list.length < (opts.max || 40); fi2++) {
+        for (var fi2 = 0; fi2 < fresh.length && list.length < budgetMax; fi2++) {
           if (runPlanKnown.has(fresh[fi2]) || list.indexOf(fresh[fi2]) !== -1) continue;
           list.push(fresh[fi2]);
         }
@@ -2355,7 +2396,7 @@
           // Out of the viewport is fine — the whole point is reaching the
           // siblings the window has moved past. Hidden or unsafe is not.
           if (everPressed.has(mem) || !shown(mem) || !safeToClick(mem).ok) continue;
-          var beyond = list.length >= (opts.max || 40);
+          var beyond = list.length >= budgetMax;
           if (beyond && familyOverflow >= 8) break;
           if (beyond) familyOverflow++;
           list.push(mem); inList.add(mem);
@@ -2569,6 +2610,7 @@
     planSnapshot: function () {
       return (runPlan || []).map(function (p) {
         return { docY: Math.round(p.docY), rank: p.rank, seeded: p.seeded,
+                 dec: !!p.dec,
                  id: p.el.id || '',
                  cls: String(p.el.className || '').split(' ')[0] || p.el.tagName };
       });
