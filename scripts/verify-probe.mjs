@@ -501,6 +501,90 @@ console.log('\n4.2 — the accordion bucket closes to the unexplained');
     out.components.map((x) => x.type).join() || '(nothing)');
 }
 
+// ── 4.4: listbox vs menu, decided by what the ITEMS are ─────────────────────
+//
+// The ladder, in order: the page SAYS it (role=option, aria-haspopup=listbox,
+// a hidden native <select> the panel fronts for) — then what the items HOLD
+// (majority real links = menu, majority non-href controls = listbox). Prose
+// bullets are not items; a list nobody can press is not a listbox.
+console.log('\n4.4 — a replaced <select> is a listbox, a list of links is a menu');
+{
+  const open = async (w) => {
+    const d = w.document;
+    d.getElementById('t').addEventListener('click', () => {
+      const p = d.getElementById('p'); p.hidden = !p.hidden;
+    });
+    return await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0 });
+  };
+
+  // Rung 1: the page says the word.
+  const said = page(`
+    <div id="w">
+      <div><button id="t" aria-haspopup="listbox">Size: 42</button><span>x</span></div>
+      <ul id="p" hidden><li><button role="option">41</button></li><li><button role="option">42</button></li><li><button role="option">43</button></li></ul>
+    </div>`);
+  let out = await open(said);
+  check('role=option items make it a listbox, whatever else is true',
+    out.components.some((c) => c.type === 'listbox'),
+    out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+
+  // Rung 1b: the hidden native control it fronts for.
+  const fronted = page(`
+    <div id="w">
+      <div><button id="t">Size: 42</button><span>x</span></div>
+      <ul id="p" hidden><li><button>41</button></li><li><button>42</button></li><li><button>43</button></li></ul>
+      <select id="native" hidden><option>41</option><option>42</option><option>43</option></select>
+    </div>`);
+  out = await open(fronted);
+  check('a panel fronting a hidden native <select> is a listbox',
+    out.components.some((c) => c.type === 'listbox'),
+    out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+
+  // Rung 2: no words at all — items that are controls, not links.
+  const bare = page(`
+    <div id="w">
+      <div><button id="t">Choose a size</button><span>x</span></div>
+      <ul id="p" hidden><li><button>S</button></li><li><button>M</button></li><li><button>L</button></li><li><button>XL</button></li></ul>
+    </div>`);
+  out = await open(bare);
+  check('majority non-href controls in the panel = listbox',
+    out.components.some((c) => c.type === 'listbox'),
+    out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+  const lb = out.components.find((c) => c.type === 'listbox');
+  check('…with the trigger always filled',
+    lb && lb.parts.trigger && lb.parts.trigger[0] === bare.document.getElementById('t'),
+    lb && JSON.stringify(Object.keys(lb.parts)));
+
+  // The other side of the ladder: links stay a menu.
+  const links = page(`
+    <div id="w">
+      <div><button id="t">My account</button><span>x</span></div>
+      <ul id="p" hidden><li><a href="/orders">Orders</a></li><li><a href="/returns">Returns</a></li><li><a href="/settings">Settings</a></li></ul>
+    </div>`);
+  out = await open(links);
+  check('majority real links stays a menu, never a listbox',
+    out.components.some((c) => c.type === 'menu') &&
+    !out.components.some((c) => c.type === 'listbox'),
+    out.components.map((c) => c.type).join() || '(nothing)');
+
+  // Prose bullets are nobody's options.
+  const prose = page(`
+    <div id="w">
+      <div><button id="t" aria-expanded="false">Care tips</button><span>x</span></div>
+      <ul id="p" hidden><li>Wipe with a damp cloth</li><li>Air dry only</li><li>Store away from heat</li></ul>
+    </div>`);
+  prose.document.getElementById('t').addEventListener('click', function () {
+    const p = prose.document.getElementById('p');
+    p.hidden = !p.hidden;
+    this.setAttribute('aria-expanded', String(!p.hidden));
+  });
+  out = await prose.__u1Probe.probeAll(prose.document.getElementById('w'), { settle: 0 });
+  check('a list nobody can press is not a listbox — the disclosure stands',
+    out.components.some((c) => c.type === 'accordion') &&
+    !out.components.some((c) => c.type === 'listbox'),
+    out.components.map((c) => c.type).join() || '(nothing)');
+}
+
 // ── 4.3: the counting arm counts the FAMILY, not the pressed subset ─────────
 //
 // The two leaks, pinned BEFORE the fix (owner's order). A budget that pressed

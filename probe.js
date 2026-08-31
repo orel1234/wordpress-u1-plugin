@@ -1502,6 +1502,76 @@
       // mapping and no fix — reporting it was noise, not detection.
       if (r.trigger.tagName === 'SUMMARY' ||
           (r.trigger.closest && r.trigger.closest('details'))) return;
+      // 4.4: listbox vs menu, decided by what the ITEMS are. The ladder:
+      // the page SAYS it (role=option / aria-haspopup=listbox / role=menuitem),
+      // or the panel fronts a hidden native <select>, or — with no words at
+      // all — what the items hold: majority real links lead AWAY (menu, and
+      // mostlyLinks above already took most of those), majority non-href
+      // controls SELECT (listbox). Mixed is a menu, said with low confidence.
+      // Prose bullets are nobody's options: no pressable items, no ladder.
+      var lbType = null, lbWhy = '', lbOptions = null;
+      if (!dialogBy && !linksPanel && !r.headerDropdown) {
+        try {
+          var optEls = panel.querySelectorAll('[role="option"]');
+          var menuItemEls = panel.querySelectorAll('[role="menuitem"]');
+          var saysListbox = (r.trigger.getAttribute('aria-haspopup') || '').toLowerCase() === 'listbox' ||
+            (panel.getAttribute('role') || '').toLowerCase() === 'listbox';
+          var hiddenSelect = null;
+          try {
+            var selScope = panel.parentElement || panel;
+            var sels = selScope.querySelectorAll('select');
+            for (var si2 = 0; si2 < sels.length; si2++) {
+              if (!shown(sels[si2])) { hiddenSelect = sels[si2]; break; }
+            }
+          } catch (e2) {}
+          var realLinks = 0, ctlItems = [];
+          var pressables = panel.querySelectorAll('a[href],button,input,[role="button"],[tabindex]');
+          for (var pi2 = 0; pi2 < pressables.length; pi2++) {
+            var it = pressables[pi2];
+            var href = it.getAttribute && it.getAttribute('href');
+            if (it.tagName === 'A' && href && href !== '#' && !/^javascript:/i.test(href)) realLinks++;
+            else ctlItems.push(it);
+          }
+          // The hostile shape: items are bare divs whose only tell is the
+          // pointer cursor — the one signal a page cannot help giving.
+          if (!realLinks && !ctlItems.length) {
+            var bare = panel.querySelectorAll('div,span,li');
+            for (var bi2 = 0; bi2 < bare.length && ctlItems.length < 20; bi2++) {
+              try {
+                if (root.getComputedStyle(bare[bi2]).cursor !== 'pointer') continue;
+                var bp = bare[bi2].parentElement;
+                if (bp && root.getComputedStyle(bp).cursor === 'pointer') continue;
+                ctlItems.push(bare[bi2]);
+              } catch (e3) {}
+            }
+          }
+          if (optEls.length >= 2 || saysListbox) {
+            lbType = 'listbox';
+            lbWhy = optEls.length >= 2 ? 'its items say role=option — the page calls them options'
+                                       : 'its trigger says aria-haspopup=listbox';
+            lbOptions = optEls.length >= 2 ? Array.prototype.slice.call(optEls) : (ctlItems.length ? ctlItems : null);
+          } else if (menuItemEls.length >= 2) {
+            lbType = 'menu';
+            lbWhy = 'its items say role=menuitem';
+          } else if (hiddenSelect && ctlItems.length >= 2) {
+            lbType = 'listbox';
+            lbWhy = 'it fronts a hidden native <select> — a replaced select control';
+            lbOptions = ctlItems;
+          } else if (realLinks + ctlItems.length >= 3) {
+            if (realLinks > ctlItems.length) {
+              lbType = 'menu';
+              lbWhy = 'most of its items are real links — they lead away';
+            } else if (ctlItems.length > realLinks) {
+              lbType = 'listbox';
+              lbWhy = 'its items are controls, not links — pressing one selects a value';
+              lbOptions = ctlItems;
+            } else {
+              lbType = 'menu';
+              lbWhy = 'its items are a mix of links and controls — read as a menu, with low confidence';
+            }
+          }
+        } catch (e) {}
+      }
       // 4.2: "accordion" was the bucket everything unexplained fell into —
       // true and useless, and every stray reveal wore the name. Now it needs
       // EVIDENCE of the disclosure shape: the trigger's own aria-expanded
@@ -1511,7 +1581,7 @@
       // accordion with single:true. No evidence at all is reported as
       // exactly what it is: observed, unclassified.
       var accEvidence = null, accSingle = false;
-      if (!dialogBy && !linksPanel && !r.headerDropdown) {
+      if (!dialogBy && !linksPanel && !r.headerDropdown && !lbType) {
         var sibPanel = false, kin = 0;
         try {
           var anchor = stripAnchor(r.trigger);
@@ -1531,9 +1601,11 @@
       var type = dialogBy ? 'dialog'
         : linksPanel ? 'menu'
         : r.headerDropdown ? 'menu'
+        : lbType ? lbType
         : accEvidence ? 'accordion'
         : null;
       var why = type === 'dialog' ? dialogBy
+        : lbType ? 'it opened a list — ' + lbWhy
         : type === 'menu'
         ? (linksPanel ? 'it revealed a panel of links and nothing else'
            : 'it dropped a panel across its own header bar')
@@ -1562,8 +1634,13 @@
         type: type,
         subtype: type === 'dialog' && r.drawer ? 'drawer' : undefined,
         single: type === 'accordion' && accSingle ? true : undefined,
-        root: type === 'dialog' ? panel : commonAncestor([r.trigger, panel]),
-        parts: { trigger: [r.trigger], panel: [panel] },
+        root: type === 'dialog' ? panel
+            : type === 'listbox' ? panel
+            : commonAncestor([r.trigger, panel]),
+        parts: type === 'listbox'
+          ? (lbOptions ? { trigger: [r.trigger], listbox: [panel], options: lbOptions }
+                       : { trigger: [r.trigger], listbox: [panel] })
+          : { trigger: [r.trigger], panel: [panel] },
         stateClass: r.stateClass || null,
         focusEntered: r.focusEntered,
         why: why,
