@@ -975,6 +975,33 @@ Mega.widgets = {
       });
     }
 
+    // The autocomplete: an EMPTY list that typing fills — did not appear,
+    // it was visible all along, and the first probe version missed exactly
+    // this shape. Model names chosen so any single letter matches some.
+    const acInput = el('auditModelInput'), acList = el('auditModelList');
+    if (acInput && acList) {
+      const MODELS = ['Strider One', 'Strider Pro', 'Cloudstep', 'Cloudstep Lite',
+        'Trailhawk', 'Trailhawk GTX', 'Pacer', 'Pacer Knit', 'Metro Slip-on'];
+      const paint = () => {
+        const q = acInput.value.trim().toLowerCase();
+        const hits = q ? MODELS.filter(m => m.toLowerCase().includes(q)) : [];
+        acList.innerHTML = hits.map(m =>
+          `<li role="option" style="padding:6px 10px;cursor:pointer">${m}</li>`).join('');
+        acInput.setAttribute('aria-expanded', String(hits.length > 0));
+      };
+      acInput.addEventListener('input', paint);
+      acList.addEventListener('click', e => {
+        const opt = e.target.closest('li');
+        if (!opt) return;
+        acInput.value = opt.textContent;
+        acList.innerHTML = '';
+        acInput.setAttribute('aria-expanded', 'false');
+      });
+      acInput.addEventListener('blur', () => setTimeout(() => {
+        acList.innerHTML = ''; acInput.setAttribute('aria-expanded', 'false');
+      }, 150));
+    }
+
     const rmBtn = el('auditReadMoreBtn'), rmPanel = el('auditReadMorePanel');
     if (rmBtn && rmPanel) {
       rmBtn.addEventListener('click', () => {

@@ -816,6 +816,8 @@
   // screenfuls and pressed them twenty-eight times — which is why the cart kept
   // opening. A component only has to be operated once.
   var everPressed = new WeakSet();
+  // 4.5: fields the walk has already typed into — one letter each is plenty.
+  var everTyped = new WeakSet();
 
   // The run's ledger. A strip pressed half in one section and half in the
   // next produced two fragments, and each section's classify saw singleton
@@ -844,6 +846,7 @@
     runResults = []; runPressed = []; runExtras = []; runPlan = null;
     runCarry = []; runStarved = [];
     everPressed = new WeakSet();
+    everTyped = new WeakSet();
   }
   function classifyRun() {
     var comps = classify(runResults, runPressed, { climb: true });
@@ -1836,7 +1839,33 @@
     var scope = opts.scope || input.closest('form,section,div') || doc.body;
     var els = watched(scope, opts.limit);
     var before = fingerprint(els);
-    var countBefore = listCounts(scope);
+    // The suggestion list is not always a <ul> — on a hostile page it is a
+    // bare <div> beside the field. listCounts cannot know that, but the
+    // ANATOMY says it: the popup lives beside the input, or beside its
+    // wrapper. Those neighbours are counted too, whatever their tag.
+    var near = [];
+    try {
+      var sibs = input.parentElement ? input.parentElement.children : [];
+      for (var ni = 0; ni < sibs.length; ni++) if (sibs[ni] !== input) near.push(sibs[ni]);
+      var up = input.parentElement && input.parentElement.parentElement;
+      if (up) for (var nj = 0; nj < up.children.length; nj++) {
+        if (up.children[nj] !== input.parentElement) near.push(up.children[nj]);
+      }
+    } catch (e) {}
+    var addNear = function (map) {
+      for (var na = 0; na < near.length; na++) {
+        if (map.has(near[na])) continue;
+        var kids = 0;
+        try {
+          for (var nk = 0; nk < near[na].children.length; nk++) {
+            if (shown(near[na].children[nk])) kids++;
+          }
+        } catch (e) {}
+        map.set(near[na], kids);
+      }
+      return map;
+    };
+    var countBefore = addNear(listCounts(scope));
 
     var fire = function (el) {
       ['input', 'keyup', 'change'].forEach(function (name) {
@@ -1856,7 +1885,7 @@
     await raf();
     if (settle) await wait(settle);
     var onTouch = diff(before, fingerprint(els));
-    var countTouched = listCounts(scope);
+    var countTouched = addNear(listCounts(scope));
     var openedOnTouch = outermost(onTouch.appeared);
     countBefore.forEach(function (was, el) {
       var now = countTouched.get(el);
@@ -1876,7 +1905,7 @@
     if (settle) await wait(settle);
 
     var d = diff(beforeTyping, fingerprint(els));
-    var countAfter = listCounts(scope);
+    var countAfter = addNear(listCounts(scope));
 
     // Put the letter back before anything else. A field left with a stray
     // character in it is the most visible thing this whole file could do.
@@ -2449,6 +2478,48 @@
             // Not a press, so not in the ledger — carried to the run pass apart.
             runExtras.push(idleComp);
           }
+        }
+      }
+
+      // 4.5: the typing pass. A combobox never answers to a press — its whole
+      // life is the keystroke — so the walk types ONE letter into at most two
+      // untouched text boxes per section and watches: a list that opens on
+      // touch, or an empty list that typing fills, is a combobox. probeTyping
+      // does the watching AND the undoing; this only chooses the fields.
+      if (opts.typing !== false) {
+        var boxes = [];
+        try {
+          var allBoxes = scope.querySelectorAll(
+            'input[type="text"],input[type="search"],input:not([type])');
+          var vhT = root.innerHeight || 768, vwT = root.innerWidth || 1024;
+          for (var bx = 0; bx < allBoxes.length && boxes.length < 2; bx++) {
+            var bEl = allBoxes[bx];
+            if (everTyped.has(bEl) || !shown(bEl)) continue;
+            if (opts.inViewport) {
+              var bR = bEl.getBoundingClientRect();
+              if (!(bR.bottom > 0 && bR.top < vhT && bR.right > 0 && bR.left < vwT)) continue;
+            }
+            boxes.push(bEl);
+          }
+        } catch (e) {}
+        for (var tb = 0; tb < boxes.length; tb++) {
+          everTyped.add(boxes[tb]);
+          var typed = null;
+          try { typed = await probeTyping(boxes[tb], { settle: opts.settle }); } catch (e) {}
+          if (!typed || typed.skipped || typed.kind !== 'combobox') continue;
+          var pop = typed.openedOnTouch[0] || typed.revealed[0] ||
+                    (typed.filled[0] && typed.filled[0].list) || null;
+          var cbComp = {
+            type: 'combobox',
+            root: pop ? commonAncestor([boxes[tb], pop]) : (boxes[tb].parentElement || boxes[tb]),
+            parts: pop ? { textbox: [boxes[tb]], listbox: [pop] } : { textbox: [boxes[tb]] },
+            why: typed.openedOnTouch.length
+              ? 'touching the field opened a list of suggestions'
+              : 'typing one letter filled its list with suggestions',
+          };
+          comps.push(cbComp);
+          // Not a press, so not in the ledger — carried to the run pass apart.
+          runExtras.push(cbComp);
         }
       }
 

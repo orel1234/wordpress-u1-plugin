@@ -935,6 +935,16 @@
         </ul>
       </div>
 
+      <!-- combobox: an autocomplete — the list is EMPTY until typing fills
+           it, the commonest autocomplete on the web. role=combobox on the
+           input for the friendly build; the behavioural layer must name it
+           from the typing alone once the roles are stripped. -->
+      <div class="autocomplete" id="auditModelBox" style="position:relative;max-width:320px">
+        <label class="visually-hidden" for="auditModelInput">Find your model</label>
+        <input id="auditModelInput" type="text" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-controls="auditModelList" placeholder="Find your model…" autocomplete="off">
+        <ul id="auditModelList" role="listbox" style="list-style:none;margin:4px 0 0;padding:0;border:1px solid #ddd;background:#fff;position:absolute;left:0;right:0"></ul>
+      </div>
+
       <!-- dialog: 420px, fixed, backdropped, and NOT A ROLE IN SIGHT -->
       <button type="button" id="auditLeaveBtn" data-panel-target="auditLeaveDialog">Visit our outlet site</button>
       <div id="auditLeaveBackdrop" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60"></div>

@@ -501,6 +501,41 @@ console.log('\n4.2 — the accordion bucket closes to the unexplained');
     out.components.map((x) => x.type).join() || '(nothing)');
 }
 
+// ── 4.5: the walk types, and a combobox answers ─────────────────────────────
+console.log('\n4.5 — one letter into an untouched field finds the autocomplete');
+{
+  const w = page(`
+    <div id="w">
+      <input id="q" type="text" placeholder="Find a model">
+      <ul id="sugg"></ul>
+      <input id="filter" type="search" placeholder="Filter the list below">
+      <ul id="always"><li>one</li><li>two</li><li>three</li></ul>
+    </div>`);
+  const d = w.document;
+  d.getElementById('q').addEventListener('input', () => {
+    d.getElementById('sugg').innerHTML = d.getElementById('q').value
+      ? '<li>Strider</li><li>Pacer</li>' : '';
+  });
+  d.getElementById('filter').addEventListener('input', () => {
+    const q = d.getElementById('filter').value;
+    d.getElementById('always').innerHTML = q ? '<li>one</li>' :
+      '<li>one</li><li>two</li><li>three</li>';
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  const cb = out.components.filter((c) => c.type === 'combobox');
+  check('an empty list that typing fills is a combobox',
+    cb.length === 1 && cb[0].parts.textbox[0] === d.getElementById('q'),
+    out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+  check('…with the list it fills as its listbox part',
+    cb.length === 1 && cb[0].parts.listbox && cb[0].parts.listbox[0] === d.getElementById('sugg'),
+    cb[0] && JSON.stringify(Object.keys(cb[0].parts)));
+  check('a page filter that narrows a visible list is NOT a combobox',
+    !out.components.some((c) => c.type === 'combobox' &&
+      c.parts.textbox[0] === d.getElementById('filter')));
+  check('…and both fields are left empty',
+    d.getElementById('q').value === '' && d.getElementById('filter').value === '');
+}
+
 // ── 4.4: listbox vs menu, decided by what the ITEMS are ─────────────────────
 //
 // The ladder, in order: the page SAYS it (role=option, aria-haspopup=listbox,

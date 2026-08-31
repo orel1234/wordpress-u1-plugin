@@ -266,7 +266,7 @@ Mega.FAQ_TABS = [
   { id: 'orders', label: 'Orders & Shipping' },
   { id: 'returns', label: 'Returns & Exchanges' },
   { id: 'sizing', label: 'Sizing & Fit' },
-  { id: 'ccd', label: 'STEP Club' },
+  { id: 'cce', label: 'STEP Club' },
   { id: 'care', label: 'Care & Warranty' }
 ];
 
@@ -339,7 +339,7 @@ const price = n => Store.utils.formatPrice(n);
 
 Mega.render = {
   menu() {
-    const host = el('e38');
+    const host = el('e3b');
     if (!host) return;
     host.innerHTML = Mega.MENU.map((item, i) => `
       <div class="c70">
@@ -347,7 +347,7 @@ Mega.render = {
                 data-s0="false" data-s5="megaPanel${i}" data-x1="${i}">
           ${esc(item.label)} <span class="c6b" data-s3="true">▾</span>
         </div>
-        <div class="cag" id="megaPanel${i}" data-xc="${i}" hidden>
+        <div class="cah" id="megaPanel${i}" data-xc="${i}" hidden>
           ${item.cols.map(col => `
             <div>
               <div class="cz">${esc(col.title)}</div>
@@ -360,27 +360,27 @@ Mega.render = {
             ${Store.shoeIconSVG(Mega.color(i))}
             <div class="ch">${esc(item.promo.title)}</div>
             <p class="co">${esc(item.promo.desc)}</p>
-            <a class="cch c89" href="shop.html">Explore</a>
+            <a class="cci c8a" href="shop.html">Explore</a>
           </div>
         </div>
       </div>`).join('');
   },
 
   ticker() {
-    const host = el('eu');
+    const host = el('ew');
     if (!host) return;
     host.innerHTML = Mega.TICKER.map((msg, i) => `
-      <p class="c8z ${i === 0 ? 'c1n' : ''}" data-x7="${i}">
+      <p class="c90 ${i === 0 ? 'c1n' : ''}" data-x7="${i}">
         <span data-s3="true">✦</span> ${esc(msg)} <a href="shop.html">Details</a>
       </p>`).join('');
   },
 
   hero() {
-    const track = el('e2k');
-    const dots = el('e2x');
+    const track = el('e2n');
+    const dots = el('e30');
     if (!track) return;
     track.innerHTML = Mega.SLIDES.map((s, i) => `
-      <div class="cae ${i === 0 ? 'c33' : ''}" data-xv="${i}"
+      <div class="caf ${i === 0 ? 'c33' : ''}" data-xv="${i}"
            data-s9="slide" data-s7="Slide ${i + 1} of ${Mega.SLIDES.length}">
         <div class="c3z">
           <div>
@@ -389,8 +389,8 @@ Mega.render = {
             <p class="c55">${esc(s.desc)}</p>
             <div class="c56">${s.meta.map(m => `<span>✓ ${esc(m)}</span>`).join('')}</div>
             <div class="c22">
-              <a class="cch c95" href="shop.html">${esc(s.primary)}</a>
-              <a class="cch c89" style="border-color:#f6f2ea;color:#f6f2ea" href="shop.html">${esc(s.secondary)}</a>
+              <a class="cci c96" href="shop.html">${esc(s.primary)}</a>
+              <a class="cci c8a" style="border-color:#f6f2ea;color:#f6f2ea" href="shop.html">${esc(s.secondary)}</a>
             </div>
           </div>
           <div class="c67">
@@ -404,7 +404,7 @@ Mega.render = {
   },
 
   quick() {
-    const host = el('e27');
+    const host = el('e2a');
     if (!host) return;
     host.innerHTML = Mega.QUICK.map(q => `
       <a class="c4c" href="shop.html">
@@ -414,20 +414,20 @@ Mega.render = {
   },
 
   dealTabs() {
-    const host = el('e2s');
+    const host = el('e2v');
     if (!host) return;
     host.innerHTML = Mega.DEAL_TABS.map((t, i) => `
-      <div class="c8x" id="dealTab-${t.id}"
+      <div class="c8y" id="dealTab-${t.id}"
               data-s5="dealPanel" data-s1="${i === 0}" data-xl="${t.id}">${esc(t.label)}</div>`).join('');
   },
 
   deals(tabId) {
-    const host = el('e2r');
+    const host = el('e2u');
     if (!host) return;
     host.innerHTML = (Mega.DEALS[tabId] || []).map((d, i) => {
       const [brand, name, note, now, was, ribbon] = d;
       return `
-        <div class="cb1">
+        <div class="cb2">
           <div class="c50" style="background:${Mega.color(i)}">
             <span class="c3w">${esc(ribbon)}</span>
             ${Store.shoeIconSVG('#fff')}
@@ -452,7 +452,7 @@ Mega.render = {
   },
 
   brands() {
-    const host = el('e1u');
+    const host = el('e1x');
     if (!host) return;
     host.innerHTML = Mega.BRANDS.map(([name, sub]) => `
       <a class="c3p" href="shop.html">
@@ -461,31 +461,31 @@ Mega.render = {
   },
 
   mosaic() {
-    const host = el('e3j');
+    const host = el('e3m');
     if (!host) return;
     host.innerHTML = Mega.MOSAIC.map((t, i) => `
-      <a class="c8n ${t.size ? 'mosaic__tile--' + t.size : ''}" href="shop.html" style="background:${Mega.color(i)}">
+      <a class="c8o ${t.size ? 'mosaic__tile--' + t.size : ''}" href="shop.html" style="background:${Mega.color(i)}">
         ${Store.shoeIconSVG('#fff')}
-        <span class="c8m">${esc(t.name)}</span>
+        <span class="c8n">${esc(t.name)}</span>
         <span class="c7z">${esc(t.count)}</span>
       </a>`).join('');
   },
 
   tiers() {
-    const host = el('e34');
+    const host = el('e37');
     if (!host) return;
     host.innerHTML = Mega.TIERS.map(t => `
-      <div class="cbg ${t.featured ? 'c2p' : ''}">
+      <div class="cbh ${t.featured ? 'c2p' : ''}">
         ${t.featured ? '<span class="c5p">Most popular</span>' : ''}
         <div class="c6m">${esc(t.name)}</div>
         <span class="c4p">${esc(t.points)}</span>
         <div class="c5q">${t.perks.map(p => `<div>${esc(p)}</div>`).join('')}</div>
-        <a class="cch c89" href="shop.html">Learn more</a>
+        <a class="cci c8a" href="shop.html">Learn more</a>
       </div>`).join('');
   },
 
   sizeTable() {
-    const host = el('e14');
+    const host = el('e17');
     if (!host) return;
     host.innerHTML = Mega.SIZE_ROWS.map(r => `
       <div data-t="t4">
@@ -504,7 +504,7 @@ Mega.render = {
   },
 
   articles() {
-    const host = el('e1j');
+    const host = el('e1m');
     if (!host) return;
     host.innerHTML = Mega.ARTICLES.map(([tag, title, excerpt, date, read], i) => `
       <div class="c88">
@@ -519,22 +519,22 @@ Mega.render = {
   },
 
   instagram() {
-    const host = el('e3i');
+    const host = el('e3l');
     if (!host) return;
     const caps = ['#StepEveryDay', '#CloudlinePro', '#TrailSeason', '#StepClub', '#NewArrivals', '#BackToSchool',
       '#RunClub', '#WinterBoots', '#StepStyle', '#OnMyFeet', '#RaceDay', '#StepKids'];
     host.innerHTML = caps.map((c, i) => `
-      <a class="cbx" href="#" style="background:${Mega.color(i + 3)}">
+      <a class="cby" href="#" style="background:${Mega.color(i + 3)}">
         ${Store.shoeIconSVG('#fff')}
         <span class="c57"><span>${esc(c)}</span><span>♥ ${(i + 3) * 137}</span></span>
       </a>`).join('');
   },
 
   reviews() {
-    const host = el('e28');
+    const host = el('e2b');
     if (!host) return;
     host.innerHTML = Mega.REVIEWS.map(([name, stars, date, text, product], i) => `
-      <div class="c9r">
+      <div class="c9s">
         <div class="c4g">
           <span class="c2f" style="background:${Mega.color(i)}">${esc(name[0])}</span>
           <span>
@@ -549,29 +549,29 @@ Mega.render = {
   },
 
   stores() {
-    const host = el('e1n');
+    const host = el('e1q');
     if (!host) return;
     host.innerHTML = Mega.STORES.map(([name, addr, hours, tags, open], i) => `
       <div class="c7u" data-xw="${i}" data-s2="${i === 0}">
         <span class="c7w">${esc(name)}</span>
         <span class="c7t">${esc(addr)}</span>
         <span class="${open ? 'c7x' : 'c69'}">${open ? 'Open now' : 'Closed now'} · ${esc(hours)}</span>
-        <span class="c7y">${tags.map(t => `<span class="c8l">${esc(t)}</span>`).join('')}</span>
+        <span class="c7y">${tags.map(t => `<span class="c8m">${esc(t)}</span>`).join('')}</span>
       </div>`).join('');
   },
 
   storeDetail(i) {
-    const host = el('e10');
+    const host = el('e13');
     if (!host) return;
     const [name, addr, hours, tags, open] = Mega.STORES[i];
     host.innerHTML = `
-      <div class="c8k" data-s3="true">Map preview — ${esc(name)}</div>
+      <div class="c8l" data-s3="true">Map preview — ${esc(name)}</div>
       <div style="font-size:22px">${esc(name)}</div>
       <p style="margin-top:6px;color:var(--color-ink-soft);font-size:14px">${esc(addr)}</p>
       <p style="margin-top:6px" class="${open ? 'c7x' : 'c69'}">${open ? 'Open now' : 'Closed now'}</p>
-      <div class="c7y" style="margin-top:12px">${tags.map(t => `<span class="c8l">${esc(t)}</span>`).join('')}</div>
-      <div class="cat" style="margin-top:16px">
-        <div data-t="t0" class="ca9" style="min-width:0">
+      <div class="c7y" style="margin-top:12px">${tags.map(t => `<span class="c8m">${esc(t)}</span>`).join('')}</div>
+      <div class="cau" style="margin-top:16px">
+        <div data-t="t0" class="caa" style="min-width:0">
           <div data-t="t7">Opening hours</div>
           <div data-t="t2">
             ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'].map(d => `<div data-t="t4"><div data-t="t5" scope="row">${d}</div><div data-t="t6">${esc(hours)}</div></div>`).join('')}
@@ -581,22 +581,22 @@ Mega.render = {
         </div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
-        <a class="cch c95" href="#">Get directions</a>
-        <a class="cch c89" href="#">Call branch</a>
-        <a class="cch c89" href="#">Book a fitting</a>
+        <a class="cci c96" href="#">Get directions</a>
+        <a class="cci c8a" href="#">Call branch</a>
+        <a class="cci c8a" href="#">Book a fitting</a>
       </div>`;
   },
 
   faqTabs() {
-    const host = el('e35');
+    const host = el('e38');
     if (!host) return;
     host.innerHTML = Mega.FAQ_TABS.map((t, i) => `
-      <div class="c8x" id="faqTab-${t.id}" data-s1="${i === 0}"
-              data-s5="e2t" data-xn="${t.id}">${esc(t.label)}</div>`).join('');
+      <div class="c8y" id="faqTab-${t.id}" data-s1="${i === 0}"
+              data-s5="e2w" data-xn="${t.id}">${esc(t.label)}</div>`).join('');
   },
 
   faq(tabId) {
-    const host = el('e2t');
+    const host = el('e2w');
     if (!host) return;
     host.innerHTML = (Mega.FAQ[tabId] || []).map(([q, a], i) => `
       <div class="c5v">
@@ -611,19 +611,19 @@ Mega.render = {
   },
 
   footer() {
-    const host = el('e21');
+    const host = el('e24');
     if (!host) return;
     host.innerHTML = Mega.FOOTER.map(col => `
       <div>
         <div class="c37">${esc(col.title)}</div>
         <div class="c36">${col.links.map(l => `<div><a href="#">${esc(l)}</a></div>`).join('')}</div>
       </div>`).join('');
-    const seo = el('e2j');
+    const seo = el('e2m');
     if (seo) seo.innerHTML = Mega.SEO_LINKS.map(l => `<a href="shop.html">${esc(l)}</a>`).join(' ');
   },
 
   searchSuggestions(query) {
-    const host = el('e13');
+    const host = el('e16');
     if (!host) return;
     const q = query.trim().toLowerCase();
     const matches = (q ? Store.PRODUCTS.filter(p =>
@@ -657,12 +657,12 @@ Mega.widgets = {
     };
     let timer = setInterval(() => go(idx + 1), 5000);
     const reset = () => { clearInterval(timer); timer = setInterval(() => go(idx + 1), 5000); };
-    el('e2b').addEventListener('click', () => { go(idx - 1); reset(); });
-    el('e2a').addEventListener('click', () => { go(idx + 1); reset(); });
+    el('e2e').addEventListener('click', () => { go(idx - 1); reset(); });
+    el('e2d').addEventListener('click', () => { go(idx + 1); reset(); });
   },
 
   megaMenu() {
-    const nav = el('e38');
+    const nav = el('e3b');
     if (!nav) return;
     const closeAll = except => {
       Store.utils.qsa('[data-xc]', nav).forEach(panel => {
@@ -695,13 +695,13 @@ Mega.widgets = {
   },
 
   search() {
-    const overlay = el('e12');
-    const input = el('e1p');
+    const overlay = el('e15');
+    const input = el('e1s');
     if (!overlay) return;
     const open = () => { overlay.hidden = false; input.focus(); Mega.render.searchSuggestions(''); };
     const close = () => { overlay.hidden = true; };
-    el('e29').addEventListener('click', open);
-    el('e1o').addEventListener('click', close);
+    el('e2c').addEventListener('click', open);
+    el('e1r').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
     input.addEventListener('input', Store.utils.debounce(e => Mega.render.searchSuggestions(e.target.value), 180));
@@ -714,7 +714,7 @@ Mega.widgets = {
   heroCarousel() {
     const slides = Store.utils.qsa('[data-xv]');
     const dots = Store.utils.qsa('[data-xi]');
-    const bar = el('e1f');
+    const bar = el('e1i');
     if (!slides.length) return;
     let idx = 0, elapsed = 0, timer = null;
     const DURATION = 6500, TICK = 100;
@@ -735,10 +735,10 @@ Mega.widgets = {
       }, TICK);
     };
     const stop = () => { if (timer) clearInterval(timer); timer = null; };
-    el('e2z').addEventListener('click', () => { go(idx - 1); start(); });
-    el('e2y').addEventListener('click', () => { go(idx + 1); start(); });
+    el('e32').addEventListener('click', () => { go(idx - 1); start(); });
+    el('e31').addEventListener('click', () => { go(idx + 1); start(); });
     dots.forEach(d => d.addEventListener('click', () => { go(Number(d.dataset.xi)); start(); }));
-    const track = el('e2k');
+    const track = el('e2n');
     track.addEventListener('mouseenter', stop);
     track.addEventListener('mouseleave', start);
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) start();
@@ -761,7 +761,7 @@ Mega.widgets = {
   },
 
   countdown() {
-    const host = el('e20');
+    const host = el('e23');
     if (!host) return;
     const target = new Date();
     target.setDate(target.getDate() + 3);
@@ -783,19 +783,19 @@ Mega.widgets = {
   },
 
   dealTabs() {
-    const host = el('e2s');
+    const host = el('e2v');
     if (!host) return;
     host.addEventListener('click', e => {
       const btn = e.target.closest('[data-xl]');
       if (!btn) return;
       Store.utils.qsa('[data-xl]', host).forEach(b => b.setAttribute('data-s1', String(b === btn)));
-      el('e2r').setAttribute('data-s6', btn.id);
+      el('e2u').setAttribute('data-s6', btn.id);
       Mega.render.deals(btn.dataset.xl);
     });
   },
 
   rails() {
-    Store.utils.qsa('.ccg').forEach(rail => {
+    Store.utils.qsa('.cch').forEach(rail => {
       const viewport = rail.querySelector('.c74');
       const prev = rail.querySelector('.c6i');
       const next = rail.querySelector('.c6h');
@@ -831,7 +831,7 @@ Mega.widgets = {
   },
 
   locator() {
-    const list = el('e1n');
+    const list = el('e1q');
     if (!list) return;
     Mega.render.storeDetail(0);
     list.addEventListener('click', e => {
@@ -840,7 +840,7 @@ Mega.widgets = {
       Store.utils.qsa('[data-xw]', list).forEach(b => b.setAttribute('data-s2', String(b === btn)));
       Mega.render.storeDetail(Number(btn.dataset.xw));
     });
-    const filter = el('e11');
+    const filter = el('e14');
     filter.addEventListener('input', Store.utils.debounce(() => {
       const q = filter.value.trim().toLowerCase();
       Store.utils.qsa('[data-xw]', list).forEach(btn => {
@@ -851,8 +851,8 @@ Mega.widgets = {
   },
 
   faq() {
-    const tabs = el('e35');
-    const panel = el('e2t');
+    const tabs = el('e38');
+    const panel = el('e2w');
     if (!tabs) return;
     tabs.addEventListener('click', e => {
       const btn = e.target.closest('[data-xn]');
@@ -871,7 +871,7 @@ Mega.widgets = {
   },
 
   cookieBar() {
-    const bar = el('e2f');
+    const bar = el('e2i');
     if (!bar) return;
     if (localStorage.getItem('step_cookie_choice')) return;
     setTimeout(() => { bar.hidden = false; }, 1200);
@@ -885,9 +885,9 @@ Mega.widgets = {
   },
 
   chat() {
-    const win = el('e1y');
+    const win = el('e21');
     if (!win) return;
-    const body = el('e2p');
+    const body = el('e2s');
     const REPLIES = [
       'Happy to help with that. Which branch are you closest to?',
       'That model runs true to size — I would stay with your usual number.',
@@ -896,24 +896,24 @@ Mega.widgets = {
       'Club points post 14 days after delivery. Yours are on the way.'
     ];
     let i = 0;
-    el('e1x').addEventListener('click', () => { win.hidden = !win.hidden; if (!win.hidden) el('e2e').focus(); });
-    el('e2d').addEventListener('click', () => { win.hidden = true; });
-    el('e2q').addEventListener('submit', e => {
+    el('e20').addEventListener('click', () => { win.hidden = !win.hidden; if (!win.hidden) el('e2h').focus(); });
+    el('e2g').addEventListener('click', () => { win.hidden = true; });
+    el('e2t').addEventListener('submit', e => {
       e.preventDefault();
-      const input = el('e2e');
+      const input = el('e2h');
       if (!input.value.trim()) return;
-      body.insertAdjacentHTML('beforeend', `<p class="cbi c8c">${esc(input.value)}</p>`);
+      body.insertAdjacentHTML('beforeend', `<p class="cbj c8d">${esc(input.value)}</p>`);
       input.value = '';
       body.scrollTop = body.scrollHeight;
       setTimeout(() => {
-        body.insertAdjacentHTML('beforeend', `<p class="cbi c7i">${esc(REPLIES[i++ % REPLIES.length])}</p>`);
+        body.insertAdjacentHTML('beforeend', `<p class="cbj c7i">${esc(REPLIES[i++ % REPLIES.length])}</p>`);
         body.scrollTop = body.scrollHeight;
       }, 700);
     });
   },
 
   backToTop() {
-    const btn = el('e2c');
+    const btn = el('e2f');
     if (!btn) return;
     btn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
   },
@@ -923,19 +923,19 @@ Mega.widgets = {
       el(btn.dataset.xe).hidden = false;
     }));
     Store.utils.qsa('[data-x4]').forEach(btn => btn.addEventListener('click', () => {
-      btn.closest('.ccb').hidden = true;
+      btn.closest('.ccc').hidden = true;
     }));
-    Store.utils.qsa('.ccb').forEach(modal => modal.addEventListener('click', e => {
+    Store.utils.qsa('.ccc').forEach(modal => modal.addEventListener('click', e => {
       if (e.target === modal) modal.hidden = true;
     }));
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
-      Store.utils.qsa('.ccb').forEach(m => { m.hidden = true; });
+      Store.utils.qsa('.ccc').forEach(m => { m.hidden = true; });
     });
   },
 
   subscribe() {
-    const form = el('e16');
+    const form = el('e19');
     if (!form) return;
     form.addEventListener('submit', e => {
       e.preventDefault();
@@ -962,8 +962,8 @@ Mega.widgets = {
     toggleList('eg', 'e5');
     toggleList('e6', 'e2');
 
-    const sizeToggle = el('el'), sizeList = el('ey'),
-          sizeNative = el('ej');
+    const sizeToggle = el('em'), sizeList = el('e11'),
+          sizeNative = el('ek');
     if (sizeToggle && sizeList) {
       sizeToggle.addEventListener('click', () => { sizeList.hidden = !sizeList.hidden; });
       sizeList.addEventListener('click', e => {
@@ -975,6 +975,33 @@ Mega.widgets = {
       });
     }
 
+    // The autocomplete: an EMPTY list that typing fills — did not appear,
+    // it was visible all along, and the first probe version missed exactly
+    // this shape. Model names chosen so any single letter matches some.
+    const acInput = el('ei'), acList = el('eq');
+    if (acInput && acList) {
+      const MODELS = ['Strider One', 'Strider Pro', 'Cloudstep', 'Cloudstep Lite',
+        'Trailhawk', 'Trailhawk GTX', 'Pacer', 'Pacer Knit', 'Metro Slip-on'];
+      const paint = () => {
+        const q = acInput.value.trim().toLowerCase();
+        const hits = q ? MODELS.filter(m => m.toLowerCase().includes(q)) : [];
+        acList.innerHTML = hits.map(m =>
+          `<div style="padding:6px 10px;cursor:pointer">${m}</div>`).join('');
+        acInput.setAttribute('data-s0', String(hits.length > 0));
+      };
+      acInput.addEventListener('input', paint);
+      acList.addEventListener('click', e => {
+        const opt = e.target.closest('li');
+        if (!opt) return;
+        acInput.value = opt.textContent;
+        acList.innerHTML = '';
+        acInput.setAttribute('data-s0', 'false');
+      });
+      acInput.addEventListener('blur', () => setTimeout(() => {
+        acList.innerHTML = ''; acInput.setAttribute('data-s0', 'false');
+      }, 150));
+    }
+
     const rmBtn = el('eb'), rmPanel = el('e1');
     if (rmBtn && rmPanel) {
       rmBtn.addEventListener('click', () => {
@@ -983,7 +1010,7 @@ Mega.widgets = {
       });
     }
 
-    const miniStrip = el('eo');
+    const miniStrip = el('ep');
     if (miniStrip) {
       miniStrip.addEventListener('click', e => {
         const tab = e.target.closest('[data-xm]');
@@ -994,23 +1021,23 @@ Mega.widgets = {
       });
     }
 
-    const leaveBtn = el('ew'), leaveBox = el('e9'),
+    const leaveBtn = el('ey'), leaveBox = el('e9'),
           leaveBack = el('e0');
     const closeLeave = () => { if (leaveBox) leaveBox.hidden = true; if (leaveBack) leaveBack.hidden = true; };
     if (leaveBtn && leaveBox) {
       leaveBtn.addEventListener('click', () => { leaveBox.hidden = false; if (leaveBack) leaveBack.hidden = false; });
-      const cancel = el('e8'), ok = el('e1a');
+      const cancel = el('e8'), ok = el('e1d');
       if (cancel) cancel.addEventListener('click', closeLeave);
       if (ok) ok.addEventListener('click', closeLeave);
       if (leaveBack) leaveBack.addEventListener('click', closeLeave);
     }
 
-    const clear = el('e1t');
+    const clear = el('e1w');
     if (clear) clear.addEventListener('click', () => {
-      Store.utils.qsa('select', el('e18')).forEach(s => { s.selectedIndex = 0; });
+      Store.utils.qsa('select', el('e1b')).forEach(s => { s.selectedIndex = 0; });
     });
 
-    const tipBtn = el('e1l'), tip = el('e2o');
+    const tipBtn = el('e1o'), tip = el('e2r');
     if (tipBtn && tip) {
       const show = () => { tip.hidden = false; };
       const hide = () => { tip.hidden = true; };
@@ -1020,7 +1047,7 @@ Mega.widgets = {
       tipBtn.addEventListener('blur', hide);
     }
 
-    const sw = el('e1k');
+    const sw = el('e1n');
     if (sw) sw.addEventListener('click', () => {
       sw.setAttribute('data-s4', sw.getAttribute('data-s4') === 'true' ? 'false' : 'true');
     });
@@ -1031,7 +1058,7 @@ Mega.widgets = {
    4. BOOTSTRAP
    ========================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
-  if (!document.getElementById('e38')) return;
+  if (!document.getElementById('e3b')) return;
 
   Mega.render.menu();
   Mega.render.ticker();
@@ -1053,10 +1080,10 @@ document.addEventListener('DOMContentLoaded', () => {
   Mega.render.footer();
 
   const byBadge = badge => Store.PRODUCTS.filter(p => p.badge === badge);
-  Mega.render.productRail('eq', [...Store.PRODUCTS].sort((a, b) => b.reviews - a.reviews).slice(0, 12));
-  Mega.render.productRail('e39', byBadge('new').concat(Store.PRODUCTS.slice(0, 12)).slice(0, 12));
-  Mega.render.productRail('e30', byBadge('sale').concat(Store.PRODUCTS.filter(p => p.oldPrice)).slice(0, 12));
-  Mega.render.productRail('e1i', [...Store.PRODUCTS].sort((a, b) => b.rating - a.rating).slice(0, 12));
+  Mega.render.productRail('es', [...Store.PRODUCTS].sort((a, b) => b.reviews - a.reviews).slice(0, 12));
+  Mega.render.productRail('e3c', byBadge('new').concat(Store.PRODUCTS.slice(0, 12)).slice(0, 12));
+  Mega.render.productRail('e33', byBadge('sale').concat(Store.PRODUCTS.filter(p => p.oldPrice)).slice(0, 12));
+  Mega.render.productRail('e1l', [...Store.PRODUCTS].sort((a, b) => b.rating - a.rating).slice(0, 12));
 
   Object.values(Mega.widgets).forEach(fn => {
     try { fn(); } catch (err) { console.error('[mega] widget failed', err); }

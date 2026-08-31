@@ -198,6 +198,15 @@
       "hidden": true
     },
     {
+      "type": "combobox",
+      "root": "#auditModelBox",
+      "why": "An autocomplete: the suggestion list is EMPTY until typing fills it — the commonest autocomplete shape, and the one the count-based probe rung exists for. role=combobox on the input in the friendly build only; hostile must name it from the typing.",
+      "fields": {
+        "textbox": "#auditModelInput",
+        "listbox": "#auditModelList"
+      }
+    },
+    {
       "type": "dialog",
       "root": "#chatWindow",
       "why": "The live-chat panel: fixed, floating over the page, opened by the FAB. A real openable component the corpus simply had no label for — it was counted as a false positive in every build until this entry (owner decision, 4.2 era: corpus change, not code).",
