@@ -2391,6 +2391,17 @@ console.log('\na running scan owns the panel');
   check('a lone ambiguous link becomes the aria-label mapping, no model asked',
     /__u1SelectorIntel\.ambiguousLink\(s\), \[row\.sel\]/.test(panelSrc) &&
     /row\.type = 'aria-label';/.test(panelSrc));
+
+  // The CSP bypass and the tab-freedom story have to agree. Dropping the
+  // bypass on every glance at another tab is how "the links refuse to load"
+  // came back each time the specialist looked at the CRM; and a blocked
+  // injection never reached the line that persists manualInject, so a CSP
+  // site could never arm auto-inject at all.
+  check('a glance at another tab does not drop the CSP bypass',
+    /if \(!stillOpen\) await releaseCspBypassFor\(previousHostname\);/.test(panelSrc) &&
+    /allTabs\.some\(/.test(panelSrc));
+  check('turning the bypass on arms the persistent injection',
+    /if \(SAFE\(cssLink\) && SAFE\(jsLink\)\) \{\s*\n\s*await U1Store\.set\(\{ \[`manualInject_\$\{host\}`\]: \{ cssLink, jsLink \} \}\);/.test(panelSrc));
   // ── Pressing things can still navigate the page ──────────────────────────
   // The probe cancels link clicks, submits, beforeunload and window.open, but
   // `location.href = '/search'` runs as the page's OWN handler rather than as

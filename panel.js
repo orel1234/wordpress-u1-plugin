@@ -17619,6 +17619,18 @@ document.getElementById('cspBypassToggle')?.addEventListener('change', async (e)
     return;
   }
   if (!on) { showNotice(status, `Restriction restored for ${host}.`, 'info', 4000); return; }
+  // Turning the bypass on IS the instruction "make U1 load here" — so arm the
+  // persistent injection now, from the links already in the form. Without
+  // this the reload below came back with CSP gone and nothing injected, and
+  // the specialist had to press Inject a second time — or, worse, had never
+  // been able to persist it at all, because a blocked injection never reaches
+  // the line that saves manualInject.
+  const SAFE = (v) => typeof v === 'string' && /^https?:\/\//i.test(v.trim());
+  const cssLink = (document.getElementById('cssLink')?.value || '').trim();
+  const jsLink = (document.getElementById('jsLink')?.value || '').trim();
+  if (SAFE(cssLink) && SAFE(jsLink)) {
+    await U1Store.set({ [`manualInject_${host}`]: { cssLink, jsLink } });
+  }
   // The policy arrives with the page, so removing the header only counts from
   // the next load. Saying "on" without saying that reads as broken.
   showNotice(status, `Off for ${host} in this browser. Reloading the page so it takes effect…`, 'success', 6000);
@@ -17822,8 +17834,22 @@ async function onTabChanged(tab) {
     if (!(await sweepIsPinnedAndAlive()) && aiWorkspaceHost && aiWorkspaceHost !== newHostname) {
       parkAiWorkspace();
     }
-    // And put the site you just left back the way you found it.
-    await releaseCspBypassFor(previousHostname);
+    // And put the site you just left back the way you found it — but only
+    // when you have actually LEFT it. A glance at another tab is not leaving:
+    // the whole point of the pinned-run work is that switching tabs changes
+    // nothing about the site being worked on, and dropping the CSP bypass on
+    // every glance is how "the links refuse to load" came back each time the
+    // specialist looked at the CRM. While a tab with that site is still open
+    // in the browser, the bypass stays; closing its last tab, the explicit
+    // toggle, or closing the panel still put the protection back.
+    let stillOpen = false;
+    try {
+      const allTabs = await chrome.tabs.query({});
+      stillOpen = allTabs.some((t) => {
+        try { return getHostname(t) === previousHostname; } catch { return false; }
+      });
+    } catch {}
+    if (!stillOpen) await releaseCspBypassFor(previousHostname);
     const t = document.getElementById('cspBypassToggle');
     if (t) t.checked = false;
     const row = document.getElementById('cspBypassRow');
