@@ -522,6 +522,22 @@
     var panel = panelOf(d);
     var isLayer = panel ? isOverlay(panel) : false;
 
+    // Does it FLOAT, even when it is small? Same deadline as the overlay
+    // measurement above: a panel closed with `hidden` has no box and no
+    // computed position worth reading, so asking in classify() measured a
+    // closed panel and answered no every time. Fixed-position with the
+    // dimensions of a box someone is asked something in — a 3px progress
+    // rule is also fixed, and is not asking anybody anything.
+    var isFloating = false;
+    if (panel && !isLayer) {
+      try {
+        if (root.getComputedStyle(panel).position === 'fixed') {
+          var fr = panel.getBoundingClientRect();
+          isFloating = fr.height >= 40 && fr.width >= 80;
+        }
+      } catch (e) {}
+    }
+
     // Did focus follow what opened?
     //
     // Recorded as a FINDING, never as a condition for recognising anything. A
@@ -592,6 +608,7 @@
       touched: d.changed.length,
       focusEntered: focusEntered,
       overlay: isLayer,
+      floating: isFloating,
       stateClass: stateClass,
       restored: restored,
       held: held,
@@ -1040,9 +1057,34 @@
       if (used.has(r.trigger) || !r.opened.length) return;
       var panel = r.opened[0];
       // `r.overlay` was measured while the panel was open. See probeOne.
+      //
+      // But a dialog does not have to be BIG. The overlay test asks "does it
+      // cover the page", and a 420-pixel confirm box answers no — so a button
+      // that plainly opens a dialog was reported as an accordion, "it
+      // revealed and hid a region", true and useless. A small layer still
+      // gives itself away twice over: the page SAYS the word (role=dialog,
+      // aria-modal, <dialog>, a modal/lightbox class), or it FLOATS —
+      // position:fixed is not how an accordion's content sits in the flow
+      // under its header. Links win over floating, though: a nav drop-down
+      // under a fixed header is itself fixed, and it is a menu.
+      // The name survives closing — role and class are attributes, not
+      // layout — so it may be read here. The FLOAT was measured while the
+      // panel was open (see probeOne), for the same reason the overlay was.
+      var saysDialog = false;
+      try {
+        saysDialog = !!(panel.closest &&
+          panel.closest('dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"]')) ||
+          /(^|[\s_-])(modal|lightbox|dialog)([\s_-]|$)/i.test(String(panel.className || ''));
+      } catch (e) {}
       var type = r.overlay ? 'dialog'
-        : (mostlyLinks(panel) ? 'menu' : 'accordion');
-      var why = type === 'dialog' ? 'it opened a layer over the page'
+        : saysDialog ? 'dialog'
+        : mostlyLinks(panel) ? 'menu'
+        : r.floating ? 'dialog'
+        : 'accordion';
+      var why = type === 'dialog'
+        ? (r.overlay ? 'it opened a layer over the page'
+           : saysDialog ? 'it opened a panel the page itself calls a dialog'
+           : 'it opened a panel that floats fixed over the page')
         : type === 'menu' ? 'it revealed a panel of links and nothing else'
         : 'it revealed and hid a region';
       // How the page SAYS open, when it says it with a class. Worth reporting
@@ -1681,7 +1723,8 @@
           results.push({ trigger: list[i], opened: r.opened, closed: r.closed,
                          moved: r.moved, rerendered: r.rerendered,
                          stateClass: r.stateClass,
-                         focusEntered: r.focusEntered, overlay: r.overlay });
+                         focusEntered: r.focusEntered, overlay: r.overlay,
+                         floating: r.floating });
         }
       }
 

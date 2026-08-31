@@ -345,6 +345,63 @@ console.log('\na panel with links in it is judged on what ELSE is in it');
     out.components.map(c => c.type).join());
 }
 
+// ── A dialog does not have to be big ────────────────────────────────────────
+//
+// The overlay test asks "does it cover the page", and a small confirm box
+// answers no — so a button that plainly opens a dialog was reported as an
+// accordion: "it revealed and hid a region", true and useless. A small layer
+// still gives itself away: the page says the word (role=dialog, aria-modal, a
+// modal class), or it floats fixed. Links win over floating — a nav dropdown
+// under a fixed header is itself fixed, and it is a menu.
+console.log('\na small dialog is still a dialog');
+{
+  const mk = (panelAttrs, inner) => {
+    const w = page(`<div id="w"><button id="b">Leave site?</button>` +
+      `<div id="p" ${panelAttrs} hidden>${inner}</div></div>`);
+    const d = w.document;
+    d.getElementById('b').addEventListener('click', () => {
+      const p = d.getElementById('p'); p.hidden = !p.hidden;
+    });
+    return w;
+  };
+
+  const named = mk('role="dialog"', `You are leaving this site. <button>OK</button> <button>Cancel</button>`);
+  let out = await named.__u1Probe.probeAll(named.document.getElementById('w'), { settle: 0 });
+  check('a small panel the page calls role=dialog is a dialog, not an accordion',
+    out.components.length === 1 && out.components[0].type === 'dialog',
+    out.components.map(c => c.type).join());
+
+  const classed = mk('class="site-modal"', `Sure? <button>Yes</button> <button>No</button>`);
+  out = await classed.__u1Probe.probeAll(classed.document.getElementById('w'), { settle: 0 });
+  check('…and so is one that says it with a modal class',
+    out.components.length === 1 && out.components[0].type === 'dialog',
+    out.components.map(c => c.type).join());
+
+  // A 420×260 confirm box, centred — too small for the overlay test, no
+  // dialog name anywhere. Rect and position stubbed the way the cookie-bar
+  // tests do, because jsdom lays nothing out.
+  const floating = mk('', `Session expiring. <button>Stay</button>`);
+  floating.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    if (this.id === 'p') return { top: 254, left: 302, right: 722, bottom: 514, width: 420, height: 260 };
+    return { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
+  };
+  floating.getComputedStyle = (el) => ({
+    position: el && el.id === 'p' ? 'fixed' : 'static',
+    visibility: 'visible', display: 'block', opacity: '1',
+  });
+  out = await floating.__u1Probe.probeAll(floating.document.getElementById('w'), { settle: 0 });
+  check('…and one that floats fixed over the page, whatever it is called',
+    out.components.length === 1 && out.components[0].type === 'dialog',
+    out.components.map(c => c.type).join());
+
+  const plain = mk('', `Thirty days, unworn, in the original box.`);
+  out = await plain.__u1Probe.probeAll(plain.document.getElementById('w'), { settle: 0 });
+  check('an in-flow content reveal is still an accordion',
+    out.components.length === 1 && out.components[0].type === 'accordion',
+    out.components.map(c => c.type).join());
+}
+
 // ── A carousel is not a tab strip, and counting is what says so ────────────
 //
 // Both are "press a control, something is shown and something else hidden", and
