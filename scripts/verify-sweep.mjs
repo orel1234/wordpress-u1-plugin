@@ -2444,8 +2444,40 @@ console.log('\na running scan owns the panel');
   // hint layer's strips seeded, and the run-level pass replaces per-section
   // fragments in stop.probed at walk end.
   check('observed rows join the model\'s before the audit',
-    /mergeObservedRows\(part\.components, observedRowsFor\(stop\)\)/.test(panelSrc) &&
+    /mergeObservedRows\(part\.components, observedRowsFor\(stop\), asking\)/.test(panelSrc) &&
     /auditSurveyComponents\(merged, tab\)/.test(panelSrc));
+
+  // Stage 6: one confidence number per row, from the voices that agreed —
+  // and a publication threshold. The maths is lifted and exercised; the
+  // threshold and the shape-reader bump are pinned in the source.
+  {
+    const confidenceOf = new window.Function('return ' + lift('confidenceOf'))();
+    const hint = (component, maybe) => [{ component, maybe, selector: '#x' }];
+    const row = (source, extra) => ({ containerSelector: '#x', source, ...extra });
+    check('a role/tag hint plus the model is certainty (1.0, capped)',
+      confidenceOf(row('model'), hint('menu', false)) === 1);
+    check('a class hint plus the model publishes at 0.7',
+      confidenceOf(row('model'), hint('menu', true)) === 0.7);
+    check('the model alone is 0.3 — below the publication line',
+      confidenceOf(row('model'), []) === 0.3);
+    check('pressing alone is 0.5 — also below it',
+      confidenceOf(row('observed'), []) === 0.5);
+    check('pressing + model crosses the line at 0.8',
+      confidenceOf(row('model+observed'), []) === 0.8);
+    check('a confirmed shape adds 0.4',
+      confidenceOf(row('observed', { shapeConfirmed: true }), []) === 0.9);
+    check('an unnamed hint is silence, not testimony',
+      confidenceOf(row('model'), [{ component: '', selector: '#x' }]) === 0.3);
+  }
+  check('rows below 0.6 are held back from publication, said in the log',
+    /c\.detConf != null && c\.detConf < 0\.6/.test(panelSrc) &&
+    /held back \$\{c\.label \|\| c\.containerSelector\}/.test(panelSrc));
+  check('below 0.9 the row says so in its why; a mismatch pair carries a score EACH',
+    /Confidence \$\{c\.detConf\} — read before applying\./.test(panelSrc) &&
+    /\(confidence \$\{r\.detConf\}\)/.test(panelSrc));
+  check('a shape reader that answered bumps the row +0.4, once',
+    /lbShape \|\| fmShape \|\| accShape \|\| cbShape \|\| dlgShape \|\| tgShape/.test(panelSrc) &&
+    /row\.detConf \+ 0\.4/.test(panelSrc));
   check('…and a type disagreement flags BOTH rows, silencing neither',
     /same\.mismatch = true;/.test(panelSrc) && /obs\.mismatch = true;/.test(panelSrc) &&
     /Pressing said \$\{obs\.u1Type\}/.test(panelSrc));

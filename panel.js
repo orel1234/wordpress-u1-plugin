@@ -7414,7 +7414,25 @@ function observedRowsFor(stop) {
     }));
 }
 
-function mergeObservedRows(modelRows, obsRows) {
+// Stage 6: one confidence number per discovery row, from the voices that
+// agreed. A role/tag hint is worth 1.0 and a class hint 0.4; pressing and
+// watching adds 0.5; the model's word adds 0.3; a shape reader that later
+// confirms the anatomy adds 0.4 (see prepareOne). Probe silence adds
+// nothing — it is silence, not testimony. Published at ≥0.6; shown as sure
+// only at ≥0.9.
+function confidenceOf(row, hintRows) {
+  let s = 0;
+  const hint = (hintRows || []).find((h) =>
+    h && h.component && h.selector && h.selector === row.containerSelector);
+  if (hint) s += hint.maybe ? 0.4 : 1.0;
+  const src = row.source || 'model';
+  if (/observed/.test(src)) s += 0.5;
+  if (/model/.test(src)) s += 0.3;
+  if (row.shapeConfirmed) s += 0.4;
+  return Math.min(1, Math.round(s * 10) / 10);
+}
+
+function mergeObservedRows(modelRows, obsRows, hintRows) {
   const out = (modelRows || []).map((r) => ({ ...r, source: r.source || 'model' }));
   for (const obs of obsRows || []) {
     const same = out.find((r) => r.containerSelector === obs.containerSelector);
@@ -7433,6 +7451,12 @@ function mergeObservedRows(modelRows, obsRows) {
     obs.mismatch = true;
     obs.why += ` ⚠ The reading says ${same.u1Type} — decide.`;
     out.push(obs);
+  }
+  // Every row leaves with its score; a mismatch pair carries one score EACH,
+  // so the person deciding sees which voice has more behind it.
+  for (const r of out) {
+    r.detConf = confidenceOf(r, hintRows);
+    if (r.mismatch) r.why += ` (confidence ${r.detConf})`;
   }
   return out;
 }
@@ -8602,6 +8626,12 @@ async function prepareOne(row, tab) {
   if (row.type === 'checkbox') {
     const cap = await autoOpenCapture(tab, row.sel, 'checkbox');
     if (cap && cap.toggle && cap.toggle.toggled) tgShape = cap.toggle;
+  }
+
+  // Stage 6: a shape reader that resolved the anatomy is testimony — +0.4 on
+  // the row's confidence, once, whichever reader answered.
+  if ((lbShape || fmShape || accShape || cbShape || dlgShape || tgShape) && row.detConf != null) {
+    row.detConf = Math.min(1, Math.round((row.detConf + 0.4) * 10) / 10);
   }
 
   // A link whose whole text is "Learn more" is a real link and a useless name
@@ -11799,7 +11829,7 @@ async function scanPickedScreens(numbers) {
       // 3.1 + 3.3: the probe's observations join the model's rows before the
       // audit, merged by root — so menuIsReallyListbox and alreadyNative
       // finally run on the one detector that works on hint-free pages.
-      const merged = mergeObservedRows(part.components, observedRowsFor(stop));
+      const merged = mergeObservedRows(part.components, observedRowsFor(stop), asking);
       const audit = await auditSurveyComponents(merged, tab);
       const found = audit.comps;
       for (const d of audit.dropped) {
@@ -11817,10 +11847,21 @@ async function scanPickedScreens(numbers) {
       // thrown away by the call's own answer.
       stop.found = (stop.found || []).filter((f) => f.done);
       for (const c of found) {
+        // Stage 6: the publication threshold. A row below 0.6 — the model's
+        // word alone, with no markup voice and no behaviour behind it — is
+        // said in the log, not published as a discovery.
+        if (c.detConf != null && c.detConf < 0.6) {
+          sweepLog(stop.n, `held back ${c.label || c.containerSelector} (${c.u1Type}) — ` +
+            `confidence ${c.detConf}: one voice is not enough to publish`, 'skip');
+          continue;
+        }
         // Never twice, whatever brought it back: a sticky bar, a repeated
         // footer, or a component straddling the overlap between two sections.
         if (handled.has(c.containerSelector)) { seenAgain++; continue; }
         handled.add(c.containerSelector);
+        if (c.detConf != null && c.detConf < 0.9) {
+          c.why = `Confidence ${c.detConf} — read before applying. ` + (c.why || '');
+        }
         stop.found.push({
           id: `s${stop.n}i${stop.found.length}`,
           label: c.label || c.containerSelector,
@@ -11833,6 +11874,7 @@ async function scanPickedScreens(numbers) {
           trigger: c.triggerSelector || '',
           why: c.why || '',
           needsWork: c.needsWork !== false,
+          detConf: c.detConf,
         });
       }
       stop.scanned = true;
