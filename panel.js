@@ -10017,6 +10017,14 @@ async function runSweep(tab) {
           if (mine.length) byY[si].probed = mine;
         }
         sweepLog(0, `run-level pass: ${finalObs.length} whole component${finalObs.length === 1 ? '' : 's'} from the presses, fragments replaced`, '');
+        // 4.2: a reveal that matched no pattern is said out loud in the log —
+        // an existing row, never a new discovery card and never a guess.
+        const unclassed = finalObs.filter((c) => !c.type);
+        if (unclassed.length) {
+          sweepLog(0, `observed, unclassified: ${unclassed.slice(0, 6).map((c) => c.root).join(' · ')}` +
+            (unclassed.length > 6 ? ` · +${unclassed.length - 6} more` : '') +
+            ' — something opened, no pattern matched; left for a person', 'skip');
+        }
       }
     } catch { /* per-section observations stand */ }
 

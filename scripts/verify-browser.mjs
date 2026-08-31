@@ -273,6 +273,10 @@ async function runVariant(browser, variant) {
     const hintDetections = live([...hintByEl.entries()]
       .filter(([, h]) => !h.nested)
       .map(([el, h]) => ({ el, type: h.component, selector: h.selector })));
+    // 4.2: observed-but-unclassified is its own column, never a score.
+    const unclassified = finalComps
+      .filter((c) => c && c.root && !c.type)
+      .map((c) => S.robustSelector ? S.robustSelector(c.root) : '(unnamed)');
     const classifyDetections = finalComps
       .filter((c) => c && c.root && c.type)
       // A detection rooted on <body> or <html> is not a detection of anything
@@ -329,7 +333,7 @@ async function runVariant(browser, variant) {
       hint: score(hintDetections),
       classify: score(classifyLive),
       union,
-      openFound, openNamed, openTotal: openable.length, openDetail,
+      openFound, openNamed, openTotal: openable.length, openDetail, unclassified,
       builtProbes, pressedTotal, observedList,
       plannedCount: planned, planSections,
       starved: P.starvedSnapshot ? P.starvedSnapshot() : [],
@@ -426,6 +430,11 @@ for (const variant of ONLY) {
   for (const d of r.openDetail || []) {
     console.log(`    ${d.found ? (d.named ? ' ok ' : ' ~~ ') : 'MISS'}  ${d.type.padEnd(10)} ${d.root}` +
       (d.found && !d.named ? `  — collected, named ${d.got || '(nothing)'}` : ''));
+  }
+  if ((r.unclassified || []).length) {
+    console.log(`  observed, unclassified (type:null — reported, never scored): ` +
+      r.unclassified.slice(0, 8).join(' · ') +
+      (r.unclassified.length > 8 ? ` · +${r.unclassified.length - 8} more` : ''));
   }
   if ((r.starved || []).length) {
     console.log(`  starved (budget cost them their press, even with one spillover): ` +

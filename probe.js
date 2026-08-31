@@ -1450,15 +1450,48 @@
         : r.scrollLocked ? 'it locked the page’s scroll while open'
         : (r.floating && !linksPanel && !r.nearSmall) ? 'it opened a panel that floats over the page'
         : null;
+      // 4.2: <details>/<summary> is the browser's own disclosure. It needs no
+      // mapping and no fix — reporting it was noise, not detection.
+      if (r.trigger.tagName === 'SUMMARY' ||
+          (r.trigger.closest && r.trigger.closest('details'))) return;
+      // 4.2: "accordion" was the bucket everything unexplained fell into —
+      // true and useless, and every stray reveal wore the name. Now it needs
+      // EVIDENCE of the disclosure shape: the trigger's own aria-expanded
+      // flipped with the press, or the panel sits beside its trigger in the
+      // flow, or the trigger has same-kind siblings (an accordion of which
+      // one header was pressed). One trigger with evidence is a disclosure —
+      // accordion with single:true. No evidence at all is reported as
+      // exactly what it is: observed, unclassified.
+      var accEvidence = null, accSingle = false;
+      if (!dialogBy && !linksPanel && !r.headerDropdown) {
+        var sibPanel = false, kin = 0;
+        try {
+          var anchor = stripAnchor(r.trigger);
+          sibPanel = panel.parentElement === anchor.parentElement ||
+                     panel.parentElement === r.trigger.parentElement;
+          var par = anchor.parentElement;
+          if (par) for (var ki2 = 0; ki2 < par.children.length; ki2++) {
+            if (par.children[ki2].tagName === anchor.tagName) kin++;
+          }
+        } catch (e) {}
+        accEvidence = r.expandedFlipped ? 'its trigger’s aria-expanded flipped with the press'
+          : sibPanel ? 'the revealed region sits beside its trigger in the flow'
+          : kin >= 2 ? 'its trigger has ' + kin + ' same-kind siblings'
+          : null;
+        accSingle = !!accEvidence && kin < 2;
+      }
       var type = dialogBy ? 'dialog'
         : linksPanel ? 'menu'
         : r.headerDropdown ? 'menu'
-        : 'accordion';
+        : accEvidence ? 'accordion'
+        : null;
       var why = type === 'dialog' ? dialogBy
         : type === 'menu'
         ? (linksPanel ? 'it revealed a panel of links and nothing else'
            : 'it dropped a panel across its own header bar')
-        : 'it revealed and hid a region';
+        : type === 'accordion'
+        ? 'it revealed and hid a region — ' + accEvidence
+        : 'revealed something, no pattern matched';
       if (type === 'dialog' && r.drawer) {
         why += '. It is a DRAWER: full height, hugging the edge';
       }
@@ -1480,6 +1513,7 @@
       comps.push({
         type: type,
         subtype: type === 'dialog' && r.drawer ? 'drawer' : undefined,
+        single: type === 'accordion' && accSingle ? true : undefined,
         root: type === 'dialog' ? panel : commonAncestor([r.trigger, panel]),
         parts: { trigger: [r.trigger], panel: [panel] },
         stateClass: r.stateClass || null,

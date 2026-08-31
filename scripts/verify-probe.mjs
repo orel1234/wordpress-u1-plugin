@@ -453,6 +453,54 @@ console.log('\nthe plan decides who belongs where');
     JSON.stringify({ pressed: out.pressed, comps: out.components.map((c) => c.type) }));
 }
 
+// ── 4.2: accordion needs evidence; the rest says "observed, unclassified" ──
+console.log('\n4.2 — the accordion bucket closes to the unexplained');
+{
+  // A lone disclosure that keeps honest aria-expanded: accordion, single.
+  const disc = page(`
+    <div id="w">
+      <div><button id="t" aria-expanded="false">More</button><span>x</span></div>
+      <section><div id="p" hidden>The rest of the story.</div></section>
+    </div>`);
+  disc.document.getElementById('t').addEventListener('click', function () {
+    const p = disc.document.getElementById('p');
+    p.hidden = !p.hidden;
+    this.setAttribute('aria-expanded', String(!p.hidden));
+  });
+  let out = await disc.__u1Probe.probeAll(disc.document.getElementById('w'), { settle: 0 });
+  let c = out.components.find((x) => x.type === 'accordion');
+  check('a lone trigger whose aria-expanded flips is an accordion', !!c,
+    out.components.map((x) => x.type + ':' + x.why).join(' | ') || '(nothing)');
+  check('…marked single:true — a disclosure, not a stack', c && c.single === true,
+    c && JSON.stringify({ single: c.single }));
+
+  // A reveal with NO disclosure evidence: far panel, no aria, no siblings.
+  const stray = page(`
+    <div id="w">
+      <div><button id="t">Mystery</button><span>x</span></div>
+      <div><section><div id="p" hidden>Something appeared far away.</div></section></div>
+    </div>`);
+  stray.document.getElementById('t').addEventListener('click', () => {
+    const p = stray.document.getElementById('p'); p.hidden = !p.hidden;
+  });
+  out = await stray.__u1Probe.probeAll(stray.document.getElementById('w'), { settle: 0 });
+  const nul = out.components.find((x) => x.type === null);
+  check('a reveal with no pattern is reported as type:null, not guessed',
+    !!nul && /no pattern matched/.test(nul.why) &&
+    !out.components.some((x) => x.type === 'accordion'),
+    out.components.map((x) => x.type + ':' + x.why).join(' | ') || '(nothing)');
+
+  // The browser's own disclosure needs nobody's mapping.
+  const native = page(`
+    <div id="w">
+      <details><summary id="t">Details</summary><p>Native.</p></details>
+    </div>`);
+  out = await native.__u1Probe.probeAll(native.document.getElementById('w'), { settle: 0 });
+  check('details/summary is skipped — native, nothing to map',
+    !out.components.length,
+    out.components.map((x) => x.type).join() || '(nothing)');
+}
+
 // ── Spillover: the budget starves nobody silently ───────────────────────────
 //
 // A planned candidate its band's budget starved goes to the HEAD of the next
