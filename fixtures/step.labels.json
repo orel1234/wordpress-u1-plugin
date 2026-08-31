@@ -6,13 +6,24 @@
     "this file: a corpus built from the tool's own output can only ever score 100%.",
     "",
     "Several components are BUILT BY JAVASCRIPT after load (mega-nav's items, the",
-    "hero slides, the deal tabs, the FAQ accordion). Their selectors are taken from",
-    "the template literals in step-mega.js, so the labels describe the page as a",
-    "user meets it rather than as it is served.",
+    "hero slides, the deal tabs, the FAQ accordion, the branch-locator detail).",
+    "Their selectors are taken from the template literals in step-mega.js, so the",
+    "labels describe the page as a user meets it rather than as it is served.",
     "",
     "`hidden: true` marks a component that exists only while opened. The survey",
     "cannot see it, and a scorer that counts it as a miss is measuring the wrong",
-    "thing — it is scored separately, under `openable`."
+    "thing — it is scored separately, under `openable`.",
+    "",
+    "`type: \"none\"` pins something that must NOT be flagged — a near-miss built",
+    "into the page on purpose (a lone button whose class says 'modal', a layout",
+    "table, a price slider). Never scored for recall; a detection matching one is",
+    "a CONFIRMED false positive.",
+    "",
+    "Tab strips are labelled `tabs`. Until stage 4 restores the tabs/menu split,",
+    "both harnesses accept `menu` for them and print the count owed.",
+    "",
+    "`single: true` on an accordion marks a lone disclosure — one trigger, one",
+    "panel. The type stays accordion by decision; the flag is for stage 4."
   ],
   "components": [
     {
@@ -27,18 +38,18 @@
       "builtByJs": true
     },
     {
-      "type": "menu",
+      "type": "tabs",
       "root": ".finder__tabs",
-      "why": "Five sibling controls over five panels. Labelled `tabs` until a tab strip was decided to BE a menu — same shape, and the class list was already calling `nav nav-tabs` a menu anyway.",
+      "why": "Five sibling controls over five panels that swap in place — the textbook tab strip. Was relabelled `menu` when the collapse was decided; restored to `tabs` for the stage-4 split. Harnesses accept `menu` for it meanwhile, counted and warned.",
       "fields": {
         "items": ".finder__tab",
         "submenus": ".finder__panel"
       }
     },
     {
-      "type": "menu",
+      "type": "tabs",
       "root": "#dealTabs",
-      "why": "Six sibling controls over ONE re-rendered region, not six panels. A strip over one region is still the shape, and the already-selected one belongs to it.",
+      "why": "Six sibling controls over ONE re-rendered region. A strip over one region is still the shape, and the already-selected one belongs to it. Restored to `tabs`, menu accepted until stage 4.",
       "fields": {
         "items": ".tab-bar__btn",
         "submenus": "#dealGrid"
@@ -46,13 +57,20 @@
       "builtByJs": true
     },
     {
-      "type": "menu",
+      "type": "tabs",
       "root": "#faqTabs",
-      "why": "The same strip shape again, over the accordion below it.",
+      "why": "The same strip shape again, over the accordion below it. Restored to `tabs`, menu accepted until stage 4.",
       "fields": {
         "items": ".tab-bar__btn",
         "submenus": "#faqPanel"
       },
+      "builtByJs": true
+    },
+    {
+      "type": "accordion",
+      "root": "#faqPanel",
+      "why": "The FAQ items under the tab strip: several sibling header buttons, each opening its answer in place. Built by mega.js — invisible to the jsdom harness until its renderer list included faqTabs/faq, and reported as a false positive for exactly that reason. It was a real accordion all along; the corpus was short.",
+      "fields": {},
       "builtByJs": true
     },
     {
@@ -76,10 +94,37 @@
       "matches": 5
     },
     {
+      "type": "form",
+      "root": "#subscribeForm",
+      "why": "A real <form>: five labelled fields, a required consent checkbox, a submit button. Flagged by the tool and unlabelled until the precision metric surfaced it — the finding was about the corpus, not the detector.",
+      "fields": {
+        "inputField": ".subscribe__input"
+      }
+    },
+    {
       "type": "table",
-      "root": ".data-table",
-      "why": "A real <table> with a sticky thead.",
+      "root": "#tierBenefitsTable",
+      "why": "The membership-tiers comparison. Was rooted on bare `.data-table`, which matches whichever of the page's four data tables happens to come first — each table now carries its own id and its own label.",
       "fields": {}
+    },
+    {
+      "type": "table",
+      "root": "#sizeChartTable",
+      "why": "The size conversion chart — a real <table> with scope'd headers and a caption.",
+      "fields": {}
+    },
+    {
+      "type": "table",
+      "root": "#compareSpecTable",
+      "why": "The four-flagship spec comparison — a real <table>.",
+      "fields": {}
+    },
+    {
+      "type": "table",
+      "root": "#locatorDetail",
+      "why": "The branch detail pane renders an opening-hours <table> per selected store. Rooted on the pane because the table inside is rebuilt on every selection.",
+      "fields": {},
+      "builtByJs": true
     },
     {
       "type": "dialog",
@@ -100,22 +145,120 @@
       "hidden": true
     },
     {
+      "type": "dialog",
+      "root": "#sizeModal",
+      "why": "The size-guide modal, opened from two [data-modal-open] buttons. Flagged by the tool and unlabelled until the precision metric surfaced it.",
+      "fields": {
+        "trigger": "[data-modal-open=\"sizeModal\"]"
+      },
+      "hidden": true
+    },
+    {
       "type": "breadcrumb",
       "root": "nav[aria-label=\"Breadcrumb\"]",
       "why": "A trail: links with a separator between each pair, in text smaller than the body. Labelled `menu` until the rule was decided — it is navigation, but it is not a menu, and it now has a type of its own.",
+      "fields": {}
+    },
+
+    {
+      "type": "menu",
+      "root": "#auditAccountList",
+      "why": "My account: a button opening a list of five real links, OUTSIDE any <nav>. A dropdown of links is a menu wherever it lives — the footer demotion and the nav requirement must not eat it.",
+      "fields": {
+        "trigger": "#auditAccountBtn"
+      },
+      "hidden": true
+    },
+    {
+      "type": "menu",
+      "root": "#auditDropdownMenu",
+      "why": "A Bootstrap-style dropdown: data-toggle=dropdown, no aria-controls, real hrefs inside. The commonest dropdown dialect on the web; deliberately edge-poor so only class or behaviour can find it.",
+      "fields": {
+        "trigger": "#auditDropdownBtn"
+      },
+      "hidden": true
+    },
+    {
+      "type": "listbox",
+      "root": "#auditSizeList",
+      "why": "A replaced <select>: hidden native control, visible toggle whose TEXT CHANGES to the chosen option, options that select a value rather than navigate. The Molina pattern, pinned. Items are buttons, not links — a listbox, not a menu.",
+      "fields": {
+        "trigger": "#auditSizeToggle",
+        "options": "#auditSizeList>li>button"
+      },
+      "hidden": true
+    },
+    {
+      "type": "dialog",
+      "root": "#auditLeaveDialog",
+      "why": "A 420px fixed confirm box with a backdrop and NO role anywhere — the small dialog the overlay size test cannot see. Declared via data-panel-target on its trigger.",
+      "fields": {
+        "trigger": "#auditLeaveBtn"
+      },
+      "hidden": true
+    },
+    {
+      "type": "accordion",
+      "root": "#auditReadMore",
+      "why": "A single disclosure: one trigger with aria-expanded, one adjacent panel of prose. Type accordion by decision, with single:true for the stage-4 subtype.",
+      "single": true,
+      "fields": {
+        "contentSelector": "#auditReadMorePanel"
+      }
+    },
+
+    {
+      "type": "none",
+      "root": "#auditMenuToggle",
+      "why": "A lone button whose CLASS says menu-toggle, outside any nav, opening nothing on this page. A part-name is not a component."
+    },
+    {
+      "type": "none",
+      "root": "#auditOpenModal",
+      "why": "A lone button whose CLASS says open-modal. The class rule that reads 'modal' must not call the BUTTON a dialog."
+    },
+    {
+      "type": "none",
+      "root": "#auditPriceSlider",
+      "why": "A price range control — input[type=range] in a wrapper whose class says slider. A slider is not a carousel."
+    },
+    {
+      "type": "none",
+      "root": "#auditGallery",
+      "why": "A static image grid whose class says gallery. Nothing cycles, nothing hides — not a carousel."
+    },
+    {
+      "type": "none",
+      "root": "#auditLayoutTable",
+      "why": "A 3×3 <table role=\"presentation\"> used for layout. The role is the author saying 'not a table'; detection must listen."
+    },
+    {
+      "type": "none",
+      "root": "#auditFilters",
+      "why": "Three selects and a type=button 'Clear'. Fields plus a clickable is not a form — nothing here submits anywhere."
+    },
+    {
+      "type": "none",
+      "root": "#auditTabsContent",
+      "why": "A div whose class says tabs-content, sitting inside a strip. The CONTENT of tabs is not the tabs."
+    },
+    {
+      "type": "tabs",
+      "root": "#auditMiniStrip",
+      "why": "The mini strip AROUND the tabs-content decoy is itself a real two-tab strip — two sibling buttons swapping panels in place. The decoy pins what must not be flagged; this pins what must.",
       "fields": {}
     }
   ],
   "carousels_secondary": {
     "note": [
-      "The four `.rail` strips are horizontal scrollers with prev/next buttons.",
-      "Whether they are 'a carousel' is a judgement call a specialist makes, so they",
-      "are held apart from the scored set rather than counted as a miss either way.",
-      "If the tool names them carousels that is not wrong; if it stays silent that is",
-      "not wrong either."
+      "The four `.rail` strips are horizontal scrollers with prev/next buttons,",
+      "and `.ticker` is an auto-advancing marquee. Whether each is 'a carousel' is",
+      "a judgement call a specialist makes, so they are held apart from the scored",
+      "set rather than counted as a hit or a false positive either way."
     ],
     "roots": [
-      ".rail"
+      ".rail",
+      ".ticker"
     ]
   }
 }

@@ -7,8 +7,8 @@
 <meta name="description" content="STEP is the country's leading footwear retailer: running, sneakers, boots, kids and sport across 14 branches and online. Free shipping over $300, 60-day returns.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;600;700&family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="real-styles.css">
-<link rel="stylesheet" href="real-mega.css">
+<link rel="stylesheet" href="step-real-styles.css">
+<link rel="stylesheet" href="step-real-mega.css">
 </head>
 <body>
 
@@ -540,7 +540,7 @@
       <div style="margin-top:var(--space-6)">
         <h3 style="font-size:20px;margin-bottom:var(--space-4)">Benefits at a glance</h3>
         <div class="table-wrap">
-          <table class="data-table">
+          <table class="data-table" id="tierBenefitsTable">
             <caption>Comparison of STEP Club membership tiers. Benefits are cumulative — each tier includes everything below it.</caption>
             <thead>
               <tr><th scope="col">Benefit</th><th scope="col">Step</th><th scope="col">Stride</th><th scope="col">Sprint</th><th scope="col">Summit</th></tr>
@@ -592,7 +592,7 @@
       <button class="btn btn--outline" type="button" data-modal-open="sizeModal">How to measure</button>
     </div>
     <div class="table-wrap">
-      <table class="data-table">
+      <table class="data-table" id="sizeChartTable">
         <caption>EU, US, UK and centimeter conversions for adult footwear. Kids' sizing uses a separate chart shown on each product page.</caption>
         <thead>
           <tr>
@@ -615,7 +615,7 @@
       </div>
     </div>
     <div class="table-wrap">
-      <table class="data-table">
+      <table class="data-table" id="compareSpecTable">
         <caption>Technical comparison of the Cloudline Pro Race, Cloudline Daily, Air Classic Low and Alpine Boot Pro.</caption>
         <thead>
           <tr>
@@ -825,6 +825,129 @@
     </div>
   </section>
 
+  <!-- ======================= AUDIT CASES ======================= -->
+  <!-- Deliberate near-misses and behavioural widgets for the detection corpus.
+       Every element here carries a label in step.labels.json — positives AND
+       pinned negatives (type "none"). Styling is inline on purpose: these
+       exist for the detector, not the design, and inline styles survive the
+       hostile build's class renames untouched. -->
+  <section class="section container" id="auditCases">
+    <div class="section__head"><div>
+      <span class="eyebrow">Store tools</span>
+      <h2 class="section__title">Quick store tools</h2>
+    </div></div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">
+
+      <!-- none: a lone button whose CLASS says menu -->
+      <button class="menu-toggle" id="auditMenuToggle" type="button">Quick links</button>
+
+      <!-- none: a lone button whose CLASS says modal -->
+      <button class="open-modal" id="auditOpenModal" type="button">Store policy</button>
+
+      <!-- none: a range control; class says slider, nothing cycles -->
+      <div class="price-slider" id="auditPriceSlider">
+        <label for="auditPriceRange">Max price</label>
+        <input type="range" id="auditPriceRange" min="20" max="300" value="120">
+      </div>
+
+      <!-- none: a static grid; class says gallery, nothing cycles or hides -->
+      <div class="product-gallery" id="auditGallery" style="display:grid;grid-template-columns:repeat(4,64px);gap:8px">
+        <span style="display:block;height:64px;background:#eee" aria-hidden="true"></span>
+        <span style="display:block;height:64px;background:#e2e2e2" aria-hidden="true"></span>
+        <span style="display:block;height:64px;background:#eee" aria-hidden="true"></span>
+        <span style="display:block;height:64px;background:#e2e2e2" aria-hidden="true"></span>
+      </div>
+
+      <!-- none: a 3×3 layout table, and it says so -->
+      <table id="auditLayoutTable">
+        <tr><td>Mon–Thu</td><td>09–21</td><td>All branches</td></tr>
+        <tr><td>Fri</td><td>09–15</td><td>All branches</td></tr>
+        <tr><td>Sat</td><td>Closed</td><td>Outlet open</td></tr>
+      </table>
+
+      <!-- menu: a button opening five real links, OUTSIDE any nav -->
+      <div class="account-box" id="auditAccount">
+        <button type="button" id="auditAccountBtn" data-expanded="false" data-controls="auditAccountList">My account</button>
+        <ul id="auditAccountList" style="list-style:none;padding:8px;margin:4px 0 0;border:1px solid #ddd;background:#fff" class="is-hidden">
+          <li><a href="/account/orders">Orders</a></li>
+          <li><a href="/account/returns">Returns</a></li>
+          <li><a href="/account/addresses">Addresses</a></li>
+          <li><a href="/account/club">Club points</a></li>
+          <li><a href="/account/settings">Settings</a></li>
+        </ul>
+      </div>
+
+      <!-- none: three selects and a Clear that submits nothing -->
+      <div class="quick-filter" id="auditFilters">
+        <label>Brand
+          <select><option>Any</option><option>Cloudline</option><option>Alpine</option></select>
+        </label>
+        <label>Sport
+          <select><option>Any</option><option>Running</option><option>Training</option></select>
+        </label>
+        <label>Width
+          <select><option>Any</option><option>Regular</option><option>Wide</option></select>
+        </label>
+        <button type="button" id="auditClear">Clear</button>
+      </div>
+
+      <!-- none beside a strip: the CONTENT of tabs is not the tabs -->
+      <div class="mini-strip" id="auditMiniStrip">
+        <button type="button" data-mini-tab="care">Care</button>
+        <button type="button" data-mini-tab="repair">Repair</button>
+        <div class="tabs-content" id="auditTabsContent">
+          <p data-mini-panel="care">Brush dry mud off before it sets.</p>
+          <p data-mini-panel="repair" class="is-hidden">Resoling takes about ten days.</p>
+        </div>
+      </div>
+
+      <!-- accordion, single: one trigger, one adjacent panel -->
+      <div class="fit-note" id="auditReadMore">
+        <button type="button" id="auditReadMoreBtn" data-expanded="false">Read more about sizing</button>
+        <div id="auditReadMorePanel" class="is-hidden">
+          <p>Feet swell through the day, so an evening measurement with your usual socks is the honest one. Between sizes, take the larger for running and the smaller for boots.</p>
+        </div>
+      </div>
+
+      <!-- listbox: a replaced select — the Molina pattern -->
+      <div class="size-picker" id="auditSizePicker">
+        <button type="button" class="size-picker__toggle" id="auditSizeToggle">Choose size</button>
+        <ul class="size-picker__list is-hidden" id="auditSizeList" style="list-style:none;padding:8px;margin:4px 0 0;border:1px solid #ddd;background:#fff">
+          <li><button type="button">EU 40</button></li>
+          <li><button type="button">EU 41</button></li>
+          <li><button type="button">EU 42</button></li>
+          <li><button type="button">EU 43</button></li>
+        </ul>
+        <select id="auditSizeNative" aria-hidden="true" tabindex="-1" style="position:absolute;left:-9999px">
+          <option>EU 40</option><option>EU 41</option><option>EU 42</option><option>EU 43</option>
+        </select>
+      </div>
+
+      <!-- menu: the Bootstrap dropdown dialect — data-toggle, no data-controls -->
+      <div class="dropdown" id="auditDropdown">
+        <button type="button" class="dropdown-toggle" id="auditDropdownBtn" data-toggle="dropdown" data-expanded="false">Help</button>
+        <ul class="dropdown-menu is-hidden" id="auditDropdownMenu" style="list-style:none;padding:8px;margin:4px 0 0;border:1px solid #ddd;background:#fff">
+          <li><a href="/help/shipping">Shipping</a></li>
+          <li><a href="/help/returns">Returns policy</a></li>
+          <li><a href="/help/sizing">Sizing help</a></li>
+          <li><a href="/help/contact">Contact us</a></li>
+        </ul>
+      </div>
+
+      <!-- dialog: 420px, fixed, backdropped, and NOT A ROLE IN SIGHT -->
+      <button type="button" id="auditLeaveBtn" data-panel-target="auditLeaveDialog">Visit our outlet site</button>
+      <div id="auditLeaveBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60" class="is-hidden"></div>
+      <div id="auditLeaveDialog" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:420px;max-width:90vw;background:#fff;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.3);z-index:61" class="is-hidden">
+        <h3 style="margin-top:0">Leaving STEP</h3>
+        <p>The outlet store is run by our partner and opens in the same tab. Your cart here is kept.</p>
+        <button type="button" id="auditLeaveOk">Continue</button>
+        <button type="button" id="auditLeaveCancel">Stay</button>
+      </div>
+
+    </div>
+  </section>
+
   <!-- ======================= SEO TEXT ======================= -->
   <section class="section container">
     <div class="seo-text">
@@ -962,7 +1085,7 @@
   </div>
 </div>
 
-<script src="real-script.js"></script>
-<script src="real-mega.js"></script>
+<script src="step-real-script.js"></script>
+<script src="step-real-mega.js"></script>
 </body>
 </html>

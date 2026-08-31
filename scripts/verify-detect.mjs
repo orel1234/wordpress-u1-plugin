@@ -54,6 +54,9 @@ if (REAL) {
     c.root = translate(c.root);
     for (const k of Object.keys(c.fields || {})) c.fields[k] = translate(c.fields[k]);
   }
+  if (labels.carousels_secondary) {
+    labels.carousels_secondary.roots = labels.carousels_secondary.roots.map(translate);
+  }
   labels.url += '  (REALISTIC build — semantic tags, no ARIA relationships)';
 }
 
@@ -71,6 +74,11 @@ if (HOSTILE) {
   for (const c of labels.components) {
     c.root = translate(c.root);
     for (const k of Object.keys(c.fields || {})) c.fields[k] = translate(c.fields[k]);
+  }
+  // The judgement-call set has to follow the renames too, or its members come
+  // back as false positives under their hostile names.
+  if (labels.carousels_secondary) {
+    labels.carousels_secondary.roots = labels.carousels_secondary.roots.map(translate);
   }
   labels.url += '  (HOSTILE build — no roles, no semantic tags, opaque names)';
 }
@@ -135,10 +143,15 @@ function buildPage() {
     w.eval(mega + '\n;window.Mega = Mega;');
     // Only the renderers that create labelled components. The rest of mega.js
     // wants timers, fetch and a router, and none of that is being measured.
+    // faqTabs builds the strip the #faqTabs label describes, faq('orders')
+    // fills the accordion under it (called with an argument — with none it
+    // renders nothing and the label scored off the empty shell), ticker and
+    // stores build the two labelled late-comers.
     w.eval(`
-      ['menu','hero','dealTabs','faq'].forEach(function (fn) {
+      ['menu','ticker','hero','dealTabs','faqTabs','stores'].forEach(function (fn) {
         try { Mega.render && Mega.render[fn] && Mega.render[fn](); } catch (e) {}
       });
+      try { Mega.render && Mega.render.faq && Mega.render.faq('orders'); } catch (e) {}
     `);
   } catch { /* a renderer that will not run leaves its component unbuilt */ }
 
@@ -193,11 +206,16 @@ if (process.env.U1_DBG) {
     console.log(`EDGE ${(c.selector || '(none)').padEnd(30)} ${(c.openedVia || '').padEnd(22)} ${c.openedBy || ''}`);
   }
 }
-const scored = labels.components.filter(c => !c.hidden);
-const openable = labels.components.filter(c => c.hidden);
+// A label of type "none" pins something that must NOT be flagged — a layout
+// grid, a presentation table, a lone styled button. It is never scored for
+// recall; its whole job is on the precision side, where a detection matching
+// it is a CONFIRMED false positive rather than a debatable one.
+const negatives = labels.components.filter(c => c.type === 'none');
+const scored = labels.components.filter(c => !c.hidden && c.type !== 'none');
+const openable = labels.components.filter(c => c.hidden && c.type !== 'none');
 
 const rows = [];
-let found = 0, typed = 0, rooted = 0;
+let found = 0, typed = 0, rooted = 0, tabsAsMenu = 0;
 
 for (const want of scored) {
   let target = null;
@@ -211,10 +229,14 @@ for (const want of scored) {
   if (!cand) { rows.push({ want, verdict: 'not-found' }); continue; }
   found++;
 
-  // Typed: does the local hint name it correctly?
-  const same = cand.component === want.type ||
-    (want.type === 'tabs' && cand.component === 'tabs');
+  // Typed: does the local hint name it correctly? Until stage 4 lands the
+  // tabs/menu split, a tab strip answered "menu" counts as correct — the
+  // collapse was a documented decision — but it is counted separately and
+  // warned about, so the day exact "tabs" is demanded the number is known.
+  const asMenu = want.type === 'tabs' && cand.component === 'menu';
+  const same = cand.component === want.type || asMenu;
   if (same) typed++;
+  if (asMenu) tabsAsMenu++;
 
   // Rooted: does the selector it produced resolve back to this same element?
   let hits = [];
@@ -288,6 +310,45 @@ for (const want of openable) {
 const openTrigTotal = openable.filter(c => (c.fields || {}).trigger).length -
   openRows.filter(r => r.trigBroken).length;
 
+// ── Precision ───────────────────────────────────────────────────────────────
+// Recall-only scoring let a detector that names every <div> a component reach
+// 100%. A detection is a FALSE POSITIVE when the element it flags is neither a
+// labelled component, nor inside one, nor a wrapper around one. Grouped by
+// root before counting: the megaNav's twenty nested hint rows are one wrong
+// idea, not twenty — a flagged element inside another flagged element
+// collapses into it, and `nested` rows never count at all (they already
+// declared themselves echoes).
+const labelEls = [];
+for (const c of labels.components) {
+  if (c.type === 'none') continue;
+  try { const el = d.querySelector(c.root); if (el) labelEls.push(el); } catch {}
+}
+const negEls = [];
+for (const c of negatives) {
+  try { const el = d.querySelector(c.root); if (el) negEls.push(el); } catch {}
+}
+// carousels_secondary is the labels file's "judgement call" set: naming these
+// is not wrong and staying silent is not wrong either. So a detection on one
+// is neither a hit nor a false positive — it is simply not judged.
+const secEls = [];
+for (const sel of (labels.carousels_secondary && labels.carousels_secondary.roots) || []) {
+  try { for (const el of d.querySelectorAll(sel)) secEls.push(el); } catch {}
+}
+const flagged = [];
+for (const c of got.candidates) {
+  if (!c.component || c.nested) continue;
+  let el = null;
+  try { el = d.querySelector(`[data-u1-mark="${c.mark}"]`); } catch { el = null; }
+  if (el) flagged.push({ c, el });
+}
+const groups = flagged.filter(({ el }) =>
+  !flagged.some((o) => o.el !== el && o.el.contains(el)))
+  .filter(({ el }) => !secEls.some((S) => S === el || S.contains(el) || el.contains(S)));
+const isTP = ({ el }) => labelEls.some((L) => L === el || L.contains(el) || el.contains(L));
+const tpGroups = groups.filter(isTP);
+const fpGroups = groups.filter((g) => !isTP(g));
+const pinnedFp = ({ el }) => negEls.some((N) => N === el || N.contains(el) || el.contains(N));
+
 const pct = (a, b) => b ? Math.round((a / b) * 1000) / 10 : 0;
 const bar = (p) => '█'.repeat(Math.round(p / 5)).padEnd(20, '·');
 
@@ -301,10 +362,28 @@ const measures = [
   ['label fields still resolve', fieldOk, fieldTotal],
   ['closed ones collected', openFound, openable.length],
   ['…and their trigger named', openTrig, openTrigTotal],
+  ['precision (flag groups)', tpGroups.length, groups.length],
 ];
 for (const [name, a, b] of measures) {
   const p = pct(a, b);
   console.log(`  ${name.padEnd(28)} ${bar(p)} ${String(a).padStart(3)}/${b}  ${p}%`);
+}
+if (tabsAsMenu) {
+  console.log(`\n  ⚠ ${tabsAsMenu} tab strip${tabsAsMenu === 1 ? '' : 's'} accepted as "menu" — the documented collapse. ` +
+    `Stage 4 will demand exact "tabs"; this line is the count that will be owed.`);
+}
+
+// The FP list itself, always — a number without names cannot be acted on.
+if (fpGroups.length) {
+  console.log('\n  False positives — flagged, and no label agrees:');
+  const byType = {};
+  for (const g of fpGroups) {
+    const key = g.c.component + (pinnedFp(g) ? '  ← pinned negative' : '');
+    (byType[key] ||= []).push(g.c.selector || '(no selector)');
+  }
+  for (const [t, sels] of Object.entries(byType)) {
+    console.log(`    ${t.padEnd(24)} ×${String(sels.length).padEnd(3)} ${sels.slice(0, 5).join(' · ')}${sels.length > 5 ? ' …' : ''}`);
+  }
 }
 
 console.log('\n  Where it stands, component by component:');
@@ -398,9 +477,12 @@ console.log(REAL ? `
 // A floor, not a target. It fails the build only if detection collapses, so the
 // number can be watched as it climbs rather than blocking every commit.
 const FLOOR = HOSTILE ? 0 : 60;
-const worst = Math.min(pct(found, scored.length), pct(rooted, scored.length));
+// Precision joins the floor: recall alone was gameable by flagging everything.
+// A page with no flag groups at all has nothing to be imprecise about.
+const precisionPct = groups.length ? pct(tpGroups.length, groups.length) : 100;
+const worst = Math.min(pct(found, scored.length), pct(rooted, scored.length), precisionPct);
 if (worst < FLOOR) {
-  console.error(`  Detection fell below ${FLOOR}% — something regressed.\n`);
+  console.error(`  Detection fell below ${FLOOR}% (recall or precision) — something regressed.\n`);
   process.exit(1);
 }
 

@@ -942,6 +942,73 @@ Mega.widgets = {
       Store.toast.show('You are on the list. Check your inbox to confirm.', 'success');
       form.reset();
     });
+  },
+
+  /* The audit cases — behaviour for the detection corpus's widgets. Each is
+     the SMALLEST honest implementation of its pattern: the account and help
+     dropdowns toggle a list, the size picker selects a value into a hidden
+     native <select> and its toggle's text, the read-more is a lone
+     disclosure, and the leave box is a small fixed dialog with a backdrop
+     and no role anywhere — deliberately. */
+  auditCases() {
+    const toggleList = (btnId, listId) => {
+      const btn = el(btnId), list = el(listId);
+      if (!btn || !list) return;
+      btn.addEventListener('click', () => {
+        list.hidden = !list.hidden;
+        btn.setAttribute('aria-expanded', String(!list.hidden));
+      });
+    };
+    toggleList('auditAccountBtn', 'auditAccountList');
+    toggleList('auditDropdownBtn', 'auditDropdownMenu');
+
+    const sizeToggle = el('auditSizeToggle'), sizeList = el('auditSizeList'),
+          sizeNative = el('auditSizeNative');
+    if (sizeToggle && sizeList) {
+      sizeToggle.addEventListener('click', () => { sizeList.hidden = !sizeList.hidden; });
+      sizeList.addEventListener('click', e => {
+        const opt = e.target.closest('button');
+        if (!opt) return;
+        sizeToggle.textContent = opt.textContent;
+        if (sizeNative) sizeNative.value = opt.textContent;
+        sizeList.hidden = true;
+      });
+    }
+
+    const rmBtn = el('auditReadMoreBtn'), rmPanel = el('auditReadMorePanel');
+    if (rmBtn && rmPanel) {
+      rmBtn.addEventListener('click', () => {
+        rmPanel.hidden = !rmPanel.hidden;
+        rmBtn.setAttribute('aria-expanded', String(!rmPanel.hidden));
+      });
+    }
+
+    const miniStrip = el('auditMiniStrip');
+    if (miniStrip) {
+      miniStrip.addEventListener('click', e => {
+        const tab = e.target.closest('[data-mini-tab]');
+        if (!tab) return;
+        Store.utils.qsa('[data-mini-panel]', miniStrip).forEach(p => {
+          p.hidden = p.getAttribute('data-mini-panel') !== tab.getAttribute('data-mini-tab');
+        });
+      });
+    }
+
+    const leaveBtn = el('auditLeaveBtn'), leaveBox = el('auditLeaveDialog'),
+          leaveBack = el('auditLeaveBackdrop');
+    const closeLeave = () => { if (leaveBox) leaveBox.hidden = true; if (leaveBack) leaveBack.hidden = true; };
+    if (leaveBtn && leaveBox) {
+      leaveBtn.addEventListener('click', () => { leaveBox.hidden = false; if (leaveBack) leaveBack.hidden = false; });
+      const cancel = el('auditLeaveCancel'), ok = el('auditLeaveOk');
+      if (cancel) cancel.addEventListener('click', closeLeave);
+      if (ok) ok.addEventListener('click', closeLeave);
+      if (leaveBack) leaveBack.addEventListener('click', closeLeave);
+    }
+
+    const clear = el('auditClear');
+    if (clear) clear.addEventListener('click', () => {
+      Store.utils.qsa('select', el('auditFilters')).forEach(s => { s.selectedIndex = 0; });
+    });
   }
 };
 

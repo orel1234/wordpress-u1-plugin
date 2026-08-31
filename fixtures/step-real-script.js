@@ -152,7 +152,7 @@ Store.SHOE_SOLE_PATH = 'M14,88 L202,88 C210,88 216,93 215,100 C214,104 209,106 2
 Store.SHOE_LACES_PATH = 'M68,36 L76,50 M78,32 L86,46 M88,29 L96,43';
 
 Store.shoeIconSVG = (color, extraClass = '') => `
-  <svg class="cb7 ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
+  <svg class="shoe-icon ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
     <path d="${Store.SHOE_ICON_PATH}" fill="currentColor"/>
     <path d="${Store.SHOE_SOLE_PATH}" fill="currentColor" opacity="0.5"/>
     <path d="${Store.SHOE_LACES_PATH}" fill="none" stroke="rgba(0,0,0,0.3)" stroke-width="3" stroke-linecap="round"/>
@@ -184,7 +184,7 @@ Store.toast = (() => {
     if (!region) {
       region = document.createElement('div');
       region.id = 'toastRegion';
-      region.className = 'c90';
+      region.className = 'toast-region';
       document.body.appendChild(region);
     }
     return region;
@@ -196,7 +196,7 @@ Store.toast = (() => {
     el.textContent = message;
     region.appendChild(el);
     setTimeout(() => {
-      el.classList.add('c7b');
+      el.classList.add('toast--leaving');
       el.addEventListener('animationend', () => el.remove(), { once: true });
     }, duration);
   }
@@ -283,13 +283,13 @@ Store.header = (() => {
     if (!nav) return;
     nav.innerHTML = Store.NAV.map(item => {
       if (!item.children) {
-        return `<div class="c6x"><a class="c6y" href="${item.href}">${item.label}</a></div>`;
+        return `<div class="main-nav__item"><a class="main-nav__link" href="${item.href}">${item.label}</a></div>`;
       }
       return `
-        <div class="c6x c1">
-          <div class="c6y c41" data-x5>${item.label}</div>
-          <div class="c34">
-            ${item.children.map(child => `<a class="cg" href="${child.href}">${child.label}</a>`).join('')}
+        <div class="main-nav__item main-nav__item--has-dropdown">
+          <button class="main-nav__link main-nav__trigger" type="button" data-nav-trigger>${item.label}</button>
+          <div class="main-nav__dropdown">
+            ${item.children.map(child => `<a class="main-nav__dropdown-link" href="${child.href}">${child.label}</a>`).join('')}
           </div>
         </div>`;
     }).join('');
@@ -299,23 +299,23 @@ Store.header = (() => {
     const nav = document.getElementById('mainNav');
     if (!nav) return;
     nav.addEventListener('click', e => {
-      const trigger = e.target.closest('[data-x5]');
+      const trigger = e.target.closest('[data-nav-trigger]');
       if (!trigger) return;
-      const item = trigger.closest('.c6x');
-      const wasOpen = item.classList.contains('c1e');
-      Store.utils.qsa('.c1e', nav).forEach(el => el.classList.remove('c1e'));
-      if (!wasOpen) item.classList.add('c1e');
+      const item = trigger.closest('.main-nav__item');
+      const wasOpen = item.classList.contains('main-nav__item--open');
+      Store.utils.qsa('.main-nav__item--open', nav).forEach(el => el.classList.remove('main-nav__item--open'));
+      if (!wasOpen) item.classList.add('main-nav__item--open');
     });
     document.addEventListener('click', e => {
-      if (!nav.contains(e.target)) Store.utils.qsa('.c1e', nav).forEach(el => el.classList.remove('c1e'));
+      if (!nav.contains(e.target)) Store.utils.qsa('.main-nav__item--open', nav).forEach(el => el.classList.remove('main-nav__item--open'));
     });
   }
 
   function renderBadge() {
-    Store.utils.qsa('.icon-btn__badge[data-x8]').forEach(el => {
+    Store.utils.qsa('.icon-btn__badge[data-cart-badge]').forEach(el => {
       const n = Store.cart.count();
       el.textContent = n;
-      el.hidden = n === 0;
+      el.classList.toggle('is-hidden', !!(n === 0));
     });
   }
 
@@ -323,36 +323,36 @@ Store.header = (() => {
     const { product, size, colorName, qty, index } = item;
     const color = product.colors.find(c => c.name === colorName) || product.colors[0];
     return `
-      <div class="cav" data-xu="${index}">
-        <div class="c4v" style="background:${color.hex}">
+      <div class="cart-line" data-index="${index}">
+        <div class="cart-line__thumb" style="background:${color.hex}">
           ${Store.shoeIconSVG('rgba(255,255,255,0.92)')}
         </div>
         <div>
-          <div class="c5x">${Store.utils.escapeHtml(product.name)}</div>
-          <div class="c5w">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
-          <div class="c6q">
-            <div class="c9l" data-xa>
-              <div class="c5i" data-x10="-1">−</div>
-              <span class="c3h">${qty}</span>
-              <div class="c5i" data-x10="1">+</div>
+          <div class="cart-line__name">${Store.utils.escapeHtml(product.name)}</div>
+          <div class="cart-line__meta">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
+          <div class="cart-line__qty">
+            <div class="qty-stepper" data-drawer-qty>
+              <button class="qty-stepper__btn" type="button" data-step="-1">−</button>
+              <span class="qty-stepper__value">${qty}</span>
+              <button class="qty-stepper__btn" type="button" data-step="1">+</button>
             </div>
           </div>
         </div>
-        <div class="c2y">
-          <span class="c4u">${Store.utils.formatPrice(product.price * qty)}</span>
-          <div class="c3q" data-xq>Remove</div>
+        <div class="cart-line__col-end">
+          <span class="cart-line__price">${Store.utils.formatPrice(product.price * qty)}</span>
+          <button class="cart-line__remove" type="button" data-remove>Remove</button>
         </div>
       </div>`;
   }
 
   function renderDrawer() {
-    const itemsEl = document.getElementById('en');
-    const footerEl = document.getElementById('ed');
+    const itemsEl = document.getElementById('cartDrawerItems');
+    const footerEl = document.getElementById('cartDrawerFooter');
     if (!itemsEl) return;
     const items = Store.cart.withProducts();
 
     if (!items.length) {
-      itemsEl.innerHTML = `<div class="c2v">Your cart is empty right now.<br>Time to find a new pair 👟</div>`;
+      itemsEl.innerHTML = `<div class="cart-drawer__empty">Your cart is empty right now.<br>Time to find a new pair 👟</div>`;
       footerEl.innerHTML = '';
       return;
     }
@@ -360,38 +360,38 @@ Store.header = (() => {
     itemsEl.innerHTML = items.map(lineTemplate).join('');
     const { subtotal, shipping, discount, total } = Store.cart.totals();
     footerEl.innerHTML = `
-      <div class="c9z"><span>Subtotal</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
-      ${discount ? `<div class="c9z"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
-      <div class="c9z"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
-      <div class="c9z c3n"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
-      <a class="ccf c89 ca2" href="cart.html">View Cart</a>
-      <a class="ccf c88 ca2" href="checkout.html">Checkout</a>`;
+      <div class="summary-row"><span>Subtotal</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
+      ${discount ? `<div class="summary-row"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
+      <div class="summary-row"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
+      <div class="summary-row summary-row--total"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
+      <a class="btn btn--primary btn--block" href="cart.html">View Cart</a>
+      <a class="btn btn--outline btn--block" href="checkout.html">Checkout</a>`;
   }
 
   function openDrawer() {
-    const overlay = document.getElementById('e3');
+    const overlay = document.getElementById('cartDrawerOverlay');
     if (!overlay) return;
     renderDrawer();
-    overlay.hidden = false;
+    overlay.classList.toggle('is-hidden', !!(false));
   }
   function closeDrawer() {
-    const overlay = document.getElementById('e3');
-    if (overlay) overlay.hidden = true;
+    const overlay = document.getElementById('cartDrawerOverlay');
+    if (overlay) overlay.classList.toggle('is-hidden', !!(true));
   }
 
   function handleDrawerClick(e) {
-    const stepBtn = e.target.closest('[data-x10]');
-    const removeBtn = e.target.closest('[data-xq]');
+    const stepBtn = e.target.closest('[data-step]');
+    const removeBtn = e.target.closest('[data-remove]');
     if (stepBtn) {
-      const line = stepBtn.closest('.cav');
-      const index = Number(line.dataset.xu);
+      const line = stepBtn.closest('.cart-line');
+      const index = Number(line.dataset.index);
       const items = Store.cart.read();
-      const delta = Number(stepBtn.dataset.x10);
+      const delta = Number(stepBtn.dataset.step);
       Store.cart.updateQty(index, items[index].qty + delta);
       renderDrawer();
     } else if (removeBtn) {
-      const line = removeBtn.closest('.cav');
-      Store.cart.remove(Number(line.dataset.xu));
+      const line = removeBtn.closest('.cart-line');
+      Store.cart.remove(Number(line.dataset.index));
       renderDrawer();
     }
   }
@@ -401,7 +401,7 @@ Store.header = (() => {
     const nav = document.getElementById('mainNav');
     if (!toggle || !nav) return;
     toggle.addEventListener('click', () => {
-      nav.classList.toggle('c6z');
+      nav.classList.toggle('main-nav--open');
     });
   }
 
@@ -411,16 +411,16 @@ Store.header = (() => {
     renderBadge();
     document.addEventListener('cart:change', renderBadge);
 
-    const cartBtn = document.getElementById('e1u');
-    const closeBtn = document.getElementById('em');
-    const overlay = document.getElementById('e3');
-    const itemsEl = document.getElementById('en');
+    const cartBtn = document.getElementById('cartToggle');
+    const closeBtn = document.getElementById('cartDrawerClose');
+    const overlay = document.getElementById('cartDrawerOverlay');
+    const itemsEl = document.getElementById('cartDrawerItems');
 
     if (cartBtn) cartBtn.addEventListener('click', openDrawer);
     if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
     if (overlay) overlay.addEventListener('click', e => { if (e.target === overlay) closeDrawer(); });
     if (itemsEl) itemsEl.addEventListener('click', handleDrawerClick);
-    document.addEventListener('cart:change', () => { if (overlay && !overlay.hidden) renderDrawer(); });
+    document.addEventListener('cart:change', () => { if (overlay && !overlay.classList.contains('is-hidden')) renderDrawer(); });
 
     initMobileNav();
 
@@ -442,58 +442,58 @@ Store.header = (() => {
    ========================================================================== */
 Store.homePage = (() => {
   function renderCategories() {
-    const el = document.getElementById('e1b');
+    const el = document.getElementById('categoryGrid');
     if (!el) return;
     const palette = ['#b5432b', '#233150', '#5b3a22', '#3c5a44', '#8a8577'];
     el.innerHTML = Store.CATEGORIES.map((cat, i) => {
       const count = Store.PRODUCTS.filter(p => p.category === cat.slug).length;
       return `
-        <a class="c7h" href="shop.html?cat=${cat.slug}">
-          <div class="c9" style="background:${palette[i % palette.length]}">
+        <a class="category-tile" href="shop.html?cat=${cat.slug}">
+          <div class="category-tile__icon-wrap" style="background:${palette[i % palette.length]}">
             ${Store.shoeIconSVG('#fff')}
           </div>
-          <span class="c1w">${cat.label}</span>
-          <span class="c19">${count} styles</span>
+          <span class="category-tile__name">${cat.label}</span>
+          <span class="category-tile__count">${count} styles</span>
         </a>`;
     }).join('');
   }
 
   function productCardTemplate(p) {
-    const oldPriceHtml = p.oldPrice ? `<span class="cd">${Store.utils.formatPrice(p.oldPrice)}</span>` : '';
-    const badgeHtml = p.badge ? `<span class="c48 ${p.badge === 'sale' ? 'cj' : ''}">${p.badge === 'sale' ? 'Sale' : 'New'}</span>` : '';
+    const oldPriceHtml = p.oldPrice ? `<span class="product-card__price--old">${Store.utils.formatPrice(p.oldPrice)}</span>` : '';
+    const badgeHtml = p.badge ? `<span class="product-card__tag ${p.badge === 'sale' ? 'product-card__tag--sale' : ''}">${p.badge === 'sale' ? 'Sale' : 'New'}</span>` : '';
     return `
-      <div class="c8p">
+      <article class="product-card">
         ${badgeHtml}
-        <div class="c3c" data-xo="false" data-x11="${p.id}">♥</div>
-        <a class="c28" style="background:${p.colors[0].hex}" href="product.html?id=${p.id}">
+        <button class="product-card__wish" type="button" data-pressed="false" data-wish="${p.id}">♥</button>
+        <a class="product-card__media" style="background:${p.colors[0].hex}" href="product.html?id=${p.id}">
           ${Store.shoeIconSVG('#fff')}
         </a>
-        <div class="c3a">
-          <span class="cr">${Store.getCategoryLabel(p.category)}</span>
-          <div class="c3b"><a href="product.html?id=${p.id}">${Store.utils.escapeHtml(p.name)}</a></div>
-          <span class="c1h">${Store.utils.stars(p.rating)} <span style="color:var(--color-ink-faint)">(${p.reviews})</span></span>
-          <div class="ci">
-            <span class="c29">${Store.utils.formatPrice(p.price)}</span>
+        <div class="product-card__body">
+          <span class="product-card__category">${Store.getCategoryLabel(p.category)}</span>
+          <h3 class="product-card__name"><a href="product.html?id=${p.id}">${Store.utils.escapeHtml(p.name)}</a></h3>
+          <span class="product-card__rating">${Store.utils.stars(p.rating)} <span style="color:var(--color-ink-faint)">(${p.reviews})</span></span>
+          <div class="product-card__price-row">
+            <span class="product-card__price">${Store.utils.formatPrice(p.price)}</span>
             ${oldPriceHtml}
           </div>
-          <div class="cs">
-            ${p.colors.map(c => `<span class="c1i" style="background:${c.hex}" title="${c.name}"></span>`).join('')}
+          <div class="product-card__swatches">
+            ${p.colors.map(c => `<span class="product-card__swatch" style="background:${c.hex}" title="${c.name}"></span>`).join('')}
           </div>
         </div>
-        <div class="c47" data-xh="${p.id}">Add to Cart</div>
-      </div>`;
+        <button class="product-card__add" type="button" data-quick-add="${p.id}">Add to Cart</button>
+      </article>`;
   }
 
   function renderFeatured() {
-    const el = document.getElementById('e1c');
+    const el = document.getElementById('featuredGrid');
     if (!el) return;
     el.innerHTML = Array.from({ length: 4 }, () => `
-      <div class="c8p ct">
-        <div class="c28"><span class="cbp c6j"></span></div>
-        <div class="c3a">
-          <span class="cbp c79" style="width:40%"></span>
-          <span class="cbp c79" style="width:80%"></span>
-          <span class="cbp c79" style="width:50%"></span>
+      <div class="product-card product-card--skeleton">
+        <div class="product-card__media"><span class="skeleton skeleton--media"></span></div>
+        <div class="product-card__body">
+          <span class="skeleton skeleton--line" style="width:40%"></span>
+          <span class="skeleton skeleton--line" style="width:80%"></span>
+          <span class="skeleton skeleton--line" style="width:50%"></span>
         </div>
       </div>`).join('');
 
@@ -504,21 +504,21 @@ Store.homePage = (() => {
   }
 
   function handleGridClick(e) {
-    const quickAdd = e.target.closest('[data-xh]');
-    const wish = e.target.closest('[data-x11]');
+    const quickAdd = e.target.closest('[data-quick-add]');
+    const wish = e.target.closest('[data-wish]');
     if (quickAdd) {
-      const product = Store.getProduct(quickAdd.dataset.xh);
+      const product = Store.getProduct(quickAdd.dataset.quickAdd);
       Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
       Store.toast.show(`${product.name} added to cart`, 'success');
     } else if (wish) {
-      const pressed = wish.dataset.xo === 'true';
-      wish.dataset.xo = String(!pressed);
-      wish.classList.toggle('c5', !pressed);
+      const pressed = wish.dataset.pressed === 'true';
+      wish.dataset.pressed = String(!pressed);
+      wish.classList.toggle('product-card__wish--active', !pressed);
     }
   }
 
   function init() {
-    if (!document.getElementById('e1c')) return;
+    if (!document.getElementById('featuredGrid')) return;
     renderCategories();
     renderFeatured();
     document.body.addEventListener('click', handleGridClick);
@@ -565,8 +565,8 @@ Store.shopPage = (() => {
     if (state.badge) chips.push({ type: 'badge', value: state.badge, label: state.badge === 'sale' ? 'Sale' : 'New Arrivals' });
 
     el.innerHTML = chips.map(c => `
-      <span class="c9a" data-xg="${c.type}" data-x9="${c.value}">
-        ${c.label} <div>✕</div>
+      <span class="filter-chip" data-chip-type="${c.type}" data-chip-value="${c.value}">
+        ${c.label} <button type="button">✕</button>
       </span>`).join('');
   }
 
@@ -575,16 +575,16 @@ Store.shopPage = (() => {
     catGroup.innerHTML = Store.CATEGORIES.map(c => {
       const count = Store.PRODUCTS.filter(p => p.category === c.slug).length;
       return `
-        <span class="c8d">
-          <input class="c20" type="checkbox" value="${c.slug}" ${state.categories.has(c.slug) ? 'checked' : ''}>
-          ${c.label} <span class="c1z">${count}</span>
-        </span>`;
+        <label class="filter-check">
+          <input class="filter-check__input" type="checkbox" value="${c.slug}" ${state.categories.has(c.slug) ? 'checked' : ''}>
+          ${c.label} <span class="filter-check__count">${count}</span>
+        </label>`;
     }).join('');
 
     const sizeGroup = document.getElementById('sizeFilterGroup');
     const allSizes = Array.from(new Set(Store.PRODUCTS.flatMap(p => p.sizes))).sort((a, b) => a - b);
     sizeGroup.innerHTML = allSizes.map(s => `
-      <div class="cb8 ${state.sizes.has(s) ? 'c4l' : ''}" data-xz="${s}">${s}</div>`).join('');
+      <button type="button" class="size-chip ${state.sizes.has(s) ? 'size-chip--active' : ''}" data-size="${s}">${s}</button>`).join('');
 
     document.getElementById('priceRange').value = state.maxPrice;
     document.getElementById('priceRangeValue').textContent = Store.utils.formatPrice(state.maxPrice);
@@ -601,7 +601,7 @@ Store.shopPage = (() => {
 
     grid.innerHTML = pageItems.length
       ? pageItems.map(Store.homePage.productCardTemplate).join('')
-      : `<p class="c98">No products match your filters.<br>Try removing a few filters.</p>`;
+      : `<p class="empty-state">No products match your filters.<br>Try removing a few filters.</p>`;
 
     renderPagination(totalPages);
     renderFilterChips();
@@ -611,16 +611,16 @@ Store.shopPage = (() => {
   function renderPagination(totalPages) {
     const el = document.getElementById('shopPagination');
     if (totalPages <= 1) { el.innerHTML = ''; return; }
-    let html = `<div class="c6c" data-xy="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''}>‹</div>`;
+    let html = `<button class="pagination__btn" data-page="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''}>‹</button>`;
     for (let i = 1; i <= totalPages; i++) {
-      html += `<div class="c5e ${i === state.page ? 'cc' : ''}" data-xy="${i}">${i}</div>`;
+      html += `<button class="pagination__page ${i === state.page ? 'pagination__page--active' : ''}" data-page="${i}">${i}</button>`;
     }
-    html += `<div class="c6c" data-xy="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''}>›</div>`;
+    html += `<button class="pagination__btn" data-page="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''}>›</button>`;
     el.innerHTML = html;
   }
 
   function handleSidebarChange(e) {
-    if (e.target.matches('.c20')) {
+    if (e.target.matches('.filter-check__input')) {
       const val = e.target.value;
       e.target.checked ? state.categories.add(val) : state.categories.delete(val);
       state.page = 1;
@@ -629,9 +629,9 @@ Store.shopPage = (() => {
   }
 
   function handleSidebarClick(e) {
-    const sizeChip = e.target.closest('.cb8');
+    const sizeChip = e.target.closest('.size-chip');
     if (sizeChip) {
-      const size = Number(sizeChip.dataset.xz);
+      const size = Number(sizeChip.dataset.size);
       state.sizes.has(size) ? state.sizes.delete(size) : state.sizes.add(size);
       state.page = 1;
       renderGrid();
@@ -646,7 +646,7 @@ Store.shopPage = (() => {
   function handleChipsClick(e) {
     const btn = e.target.closest('.filter-chip button');
     if (!btn) return;
-    const chip = btn.closest('.c9a');
+    const chip = btn.closest('.filter-chip');
     const { chipType, chipValue } = chip.dataset;
     if (chipType === 'cat') state.categories.delete(chipValue);
     if (chipType === 'size') state.sizes.delete(Number(chipValue));
@@ -657,9 +657,9 @@ Store.shopPage = (() => {
   }
 
   function handleGridClick(e) {
-    const pageBtn = e.target.closest('#shopPagination [data-xy]');
+    const pageBtn = e.target.closest('#shopPagination [data-page]');
     if (pageBtn) {
-      const page = Number(pageBtn.dataset.xy);
+      const page = Number(pageBtn.dataset.page);
       if (page >= 1) { state.page = page; renderGrid(); window.scrollTo({ top: document.getElementById('shopGrid').offsetTop - 100, behavior: 'smooth' }); }
     }
   }
@@ -674,16 +674,16 @@ Store.shopPage = (() => {
     document.getElementById('activeFilterChips').addEventListener('click', handleChipsClick);
     document.getElementById('shopPagination').addEventListener('click', handleGridClick);
     document.getElementById('shopGrid').addEventListener('click', e => {
-      const quickAdd = e.target.closest('[data-xh]');
-      const wish = e.target.closest('[data-x11]');
+      const quickAdd = e.target.closest('[data-quick-add]');
+      const wish = e.target.closest('[data-wish]');
       if (quickAdd) {
-        const product = Store.getProduct(quickAdd.dataset.xh);
+        const product = Store.getProduct(quickAdd.dataset.quickAdd);
         Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
         Store.toast.show(`${product.name} added to cart`, 'success');
       } else if (wish) {
-        const pressed = wish.dataset.xo === 'true';
-        wish.dataset.xo = String(!pressed);
-        wish.classList.toggle('c5', !pressed);
+        const pressed = wish.dataset.pressed === 'true';
+        wish.dataset.pressed = String(!pressed);
+        wish.classList.toggle('product-card__wish--active', !pressed);
       }
     });
 
@@ -717,23 +717,23 @@ Store.productPage = (() => {
 
     const thumbs = document.getElementById('galleryThumbs');
     thumbs.innerHTML = product.colors.map(c => `
-      <div class="cu ${c.name === selectedColor.name ? 'c0' : ''}"
-        style="background:${c.hex}" data-xt="${Store.utils.escapeHtml(c.name)}">
+      <button class="product-gallery__thumb ${c.name === selectedColor.name ? 'product-gallery__thumb--active' : ''}"
+        type="button" style="background:${c.hex}" data-color="${Store.utils.escapeHtml(c.name)}">
         ${Store.shoeIconSVG('#fff')}
-      </div>`).join('');
+      </button>`).join('');
   }
 
   function renderColors() {
     document.getElementById('colorOptions').innerHTML = product.colors.map(c => `
-      <div class="c8c ${c.name === selectedColor.name ? 'c1a' : ''}" data-xt="${Store.utils.escapeHtml(c.name)}">
-        <span class="c31" style="background:${c.hex}"></span>
-      </div>`).join('');
+      <button class="color-swatch ${c.name === selectedColor.name ? 'color-swatch--active' : ''}" type="button" data-color="${Store.utils.escapeHtml(c.name)}">
+        <span class="color-swatch__fill" style="background:${c.hex}"></span>
+      </button>`).join('');
     document.getElementById('selectedColorLabel').textContent = selectedColor.name;
   }
 
   function renderSizes() {
     document.getElementById('sizeOptions').innerHTML = product.sizes.map(s => `
-      <div class="cb8 ${s === c8u ? 'c4l' : ''}" data-xz="${s}">${s}</div>`).join('');
+      <button class="size-chip ${s === selectedSize ? 'size-chip--active' : ''}" type="button" data-size="${s}">${s}</button>`).join('');
   }
 
   function renderInfo() {
@@ -749,12 +749,12 @@ Store.productPage = (() => {
     document.title = `${product.name} — STEP`;
 
     const oldPriceEl = document.getElementById('productOldPrice');
-    if (product.oldPrice) { oldPriceEl.textContent = Store.utils.formatPrice(product.oldPrice); oldPriceEl.hidden = false; }
-    else oldPriceEl.hidden = true;
+    if (product.oldPrice) { oldPriceEl.textContent = Store.utils.formatPrice(product.oldPrice); oldPriceEl.classList.toggle('is-hidden', !!(false)); }
+    else oldPriceEl.classList.toggle('is-hidden', !!(true));
 
     document.getElementById('descPanel').textContent = product.desc;
     document.getElementById('detailsPanel').innerHTML = `
-      <div class="cba">
+      <div class="spec-list">
         <div><span>Upper material</span><strong>${product.details.material}</strong></div>
         <div><span>Sole</span><strong>${product.details.sole}</strong></div>
         <div><span>Country of origin</span><strong>${product.details.origin}</strong></div>
@@ -768,43 +768,43 @@ Store.productPage = (() => {
   }
 
   function handleOptionClick(e) {
-    const colorBtn = e.target.closest('[data-xt]');
-    const sizeBtn = e.target.closest('.cb8');
+    const colorBtn = e.target.closest('[data-color]');
+    const sizeBtn = e.target.closest('.size-chip');
     if (colorBtn) {
-      selectedColor = product.colors.find(c => c.name === colorBtn.dataset.xt);
+      selectedColor = product.colors.find(c => c.name === colorBtn.dataset.color);
       renderGallery();
       renderColors();
     } else if (sizeBtn) {
-      selectedSize = Number(sizeBtn.dataset.xz);
+      selectedSize = Number(sizeBtn.dataset.size);
       renderSizes();
-      document.getElementById('sizeError').classList.remove('c2n');
+      document.getElementById('sizeError').classList.remove('size-error--visible');
     }
   }
 
   function initQtyStepper() {
     const valueEl = document.getElementById('qtyValue');
     document.getElementById('qtyStepper').addEventListener('click', e => {
-      const btn = e.target.closest('[data-x10]');
+      const btn = e.target.closest('[data-step]');
       if (!btn) return;
-      const next = Math.max(1, Number(valueEl.textContent) + Number(btn.dataset.x10));
+      const next = Math.max(1, Number(valueEl.textContent) + Number(btn.dataset.step));
       valueEl.textContent = next;
     });
   }
 
   function initTabs() {
-    const tabs = Store.utils.qsa('.c49');
+    const tabs = Store.utils.qsa('.product-tabs__tab');
     tabs.forEach(tab => tab.addEventListener('click', () => {
-      tabs.forEach(t => t.classList.remove('c7'));
-      tab.classList.add('c7');
-      Store.utils.qsa('.c2d').forEach(p => p.hidden = true);
-      document.getElementById(tab.dataset.panel).hidden = false;
+      tabs.forEach(t => t.classList.remove('product-tabs__tab--active'));
+      tab.classList.add('product-tabs__tab--active');
+      Store.utils.qsa('.product-tabs__panel').forEach(p => p.classList.toggle('is-hidden', !!(true)));
+      document.getElementById(tab.dataset.panel).classList.toggle('is-hidden', !!(false));
     }));
   }
 
   function initAddToCart() {
     document.getElementById('addToCartBtn').addEventListener('click', () => {
       if (!selectedSize) {
-        document.getElementById('sizeError').classList.add('c2n');
+        document.getElementById('sizeError').classList.add('size-error--visible');
         return;
       }
       const qty = Number(document.getElementById('qtyValue').textContent);
@@ -844,27 +844,27 @@ Store.cartPage = (() => {
     const { product, size, colorName, qty, index } = item;
     const color = product.colors.find(c => c.name === colorName) || product.colors[0];
     return `
-      <div data-t="t4" data-xu="${index}">
-        <div data-t="t6">
-          <div class="c1v">
-            <div class="c3r" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
+      <tr data-index="${index}">
+        <td>
+          <div class="cart-table__product">
+            <div class="cart-table__thumb" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
             <div>
-              <div class="c4x">${Store.utils.escapeHtml(product.name)}</div>
-              <div class="c4w">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
+              <div class="cart-table__name">${Store.utils.escapeHtml(product.name)}</div>
+              <div class="cart-table__meta">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
             </div>
           </div>
-        </div>
-        <div data-t="t6">${Store.utils.formatPrice(product.price)}</div>
-        <div data-t="t6">
-          <div class="c9l" data-xj>
-            <div class="c5i" data-x10="-1">−</div>
-            <span class="c3h">${qty}</span>
-            <div class="c5i" data-x10="1">+</div>
+        </td>
+        <td>${Store.utils.formatPrice(product.price)}</td>
+        <td>
+          <div class="qty-stepper" data-cart-qty>
+            <button class="qty-stepper__btn" type="button" data-step="-1">−</button>
+            <span class="qty-stepper__value">${qty}</span>
+            <button class="qty-stepper__btn" type="button" data-step="1">+</button>
           </div>
-        </div>
-        <div data-t="t6"><strong>${Store.utils.formatPrice(product.price * qty)}</strong></div>
-        <div data-t="t6"><div class="c3q" data-xq>Remove</div></div>
-      </div>`;
+        </td>
+        <td><strong>${Store.utils.formatPrice(product.price * qty)}</strong></td>
+        <td><button class="cart-line__remove" type="button" data-remove>Remove</button></td>
+      </tr>`;
   }
 
   function renderSummary() {
@@ -875,9 +875,9 @@ Store.cartPage = (() => {
 
     const discountRow = document.getElementById('summaryDiscountRow');
     if (discount > 0) {
-      discountRow.hidden = false;
+      discountRow.classList.toggle('is-hidden', !!(false));
       document.getElementById('summaryDiscount').textContent = '-' + Store.utils.formatPrice(discount);
-    } else discountRow.hidden = true;
+    } else discountRow.classList.toggle('is-hidden', !!(true));
 
     const freeShipNote = document.getElementById('freeShippingNote');
     if (freeShipNote) {
@@ -889,7 +889,7 @@ Store.cartPage = (() => {
     const checkoutBtn = document.getElementById('goToCheckoutBtn');
     if (checkoutBtn) {
       const isEmpty = Store.cart.withProducts().length === 0;
-      checkoutBtn.classList.toggle('c7f', isEmpty);
+      checkoutBtn.classList.toggle('btn--disabled', isEmpty);
     }
   }
 
@@ -899,28 +899,28 @@ Store.cartPage = (() => {
     const emptyEl = document.getElementById('cartEmpty');
 
     if (!items.length) {
-      tableWrap.hidden = true;
-      emptyEl.hidden = false;
+      tableWrap.classList.toggle('is-hidden', !!(true));
+      emptyEl.classList.toggle('is-hidden', !!(false));
     } else {
-      tableWrap.hidden = false;
-      emptyEl.hidden = true;
+      tableWrap.classList.toggle('is-hidden', !!(false));
+      emptyEl.classList.toggle('is-hidden', !!(true));
       document.getElementById('cartTableBody').innerHTML = items.map(rowTemplate).join('');
     }
     renderSummary();
   }
 
   function handleTableClick(e) {
-    const stepBtn = e.target.closest('[data-x10]');
-    const removeBtn = e.target.closest('[data-xq]');
+    const stepBtn = e.target.closest('[data-step]');
+    const removeBtn = e.target.closest('[data-remove]');
     if (stepBtn) {
       const row = stepBtn.closest('tr');
-      const index = Number(row.dataset.xu);
+      const index = Number(row.dataset.index);
       const items = Store.cart.read();
-      Store.cart.updateQty(index, items[index].qty + Number(stepBtn.dataset.x10));
+      Store.cart.updateQty(index, items[index].qty + Number(stepBtn.dataset.step));
       render();
     } else if (removeBtn) {
       const row = removeBtn.closest('tr');
-      Store.cart.remove(Number(row.dataset.xu));
+      Store.cart.remove(Number(row.dataset.index));
       Store.toast.show('Item removed from cart', 'info');
       render();
     }
@@ -979,11 +979,11 @@ Store.checkoutPage = (() => {
     currentStep = step;
     [1, 2, 3].forEach(n => {
       const panel = document.getElementById('checkoutStep' + n);
-      if (panel) panel.hidden = n !== step;
+      if (panel) panel.classList.toggle('is-hidden', !!(n !== step));
       const indicator = document.getElementById('stepIndicator' + n);
       if (indicator) {
-        indicator.classList.toggle('cy', n === step);
-        indicator.classList.toggle('c1x', n < step);
+        indicator.classList.toggle('checkout-step--active', n === step);
+        indicator.classList.toggle('checkout-step--done', n < step);
       }
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -996,13 +996,13 @@ Store.checkoutPage = (() => {
     el.innerHTML = items.map(item => {
       const color = item.product.colors.find(c => c.name === item.colorName) || item.product.colors[0];
       return `
-        <div class="cav">
-          <div class="c4v" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
+        <div class="cart-line">
+          <div class="cart-line__thumb" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
           <div>
-            <div class="c5x">${Store.utils.escapeHtml(item.product.name)}</div>
-            <div class="c5w">Size ${item.size} · ${Store.utils.escapeHtml(item.colorName)} · Qty ${item.qty}</div>
+            <div class="cart-line__name">${Store.utils.escapeHtml(item.product.name)}</div>
+            <div class="cart-line__meta">Size ${item.size} · ${Store.utils.escapeHtml(item.colorName)} · Qty ${item.qty}</div>
           </div>
-          <div class="c2y"><span class="c4u">${Store.utils.formatPrice(item.product.price * item.qty)}</span></div>
+          <div class="cart-line__col-end"><span class="cart-line__price">${Store.utils.formatPrice(item.product.price * item.qty)}</span></div>
         </div>`;
     }).join('');
 
@@ -1011,8 +1011,8 @@ Store.checkoutPage = (() => {
     document.getElementById('checkoutShipping').textContent = shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping);
     document.getElementById('checkoutTotal').textContent = Store.utils.formatPrice(total);
     const discountRow = document.getElementById('checkoutDiscountRow');
-    if (discount > 0) { discountRow.hidden = false; document.getElementById('checkoutDiscount').textContent = '-' + Store.utils.formatPrice(discount); }
-    else discountRow.hidden = true;
+    if (discount > 0) { discountRow.classList.toggle('is-hidden', !!(false)); document.getElementById('checkoutDiscount').textContent = '-' + Store.utils.formatPrice(discount); }
+    else discountRow.classList.toggle('is-hidden', !!(true));
   }
 
   /* ---- Step 1: contact + shipping validation ---- */
@@ -1030,7 +1030,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('cbw', !ok);
+      input.classList.toggle('invalid', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });
@@ -1090,7 +1090,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('cbw', !ok);
+      input.classList.toggle('invalid', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });
@@ -1108,7 +1108,7 @@ Store.checkoutPage = (() => {
     const label = document.getElementById('placeOrderLabel');
 
     btn.disabled = true;
-    spinner.hidden = false;
+    spinner.classList.toggle('is-hidden', !!(false));
     label.textContent = 'Processing payment…';
 
     // simulate real payment processing latency
@@ -1124,7 +1124,7 @@ Store.checkoutPage = (() => {
       Store.cart.clearPromo();
 
       btn.disabled = false;
-      spinner.hidden = true;
+      spinner.classList.toggle('is-hidden', !!(true));
       label.textContent = 'Place Order';
 
       goToStep(3);
@@ -1136,8 +1136,8 @@ Store.checkoutPage = (() => {
     if (!root) return;
 
     if (Store.cart.withProducts().length === 0) {
-      document.getElementById('checkoutEmptyState').hidden = false;
-      document.getElementById('checkoutMain').hidden = true;
+      document.getElementById('checkoutEmptyState').classList.toggle('is-hidden', !!(false));
+      document.getElementById('checkoutMain').classList.toggle('is-hidden', !!(true));
       return;
     }
 
