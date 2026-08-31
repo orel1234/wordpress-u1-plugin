@@ -5694,7 +5694,7 @@ async function confirmedToMapping(pick, stop, tab) {
       }
       if (!container && cap) {
         openWhy = cap.err ||
-          (!cap.opened ? 'pressed it, but nothing new appeared on the page' : '');
+          (!cap.opened ? `pressed ${cap.pressed || 'it'}, but nothing new appeared on the page` : '');
       }
     }
   }
@@ -8147,7 +8147,10 @@ async function autoOpenCapture(tab, triggerSel, type) {
         // A survey names the COMPONENT, which for a sign-in dropdown is the
         // wrapper holding the button and the closed list together. Clicking
         // the wrapper fires no handler — the listener lives on the button —
-        // so descend to the pressable thing inside before pressing.
+        // so descend to the pressable thing inside before pressing. The
+        // named element is kept: the markup's own statements live anywhere
+        // inside it, not only on what ends up being pressed.
+        const namedEl = trigger;
         if (!trigger.matches('button,a[href],[role="button"],[aria-haspopup],[tabindex],input,summary')) {
           const inner = trigger.querySelector(
             'button,[role="button"],a[href],[aria-haspopup],summary,[tabindex]');
@@ -8171,8 +8174,28 @@ async function autoOpenCapture(tab, triggerSel, type) {
         }
 
         // What the markup already states (aria-controls, a data-* id, a role
-        // in the neighbourhood) — costs nothing and needs no restore.
-        const stated = S.openedBy(trigSel) || null;
+        // in the neighbourhood) — costs nothing and needs no restore. Asked
+        // about the named element AND about what it holds: the survey names
+        // the WRAPPER, and the aria-controls that answers everything sits on
+        // the button inside it — asking only the wrapper missed a component
+        // whose own description said "aria-controls links them".
+        let stated = S.openedBy(trigSel) || null;
+        if (!stated) {
+          try {
+            const carriers = [namedEl, trigger]
+              .filter((el, i, a) => el && a.indexOf(el) === i)
+              .filter((el) => el.matches('[aria-controls],[aria-owns]'))
+              .concat(Array.prototype.slice.call(
+                namedEl.querySelectorAll('[aria-controls],[aria-owns]')));
+            for (const c of carriers) {
+              const id = c.getAttribute('aria-controls') || c.getAttribute('aria-owns');
+              const el = id && document.getElementById(id);
+              if (!el || el === namedEl || el.contains(namedEl)) continue;
+              const sel = S.robustSelector(el);
+              if (sel && S.isU1Valid(sel)) { stated = sel; break; }
+            }
+          } catch (e) {}
+        }
 
         // A toggle has no panel to open; its two states are read off one
         // press, and probeToggle presses back so the box ends as it started.
@@ -8294,6 +8317,7 @@ async function autoOpenCapture(tab, triggerSel, type) {
         const held = r.held || null;
         return {
           stated,
+          pressed: S.robustSelector(trigger) || trigSel,
           root: (held && held.root) || stated || null,
           shape: (held && held.shape) || null,
           markup: (held && held.markup) || null,
@@ -11872,7 +11896,7 @@ async function buildPickedComponents() {
             // the same card comes back run after run with no way to know why.
             openWhy = cap.err;
           } else if (cap && !cap.opened) {
-            openWhy = 'pressed it, but nothing new appeared on the page';
+            openWhy = `pressed ${cap.pressed || 'it'}, but nothing new appeared on the page`;
           }
         }
       } else if (acceptsTrigger(f.type) && f.trigger) {
