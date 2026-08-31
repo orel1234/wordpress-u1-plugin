@@ -7596,9 +7596,10 @@ document.getElementById('deleteAllBtn')?.addEventListener('click', async () => {
   document.getElementById('deleteAllBody').innerHTML =
     `<strong>${list.length} mapping${list.length === 1 ? '' : 's'} on ${escapeHtml(currentHostname)}</strong> — ` +
     escapeHtml(Object.entries(byType).map(([t, n]) => `${n} ${t}`).join(', ')) + '.<br><br>' +
-    'They go from this computer and from the server, so your colleagues lose them too. ' +
-    'The page keeps whatever U1 already applied until it is reloaded.<br><br>' +
-    'Export from the Export tab first if you might want them back.';
+    'Everything goes: the mappings, the set-aside offers and the dismissed list — from this ' +
+    'computer and from the server, so your colleagues lose them too. The page reloads afterwards, ' +
+    'so what U1 already wrote into it goes with them and the next scan sees the site as it really is.<br><br>' +
+    'Export from the Export tab first if you might want any of it back.';
 
   const go = await new Promise((resolve) => {
     const done = (v) => {
@@ -7627,8 +7628,27 @@ document.getElementById('deleteAllBtn')?.addEventListener('click', async () => {
     const goneKeys = list.filter((m) => m && typeof m === 'object').map(mappingKey);
     await rememberSelfApplied(goneKeys);
     await forgetDeclinedFixes(goneKeys);
-    showNotice(status, `${list.length} mapping${list.length === 1 ? '' : 's'} deleted. ` +
-      `Reload the page to see it without them.`, 'success', 8000);
+    // "Total" means total: the set-aside offers and the dismissed selectors
+    // are decisions about work that no longer exists, and keeping them is how
+    // a clean slate stayed haunted — a scan on an emptied site still refused
+    // to look at things nobody remembered refusing. Through set(), so the
+    // server hears it too.
+    await U1Store.set({
+      [storageKey('declined', currentHostname)]: [],
+      [storageKey('dismissed', currentHostname)]: [],
+    });
+    // And the page itself: U1 keeps whatever it already wrote until a
+    // reload, and those leftovers are exactly what later scans misread —
+    // ARIA nobody's markup contains, fixes "the site runs". A wipe that
+    // leaves them standing is half a wipe.
+    try {
+      const tab = await getTab();
+      if (isInjectable(tab) && getHostname(tab) === currentHostname) {
+        await chrome.tabs.reload(tab.id);
+      }
+    } catch {}
+    showNotice(status, `${list.length} mapping${list.length === 1 ? '' : 's'} deleted, ` +
+      `the set-aside and dismissed lists cleared, and the page reloaded clean.`, 'success', 8000);
   } catch (err) {
     // Local went; the server did not. Say which, because "deleted" and
     // "deleted here" are different states and the next pull tells them apart.
@@ -8231,9 +8251,17 @@ async function autoOpenCapture(tab, triggerSel, type) {
             let seen = 0;
             while (queue.length && seen++ < 200) {
               const node = queue.shift();
-              if (node === trigger || node.contains(trigger)) continue;
+              const kids = Array.prototype.slice.call(node.children);
+              // A node HOLDING the trigger is not the list — but the list may
+              // sit beside the trigger inside it, so its children still get
+              // their turn. Skipping the whole subtree missed exactly the
+              // <ul> next to the button one level down.
+              if (node === trigger || node.contains(trigger)) {
+                for (const k of kids) queue.push(k);
+                continue;
+              }
               let hits = 0;
-              for (const k of Array.prototype.slice.call(node.children)) {
+              for (const k of kids) {
                 if (k.matches && k.matches(OPT)) hits++;
               }
               if (hits >= 2) {
