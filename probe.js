@@ -1864,6 +1864,47 @@
     var start = fingerprint(wholeScope);
     try {
       var list = pressable(scope, opts);
+      // Decision A: pressing ONE member of a family of pressable siblings
+      // (family through the stage-4.7 climb — ul>li>button IS siblings)
+      // pulls the rest into this section's list, past the budget if need
+      // be, capped at +8. Without this the finder's strip got the last two
+      // slots at its only viewport window, the first was the selected
+      // no-op, and no run-level pass can merge presses that never happened.
+      var PRESS_VOCAB = 'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],summary,[tabindex]';
+      var inList = new Set(list);
+      var familyDone = new Set();
+      var familyOverflow = 0;
+      var familyOf = function (el) {
+        var anchor = stripAnchor(el);
+        var par = anchor.parentElement;
+        if (!par || par === doc.body || par === doc.documentElement) return null;
+        var members = [];
+        for (var ci = 0; ci < par.children.length; ci++) {
+          var sib = par.children[ci];
+          var m = null;
+          try {
+            m = sib.matches(PRESS_VOCAB) ? sib : sib.querySelector(PRESS_VOCAB);
+          } catch (e) { m = null; }
+          if (m) members.push(m);
+        }
+        return members.length >= 2 ? { parent: par, members: members } : null;
+      };
+      var finishFamily = function (justPressed) {
+        var fam = familyOf(justPressed);
+        if (!fam || familyDone.has(fam.parent)) return;
+        familyDone.add(fam.parent);
+        for (var fi = 0; fi < fam.members.length; fi++) {
+          var mem = fam.members[fi];
+          if (mem === justPressed || inList.has(mem)) continue;
+          // Out of the viewport is fine — the whole point is reaching the
+          // siblings the window has moved past. Hidden or unsafe is not.
+          if (everPressed.has(mem) || !shown(mem) || !safeToClick(mem).ok) continue;
+          var beyond = list.length >= (opts.max || 40);
+          if (beyond && familyOverflow >= 8) break;
+          if (beyond) familyOverflow++;
+          list.push(mem); inList.add(mem);
+        }
+      };
       for (var i = 0; i < list.length; i++) {
         // Each press is measured in its own neighbourhood, not across the whole
         // page — see localScope. The run-wide restore check below still uses
@@ -1879,6 +1920,7 @@
         everPressed.add(list[i]);
         pressed.push(list[i]);
         runPressed.push(list[i]);
+        finishFamily(list[i]);
         if (r.opened.length || r.moved.length || r.rerendered.length) {
           var entry = { trigger: list[i], opened: r.opened, closed: r.closed,
                         moved: r.moved, rerendered: r.rerendered,

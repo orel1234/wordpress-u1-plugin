@@ -279,6 +279,65 @@ console.log('\nblocked navigations are reported');
   check('disarm() hands the list back instead of undefined', Array.isArray(back));
 }
 
+// ── Decision A: pressing one sibling pulls in the family ────────────────────
+//
+// The finder's strip got the last two budget slots at its only viewport
+// window, and the first was the selected no-op. Now pressing ONE member of a
+// pressable-sibling family (through the li/single-child climb) pulls the rest
+// into the same section, past the budget, capped at +8.
+console.log('\none pressed sibling finishes the family');
+{
+  const w = page(`
+    <div id="w">
+      <ul id="strip">
+        <li><button id="s1">One</button></li>
+        <li><button id="s2">Two</button></li>
+        <li><button id="s3">Three</button></li>
+        <li><button id="s4">Four</button></li>
+        <li><button id="s5">Five</button></li>
+      </ul>
+      <div id="q1">panel one</div>
+      <div id="q2" hidden>panel two</div>
+      <div id="q3" hidden>panel three</div>
+      <div id="q4" hidden>panel four</div>
+      <div id="q5" hidden>panel five</div>
+    </div>`);
+  const d = w.document;
+  for (const n of [1, 2, 3, 4, 5]) {
+    d.getElementById('s' + n).addEventListener('click', () => {
+      for (const m of [1, 2, 3, 4, 5]) d.getElementById('q' + m).hidden = m !== n;
+    });
+  }
+  w.__u1Probe.resetRun();
+  // Budget of ONE: the old walk would press s1 (the selected no-op) and stop.
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 1 });
+  check('the whole family is pressed past the budget', out.pressed === 5, String(out.pressed));
+  // The section pass groups by literal parent — li-wrapped rows stay
+  // fragments there BY DESIGN; the li climb belongs to the run-level pass.
+  const strip = w.__u1Probe.classifyRun().find((c) => c.type === 'menu' && c.shape === 'strip');
+  check('…and the run pass turns the presses into ONE strip',
+    !!strip && strip.parts.items.length === 5 && strip.root === d.getElementById('strip'),
+    strip ? `items ${strip.parts.items.length}, root ${strip.root.id}` : '(no strip)');
+}
+{
+  // The cap: a family of 12 with a budget of 1 presses at most 1 + 8.
+  let html = '<div id="w"><ul id="big">';
+  for (let n = 1; n <= 12; n++) html += `<li><button id="b${n}">B${n}</button></li>`;
+  html += '</ul>';
+  for (let n = 1; n <= 12; n++) html += `<div id="r${n}"${n === 1 ? '' : ' hidden'}>p</div>`;
+  html += '</div>';
+  const w = page(html);
+  const d = w.document;
+  for (let n = 1; n <= 12; n++) {
+    d.getElementById('b' + n).addEventListener('click', () => {
+      for (let m = 1; m <= 12; m++) d.getElementById('r' + m).hidden = m !== n;
+    });
+  }
+  w.__u1Probe.resetRun();
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 1 });
+  check('the overflow is capped at +8', out.pressed === 9, String(out.pressed));
+}
+
 // ── Fragments become the strip: the run-level pass ──────────────────────────
 //
 // A strip pressed half in one section and half in the next classified as
