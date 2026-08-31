@@ -5677,6 +5677,7 @@ async function confirmedToMapping(pick, stop, tab) {
   // APPEARS, and the row holds the control that summons it. Same two sources of
   // the other half, best evidence first, as the bulk path uses.
   let container = '';
+  let openWhy = '';
   if (triggerRequired(pick.type) || triggerFirstType(pick.type)) {
     const seen = (stop.probed || []).find((p) =>
       p.parts && (p.parts.trigger === sel || p.root === sel) && p.parts.panel);
@@ -5686,13 +5687,23 @@ async function confirmedToMapping(pick, stop, tab) {
     // and read what appears, the same way the card route does.
     if (!container) {
       const cap = await autoOpenCapture(tab, sel, pick.type);
-      container = (cap && (cap.root || cap.stated)) || '';
+      if (cap && cap.shape && cap.shape.listbox) {
+        container = cap.shape.listbox;
+      } else {
+        container = (cap && (cap.root || cap.stated)) || '';
+      }
+      if (!container && cap) {
+        openWhy = cap.err ||
+          (!cap.opened ? 'pressed it, but nothing new appeared on the page' : '');
+      }
     }
   }
   const built = rowFromParts({
     type: pick.type, found: sel, container, label: sel, compIndex: undefined,
   });
-  if (built.err) return { err: built.err };
+  if (built.err) {
+    return { err: built.err + (openWhy ? ` (Tried to open it myself: ${openWhy}.)` : '') };
+  }
   built.row.needsWork = true;
   const prepared = await prepareOne(built.row, tab);
   if (prepared.err) return { err: prepared.err };
@@ -8136,6 +8147,22 @@ async function autoOpenCapture(tab, triggerSel, type) {
           const inner = trigger.querySelector(
             'button,[role="button"],a[href],[aria-haspopup],summary,[tabindex]');
           if (inner) trigger = inner;
+          else {
+            // A bare <div class="clicker"> with a JS handler gives none of the
+            // hints that list can read. The cursor is the one honest signal
+            // left — and pressing the right element matters twice over: the
+            // wrapper's own text face bundles the options in ("Sign In…
+            // Register"), and 'register' reads as an action the safety layer
+            // rightly refuses to press. The button's own face is just
+            // "Sign In", which it allows. First pointer-cursor descendant in
+            // document order wins: the button precedes the closed list.
+            const kids = trigger.querySelectorAll('*');
+            for (let i = 0; i < kids.length && i < 60; i++) {
+              try {
+                if (getComputedStyle(kids[i]).cursor === 'pointer') { trigger = kids[i]; break; }
+              } catch (e) { /* keep looking */ }
+            }
+          }
         }
 
         // What the markup already states (aria-controls, a data-* id, a role
@@ -11679,6 +11706,7 @@ async function buildPickedComponents() {
       // that, it is read off the page the same way every other selector is.
       let container = '';
       let found = f.sel;
+      let openWhy = '';
       if (triggerRequired(f.type) || triggerFirstType(f.type)) {
         const seen = (stop.probed || []).find(p =>
           p.parts && (p.parts.trigger === f.sel || p.root === f.sel) && p.parts.panel);
@@ -11711,6 +11739,13 @@ async function buildPickedComponents() {
             if (cap.shape.trigger) found = cap.shape.trigger;
           } else if (cap && (cap.root || cap.stated)) {
             container = cap.root || cap.stated;
+          } else if (cap && cap.err) {
+            // The refusal below says only "open it on the page" — which reads
+            // as nothing was even attempted. It was; say what stopped it, or
+            // the same card comes back run after run with no way to know why.
+            openWhy = cap.err;
+          } else if (cap && !cap.opened) {
+            openWhy = 'pressed it, but nothing new appeared on the page';
           }
         }
       } else if (acceptsTrigger(f.type) && f.trigger) {
@@ -11726,8 +11761,12 @@ async function buildPickedComponents() {
         type: f.type, found, container, label: f.label, compIndex: undefined,
       });
       if (built.err) {
-        aiBulk.failed.push({ label: f.label, err: built.err });
-        f.failed = built.err;
+        // "Open it on the page" alone reads as nothing was even attempted.
+        // It was — say what stopped it, or the same card comes back run
+        // after run with no way to know why.
+        const why = built.err + (openWhy ? ` (Tried to open it myself: ${openWhy}.)` : '');
+        aiBulk.failed.push({ label: f.label, err: why });
+        f.failed = why;
         continue;
       }
       f.failed = null;

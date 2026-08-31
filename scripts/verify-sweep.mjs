@@ -2358,6 +2358,14 @@ console.log('\na running scan owns the panel');
   check('the opener presses the button inside a wrapper, not the wrapper',
     /if \(!trigger\.matches\('button,a\[href\],\[role="button"\],\[aria-haspopup\],\[tabindex\],input,summary'\)\) \{/.test(panelSrc) &&
     /const pressedSel = S\.robustSelector\(trigger\) \|\| trigSel;/.test(panelSrc));
+  // A bare <div class="clicker"> gives none of those hints; the pointer
+  // cursor is the one honest signal left.
+  check('…and falls back to the pointer cursor for a bare-div trigger',
+    /getComputedStyle\(kids\[i\]\)\.cursor === 'pointer'/.test(panelSrc));
+  // "Open it on the page" alone reads as nothing was attempted. It was —
+  // the card must say what stopped the machine's own attempt.
+  check('a failed self-open says WHY, in every build path',
+    (panelSrc.match(/Tried to open it myself: /g) || []).length >= 2);
   // ── Pressing things can still navigate the page ──────────────────────────
   // The probe cancels link clicks, submits, beforeunload and window.open, but
   // `location.href = '/search'` runs as the page's OWN handler rather than as
