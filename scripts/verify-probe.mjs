@@ -426,13 +426,16 @@ console.log('\nthe run-level pass merges what the sections split');
   w.__u1Probe.resetRun();
   const first = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 2 });
   const second = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 4 });
-  check('each half-budget section sees only fragments',
-    !first.components.some((c) => c.type === 'menu' && c.parts.items.length === 4) &&
-    !second.components.some((c) => c.type === 'menu' && c.parts.items.length === 4),
-    [first.components.map((c) => c.type).join(), second.components.map((c) => c.type).join()].join(' / '));
+  // Decision A + the 4.7 climb closed this from both ends: the FIRST call,
+  // budget of two, now presses the whole family and sees the whole strip —
+  // the second call has nothing left to press.
+  check('family completion + the climb give the first section the whole strip',
+    first.components.some((c) => c.type === 'menu' && c.parts.items.length === 4) &&
+    second.pressed === 0,
+    [first.components.map((c) => c.type + ':' + (c.parts.items || []).length).join(), 'second pressed ' + second.pressed].join(' / '));
   const run = w.__u1Probe.classifyRun();
   const strip = run.find((c) => c.type === 'menu' && c.shape === 'strip');
-  check('the run pass sees ONE strip across both sections',
+  check('the run pass agrees: ONE strip',
     !!strip && strip.parts.items.length === 4,
     JSON.stringify(run.map((c) => ({ t: c.type, n: c.parts.items ? c.parts.items.length : 0 }))));
   check('…rooted on the <ul>, climbed through the <li> rows',
@@ -610,6 +613,27 @@ console.log('\na panel with links in it is judged on what ELSE is in it');
   out = await links.__u1Probe.probeAll(links.document.getElementById('w'), { settle: 0 });
   check('…while links and nothing else is still a menu',
     out.components.length === 1 && out.components[0].type === 'menu',
+    out.components.map(c => c.type).join());
+
+  // 4.8: the RATIO. The mega-panel case verbatim — 22 links and a
+  // 120-character category blurb is a menu; the old flat 40-character
+  // threshold called it an accordion.
+  let mega = '';
+  for (let i = 0; i < 22; i++) mega += `<a href="/c${i}">Category ${i}</a>`;
+  mega += `<p>${'x'.repeat(120)}</p>`;
+  const megaW = mk(mega);
+  out = await megaW.__u1Probe.probeAll(megaW.document.getElementById('w'), { settle: 0 });
+  check('22 links with a 120-char blurb is a MENU — ratio, not a flat threshold',
+    out.components.length === 1 && out.components[0].type === 'menu',
+    out.components.map(c => c.type).join());
+
+  // 4.6: href="#" and javascript: do not count as links. Two of them beside
+  // prose leave the panel an accordion, not a menu.
+  const fake = mk(`Sizes run large; going half a size down is usually right for this brand.
+    <a href="#">EU 40</a> <a href="javascript:void(0)">EU 41</a>`);
+  out = await fake.__u1Probe.probeAll(fake.document.getElementById('w'), { settle: 0 });
+  check('href="#" rows are not navigation — the panel stays an accordion',
+    out.components.length === 1 && out.components[0].type === 'accordion',
     out.components.map(c => c.type).join());
 }
 

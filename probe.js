@@ -320,7 +320,12 @@
       if (!was || !now || was === now) return;
       var a = was.split('|'), b = now.split('|');
       var dx = Math.abs(Number(b[0]) - Number(a[0])), dy = Math.abs(Number(b[1]) - Number(a[1]));
-      if (dx > 8 && dx > dy) out.push(el);
+      // PURE sideways, not merely sideways-dominant. A flex-wrap container
+      // that reflows sends items to another row — huge dx AND a row of dy —
+      // and "dx > dy" let that register as a slide, which grew a phantom
+      // body-rooted carousel that swallowed every hidden component's match.
+      // A real slide translates on one axis: dy stays ~0.
+      if (dx > 8 && dy <= 8) out.push(el);
     });
     return out;
   }
@@ -541,12 +546,32 @@
     // closed panel and answered no every time. Fixed-position with the
     // dimensions of a box someone is asked something in — a 3px progress
     // rule is also fixed, and is not asking anybody anything.
-    var isFloating = false;
+    var isFloating = false, headerDropdown = false;
     if (panel && !isLayer) {
       try {
-        if (root.getComputedStyle(panel).position === 'fixed') {
-          var fr = panel.getBoundingClientRect();
-          isFloating = fr.height >= 40 && fr.width >= 80;
+        var pcs = root.getComputedStyle(panel);
+        var fr = panel.getBoundingClientRect();
+        var boxy = fr.height >= 40 && fr.width >= 80;
+        if (pcs.position === 'fixed') {
+          isFloating = boxy;
+        } else if (pcs.position === 'absolute' && boxy) {
+          // 4.9: absolute floats too, when it is anchored high (offsetParent
+          // is the body, a header or a nav) and it opens right at its
+          // trigger — a dropdown's geometry, not an accordion's flow.
+          var op = panel.offsetParent;
+          var opHigh = !op || op === doc.body ||
+            !!(op.closest && op.closest('header,nav,[role="banner"],[role="navigation"]'));
+          var tr = el.getBoundingClientRect();
+          var near = Math.abs(fr.top - tr.bottom) <= Math.max(tr.height, 8) ||
+                     Math.abs(tr.top - fr.bottom) <= Math.max(tr.height, 8);
+          isFloating = opHigh && near;
+        }
+        // A panel spanning its header/nav ancestor's width is that bar's
+        // DROPDOWN — menu territory, never "it revealed and hid a region".
+        var bar = panel.closest && panel.closest('header,nav,[role="banner"],[role="navigation"]');
+        if (bar && (pcs.position === 'absolute' || pcs.position === 'fixed')) {
+          var brRect = bar.getBoundingClientRect();
+          headerDropdown = brRect.width > 0 && fr.width >= brRect.width * 0.9;
         }
       } catch (e) {}
     }
@@ -686,6 +711,7 @@
       focusEntered: focusEntered,
       overlay: isLayer,
       floating: isFloating,
+      headerDropdown: headerDropdown,
       hidOthers: hidOthers,
       scrollLocked: scrollLocked,
       backdrop: backdrop,
@@ -952,16 +978,27 @@
    */
   var mostlyLinks = function (el) {
     try {
-      var links = el.querySelectorAll('a[href]');
+      // 4.6: only links that GO somewhere count. href="#" and javascript:
+      // are buttons wearing <a>, and counting them called value-pickers menus.
+      var links = [];
+      var all0 = el.querySelectorAll('a[href]');
+      for (var j = 0; j < all0.length; j++) {
+        var href = all0[j].getAttribute('href') || '';
+        if (href && !/^#/.test(href) && !/^javascript:/i.test(href)) links.push(all0[j]);
+      }
       if (links.length < 2) return false;
       var all = (el.textContent || '').replace(/\s+/g, ' ').trim();
       var inLinks = 0;
       for (var i = 0; i < links.length; i++) {
         inLinks += (links[i].textContent || '').replace(/\s+/g, ' ').trim().length;
       }
-      // Forty characters is about a sentence. Below that, whatever is around
-      // the links is a heading or a "see all", not content.
-      return (all.length - inLinks) < 40;
+      // 4.8: a RATIO, not the old flat forty characters. A mega-panel of 22
+      // links with a 120-character category blurb is a menu — the absolute
+      // threshold called it an accordion. Around each link, up to ~15
+      // characters of furniture is normal (a heading, a "see all"); and as a
+      // second door, free text under 40% of everything is still mostly links.
+      var free = all.length - inLinks;
+      return free <= links.length * 15 || (all.length > 0 && free / all.length <= 0.4);
     } catch (e) { return true; }
   };
 
@@ -1115,9 +1152,10 @@
     pressed = pressed || [];
     var comps = [];
     var used = new Set();
-    var anchorOf = opts.climb
-      ? function (el) { return stripAnchor(el).parentElement; }
-      : function (el) { return el.parentElement; };
+    // 4.7: the climb IS the grouping, per-section too. ul>li>button is the
+    // commonest strip markup on the web, and literal-parent grouping put
+    // every trigger in its own <li> — seven singleton groups, no strip.
+    var anchorOf = function (el) { return stripAnchor(el).parentElement; };
 
     // Siblings that each reveal a DIFFERENT panel are a tab strip. One panel
     // shared between them is the same thing — a strip over one re-rendered
@@ -1212,11 +1250,9 @@
       comps.push({
         type: 'menu',
         shape: 'strip',
-        // Under the run-level climb the group key IS the strip — the <ul>
-        // whose children are the <li> rows. The literal parent would be one
-        // trigger's own <li>.
-        root: (opts.climb ? groupKey : siblings[0].parentElement) ||
-              commonAncestor(tabs.concat(panels)),
+        // The group key IS the strip — the <ul> whose children are the <li>
+        // rows. The literal parent would be one trigger's own <li>.
+        root: groupKey || commonAncestor(tabs.concat(panels)),
         parts: { items: tabs, submenus: panels },
         why: tabs.length + ' sibling controls, each revealing ' +
              (panels.length === 1 ? 'the same region' : 'a different panel'),
@@ -1321,13 +1357,16 @@
       var type = r.overlay ? 'dialog'
         : saysDialog ? 'dialog'
         : mostlyLinks(panel) ? 'menu'
+        : r.headerDropdown ? 'menu'
         : r.floating ? 'dialog'
         : 'accordion';
       var why = type === 'dialog'
         ? (r.overlay ? 'it opened a layer over the page'
            : saysDialog ? 'it opened a panel the page itself calls a dialog'
-           : 'it opened a panel that floats fixed over the page')
-        : type === 'menu' ? 'it revealed a panel of links and nothing else'
+           : 'it opened a panel that floats over the page')
+        : type === 'menu'
+        ? (r.headerDropdown ? 'it dropped a panel across its own header bar'
+           : 'it revealed a panel of links and nothing else')
         : 'it revealed and hid a region';
       // How the page SAYS open, when it says it with a class. Worth reporting
       // even for a dialog: it is the same answer to the same question, and a
@@ -2057,6 +2096,7 @@
                         stateClass: r.stateClass,
                         focusEntered: r.focusEntered, overlay: r.overlay,
                         floating: r.floating, navigated: r.navigated,
+                        headerDropdown: r.headerDropdown,
                         hidOthers: r.hidOthers, scrollLocked: r.scrollLocked,
                         backdrop: r.backdrop, activeInside: r.activeInside };
           results.push(entry);
