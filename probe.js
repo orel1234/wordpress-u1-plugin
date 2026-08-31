@@ -649,6 +649,21 @@
         restored = same(before, fingerprint(els));
       }
     } catch (e) { restored = false; }
+    // What an incomplete restore LEFT BEHIND — recorded, not fixed (that is
+    // stage 4's). "Press residue shifts layout" stops being a guess when
+    // every restored:false names its leftovers.
+    var residue = null;
+    if (!restored) {
+      try {
+        var leftover = diff(before, fingerprint(els));
+        residue = {
+          appeared: leftover.appeared.length,
+          vanished: leftover.vanished.length,
+          changed: leftover.changed.slice(0, 3),
+          classes: classDelta(classBefore, classesOf(els), el) || null,
+        };
+      } catch (e) { residue = null; }
+    }
 
     // The state class, which is the answer to "how does this page SAY open".
     // Read off the trigger and off whatever it opened, because sites put it on
@@ -677,6 +692,7 @@
       activeInside: activeInside,
       stateClass: stateClass,
       restored: restored,
+      residue: residue,
       held: held,
     };
   }
@@ -712,8 +728,18 @@
   // and classifyRun() reads the WHOLE ledger once, with the sibling climb,
   // when the walk is done. Its answer REPLACES the fragments.
   var runResults = [], runPressed = [], runExtras = [];
+  // F-lite: one snapshot instead of live rects. Whether a strip's tabs were
+  // in the viewport at the instant pressable() read their rects turned out
+  // to be a coin flip — the hero advances on its own clock and press residue
+  // shifts layout — so the same walk pressed them in one run and never saw
+  // them in the next. planRun() measures every press candidate ONCE, at
+  // document-Y (rect.top + scrollY), and each candidate belongs to the
+  // section that Y falls in, whatever its live rect says later. The walk,
+  // the sections and the budget do not change — only "who belongs where" is
+  // decided once.
+  var runPlan = null;   // [{ el, docY, rank, seeded }]
   function resetRun() {
-    runResults = []; runPressed = []; runExtras = [];
+    runResults = []; runPressed = []; runExtras = []; runPlan = null;
     everPressed = new WeakSet();
   }
   function classifyRun() {
@@ -730,6 +756,81 @@
       if (!dup) comps.push(c);
     });
     return comps;
+  }
+
+  var PRESS_POOL = 'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],[aria-controls],summary,[tabindex]';
+
+  // A skip-link TARGET is not a control. tabindex="-1" exists to receive
+  // programmatic focus — #main-content, a heading a router focuses — and it
+  // was eating press-budget slots at every section it rode into. A real
+  // control keeps its seat whatever its tabindex says.
+  function skipTabstop(el) {
+    try {
+      return el.getAttribute('tabindex') === '-1' &&
+             !el.matches('button,a[href],[role="button"]');
+    } catch (e) { return false; }
+  }
+
+  function declaresOpen(el) {
+    try {
+      if (el.hasAttribute('aria-expanded') || el.hasAttribute('aria-haspopup')) return true;
+      var id = el.getAttribute('aria-controls');
+      if (id) {
+        var t = doc.getElementById(id);
+        if (t && !shown(t)) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  /**
+   * F-lite's snapshot: every press candidate on the page, measured ONCE at
+   * document-Y, ranked like pressable(). `opts.seeds` (decision D) force-adds
+   * the members of strips the HINT layer already identified — rank 1,
+   * because a strip the markup announces deserves its presses more than a
+   * plain button does. Returns how many candidates were planned.
+   */
+  var runPlanKnown = new WeakSet();
+  function planRun(scope, opts) {
+    opts = opts || {};
+    scope = scope || doc.body;
+    var plan = [];
+    var known = new WeakSet();
+    var sy = root.scrollY || root.pageYOffset || 0;
+    var push = function (el, rank, seeded) {
+      if (!el || el.nodeType !== 1 || known.has(el)) return;
+      if (!shown(el) || skipTabstop(el)) return;
+      if (!safeToClick(el).ok) return;
+      var y;
+      try { y = el.getBoundingClientRect().top + sy; } catch (e) { return; }
+      known.add(el);
+      plan.push({ el: el, docY: y, rank: rank, seeded: !!seeded });
+    };
+    (opts.seeds || []).forEach(function (el) { push(el, 1, true); });
+    var rec = root.__u1EventMap;
+    if (rec && typeof rec.all === 'function') {
+      try { rec.all().forEach(function (el) { push(el, 0); }); } catch (e) {}
+    }
+    try {
+      scope.querySelectorAll(PRESS_POOL).forEach(function (el) {
+        push(el, declaresOpen(el) ? 1 : 2);
+      });
+    } catch (e) {}
+    try {
+      var all = scope.querySelectorAll('div,span,li,td');
+      for (var i = 0; i < all.length && plan.length < 400; i++) {
+        var el = all[i];
+        if (known.has(el)) continue;
+        var p = el.parentElement;
+        if (root.getComputedStyle(el).cursor !== 'pointer') continue;
+        if (p && root.getComputedStyle(p).cursor === 'pointer') continue;
+        push(el, 3);
+      }
+    } catch (e) {}
+    plan.sort(function (a, b) { return a.rank - b.rank || a.docY - b.docY; });
+    runPlan = plan;
+    runPlanKnown = known;
+    return plan.length;
   }
 
   function pressable(scope, opts) {
@@ -765,19 +866,9 @@
       if (!el || seen.has(el) || !scope.contains(el)) return;
       if (!opts.repeat && everPressed.has(el)) return;
       if (!shown(el) || !onScreen(el)) return;
+      if (skipTabstop(el)) return;
       if (!safeToClick(el).ok) return;
       seen.add(el); buckets[rank].push(el);
-    };
-    var declares = function (el) {
-      try {
-        if (el.hasAttribute('aria-expanded') || el.hasAttribute('aria-haspopup')) return true;
-        var id = el.getAttribute('aria-controls');
-        if (id) {
-          var t = doc.getElementById(id);
-          if (t && !shown(t)) return true;
-        }
-      } catch (e) {}
-      return false;
     };
 
     var rec = root.__u1EventMap;
@@ -786,9 +877,8 @@
     }
     // The ones that announce themselves, split by how much they announce.
     try {
-      scope.querySelectorAll(
-        'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],[aria-controls],summary,[tabindex]'
-      ).forEach(function (el) { add(el, declares(el) ? 1 : 2); });
+      scope.querySelectorAll(PRESS_POOL)
+        .forEach(function (el) { add(el, declaresOpen(el) ? 1 : 2); });
     } catch (e) {}
 
     // And, when neither of those found anything, the one signal a page cannot
@@ -1863,7 +1953,33 @@
     var wholeScope = watched(scope, opts.limit);
     var start = fingerprint(wholeScope);
     try {
-      var list = pressable(scope, opts);
+      var list, planMissing = 0, usedPlan = false;
+      if (opts.sectionY && runPlan) {
+        // F-lite: this section's candidates are the ones whose SNAPSHOT Y
+        // fell in its band, whatever their live rects say now. Gates that
+        // are about the moment of pressing — still here, still safe — are
+        // re-checked; membership is not re-litigated.
+        usedPlan = true;
+        list = [];
+        for (var pi = 0; pi < runPlan.length; pi++) {
+          var pe = runPlan[pi];
+          if (pe.docY < opts.sectionY.from || pe.docY >= opts.sectionY.to) continue;
+          if (!pe.el.isConnected) { planMissing++; continue; }
+          if (!opts.repeat && everPressed.has(pe.el)) continue;
+          if (!shown(pe.el) || !safeToClick(pe.el).ok) continue;
+          if (list.length >= (opts.max || 40)) break;
+          list.push(pe.el);
+        }
+        // Arrivals since the snapshot — a panel a press just built — are
+        // measured and assigned at run time, as before.
+        var fresh = pressable(scope, opts);
+        for (var fi2 = 0; fi2 < fresh.length && list.length < (opts.max || 40); fi2++) {
+          if (runPlanKnown.has(fresh[fi2]) || list.indexOf(fresh[fi2]) !== -1) continue;
+          list.push(fresh[fi2]);
+        }
+      } else {
+        list = pressable(scope, opts);
+      }
       // Decision A: pressing ONE member of a family of pressable siblings
       // (family through the stage-4.7 climb — ul>li>button IS siblings)
       // pulls the rest into this section's list, past the budget if need
@@ -1910,6 +2026,20 @@
         // page — see localScope. The run-wide restore check below still uses
         // the full scope, because that is a guarantee about the page.
         var near = localScope(list[i], scope, opts.near);
+        // A planned candidate whose live rect has left the viewport is still
+        // this section's to press — that is the whole point of the snapshot.
+        // Centre it first so the press happens against a settled layout.
+        if (usedPlan) {
+          try {
+            var lr = list[i].getBoundingClientRect();
+            var vhP = root.innerHeight || 768;
+            if (lr.bottom <= 0 || lr.top >= vhP) {
+              list[i].scrollIntoView({ block: 'center' });
+              await raf();
+              if (opts.settle) await wait(opts.settle);
+            }
+          } catch (e) {}
+        }
         // Which press tried to LEAVE. The net counts what it stops; growth
         // across one press pins the attempt on that press, and a press that
         // navigated is not a press that revealed something.
@@ -2030,7 +2160,8 @@
     }
     var restored = same(start, fingerprint(wholeScope));
     return { components: comps, pressed: pressed.length, skipped: skipped,
-             restored: restored, blocked: net.blocked.slice() };
+             restored: restored, blocked: net.blocked.slice(),
+             planMissing: planMissing };
   }
 
   root.__u1Probe = {
@@ -2044,6 +2175,14 @@
     classify: classify,
     classifyRun: classifyRun,
     resetRun: resetRun,
+    planRun: planRun,
+    planSnapshot: function () {
+      return (runPlan || []).map(function (p) {
+        return { docY: Math.round(p.docY), rank: p.rank, seeded: p.seeded,
+                 id: p.el.id || '',
+                 cls: String(p.el.className || '').split(' ')[0] || p.el.tagName };
+      });
+    },
     probeForm: probeForm,
     probeTyping: probeTyping,
     probeCalendar: probeCalendar,

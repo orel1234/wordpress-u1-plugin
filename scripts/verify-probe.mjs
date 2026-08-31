@@ -279,6 +279,63 @@ console.log('\nblocked navigations are reported');
   check('disarm() hands the list back instead of undefined', Array.isArray(back));
 }
 
+// ── F-lite: the snapshot decides membership, not the live rects ─────────────
+console.log('\nthe plan decides who belongs where');
+{
+  const w = page(`
+    <div id="w">
+      <button id="nearBtn">Near</button>
+      <button id="farBtn">Far</button>
+      <div id="farPanel" hidden>far panel</div>
+      <div id="skipTarget" tabindex="-1">skip-link target</div>
+      <button id="negBtn" tabindex="-1">Still a button</button>
+    </div>`);
+  const d = w.document;
+  // Distinct document-Y per element, so the bands mean something.
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('hidden')) return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    const tops = { nearBtn: 100, farBtn: 5000, skipTarget: 5010, negBtn: 5020 };
+    const t = tops[this.id] != null ? tops[this.id] : 10;
+    return { top: t, bottom: t + 40, left: 10, right: 210, width: 200, height: 40 };
+  };
+  d.getElementById('farBtn').addEventListener('click', () => {
+    const p = d.getElementById('farPanel'); p.hidden = !p.hidden;
+  });
+  w.__u1Probe.resetRun();
+  const planned = w.__u1Probe.planRun(d.getElementById('w'));
+  const snap = w.__u1Probe.planSnapshot();
+  check('the snapshot holds every candidate at its document-Y',
+    planned === 3 && snap.some((p) => p.id === 'farBtn' && p.docY === 5000),
+    JSON.stringify(snap));
+  check('a tabindex="-1" non-control is not a candidate; a button with it still is',
+    !snap.some((p) => p.id === 'skipTarget') && snap.some((p) => p.id === 'negBtn'));
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'),
+    { settle: 0, idle: 0, inViewport: true, sectionY: { from: 4000, to: 6000 } });
+  check('a far section presses ITS planned members, live viewport notwithstanding',
+    out.pressed >= 1 && out.components.some((c) => c.type && c.parts.trigger &&
+      c.parts.trigger[0] === d.getElementById('farBtn')),
+    JSON.stringify({ pressed: out.pressed, comps: out.components.map((c) => c.type) }));
+}
+
+// ── An incomplete restore names its leftovers ───────────────────────────────
+console.log('\nrestore residue is recorded, not shrugged at');
+{
+  const w = page(`<div id="w"><button id="b">Open</button><div id="pnl" hidden>x</div></div>`);
+  const d = w.document;
+  let opens = 0;
+  d.getElementById('b').addEventListener('click', () => {
+    opens++;
+    d.getElementById('pnl').hidden = false;          // never closes again
+    d.getElementById('pnl').className = 'left-open';
+  });
+  const res = await w.__u1Probe.probeOne(d.getElementById('b'),
+    { scope: d.getElementById('w'), settle: 0 });
+  check('a press that cannot be undone says so', res.restored === false);
+  check('…and the residue names what stayed',
+    !!res.residue && res.residue.appeared >= 1,
+    JSON.stringify(res.residue && { appeared: res.residue.appeared, classes: !!res.residue.classes }));
+}
+
 // ── Decision A: pressing one sibling pulls in the family ────────────────────
 //
 // The finder's strip got the last two budget slots at its only viewport

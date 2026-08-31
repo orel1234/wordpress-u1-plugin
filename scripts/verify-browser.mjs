@@ -118,12 +118,43 @@ async function runVariant(browser, variant) {
 
     // ── Pass 1: the sweep's walk — hint collection + probe per section ─────
     try { P.resetRun && P.resetRun(); } catch (e) {}
+
+    // F-lite + D. One snapshot decides press membership; the hint layer's
+    // strips are seeded so a strip the markup announces never depends on
+    // where the viewport happened to be when rects were read. The seed scan
+    // mirrors the hint vocabulary for strips: role=tablist, or a tab/menu/nav
+    // -flavoured class, with ≥2 direct children that hold a pressable.
+    const seeds = [];
+    try {
+      const STRIP_ROOTS = document.querySelectorAll(
+        '[role="tablist"],[class*="tab" i],[class*="menu" i],[class*="nav" i]');
+      for (const rootEl of STRIP_ROOTS) {
+        if (seeds.length >= 60) break;
+        const kids = [...rootEl.children].map((k) => {
+          try {
+            return k.matches('button,[role="button"],[role="tab"],summary') ? k
+              : k.querySelector('button,[role="button"],[role="tab"],summary');
+          } catch (e) { return null; }
+        }).filter(Boolean);
+        if (kids.length >= 2) for (const k of kids) { if (seeds.length < 60) seeds.push(k); }
+      }
+    } catch (e) {}
+    window.scrollTo(0, 0);
+    await new Promise((r) => setTimeout(r, 150));
+    const planned = P.planRun ? P.planRun(document.body, { seeds }) : 0;
+
     const vh = window.innerHeight;
     const total = Math.max(document.documentElement.scrollHeight, vh);
+    const step = Math.round(vh * OVERLAP);
+    // The per-section press signature, for the stability gate: which planned
+    // candidates belong to each band, named tersely. Identical across runs
+    // is the whole promise of the snapshot.
+    const face = (el) => (el.id || String(el.className).split(' ')[0] || el.tagName).slice(0, 24);
+    const planSections = [];
     const hintByEl = new Map();     // el → {component, maybe, nested, selector}
     const observed = [];            // classify comps, elements kept live
     let pressedTotal = 0;
-    for (let y = 0; y < total; y += Math.round(vh * OVERLAP)) {
+    for (let y = 0; y < total; y += step) {
       window.scrollTo({ top: y, left: 0, behavior: 'instant' });
       await new Promise((r) => setTimeout(r, 120));
       try { S.clearMarks && S.clearMarks(); } catch (e) {}
@@ -137,13 +168,27 @@ async function runVariant(browser, variant) {
           hintByEl.set(el, { component: c.component, maybe: !!c.maybe, nested: !!c.nested, selector: c.selector || '' });
         }
       }
+      const band = { from: y, to: y + step >= total ? Infinity : y + step };
       let probed = null;
-      try { probed = await P.probeAll(document.body, PROBE_OPTS); } catch (e) { probed = null; }
+      try {
+        probed = await P.probeAll(document.body, { ...PROBE_OPTS, sectionY: band });
+      } catch (e) { probed = null; }
       if (probed) {
         pressedTotal += probed.pressed || 0;
         for (const comp of probed.components || []) observed.push(comp);
       }
+      planSections.push({ y });
     }
+    // The signature comes from the PLAN itself (stable by construction), not
+    // from what got pressed — everPressed thins later sections by design.
+    try {
+      const snap = P.planSnapshot ? P.planSnapshot() : [];
+      for (const sec of planSections) {
+        const to = sec.y + step >= total ? Infinity : sec.y + step;
+        sec.faces = snap.filter((p) => p.docY >= sec.y && p.docY < to)
+          .map((p) => (p.seeded ? '*' : '') + (p.id || p.cls));
+      }
+    } catch (e) {}
     window.scrollTo(0, 0);
     // ── The run-level pass (stage 3.5): one classify over the whole ledger,
     // with the sibling climb. Its answer REPLACES the per-section fragments —
@@ -282,6 +327,7 @@ async function runVariant(browser, variant) {
       union,
       openFound, openNamed, openTotal: openable.length,
       builtProbes, pressedTotal, observedList,
+      plannedCount: planned, planSections,
     };
   }, { labels, OVERLAP, PROBE_OPTS });
 
@@ -297,7 +343,67 @@ const line = (name, a, b) => console.log(`    ${name.padEnd(26)} ${bar(pct(a, b)
 const NAMES = { '': 'FRIENDLY', '-real': 'REALISTIC', '-hostile': 'HOSTILE' };
 let failed = false;
 
+const STABILITY = (() => {
+  const a = process.argv.find((x) => x.startsWith('--stability'));
+  return a ? Number(a.split('=')[1] || 5) : 0;
+})();
+
 const browser = await chromium.launch();
+
+// ── The stability gate: N full walks per build ──────────────────────────────
+// F-lite's promise is determinism: the per-section candidate plan must be
+// IDENTICAL run to run, the finder strip must classify every time, and the
+// classify numbers are reported as mean and range, not as one lucky draw.
+if (STABILITY) {
+  for (const variant of ONLY) {
+    const runs = [];
+    for (let n = 0; n < STABILITY; n++) runs.push(await runVariant(browser, variant));
+    console.log(`\n══ ${NAMES[variant]} — ${STABILITY} runs ══`);
+
+    if (variant === '') {
+      const sig = (r) => JSON.stringify(r.planSections.map((s) => s.faces));
+      const sigs = runs.map(sig);
+      const identical = sigs.every((s) => s === sigs[0]);
+      console.log(`  plan identical across runs: ${identical ? `YES (${runs[0].planSections.length} sections, ${runs[0].plannedCount} candidates)` : 'NO'}`);
+      if (!identical) {
+        failed = true;
+        for (let n = 1; n < runs.length; n++) {
+          if (sigs[n] === sigs[0]) continue;
+          runs[0].planSections.forEach((s, i) => {
+            const other = runs[n].planSections[i];
+            if (JSON.stringify(s.faces) !== JSON.stringify(other && other.faces)) {
+              console.log(`    run 1 vs run ${n + 1}, section y=${s.y}:`);
+              console.log(`      1: ${s.faces.join(' ')}`);
+              console.log(`      ${n + 1}: ${(other ? other.faces : []).join(' ')}`);
+            }
+          });
+          break;
+        }
+      }
+      const finder = runs.map((r) => {
+        const row = (r.classify.rows || []).find((x) => x.root === '.finder__tabs');
+        return row ? row.got : '(no row)';
+      });
+      const finderOk = finder.every((g) => g === 'menu' || g === 'tabs');
+      console.log(`  .finder__tabs classify verdicts: ${finder.join(' · ')}  ⇒ ${finderOk ? 'PASS' : 'FAIL'}`);
+      if (!finderOk) failed = true;
+    }
+
+    const stat = (pick) => {
+      const vals = runs.map(pick);
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      return `${mean.toFixed(1)} [${Math.min(...vals)}–${Math.max(...vals)}]`;
+    };
+    console.log(`  classify found:     ${stat((r) => r.classify.found)} /${runs[0].classify.denom}`);
+    console.log(`  classify typed:     ${stat((r) => r.classify.typed)} /${runs[0].classify.denom}`);
+    console.log(`  classify precision: ${stat((r) => r.classify.groups ? Math.round((r.classify.tp / r.classify.groups) * 1000) / 10 : 100)}%`);
+    console.log(`  closed named right: ${stat((r) => r.openNamed)} /${runs[0].openTotal}`);
+    console.log(`  presses:            ${stat((r) => r.pressedTotal)}`);
+  }
+  await browser.close();
+  server.close();
+  process.exit(failed ? 1 : 0);
+}
 for (const variant of ONLY) {
   const r = await runVariant(browser, variant);
   console.log(`\n══ ${NAMES[variant]} — real Chromium, the sweep's own walk ══`);
