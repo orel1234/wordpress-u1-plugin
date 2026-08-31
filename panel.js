@@ -5700,6 +5700,7 @@ async function confirmedToMapping(pick, stop, tab) {
   }
   const built = rowFromParts({
     type: pick.type, found: sel, container, label: sel, compIndex: undefined,
+    why: pick.why || (cand && cand.why) || '',
   });
   if (built.err) {
     return { err: built.err + (openWhy ? ` (Tried to open it myself: ${openWhy}.)` : '') };
@@ -7753,6 +7754,7 @@ function rowFromCompCard(comp) {
     container: (comp.querySelector('.ai-comp-cont')?.value || '').trim(),
     label: comp.querySelector('.ai-comp-label').textContent,
     compIndex: comp.dataset.i,
+    why: (comp.querySelector('.ai-comp-why')?.textContent || '').trim(),
   });
 }
 
@@ -7763,7 +7765,7 @@ function rowFromCompCard(comp) {
  * the model's answer to preparing each component — so the trigger swap and the
  * required-field check had to stop living inside the DOM reader.
  */
-function rowFromParts({ type, found, container, label, compIndex }) {
+function rowFromParts({ type, found, container, label, compIndex, why }) {
   // For a type whose trigger is REQUIRED the found element is the TRIGGER, and
   // the mapping is rooted on what it opens. Everything downstream expects
   // `sel` to be that root, so swap them here rather than teaching each step
@@ -7786,6 +7788,11 @@ function rowFromParts({ type, found, container, label, compIndex }) {
     trigger: swap ? found : (acceptsTrigger(type) && container ? container : undefined),
     label,
     compIndex,
+    // The scan's diagnosis rides along. Every finding names the defect and
+    // usually the remedy — "missing aria-expanded", "should be an h3" — and
+    // dropping it here was why the mapping step kept re-deriving (or
+    // faithfully copying) what the finding had already answered.
+    why: (why || '').trim() || undefined,
   };
   // Block only on what the schema actually requires. dialog declares a trigger
   // but does not require one, and this used to refuse it anyway.
@@ -8546,18 +8553,36 @@ async function prepareOne(row, tab) {
         { key: 'headingSelector', value: row.ambiguousLink.headingSelector,
           why: `The card's own heading — "${row.ambiguousLink.headingText}" — so "${row.ambiguousLink.text}" finally says what it is about.` });
     }
-    // The one measurable extra. u1.fix.heading needs a level, and the element
-    // says what it is.
+    // The one measurable extra — and the one place the diagnosis used to be
+    // thrown away at the moment it mattered. u1.fix.heading needs a level,
+    // and this read it off the element's own tag: for a heading mapped
+    // BECAUSE its level is wrong ("h6 where the outline calls for h3"), that
+    // faithfully copied the defect into the fix. The outline already knows
+    // what the sequence calls for; ask it, and fall back to the tag only for
+    // a heading whose level was never the problem.
     if (row.type === 'heading') {
       const lvl = await inPage(tab.id, (sel) => {
+        let el = null;
+        try { el = document.querySelector(sel); } catch (e) { return null; }
+        if (!el) return null;
+        const own = Number((el.tagName.match(/^H(\d)$/) || [])[1]) ||
+                    Number(el.getAttribute('aria-level')) || 0;
+        const S = window.__u1SelectorIntel;
         try {
-          const el = document.querySelector(sel);
-          if (!el) return 0;
-          return Number((el.tagName.match(/^H(\d)$/) || [])[1]) ||
-                 Number(el.getAttribute('aria-level')) || 0;
-        } catch (e) { return 0; }
+          for (const r of (S && S.headingOutline ? S.headingOutline() : [])) {
+            let m = null;
+            try { m = document.querySelector(r.selector); } catch (e) {}
+            if (m === el) return { own, should: r.should || null, problem: r.problem || null };
+          }
+        } catch (e) {}
+        return { own, should: null, problem: null };
       }, [row.sel]);
-      if (lvl) fields.push({ key: 'level', value: String(lvl), why: 'From the element\'s own tag.' });
+      if (lvl && lvl.should && lvl.should !== lvl.own) {
+        fields.push({ key: 'level', value: String(lvl.should),
+          why: `What the page's own outline calls for — the sequence ${lvl.problem === 'no level' ? 'gives this no level' : `skips to h${lvl.own}`}, and h${lvl.should} is the step it lands on. Copying the tag's h${lvl.own} would have written the defect into the fix.` });
+      } else if (lvl && lvl.own) {
+        fields.push({ key: 'level', value: String(lvl.own), why: 'From the element\'s own tag — the outline finds no fault with it.' });
+      }
     }
     const local = {
       primary: row.sel,
@@ -8578,9 +8603,18 @@ async function prepareOne(row, tab) {
     u1Type: row.type,
     containerSel: row.sel,
     markup,
-    instruction: row.trigger
-      ? `The specialist identified "${row.trigger}" as the element that opens this ${row.type}. Use it for the trigger field and do not look for another.`
-      : undefined,
+    // The finding is the brief. The discovery stage already named the defect
+    // — "missing aria-expanded on Members", "no role on the replacement div"
+    // — and the mapping model used to be handed the markup with none of it,
+    // so it mapped the component in general instead of mapping AT the fault.
+    instruction: [
+      row.trigger
+        ? `The specialist identified "${row.trigger}" as the element that opens this ${row.type}. Use it for the trigger field and do not look for another.`
+        : '',
+      row.why
+        ? `The scan's finding about this component: "${row.why}". Fill the fields so the mapping corrects exactly that.`
+        : '',
+    ].filter(Boolean).join('\n') || undefined,
     fields: schema.fields || [],
     fieldDocs: schema.desc || {},
     options: Object.keys(schema.rootFields || {}),
@@ -11614,7 +11648,7 @@ async function scanPickedScreens(numbers) {
             ((i) / stops.length) * 100);
           try {
             const made = await confirmedToMapping(
-              { mark: null, type: todo[b].type, sel: todo[b].sel }, stop, tab);
+              { mark: null, type: todo[b].type, sel: todo[b].sel, why: todo[b].why }, stop, tab);
             if (made.err) { todo[b].failed = made.err; sweepLog(stop.n, `${todo[b].type}: ${made.err}`, 'err'); }
             else {
               todo[b].done = true;
@@ -11910,6 +11944,7 @@ async function buildPickedComponents() {
       }
       const built = rowFromParts({
         type: f.type, found, container, label: f.label, compIndex: undefined,
+        why: f.why,
       });
       if (built.err) {
         // "Open it on the page" alone reads as nothing was even attempted.

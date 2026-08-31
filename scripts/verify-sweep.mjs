@@ -821,7 +821,7 @@ console.log('\nnot stopping means finishing');
 
   check('the silent mode builds what it finds, in the run',
     /if \(!sweepPause\.on && !sweepLabel\.on\) \{/.test(loop) &&
-    /await confirmedToMapping\(\s*\n?\s*\{ mark: null, type: todo\[b\]\.type, sel: todo\[b\]\.sel \}, stop, tab\)/.test(loop));
+    /await confirmedToMapping\(\s*\n?\s*\{ mark: null, type: todo\[b\]\.type, sel: todo\[b\]\.sel, why: todo\[b\]\.why \}, stop, tab\)/.test(loop));
   check('…one at a time, so each lands in the drawer as it finishes',
     /for \(let b = 0; b < todo\.length && !aiSweep\.abort; b\+\+\)/.test(loop));
   check('…and Stop still gets out of it',
@@ -2400,6 +2400,22 @@ console.log('\na running scan owns the panel');
   check('a glance at another tab does not drop the CSP bypass',
     /if \(!stillOpen\) await releaseCspBypassFor\(previousHostname\);/.test(panelSrc) &&
     /allTabs\.some\(/.test(panelSrc));
+  // The diagnosis is the guide. Every finding names the defect and usually
+  // the remedy — and the mapping step used to throw it away at the moment it
+  // mattered: a heading mapped BECAUSE it is h6-where-h3-belongs had its
+  // level read off the broken tag, and the mapping model got the markup with
+  // no word of what the discovery stage had already found wrong.
+  check('a heading\'s level comes from what the outline calls for, not the broken tag',
+    /S\.headingOutline\(\)/.test(panelSrc) &&
+    /would have written the defect into the fix/.test(panelSrc));
+  check('the scan\'s finding rides into the mapping model as the brief',
+    /why: \(why \|\| ''\)\.trim\(\) \|\| undefined/.test(panelSrc) &&
+    /The scan's finding about this component/.test(panelSrc));
+  check('…from the card, the sweep build, and the do-not-stop path alike',
+    /\.ai-comp-why'\)\?\.textContent/.test(panelSrc) &&
+    /why: f\.why,/.test(panelSrc) &&
+    /why: pick\.why \|\| \(cand && cand\.why\) \|\| ''/.test(panelSrc));
+
   check('turning the bypass on arms the persistent injection',
     /if \(SAFE\(cssLink\) && SAFE\(jsLink\)\) \{\s*\n\s*await U1Store\.set\(\{ \[`manualInject_\$\{host\}`\]: \{ cssLink, jsLink \} \}\);/.test(panelSrc));
   // ── Pressing things can still navigate the page ──────────────────────────
