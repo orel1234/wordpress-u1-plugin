@@ -2416,6 +2416,23 @@ console.log('\na running scan owns the panel');
     /why: f\.why,/.test(panelSrc) &&
     /why: pick\.why \|\| \(cand && cand\.why\) \|\| ''/.test(panelSrc));
 
+  // Deleting is the opposite of declining, and used to be recorded as the
+  // same thing: both delete paths called rememberDeclinedFixes, so every
+  // map-apply-delete experiment grew the shared "set aside" pile by one —
+  // seventeen deep on Molina before anybody understood where they came from.
+  check('a delete never forges a decline',
+    !/rememberDeclinedFixes\(\[mappingKey\(gone\)\]\)/.test(panelSrc) &&
+    !/rememberDeclinedFixes\(list\.filter/.test(panelSrc));
+  check('…the leftover is remembered as OURS instead, and any decline lifted',
+    /rememberSelfApplied\(\[mappingKey\(gone\)\]\)/.test(panelSrc) &&
+    /forgetDeclinedFixes\(goneKeys\)/.test(panelSrc));
+  check('an applied batch is never mistaken for the site\'s own deployment',
+    /rememberSelfApplied\(structured\.map\(mappingKey\)\)/.test(panelSrc) &&
+    /if \(selfApplied\.has\(k\)\) continue;/.test(panelSrc));
+  check('…and the self-applied note stays off the server and out of backups',
+    /'__selfApplied_' \+ currentHostname/.test(panelSrc) &&
+    /setLocalOnly\(\{ \[key\]: \[\.\.\.have\]\.slice\(-800\) \}\)/.test(panelSrc));
+
   check('turning the bypass on arms the persistent injection',
     /if \(SAFE\(cssLink\) && SAFE\(jsLink\)\) \{\s*\n\s*await U1Store\.set\(\{ \[`manualInject_\$\{host\}`\]: \{ cssLink, jsLink \} \}\);/.test(panelSrc));
   // ── Pressing things can still navigate the page ──────────────────────────

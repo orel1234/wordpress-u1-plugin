@@ -1367,6 +1367,11 @@ async function applyMappingsBatch(items, forTab) {
     return { ok: false, err: 'No applicable mappings (legacy string mappings cannot be auto-applied — re-add them).' };
   }
   await ensurePatchOnPage(tab.id);
+  // Everything this batch runs is OURS from this moment: the page will keep
+  // the recorded u1.fix calls until it reloads, and without this note a
+  // mapping applied and later deleted masquerades as "a fix the site runs".
+  // Best-effort and unawaited — a bookkeeping miss must not stall an apply.
+  try { rememberSelfApplied(structured.map(mappingKey)); } catch {}
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -7612,10 +7617,16 @@ document.getElementById('deleteAllBtn')?.addEventListener('click', async () => {
     // Through set(), not setLocalOnly: the server has to be told, or the next
     // pull brings every one of them straight back.
     await U1Store.set({ [key]: [] });
-    // Same as deleting one: any of these the site ALSO runs would be offered
-    // back for adoption the moment the list is drawn empty, which is the one
-    // moment the offer is loudest.
-    await rememberDeclinedFixes(list.filter((m) => m && typeof m === 'object').map(mappingKey));
+    // Deleted means deleted EVERYWHERE. These were OUR fixes: what the page
+    // still runs of them is this machine's leftover, remembered locally so
+    // it is never mistaken for the site's own deployment — and any standing
+    // decline of the same fixes is lifted, not deepened. The old behaviour
+    // here declined every deleted mapping, permanently and for the whole
+    // team, which is how a week of map-apply-delete experiments became "17
+    // fixes set aside" that nobody remembered refusing.
+    const goneKeys = list.filter((m) => m && typeof m === 'object').map(mappingKey);
+    await rememberSelfApplied(goneKeys);
+    await forgetDeclinedFixes(goneKeys);
     showNotice(status, `${list.length} mapping${list.length === 1 ? '' : 's'} deleted. ` +
       `Reload the page to see it without them.`, 'success', 8000);
   } catch (err) {
@@ -16613,6 +16624,57 @@ async function rememberDeclinedFixes(keys) {
   } catch { return 0; }
 }
 
+/**
+ * Fixes THIS machine has run against the live page, by mapping key. Local and
+ * private on purpose (the "__" prefix keeps it out of backups and off the
+ * server): its one job is to recognise this browser's own leftovers. A page
+ * keeps running whatever U1 wrote until it is reloaded, so a mapping applied
+ * here and then deleted here used to masquerade as "a fix the site runs" —
+ * and the delete path answered that by DECLINING it, permanently and for the
+ * whole team. Every experiment of map-apply-delete grew the set-aside pile by
+ * one. Now a leftover is recognised for what it is and simply not offered;
+ * nothing is declined on anyone's behalf, and a page reload clears the
+ * leftover itself.
+ */
+async function selfAppliedKeys() {
+  try {
+    const key = '__selfApplied_' + currentHostname;
+    const v = (await U1Store.get([key]))[key];
+    return new Set(Array.isArray(v) ? v.filter((k) => typeof k === 'string') : []);
+  } catch { return new Set(); }
+}
+
+async function rememberSelfApplied(keys) {
+  const add = (keys || []).filter(Boolean);
+  if (!add.length) return;
+  try {
+    const key = '__selfApplied_' + currentHostname;
+    const have = await selfAppliedKeys();
+    const before = have.size;
+    for (const k of add) have.add(k);
+    if (have.size === before) return;
+    await U1Store.setLocalOnly({ [key]: [...have].slice(-800) });
+  } catch {}
+}
+
+/**
+ * Deleting is the opposite of declining, and used to be recorded as the same
+ * thing. "Every time I delete I expect it deleted from EVERYWHERE" — so a
+ * delete also lifts any standing decline of the same fix, or the mapping
+ * comes back undeletable-in-spirit: gone from the list, alive on the page,
+ * and refused a fresh offer forever.
+ */
+async function forgetDeclinedFixes(keys) {
+  const drop = new Set((keys || []).filter(Boolean));
+  if (!drop.size) return;
+  try {
+    const key = storageKey('declined', currentHostname);
+    const have = await declinedFixKeys();
+    const next = [...have].filter((k) => !drop.has(k));
+    if (next.length !== have.size) await U1Store.set({ [key]: next });
+  } catch {}
+}
+
 async function renderExistingFixes() {
   const box = document.getElementById('importExisting');
   if (!box) return;
@@ -16625,6 +16687,7 @@ async function renderExistingFixes() {
   // because the count in the heading has to be the count of what is actually
   // being offered — "83 fixes" above a list of nine is worse than no heading.
   const declined = await declinedFixKeys();
+  const selfApplied = await selfAppliedKeys();
   const fresh = [];
   const seen = new Set();
   let refused = 0;
@@ -16634,6 +16697,10 @@ async function renderExistingFixes() {
     const k = mappingKey(tpl);
     if (have.has(k) || seen.has(k)) continue;   // already ours, or the page ran it twice
     seen.add(k);
+    // This machine's own leftover — a fix WE ran against the page, whose
+    // mapping may since have been deleted. Not the site's deployment, not an
+    // offer, not a refusal to count: a page reload makes it vanish.
+    if (selfApplied.has(k)) continue;
     if (declined.has(k)) { refused++; continue; }
     fresh.push(tpl);
   }
@@ -17003,19 +17070,18 @@ async function loadMappingsList() {
       list.splice(i, 1);
       await U1Store.set({ [key]: list });
 
-      // Deleting a mapping the SITE also runs is an answer to the adoption
-      // offer, not just a removal from the list.
-      //
-      // Without this, deleting the eighty-three you had just adopted put all
-      // eighty-three straight back into "this site is already running 83 U1
-      // fixes that are not in your list" — the offer is read from the live
-      // page, and the page still runs them. The list emptied and the offer
-      // refilled, on a loop, with no way out of it but adopting again.
-      //
-      // It goes to the server for the same reason every other decision does:
-      // deleted in the plugin means deleted there too, or a colleague is
-      // offered what you threw away.
-      if (gone && typeof gone === 'object') await rememberDeclinedFixes([mappingKey(gone)]);
+      // Deleted means deleted EVERYWHERE — including from the standing
+      // declines. The page still runs what U1 already wrote, and that
+      // leftover used to be answered by DECLINING the fix (permanently, for
+      // the whole team), so every map-apply-delete experiment grew the
+      // set-aside pile by one. Now the leftover is remembered locally as
+      // OURS — recognised and simply not offered — and the loop the old
+      // decline was written against ("deleted 83, offered 83 back") stays
+      // closed without anybody's refusal being forged.
+      if (gone && typeof gone === 'object') {
+        await rememberSelfApplied([mappingKey(gone)]);
+        await forgetDeclinedFixes([mappingKey(gone)]);
+      }
 
       loadMappingsList();
       refreshExportInfo();
