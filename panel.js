@@ -17492,7 +17492,17 @@ document.getElementById('importDataBtn').addEventListener('click', () => {
         await refreshExportInfo();
         const tab = await getTab();
         if (tab) await refreshSetupTab(tab);
-        const sites = Object.keys(data).filter(k => k.startsWith('mappings_')).length;
+        const siteNames = Object.keys(data)
+          .filter(k => k.startsWith('mappings_'))
+          .map(k => k.slice('mappings_'.length));
+        const sites = siteNames.length;
+        // The silent way an import "does not work": the backup's work is
+        // filed under a different hostname — member.molina.com against
+        // molina.com, or a pre-www-stripping key — and the panel, filtered
+        // to the site in front, honestly shows "No mappings yet" right
+        // beside a notice that just said the import succeeded. Name the
+        // hostnames, and say out loud when none of them is this one.
+        const hereToo = siteNames.includes(currentHostname);
         // Every site goes up, not only the one in front of you. U1Store.set's
         // sync hook is scoped to the current hostname — right for a save, wrong
         // for an import, where nine sites out of ten would have landed on this
@@ -17500,12 +17510,18 @@ document.getElementById('importDataBtn').addEventListener('click', () => {
         // half of what it did.
         const up = await pushImportedSites(data, status);
         showNotice(status,
-          `Imported ${sites} site${sites !== 1 ? 's' : ''}.` +
+          `Imported ${sites} site${sites !== 1 ? 's' : ''}` +
+          (sites ? ` (${siteNames.join(', ')})` : '') + '.' +
+          (sites && !hereToo
+            ? ` None of them is ${currentHostname}, the site in front of you — its list will still say "no mappings". ` +
+              `If this is the same client under another address, the Mappings drawer offers to move the work across.`
+            : '') +
           (up.sent ? ` ${up.sent} uploaded to the server.` : '') +
           (up.blocked.length ? ` Not uploaded — you are not assigned to ${up.blocked.join(', ')}; ` +
             `that work is on this machine only.` : '') +
           (dropped ? ` (${dropped} unsafe/unknown entr${dropped !== 1 ? 'ies' : 'y'} skipped.)` : ''),
-          up.blocked.length ? 'error' : 'success', up.blocked.length ? 15000 : 6000);
+          (up.blocked.length || (sites && !hereToo)) ? 'error' : 'success',
+          (up.blocked.length || (sites && !hereToo)) ? 15000 : 6000);
       } catch (err) {
         showNotice(status, 'Import failed: ' + err.message, 'error', 5000);
       }
