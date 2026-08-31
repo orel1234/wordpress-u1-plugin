@@ -1868,7 +1868,7 @@ console.log('\nthe hints, on the markup they were written for');
   check('the <form> is named', /form/.test(line), line);
   const hintOf = (sel) => got.candidates.find(c => (c.selector || '').includes(sel));
   check('a role-based hint is stated as fact',
-    hintOf('finder__tabs')?.component === 'menu' && hintOf('finder__tabs')?.maybe === false,
+    hintOf('finder__tabs')?.component === 'tabs' && hintOf('finder__tabs')?.maybe === false,
     JSON.stringify(hintOf('finder__tabs')));
   check('a class-based hint is stated as a guess',
     hintOf('hero-carousel')?.component === 'carousel' && hintOf('hero-carousel')?.maybe === true,
@@ -1960,10 +1960,10 @@ console.log('\nscreenfuls that used to come back unmarked');
   const named = [
     ['<div class="site-navbar"><a href="#a">One</a></div>', 'menu'],
     ['<div class="main-menu"><a href="#a">One</a></div>', 'menu'],
-    ['<div class="tab-bar"><button>A</button></div>', 'menu'],
+    ['<div class="tab-bar"><button>A</button></div>', 'tabs'],
     // camelCase, which the collector could not see until both class lists were
     // made case-insensitive. Named nothing at all before that.
-    ['<div class="dealTabs"><button>A</button></div>', 'menu'],
+    ['<div class="dealTabs"><button>A</button></div>', 'tabs'],
     // gallery is a gated word since the stage-1 audit rules: alone it needs
     // something that can cycle — here, a [hidden] slide waiting its turn.
     // A static image grid called "gallery" is the pinned negative now.

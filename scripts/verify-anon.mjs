@@ -954,10 +954,10 @@ console.log('\na <form> is a form');
   check('…as ONE form, not one per row of fields',
     finder.name('.finder__row') !== 'form' && finder.name('.finder__opts') !== 'form',
     `${finder.name('.finder__row')} / ${finder.name('.finder__opts')}`);
-  // Still a component of its own — the point of this check — but named `menu`
-  // now that a strip and a nav bar are one component.
+  // Still a component of its own — the point of this check — and named
+  // `tabs` since 4.3 ended the tabs-as-menu collapse.
   check('…and the strip beside it is still its own component',
-    finder.name('.finder__tabs') === 'menu', finder.name('.finder__tabs'));
+    finder.name('.finder__tabs') === 'tabs', finder.name('.finder__tabs'));
 
   // The guard this replaces was written for a real case and still catches it.
   // One submit is a form whose fields are in rows; three submits is a page

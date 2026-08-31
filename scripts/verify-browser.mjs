@@ -198,7 +198,8 @@ async function runVariant(browser, variant) {
 
     // ── Scoring helpers ────────────────────────────────────────────────────
     const touches = (a, b) => !!a && !!b && (a === b || a.contains(b) || b.contains(a));
-    const typeOk = (want, got) => got === want || (want === 'tabs' && got === 'menu');
+    // 4.3: exact — the tabs-as-menu collapse is over, the count is paid.
+    const typeOk = (want, got) => got === want;
     // The TIGHTEST match, not the first: the idle-watch can hand back a
     // carousel rooted on a huge common ancestor, and first-match let that one
     // detection "explain" every label on the page. Exact element beats a
@@ -220,17 +221,14 @@ async function runVariant(browser, variant) {
     const score = (detections) => {
       // detections: [{el, type, selector}]
       const rows = [];
-      let found = 0, typed = 0, rooted = 0, tabsAsMenu = 0;
+      let found = 0, typed = 0, rooted = 0;
       for (const { label, el } of positives) {
         if (label.hidden) continue;           // the closed half is its own story
         if (!el) { rows.push({ type: label.type, root: label.root, got: '(label broken)' }); continue; }
         const hit = bestMatch(detections, el);
         if (!hit) { rows.push({ type: label.type, root: label.root, got: '(none)' }); continue; }
         found++;
-        if (typeOk(label.type, hit.type)) {
-          typed++;
-          if (label.type === 'tabs' && hit.type === 'menu') tabsAsMenu++;
-        }
+        if (typeOk(label.type, hit.type)) typed++;
         let hits = [];
         try { hits = hit.selector ? Array.from(document.querySelectorAll(hit.selector)) : []; } catch (e) {}
         if (hits.length && hits.some((h) => touches(h, el))) rooted++;
@@ -260,7 +258,7 @@ async function runVariant(browser, variant) {
         pinned: negatives.some((n) => n.el && touches(g.el, n.el)),
       }));
       const denom = positives.filter((p) => !p.label.hidden).length;
-      return { found, typed, rooted, denom, tabsAsMenu, tp: tp.length, groups: groups.length, fpList, rows };
+      return { found, typed, rooted, denom, tp: tp.length, groups: groups.length, fpList, rows };
     };
 
     // Only elements still IN the document may testify. A pane that re-renders
@@ -450,7 +448,6 @@ for (const variant of ONLY) {
     line('named correctly', m.typed, m.denom);
     line('selector resolves', m.rooted, m.denom);
     line('precision (flag groups)', m.tp, m.groups);
-    if (m.tabsAsMenu) console.log(`    ⚠ ${m.tabsAsMenu} tab strip(s) accepted as "menu" (documented collapse; stage 4 will demand "tabs")`);
     if (m.fpList.length) {
       const byType = {};
       for (const f of m.fpList) (byType[f.type + (f.pinned ? ' ← pinned negative' : '')] ||= []).push(f.selector);

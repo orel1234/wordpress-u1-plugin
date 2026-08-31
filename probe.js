@@ -1253,8 +1253,14 @@
 
     byParent.forEach(function (siblings, groupKey) {
       if (siblings.length < 2) return;
+      // 4.3 swap-in-place: a press that opened NOTHING but closed two or
+      // more things and re-rendered a container is a reveal too — the strip
+      // that rebuilds its region in place (dealTabs) produced opened:[] on
+      // every press and classified as nothing at all.
       var group = results.filter(function (r) {
-        return siblings.indexOf(r.trigger) !== -1 && r.opened.length;
+        return siblings.indexOf(r.trigger) !== -1 &&
+          (r.opened.length ||
+           ((r.closed || []).length >= 2 && (r.rerendered || []).length));
       });
       if (!group.length) return;
       // Siblings that each reveal something are not automatically a tab strip.
@@ -1267,7 +1273,10 @@
       var exclusive = group.some(function (r) { return r.closed && r.closed.length; });
       if (!exclusive) return;
       var panels = [];
-      group.forEach(function (r) { r.opened.forEach(function (el) { if (panels.indexOf(el) === -1) panels.push(el); }); });
+      group.forEach(function (r) {
+        var mine = r.opened.length ? r.opened : (r.rerendered || []);
+        mine.forEach(function (el) { if (panels.indexOf(el) === -1) panels.push(el); });
+      });
       if (!panels.length) return;
       // A CAROUSEL, if the controls are cycling a set bigger than themselves.
       var revealed = [];
@@ -1279,7 +1288,29 @@
         (r.closed || []).forEach(function (el) { if (swapped.indexOf(el) === -1) swapped.push(el); });
       });
       var run = siblingRun(revealed, pressed.concat(siblings), swapped);
-      if (run && run.items.length > siblings.length) {
+      // 4.3 counting arm: items>controls is measured against the FULL family
+      // — every child of the strip that holds a control, pressed or not —
+      // never against the subset the budget happened to press. 2 pressed of
+      // a 5-tab strip saw 3 swapped panels, 3 > 2, and a tab strip shipped
+      // as a carousel.
+      var familySize = siblings.length;
+      try {
+        var famKids = (groupKey && groupKey.children) || [];
+        var famCount = 0;
+        for (var fk = 0; fk < famKids.length; fk++) {
+          var famKid = famKids[fk];
+          var famHit = null;
+          try {
+            famHit = famKid.matches(PRESS_POOL) ? famKid : famKid.querySelector(PRESS_POOL);
+          } catch (e2) {}
+          if (!famHit) {
+            try { if (root.getComputedStyle(famKid).cursor === 'pointer') famHit = famKid; } catch (e3) {}
+          }
+          if (famHit) famCount++;
+        }
+        if (famCount > familySize) familySize = famCount;
+      } catch (e) {}
+      if (run && run.items.length > familySize) {
         group.forEach(function (r) { used.add(r.trigger); });
         siblings.forEach(function (el) { used.add(el); });
         var parts = { slide: run.items };
@@ -1313,29 +1344,46 @@
       tabs.sort(function (a, b) {
         return (a.compareDocumentPosition(b) & 4) ? -1 : 1;   // 4 = FOLLOWING
       });
-      // A MENU, not a tab strip. The two are one shape — several sibling
-      // controls, pressing one swaps what is shown — and detection stopped
-      // trying to tell them apart by which word the developer happened to use.
+      // 4.3: the strip finally gets TYPED instead of collapsing to "menu".
+      // What the panels DO decides: a press that navigated, or panels that
+      // are all links, is a menu — items lead AWAY. A panel swapped in one
+      // fixed place (one region, or panels sharing one parent) is tabs —
+      // the content changes, the reader stays. Anything else is an
+      // accordion of several headers.
       //
-      // `shape: 'strip'` is kept because the RESTORE below needs it, and that
-      // is a mechanical fact rather than a name: a control that cannot undo
-      // itself by being pressed again has to be pressed back deliberately.
-      // Keying the restore on the type name would have broken it the moment
-      // the name changed — silently, on somebody's live site.
+      // `shape: 'strip'` is kept on all three because the RESTORE below
+      // needs it — a mechanical fact, not a name.
       //
-      // Rooted on the DIRECT PARENT of the controls, per the menu rules, not on
-      // the common ancestor of the controls AND their panels: that reaches up
-      // past the strip and u1.fix.menu walks the root's own children looking
-      // for items.
+      // Rooted on the DIRECT PARENT of the controls, per the menu rules, not
+      // on the common ancestor of controls AND panels: that reaches up past
+      // the strip and u1's fixes walk the root's own children.
+      var stripRoot = groupKey || commonAncestor(tabs.concat(panels));
+      var anyNav = group.some(function (r) { return r.navigated; });
+      var allLinks = panels.length > 0 && panels.every(function (p) { return mostlyLinks(p); });
+      var sameParent = panels.length > 1 && panels.every(function (p) {
+        return p.parentElement === panels[0].parentElement;
+      });
+      var stripType = (anyNav || allLinks) ? 'menu'
+        : (panels.length === 1 || sameParent) ? 'tabs'
+        : 'accordion';
+      var stripWhy = stripType === 'menu'
+        ? (anyNav ? tabs.length + ' sibling controls and pressing one navigated — items lead away, a menu'
+                  : tabs.length + ' sibling controls each revealing a panel of links — a menu')
+        : stripType === 'tabs'
+        ? tabs.length + ' sibling controls swapping ' +
+          (panels.length === 1 ? 'one fixed region' : 'panels in one place') +
+          ' — the content changes, the reader stays: tabs'
+        : tabs.length + ' sibling headers, each revealing its own region — an accordion';
       comps.push({
-        type: 'menu',
+        type: stripType,
         shape: 'strip',
         // The group key IS the strip — the <ul> whose children are the <li>
         // rows. The literal parent would be one trigger's own <li>.
-        root: groupKey || commonAncestor(tabs.concat(panels)),
-        parts: { items: tabs, submenus: panels },
-        why: tabs.length + ' sibling controls, each revealing ' +
-             (panels.length === 1 ? 'the same region' : 'a different panel'),
+        root: stripRoot,
+        parts: stripType === 'menu' ? { items: tabs, submenus: panels }
+             : stripType === 'tabs' ? { tab: tabs, panel: panels }
+             : { trigger: tabs, panel: panels },
+        why: stripWhy,
       });
     });
 
@@ -2330,7 +2378,11 @@
       if (!same(start, fingerprint(wholeScope))) {
         for (var g = 0; g < comps.length; g++) {
           if (comps[g].shape !== 'strip') continue;
-          try { comps[g].parts.items[0].click(); } catch (e) {}
+          // The strip's controls live under whichever part name its TYPE
+          // uses — items (menu), tab (tabs), trigger (accordion). The
+          // restore must not care which.
+          var stripCtl = comps[g].parts.items || comps[g].parts.tab || comps[g].parts.trigger;
+          try { stripCtl[0].click(); } catch (e) {}
         }
         await raf();
         if (!same(start, fingerprint(wholeScope))) {

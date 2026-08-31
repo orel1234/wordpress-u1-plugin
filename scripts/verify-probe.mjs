@@ -501,6 +501,81 @@ console.log('\n4.2 — the accordion bucket closes to the unexplained');
     out.components.map((x) => x.type).join() || '(nothing)');
 }
 
+// ── 4.3: the counting arm counts the FAMILY, not the pressed subset ─────────
+//
+// The two leaks, pinned BEFORE the fix (owner's order). A budget that pressed
+// 2 of a 5-tab strip saw a run of 3+ swapped panels, 3 > 2, and called the
+// strip a carousel — the finder tabs and the finder form both leaked exactly
+// this way on the starved hostile walk. items>controls must be measured
+// against the full family (post-climb), never against who happened to be
+// pressed.
+console.log('\n4.3 — pressed-subset counting must not fake a carousel');
+{
+  const mkResult = (trigger, opened, closed) => ({
+    trigger, opened, closed, moved: [], rerendered: [],
+    hidOthers: [], navigated: false,
+  });
+
+  // The finder shape: 5 tabs in a ul, 2 pressed, panels swap beside it.
+  const A = page(`
+    <div id="w">
+      <ul id="strip">
+        <li><button id="t0">All</button></li>
+        <li><button id="t1">Road</button></li>
+        <li><button id="t2">Trail</button></li>
+        <li><button id="t3">Track</button></li>
+        <li><button id="t4">Kids</button></li>
+      </ul>
+      <div id="panes">
+        <section id="p0">zero</section>
+        <section id="p1" hidden>one</section>
+        <section id="p2" hidden>two</section>
+        <section id="p3" hidden>three</section>
+        <section id="p4" hidden>four</section>
+      </div>
+    </div>`);
+  const dA = A.document;
+  const $a = (id) => dA.getElementById(id);
+  let comps = A.__u1Probe.classify([
+    mkResult($a('t1'), [$a('p1')], [$a('p0')]),
+    mkResult($a('t2'), [$a('p2')], [$a('p1')]),
+  ], [$a('t1'), $a('t2')], { climb: true });
+  check('2 pressed of a 5-tab family is a strip, never a carousel',
+    comps.length && comps.every((c) => c.type !== 'carousel'),
+    comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+  check('…and the strip whose panels share one parent is TABS',
+    comps.some((c) => c.type === 'tabs'),
+    comps.map((c) => c.type).join() || '(nothing)');
+
+  // The form shape: 4 pointer-div options, 2 pressed, a result list re-shows.
+  const B = page(`
+    <div id="w">
+      <form id="f">
+        <div id="opts">
+          <div id="o0" tabindex="0">Road</div>
+          <div id="o1" tabindex="0">Trail</div>
+          <div id="o2" tabindex="0">Track</div>
+          <div id="o3" tabindex="0">Kids</div>
+        </div>
+        <ul id="res">
+          <li id="r0">alpha</li>
+          <li id="r1" hidden>beta</li>
+          <li id="r2" hidden>gamma</li>
+          <li id="r3" hidden>delta</li>
+        </ul>
+      </form>
+    </div>`);
+  const dB = B.document;
+  const $b = (id) => dB.getElementById(id);
+  comps = B.__u1Probe.classify([
+    mkResult($b('o1'), [$b('r1'), $b('r2')], [$b('r0')]),
+    mkResult($b('o2'), [$b('r3')], [$b('r1')]),
+  ], [$b('o1'), $b('o2')], { climb: true });
+  check('a form whose options re-show a result list is never a carousel',
+    comps.every((c) => c.type !== 'carousel'),
+    comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+}
+
 // ── Spillover: the budget starves nobody silently ───────────────────────────
 //
 // A planned candidate its band's budget starved goes to the HEAD of the next
@@ -598,10 +673,11 @@ console.log('\none pressed sibling finishes the family');
   check('the whole family is pressed past the budget', out.pressed === 5, String(out.pressed));
   // The section pass groups by literal parent — li-wrapped rows stay
   // fragments there BY DESIGN; the li climb belongs to the run-level pass.
-  const strip = w.__u1Probe.classifyRun().find((c) => c.type === 'menu' && c.shape === 'strip');
+  // 4.3: panels swapped in one place — the strip is TABS now, by name.
+  const strip = w.__u1Probe.classifyRun().find((c) => c.type === 'tabs' && c.shape === 'strip');
   check('…and the run pass turns the presses into ONE strip',
-    !!strip && strip.parts.items.length === 5 && strip.root === d.getElementById('strip'),
-    strip ? `items ${strip.parts.items.length}, root ${strip.root.id}` : '(no strip)');
+    !!strip && strip.parts.tab.length === 5 && strip.root === d.getElementById('strip'),
+    strip ? `tabs ${strip.parts.tab.length}, root ${strip.root.id}` : '(no strip)');
 }
 {
   // The cap: a family of 12 with a budget of 1 presses at most 1 + 8.
@@ -657,14 +733,14 @@ console.log('\nthe run-level pass merges what the sections split');
   // budget of two, now presses the whole family and sees the whole strip —
   // the second call has nothing left to press.
   check('family completion + the climb give the first section the whole strip',
-    first.components.some((c) => c.type === 'menu' && c.parts.items.length === 4) &&
+    first.components.some((c) => c.type === 'tabs' && c.parts.tab.length === 4) &&
     second.pressed === 0,
-    [first.components.map((c) => c.type + ':' + (c.parts.items || []).length).join(), 'second pressed ' + second.pressed].join(' / '));
+    [first.components.map((c) => c.type + ':' + ((c.parts.tab || c.parts.items) || []).length).join(), 'second pressed ' + second.pressed].join(' / '));
   const run = w.__u1Probe.classifyRun();
-  const strip = run.find((c) => c.type === 'menu' && c.shape === 'strip');
+  const strip = run.find((c) => c.type === 'tabs' && c.shape === 'strip');
   check('the run pass agrees: ONE strip',
-    !!strip && strip.parts.items.length === 4,
-    JSON.stringify(run.map((c) => ({ t: c.type, n: c.parts.items ? c.parts.items.length : 0 }))));
+    !!strip && strip.parts.tab.length === 4,
+    JSON.stringify(run.map((c) => ({ t: c.type, n: (c.parts.tab || c.parts.items || []).length }))));
   check('…rooted on the <ul>, climbed through the <li> rows',
     !!strip && strip.root === d.getElementById('strip'),
     strip && (strip.root.id || strip.root.tagName));
@@ -969,7 +1045,7 @@ console.log('\na carousel is told from a tab strip by counting');
   }));
   const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
   check('three controls over three panels is still a strip, not a carousel',
-    out.components.length === 1 && out.components[0].type === 'menu' &&
+    out.components.length === 1 && out.components[0].type === 'tabs' &&
     out.components[0].shape === 'strip',
     out.components.map(c => c.type + (c.shape ? ':' + c.shape : '')).join());
 }
@@ -1723,20 +1799,19 @@ console.log('\na page with no semantics at all');
   const out = await w.__u1Probe.probeAll(d.getElementById('page'), { settle: 0 });
   const of = (t) => out.components.filter(c => c.type === t);
   const idsOf = (els) => els.map(e => e.id).join(',');
-  // A tab strip reports as a MENU now — the two were decided to be one
-  // component. `shape` is what still separates them, and it exists because the
-  // RESTORE depends on the difference: a strip cannot undo itself by being
-  // pressed a second time, and a toggle already has.
+  // 4.3: the strip is typed by what its panels DO — swapped in one place
+  // means TABS, by name. `shape: 'strip'` stays because the RESTORE depends
+  // on it: a strip cannot undo itself by being pressed a second time.
   const strips = out.components.filter(c => c.shape === 'strip');
   const opened = out.components.filter(c => c.type === 'menu' && c.shape !== 'strip');
 
-  check('the strip is found, and reported as a menu', strips.length === 1 && strips[0].type === 'menu',
+  check('the strip is found, and reported as tabs', strips.length === 1 && strips[0].type === 'tabs',
     out.components.map(c => c.type + (c.shape ? ':' + c.shape : '')).join());
   check('…with every control, including the one already selected',
-    strips.length === 1 && idsOf(strips[0].parts.items) === 't1,t2,t3',
-    strips[0] && idsOf(strips[0].parts.items));
+    strips.length === 1 && idsOf(strips[0].parts.tab) === 't1,t2,t3',
+    strips[0] && idsOf(strips[0].parts.tab || strips[0].parts.items || []));
   check('…and the panels it switches between',
-    strips.length === 1 && strips[0].parts.submenus.length >= 2);
+    strips.length === 1 && strips[0].parts.panel.length >= 2);
   check('…rooted on the direct parent of the controls, not above the panels',
     strips.length === 1 && strips[0].root === d.getElementById('t1').parentElement,
     strips[0] && strips[0].root && (strips[0].root.id || strips[0].root.className));
@@ -1789,8 +1864,8 @@ console.log('\nwhen the only signal left is the cursor');
   check('and the prose is not', !list.some(e => e.id === 'text'));
 
   const out = await w.__u1Probe.probeAll(d.getElementById('page'), { settle: 0 });
-  check('the strip is identified from behaviour alone — a menu, by its shape',
-    out.components.length === 1 && out.components[0].type === 'menu' &&
+  check('the strip is identified from behaviour alone — tabs, by its shape',
+    out.components.length === 1 && out.components[0].type === 'tabs' &&
     out.components[0].shape === 'strip',
     out.components.map(c => c.type + (c.shape ? ':' + c.shape : '')).join());
   check('the page is put back', out.restored === true);

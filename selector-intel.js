@@ -961,18 +961,12 @@
    * the caller: `.tab-content` matches /tab/ and is not a tab strip. This
    * proposes; the scan confirms.
    */
-  // `tablist` says MENU, and that is a decision rather than a mistake. A tab
-  // strip and a nav bar with drop-downs are the same shape by every test either
-  // layer applies — several sibling controls, pressing one swaps what is shown —
-  // and the tool was already half-agreeing: the class list checks "nav" before
-  // it checks "tabs", so `class="nav nav-tabs"`, the commonest tab markup on the
-  // web, has always come back as a menu. The separation existed on paper.
-  //
-  // The `tabs` TYPE still exists in the builder and still has its own engine.
-  // This is what detection SUGGESTS, which is a different question from what a
-  // specialist chooses to build.
+  // 4.3: `tablist` says TABS again — the stage-4 decision that ends the
+  // documented collapse. The behavioural layer now tells the two shapes
+  // apart by what the panels DO (swapped in one place = tabs, items lead
+  // away = menu), so the hint may finally say the word the page said.
   const COMPONENT_BY_ROLE = {
-    tablist: 'menu', menu: 'menu', menubar: 'menu', navigation: 'menu',
+    tablist: 'tabs', menu: 'menu', menubar: 'menu', navigation: 'menu',
     dialog: 'dialog', alertdialog: 'dialog', listbox: 'listbox',
     combobox: 'combobox', grid: 'grid', table: 'table', tree: 'menu',
     // `radio`, not "radio group". The builder's type is called `radio`, so the
@@ -1018,7 +1012,7 @@
     [/datepicker|calendar/i, 'datepicker'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
-    [/\btabs\b|tab-bar|tabbar|tablist/i, 'menu'],
+    [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
     [/pagination|pager/i, 'pagination'],
     [/tooltip|popover/i, 'tooltip'],
     [/breadcrumb/i, 'breadcrumb'],
@@ -1387,7 +1381,7 @@
     // was nothing here. The parts were seen; the thing they add up to was not.
     try {
       if (el.querySelectorAll(':scope > [role="tab"]').length >= 2) {
-        return { name: 'menu', sure: true };
+        return { name: 'tabs', sure: true };
       }
     } catch (e) { /* :scope is old enough to rely on, but never worth throwing for */ }
 

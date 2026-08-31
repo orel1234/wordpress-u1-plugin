@@ -215,7 +215,7 @@ const scored = labels.components.filter(c => !c.hidden && c.type !== 'none');
 const openable = labels.components.filter(c => c.hidden && c.type !== 'none');
 
 const rows = [];
-let found = 0, typed = 0, rooted = 0, tabsAsMenu = 0;
+let found = 0, typed = 0, rooted = 0;
 
 for (const want of scored) {
   let target = null;
@@ -229,14 +229,10 @@ for (const want of scored) {
   if (!cand) { rows.push({ want, verdict: 'not-found' }); continue; }
   found++;
 
-  // Typed: does the local hint name it correctly? Until stage 4 lands the
-  // tabs/menu split, a tab strip answered "menu" counts as correct — the
-  // collapse was a documented decision — but it is counted separately and
-  // warned about, so the day exact "tabs" is demanded the number is known.
-  const asMenu = want.type === 'tabs' && cand.component === 'menu';
-  const same = cand.component === want.type || asMenu;
+  // Typed: does the local hint name it correctly? 4.3 landed the tabs/menu
+  // split — exact, no collapse accepted.
+  const same = cand.component === want.type;
   if (same) typed++;
-  if (asMenu) tabsAsMenu++;
 
   // Rooted: does the selector it produced resolve back to this same element?
   let hits = [];
@@ -367,10 +363,6 @@ const measures = [
 for (const [name, a, b] of measures) {
   const p = pct(a, b);
   console.log(`  ${name.padEnd(28)} ${bar(p)} ${String(a).padStart(3)}/${b}  ${p}%`);
-}
-if (tabsAsMenu) {
-  console.log(`\n  ⚠ ${tabsAsMenu} tab strip${tabsAsMenu === 1 ? '' : 's'} accepted as "menu" — the documented collapse. ` +
-    `Stage 4 will demand exact "tabs"; this line is the count that will be owed.`);
 }
 
 // The FP list itself, always — a number without names cannot be acted on.

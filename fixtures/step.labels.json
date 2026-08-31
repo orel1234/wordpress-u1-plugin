@@ -127,6 +127,15 @@
       "builtByJs": true
     },
     {
+      "type": "tabs",
+      "root": "#locatorList",
+      "why": "The branch list: sibling buttons with aria-current, pressing one re-renders the fixed detail pane beside it — behaviourally identical to dealTabs (panel swapped in one place = tabs). Unlabelled until 4.3's swap-in-place rule started seeing it; the detection was right, the corpus was short (corpus change, not code).",
+      "fields": {
+        "tab": ".locator__item"
+      },
+      "builtByJs": true
+    },
+    {
       "type": "dialog",
       "root": ".search-panel",
       "why": "role=dialog aria-modal=true, opened from the Search button.",
