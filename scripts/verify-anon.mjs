@@ -465,12 +465,28 @@ console.log('\nnames U1 itself writes never enter a mapping');
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }
 
-console.log('\na closed panel inside the scope you named is the interesting element');
+console.log('\na closed panel is collected page-wide when it earns it');
 {
   // Pointing at .click-nav returned only the button, and the model's own reason
   // was "the actual options list isn't available here". It was not: the <ul> is
   // display:none until the dropdown opens, so it never became a candidate — and
   // the prompt forbids naming a selector that is not in the list.
+  //
+  // This block used to assert the OPPOSITE of what it asserts now, and the
+  // reversal is the point. The old rule was "page-wide, never collect a closed
+  // panel — every shut modal on the site would flood the list". It did prevent
+  // the flood, and it also meant that a whole-page pass could not name a
+  // dialog, a dropdown, a closed tab panel or a collapsed accordion on ANY
+  // site, ever: their defining element is hidden at the moment anyone looks, so
+  // it was never in the list, so the model was never able to name it. Every one
+  // of those types scored a flat zero and nothing said so.
+  //
+  // The rule now is not "collect hidden things" — that really would flood. It
+  // is that a hidden element may earn a place by saying what it is: a control
+  // declares it opens it, or it carries a revealable role, or it is a hidden
+  // box sitting directly under <body> with something pressable inside. A
+  // nondescript hidden <div> in the middle of the page still gets nothing,
+  // which is what the flood test below now measures.
   const page = '<div class="signin"><div class="click-nav">' +
     '<button class="clicker">Sign In</button>' +
     '<ul class="signin-dropdown" role="menu" style="display:none">' +
@@ -494,14 +510,227 @@ console.log('\na closed panel inside the scope you named is the interesting elem
   };
 
   const wide = sels(null).map((c) => c.selector);
-  check('page-wide, a closed panel is NOT collected — every shut modal on the site would flood the list',
-    !wide.includes('.signin-dropdown'), wide.join(' | '));
+  check('page-wide, the closed dropdown IS collected — it carries role=menu',
+    wide.includes('.signin-dropdown'), wide.join(' | '));
+
+  // The other half of the same rule, and the reason the old assertion existed.
+  {
+    const noisy = '<div class="wrap">' +
+      Array.from({ length: 30 }, (_, i) =>
+        `<div class="lazy lazy${i}" style="display:none"><span>text ${i}</span></div>`).join('') +
+      '</div>';
+    const d = new JSDOM(`<body>${noisy}</body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+    d.window.Element.prototype.getBoundingClientRect = function () {
+      return d.window.getComputedStyle(this).display === 'none'
+        ? { width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }
+        : { width: 200, height: 40, top: 10, left: 10, right: 210, bottom: 50 };
+    };
+    d.window.eval(INTEL);
+    const got = d.window.__u1SelectorIntel.collectCandidates(80, null).candidates;
+    const lazies = got.filter((c) => /\blazy\d/.test(c.selector || ''));
+    check('…while thirty nondescript hidden divs still bring nothing',
+      lazies.length === 0, lazies.map((c) => c.selector).join(' | '));
+  }
 
   const scoped = sels('.click-nav');
   const ul = scoped.find((c) => c.selector === '.signin-dropdown');
   check('scoped to its container, it IS collected', !!ul);
   check('…and flagged closed, so the model knows it is not in the screenshot',
     !!(ul && ul.closed));
+}
+
+console.log('\na link that is already a link is not mapped again');
+{
+  const page = '<a class="real" href="/x">Plans</a>' +
+    '<a class="noname" href="/y"><img src="i.png"></a>' +
+    '<a class="nohref">Looks like a link</a>' +
+    '<button class="btn">Search</button>' +
+    '<button class="unnamed"></button>' +
+    '<div class="fake" onclick="go()">Press me</div>' +
+    '<a class="lying" href="/z" role="tab">Deals</a>' +
+    '<button class="untabbable" tabindex="-1">Hidden from tab</button>';
+  const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only' });
+  d.window.eval(INTEL);
+  const N = (sel) => d.window.__u1SelectorIntel.alreadyNative(sel);
+
+  check('a named <a href> needs no u1.fix.link — the browser already did it',
+    !!N('.real') && N('.real').name === 'Plans');
+  check('so does a named <button>', !!N('.btn') && N('.btn').name === 'Search');
+  check('an <a> with no href is NOT a link, whatever it looks like', N('.nohref') === null);
+  check('an icon link with no accessible name still needs one', N('.noname') === null);
+  check('an unnamed button too', N('.unnamed') === null);
+  check('a <div> with a click handler is the case fix.link was written for',
+    N('.fake') === null);
+  check('a role that contradicts the tag is a real defect, not a free pass',
+    N('.lying') === null);
+  check('a native control taken out of the tab order has lost what it came with',
+    N('.untabbable') === null);
+}
+
+console.log('\na menu that is really a listbox is retyped');
+{
+  const shape = (page, sel) => {
+    const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+    d.window.Element.prototype.getBoundingClientRect = function () {
+      return d.window.getComputedStyle(this).display === 'none'
+        ? { width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }
+        : { width: 200, height: 40, top: 10, left: 10, right: 210, bottom: 50 };
+    };
+    d.window.eval(INTEL);
+    return d.window.__u1SelectorIntel.menuIsReallyListbox(sel);
+  };
+
+  // The real Sign In drop-down: role="menu" in the markup, listbox in behaviour.
+  const signin = '<div class="signin"><div class="click-nav">' +
+    '<button class="clicker" aria-haspopup="true" aria-expanded="false">Sign In</button>' +
+    '<ul class="signin-dropdown" role="menu" style="display:none">' +
+    '<li><a href="/m">Member</a></li><li><a href="/h">HCP</a></li></ul></div></div>';
+  const asList = shape(signin, '.signin-dropdown');
+  check('pointed at the list, the shape is still read and the type corrected',
+    !!asList && asList.listbox === '.signin-dropdown' && asList.trigger === '.clicker',
+    asList && `${asList.listbox} / ${asList.trigger}`);
+  check('pointed at the wrapper, the same answer comes back',
+    (() => { const r = shape(signin, '.click-nav'); return !!r && r.listbox === '.signin-dropdown'; })());
+
+  // The guards, each on its own.
+  const inNav = '<nav class="main"><div class="click-nav">' +
+    '<button class="clicker" aria-haspopup="true">Menu</button>' +
+    '<ul class="nav-list" style="display:none"><li><a href="/a">A</a></li>' +
+    '<li><a href="/b">B</a></li></ul></div></nav>';
+  check('a hamburger revealing the site nav stays a menu — <nav> decides',
+    shape(inNav, '.nav-list') === null);
+
+  const nested = '<div class="click-nav"><button class="clicker" aria-haspopup="true">More</button>' +
+    '<ul class="drop" style="display:none"><li><a href="/a">A</a>' +
+    '<ul class="sub"><li><a href="/a1">A1</a></li><li><a href="/a2">A2</a></li></ul></li>' +
+    '<li><a href="/b">B</a></li></ul></div>';
+  check('a list with a submenu under an item is a menu — a listbox cannot express that',
+    shape(nested, '.drop') === null);
+
+  const standing = '<div class="click-nav"><button class="clicker">Go</button>' +
+    '<ul class="open-list"><li><a href="/a">A</a></li><li><a href="/b">B</a></li></ul></div>';
+  check('a list standing open with nothing declaring it a popup is not a listbox',
+    shape(standing, '.open-list') === null);
+}
+
+console.log('\na component is described in the page\'s own words');
+{
+  const word = (page, sel, trig) => {
+    const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only' });
+    d.window.eval(INTEL);
+    return d.window.__u1SelectorIntel.componentWording(sel, trig);
+  };
+  check('the control that opens it names it',
+    word('<div class="w"><button class="t">Sign In</button><ul class="l"><li>a</li></ul></div>',
+      '.l', '.t') === 'Sign In');
+  check('…and its aria-label wins over its text',
+    word('<div class="w"><button class="t" aria-label="Account menu">Sign In</button>' +
+      '<ul class="l"><li>a</li></ul></div>', '.l', '.t') === 'Account menu');
+  check('with no control, the component\'s own label is used',
+    word('<ul class="l" aria-label="Utility links"><li>a</li></ul>', '.l', '') === 'Utility links');
+  check('…then the heading immediately above it',
+    word('<h2>Quick links</h2><ul class="l"><li>a</li></ul>', '.l', '') === 'Quick links');
+  check('and nothing is invented when the page says nothing',
+    word('<ul class="l"><li>a</li></ul>', '.l', '') === '');
+}
+
+console.log('\na selector U1 cannot use is renamed, not refused');
+{
+  // The refusal is right — jQuery drops a descendant space silently and the fix
+  // would never run. What was wrong is that refusing was the FIRST thing tried
+  // on a name that resolves perfectly well and points at exactly the right
+  // element. Two dialogs on a live site were turned down over
+  // `#state-select-modal h2`, advising a person to add a class to a heading the
+  // tool was looking straight at.
+  const page = '<h2>Elsewhere</h2><h2>Also elsewhere</h2>' +
+    '<div class="modal" id="state-select-modal"><div class="modal-dialog">' +
+    '<div class="modal-header"><h2>Choose a state</h2>' +
+    '<button class="close" data-dismiss="modal">x</button></div>' +
+    '<ul class="opts"><li><a href="/ca">CA</a></li><li><a href="/fl">FL</a></li></ul>' +
+    '</div></div>';
+  const d = new JSDOM(`<body>${page}</body>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+  d.window.eval(INTEL);
+  const S = d.window.__u1SelectorIntel;
+  const D = d.window.document;
+
+  const fixedHeading = S.repairForU1('#state-select-modal h2');
+  check('a descendant space is renamed to something U1 accepts',
+    !!fixedHeading && S.isU1Valid(fixedHeading), fixedHeading);
+  check('…and it still points at the SAME heading, not at the two others',
+    D.querySelectorAll(fixedHeading).length === 1 &&
+    D.querySelector(fixedHeading) === D.querySelector('#state-select-modal h2'), fixedHeading);
+
+  const many = S.repairForU1('#state-select-modal li a');
+  check('several elements are renamed together',
+    !!many && S.isU1Valid(many) && D.querySelectorAll(many).length === 2, many);
+
+  const pseudo = S.repairForU1('.modal-header>.close:first-of-type');
+  check('a pseudo-class is renamed too — jQuery refuses those just as silently',
+    !!pseudo && S.isU1Valid(pseudo) &&
+    D.querySelector(pseudo) === D.querySelector('.close'), pseudo);
+
+  // The honest limit, and it has to stay. `:first-child` on rows that are
+  // identical to each other names an element that has no name of its own — any
+  // rename would point at both, which is the silent widening this guard exists
+  // to prevent. It falls through to the refusal, where "give the element a
+  // class" is finally the right thing to say.
+  check('…but a position among identical siblings cannot be renamed, and is not',
+    S.repairForU1('.opts>li:first-child') === null, S.repairForU1('.opts>li:first-child'));
+
+  check('a selector that was already fine is left alone',
+    S.repairForU1('.modal-header>h2') === null);
+  check('a selector naming nothing is not renamed — that is a wrong selector, not a badly spelt one',
+    S.repairForU1('#nothing-here h2') === null);
+}
+
+console.log('\na form\'s required fields are read off the page, not asked for');
+{
+  // u1.fix.form will not run without submitButton, inputField and invalidField.
+  // Nothing on this side ever looked for them — every other type has a shape
+  // function and form had none — so the model was asked, and a model reading a
+  // screenshot cannot see a type attribute or a CSS rule. It answered with
+  // three empty strings on a search box that has a Go button in the markup, and
+  // the save guard refused the component outright.
+  const shape = (page, scope, css) => {
+    const d = new JSDOM(`<html><head>${css ? `<style>${css}</style>` : ''}</head>` +
+      `<body>${page}</body></html>`, { runScripts: 'outside-only' });
+    d.window.eval(INTEL);
+    return d.window.__u1SelectorIntel.formShape(scope);
+  };
+
+  const search = '<form class="site-search"><label for="q">Search</label>' +
+    '<input id="q" class="site-search__input" type="search"><button class="site-search__go">Go</button></form>';
+  const s1 = shape(search, '.site-search');
+  check('a bare <button> in a form is the submit — that is the HTML default',
+    !!s1 && s1.submitButton.selector === '.site-search__go', s1 && s1.submitButton.selector);
+  check('the field is the input, not the button beside it',
+    !!s1 && s1.inputField.selector === '.site-search__input', s1 && s1.inputField.selector);
+  check('with nothing marked invalid and no rule for it, the standard attribute is used',
+    !!s1 && s1.invalidField.selector === '[aria-invalid="true"]', s1 && s1.invalidField.selector);
+
+  // The page cannot show an error state it has no rule for, so the rule is
+  // where the marker is learnt without submitting anything.
+  const styled = shape(search, '.site-search', '.site-search__input.is-invalid { border-color: red }');
+  check('…but a class the stylesheet styles as invalid is preferred to it',
+    !!styled && styled.invalidField.selector === '.is-invalid', styled && styled.invalidField.selector);
+
+  const hidden = '<form class="f"><input type="hidden" name="csrf">' +
+    '<input class="real" type="text"><input type="submit" class="go" value="Send"></form>';
+  const s2 = shape(hidden, '.f');
+  check('a hidden input is not a field a person fills',
+    !!s2 && s2.inputField.selector === '.real', s2 && s2.inputField.selector);
+  check('input[type=submit] is found as readily as <button>',
+    !!s2 && s2.submitButton.selector === '.go', s2 && s2.submitButton.selector);
+
+  // A form built out of divs is the ordinary case on a marketing site.
+  const divs = '<div class="dform"><input class="dfield" type="text">' +
+    '<div class="dgo" role="button">Send</div></div>';
+  const s3 = shape(divs, '.dform');
+  check('a form built out of divs still yields a control that submits it',
+    !!s3 && s3.submitButton.selector === '.dgo', s3 && s3.submitButton.selector);
+
+  check('a container with no fields and no control returns null rather than guessing',
+    shape('<div class="empty"><p>text</p></div>', '.empty') === null);
 }
 
 console.log('\na listbox is read off the structure, not asked about');

@@ -273,12 +273,22 @@ console.log('\nwhat comes back from a section');
   // Anchored to the `stop.scanned` that FOLLOWS the loop, not the first one in
   // the file — the early-skip path sets it too, and slicing to that gave an
   // empty string that failed both checks while the code was perfectly fine.
-  const loopStart = panelSrc.indexOf('const found = (part.components || [])');
+  const loopStart = panelSrc.indexOf('const audit = await auditSurveyComponents(part.components, tab);');
   const loop = panelSrc.slice(loopStart, panelSrc.indexOf('stop.scanned = true;', loopStart));
+  // The only filter on the way in is "does it name an element". needsWork is a
+  // LABEL — dropping the rows it marks false looked like a saving and was a way
+  // to return nothing, because the model is conservative with that flag.
+  const audit = panelSrc.slice(panelSrc.indexOf('async function auditSurveyComponents'),
+                               panelSrc.indexOf('function renderAiComponents('));
   check('every component with a container is kept, whatever needsWork says',
-    /filter\(c => c && c\.containerSelector\)/.test(loop), loop.slice(0, 160));
+    /filter\(\(c\) => c && c\.containerSelector\)/.test(audit) && !/needsWork/.test(audit),
+    audit.slice(0, 160));
   check('needsWork travels with the entry so the list can show it',
     /needsWork: c\.needsWork !== false/.test(loop));
+  // The two things the audit IS allowed to drop or change, and nothing else.
+  check('…and the only rows it removes are ones that need no fix at all',
+    /alreadyNative/.test(audit) && /dropped\.push/.test(audit) &&
+    (audit.match(/return;/g) || []).length === 1, audit.slice(0, 80));
 }
 {
   const withFlag = { row: { label: 'Footer nav', type: 'menu', sel: '.f', needsWork: false }, result: { confidence: 'high' } };

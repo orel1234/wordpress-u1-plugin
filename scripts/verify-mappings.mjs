@@ -680,6 +680,84 @@ const leanOk =
 const bulk = Array.from({ length: 60 }, (_, i) => ({ ...sample, mark: i + 1 }));
 const shrank = JSON.stringify(compactList(bulk)).length < JSON.stringify(bulk, null, 1).length * 0.5;
 
+// ── The closed half of the page has to survive the whole pipeline ──────────
+//
+// Collecting a shut dialog is worth nothing if the fact is dropped between the
+// collector and the saved mapping, and every link in that chain is in a
+// different file. What the page declared about what opens what has to reach
+// the model's list, be asked for in the answer, be explained in the prompt,
+// arrive on the review card, and arrive in the unattended sweep — and it must
+// still lose to a measurement, because a probe that PRESSED the control beats
+// anything read off the markup.
+const withEdge = compactList([{ ...sample, openedBy: '#searchOpen', openedVia: 'aria-controls' }])[0];
+const edgeCarried = withEdge.openedBy === '#searchOpen' && withEdge.openedVia === 'aria-controls' &&
+  !('openedBy' in lean) && !('openedVia' in lean);
+const schemaAsks = /triggerSelector:\s*\{/.test(aiSrc) &&
+  /required:[^\]]*'triggerSelector'/.test(aiSrc);
+const promptSays = /openedBy/.test(aiSrc) && /triggerSelector/.test(aiSrc);
+const cardPrefills = /class="ai-comp-cont"[\s\S]{0,200}triggerSelector/.test(panelSrc);
+const sweepCarries = /trigger:\s*c\.triggerSelector/.test(panelSrc) &&
+  /acceptsTrigger\(f\.type\)\s*&&\s*f\.trigger[\s\S]{0,600}container = f\.trigger;/.test(panelSrc);
+// Order matters, not just presence: the lbShape assignment has to come AFTER
+// the declared trigger is put on the row, or the measured answer is the one
+// that gets thrown away.
+const measuredWins = (() => {
+  const meas = panelSrc.indexOf('row.trigger = lbShape.trigger');
+  const used = panelSrc.indexOf('instruction: row.trigger');
+  const sent = panelSrc.indexOf('value: row.trigger');
+  return meas !== -1 && used > meas && sent > meas;
+})();
+
+// ── Ask the page before telling the user to go and look ────────────────────
+//
+// Two components came back "could not be mapped" on a real site, with messages
+// addressed to a person in an unattended sweep. Both were answerable from the
+// markup, and in one case by a function the tool already had.
+const formMeasured = /row\.type === 'form'[\s\S]{0,200}formShape/.test(panelSrc) &&
+  /formShape,/.test(readFileSync(join(ROOT, 'selector-intel.js'), 'utf8'));
+// The refusal for a listbox with no container fires in rowFromParts. The
+// measurement that answers it lived one step later, in prepareOne, which the
+// refusal made unreachable — so the sweep has to measure BEFORE it builds.
+const listboxMeasuredFirst = (() => {
+  // The sweep's own call, not the card's — there are two, and the card's comes
+  // first in the file.
+  const meas = panelSrc.indexOf("f.type === 'listbox'");
+  const build = panelSrc.lastIndexOf('const built = rowFromParts({');
+  return meas !== -1 && build !== -1 && meas < build;
+})();
+
+// The rename has to happen in BOTH places, and for different reasons. The save
+// gate is the one door every route goes through, so the guarantee lives there.
+// But the card is drawn long before the save gate runs, and a card showing a
+// name the engine cannot use — under a red banner explaining that it cannot —
+// is a thing the specialist is being asked to approve.
+const repairsAtSave = (() => {
+  // The save gate's own list, not the first `const bad = []` in the file.
+  const gate = panelSrc.lastIndexOf('const bad = [];');
+  if (gate === -1) return false;
+  const before = panelSrc.lastIndexOf('repairForU1', gate);
+  // The repair must sit inside the same guard, immediately above the refusal —
+  // not merely somewhere earlier in the file.
+  return before !== -1 && gate - before < 1500;
+})();
+const repairsBeforeCard = (() => {
+  const rep = panelSrc.indexOf('repairForU1');
+  const card = panelSrc.indexOf('const idx = aiMapped.length;');
+  return rep !== -1 && card !== -1 && rep < card;
+})();
+
+// ── Three answers the model kept getting wrong, now measured instead ───────
+// The prompt asks for all three in plain words. The list still came back full
+// of links that were already links, a role="menu" drop-down mapped with
+// fix.menu, and a description composed for a component the page had already
+// named. Asking again was not going to work.
+const auditRuns = /auditSurveyComponents\(out\.components, tab\)/.test(panelSrc) &&
+  /auditSurveyComponents\(part\.components, tab\)/.test(panelSrc);
+const auditReports = /left out for needing no fix/.test(panelSrc) &&
+  /left out \$\{d\.label\}/.test(panelSrc);
+const descFromPage = /componentWording/.test(panelSrc) &&
+  /description\$\/i/.test(panelSrc);
+
 // ── A real class on the page must not be called invented ────────────────────
 //
 // checkAiSelector built its "known" set from the selectors robustSelector had
@@ -1701,6 +1779,33 @@ if (!leanOk) failed++;
 console.log(`  ${shrank ? '✅' : '❌'} …less than half the size it was`);
 if (!shrank) failed++;
 
-const total = results.length + 109;
+console.log(`  ${edgeCarried ? '✅' : '❌'} what opens a hidden container travels with it into the model's list`);
+if (!edgeCarried) failed++;
+console.log(`  ${schemaAsks ? '✅' : '❌'} …and the survey is required to answer with it`);
+if (!schemaAsks) failed++;
+console.log(`  ${promptSays ? '✅' : '❌'} …and told what it means, so the picture does not overrule the page`);
+if (!promptSays) failed++;
+console.log(`  ${cardPrefills ? '✅' : '❌'} …it arrives filled in on the review card, still editable`);
+if (!cardPrefills) failed++;
+console.log(`  ${sweepCarries ? '✅' : '❌'} …and in the unattended sweep, where nobody is there to type it`);
+if (!sweepCarries) failed++;
+console.log(`  ${measuredWins ? '✅' : '❌'} …but a probe that pressed the control still overrules it`);
+if (!measuredWins) failed++;
+console.log(`  ${formMeasured ? '✅' : '❌'} a form's required fields are read off the page before the model is asked`);
+if (!formMeasured) failed++;
+console.log(`  ${listboxMeasuredFirst ? '✅' : '❌'} …and a listbox is measured before the sweep refuses it for having no container`);
+if (!listboxMeasuredFirst) failed++;
+console.log(`  ${repairsBeforeCard ? '✅' : '❌'} a name U1 cannot resolve is renamed before the card offers it for approval`);
+if (!repairsBeforeCard) failed++;
+console.log(`  ${repairsAtSave ? '✅' : '❌'} …and again at the one door every route saves through`);
+if (!repairsAtSave) failed++;
+console.log(`  ${auditRuns ? '✅' : '❌'} the survey's answer is checked against the page on BOTH routes, not just one`);
+if (!auditRuns) failed++;
+console.log(`  ${auditReports ? '✅' : '❌'} …and a row dropped for needing no fix says so, on both`);
+if (!auditReports) failed++;
+console.log(`  ${descFromPage ? '✅' : '❌'} a description is taken from the page's own words, not composed`);
+if (!descFromPage) failed++;
+
+const total = results.length + 122;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

@@ -1634,7 +1634,330 @@
     return out;
   }
 
-  function candidateElements(scope) {
+  // ── Declared edges: the control, and the thing it controls ────────────────
+  //
+  // THE GUIDING PRINCIPLE OF THIS BLOCK. Everywhere else, the collector's pool
+  // is "what is visible right now". For half of what u1 fixes that is the
+  // wrong pool, and wrong in a way that never shows up as an error — it shows
+  // up as a component type scoring zero, every time, on every site.
+  //
+  // A dialog's defining element is the modal box, and it is display:none until
+  // somebody presses the button. A listbox's is the option list, closed. A tab
+  // set's is the panels that are not the current one. An accordion's is the
+  // collapsed region. A drawer's is the drawer. None of them are on screen at
+  // the moment anyone looks, so none of them were ever collected — not
+  // mis-typed, not filtered, never seen. That is the whole of the gap between
+  // what an automatic pass finds and what a person finds, because a person
+  // does the one thing the pass never did: press things and look again.
+  //
+  // Pressing is expensive and has side effects. Reading is neither, and a page
+  // that hides a container almost always says in the markup which control
+  // reveals it. ARIA says it with aria-controls / aria-owns; the HTML popover
+  // API with popovertarget; Bootstrap and its many imitators with data-target
+  // and data-bs-target; and a plain in-page <a href="#panel"> has said it since
+  // long before any of them. Reading those turns "invisible, therefore absent"
+  // into "invisible, and here is the button that reveals it".
+  //
+  // Framework-agnostic on purpose. Nothing here knows what Bootstrap is; it
+  // knows that an attribute whose name ends in `target` holds a selector, and
+  // that ARIA's relationship attributes hold ID references. A framework that
+  // spells its own attribute the same way is picked up for free.
+  const REL_IDREF_ATTRS = ['aria-controls', 'aria-owns', 'popovertarget'];
+  const REL_SELECTOR_ATTRS = [
+    'data-target', 'data-bs-target', 'data-modal-target', 'data-drawer-target',
+    'data-dropdown-target', 'data-menu-target', 'data-collapse-target',
+    'data-dialog-target', 'data-panel-target', 'data-tab-target',
+  ];
+  const REL_SEL = REL_IDREF_ATTRS.concat(REL_SELECTOR_ATTRS)
+    .map((a) => '[' + a + ']').concat(['a[href^="#"]']).join(',');
+  // Anything a person can press. The generic data-* rule below is only allowed
+  // to look at these, which is what stops it from turning a page's analytics
+  // tags into a component list: a `data-modal="cart"` on a <div> that nobody
+  // can click did not open anything.
+  const PRESSABLE_SEL = 'button,summary,a[href],[role=button],[role=tab],[role=menuitem],[onclick],[tabindex]';
+  // A page-wide ceiling. A site with fifty declared panels must not spend the
+  // model's whole list on the ones nobody can see.
+  const RELATED_CAP = 20;
+
+  /**
+   * Hidden elements that a VISIBLE control declares it opens.
+   *
+   * Returns Map(target -> { via, trigger }). The trigger is the element, not a
+   * string, so the caller names it with the same selector builder as
+   * everything else and the two names are guaranteed to agree.
+   */
+  // ── Naming the opener when the page never declared one ───────────────────
+  //
+  // The container is on the list now, and half the time that is all there is:
+  // the button is wired in JavaScript and points at nothing. The remaining
+  // signal is the one a person uses without noticing. A drawer called
+  // `cart-drawer` is opened by the button that says Cart. An overlay called
+  // `search-panel` is opened by the one that says Search. Authors name the two
+  // halves of a pair after the same thing, because they have to think about
+  // both while writing them.
+  //
+  // Deliberately timid, because a wrong trigger is worse than none — u1 would
+  // wait on a control that never opens the thing. It answers only when exactly
+  // ONE visible pressable control on the page shares a distinctive word with
+  // the container, and generic furniture words are excluded, so the usual
+  // outcome on a busy page is silence. It is also reported as `name` in
+  // `openedVia`, so nothing downstream mistakes it for something the page said.
+  const NAME_STOP = new Set([
+    'panel', 'overlay', 'modal', 'dialog', 'drawer', 'popup', 'popover', 'flyout',
+    'wrapper', 'container', 'content', 'inner', 'outer', 'body', 'main', 'root',
+    'menu', 'list', 'item', 'items', 'group', 'block', 'box', 'area', 'view',
+    'open', 'close', 'toggle', 'show', 'hide', 'button', 'btn', 'link', 'icon',
+    'tool', 'nav', 'bar', 'header', 'footer', 'side', 'left', 'right', 'top',
+    'active', 'hidden', 'window', 'form', 'field', 'input', 'text', 'title',
+  ]);
+
+  /** `cartDrawerOverlay` / `cart-drawer__inner` → Set{'cart','drawer'} */
+  function nameTokens(el, deep) {
+    const out = new Set();
+    if (!el || el.nodeType !== 1) return out;
+    const eat = (raw) => {
+      String(raw || '')
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .split(/[^A-Za-z0-9]+/)
+        .forEach((w) => {
+          const t = w.toLowerCase();
+          if (t.length >= 4 && !NAME_STOP.has(t) && !/^\d+$/.test(t)) out.add(t);
+        });
+    };
+    eat(el.id);
+    eat(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className);
+    // The label is a sentence written for a screen reader; the id and the class
+    // are the author naming the thing. Reading both together is how "Search the
+    // store" starts matching every visible control with the word store in it,
+    // two answers become no answer, and a pair that was obvious goes unjoined.
+    // So prose is the fallback, used only when the structural names said
+    // nothing at all.
+    if (!out.size) eat(el.getAttribute('aria-label'));
+    if (deep && el.parentElement) for (const t of nameTokens(el.parentElement, false)) out.add(t);
+    return out;
+  }
+
+  function guessOpener(target, pressables) {
+    const want = nameTokens(target, true);
+    if (!want.size) return null;
+    let hit = null;
+    for (const el of pressables) {
+      if (target === el || target.contains(el)) continue;
+      const mine = nameTokens(el, false);
+      try { for (const t of nameTokens({ id: '', className: '', getAttribute: () => accName(el), nodeType: 1, parentElement: null }, false)) mine.add(t); } catch (e) {}
+      let shared = false;
+      for (const t of want) if (mine.has(t)) { shared = true; break; }
+      if (!shared) continue;
+      if (hit) return null;   // two answers is no answer
+      hit = el;
+    }
+    return hit;
+  }
+
+  function relatedTargets(scope) {
+    const map = new Map();
+    // One tab strip is one component, not five.
+    //
+    // A five-tab finder declares five edges, and each one points at a hidden
+    // panel. Admitted individually they are five candidates that look like five
+    // components, they eat a quarter of the page's whole budget, and the strip
+    // itself — the thing that actually gets mapped — is already on the list as
+    // a visible element. The signature of "these are one repeated thing" needs
+    // no framework knowledge: the triggers share a parent and so do the
+    // targets. The first one stands for the set; the rest are its siblings and
+    // whatever field selector names one will name them all.
+    let uid = 0;
+    const idOf = (el) => {
+      if (!el) return '0';
+      if (!el.__u1relId) { try { el.__u1relId = String(++uid); } catch (e) { return 'x'; } }
+      return el.__u1relId;
+    };
+    const pairSeen = new Set();
+    const add = (target, trigger, via) => {
+      if (map.size >= RELATED_CAP) return;
+      if (!target || target.nodeType !== 1 || target === trigger) return;
+      if (map.has(target)) return;
+      if (trigger) {
+        const pair = idOf(trigger.parentElement) + '>' + idOf(target.parentElement) + '>' + via;
+        if (pairSeen.has(pair)) return;
+        pairSeen.add(pair);
+      }
+      // A control pointing inside itself is naming its own chevron, not a
+      // component.
+      try { if (trigger && trigger.contains(target)) return; } catch (e) {}
+      // The entire value of an edge is the element you CANNOT see. One already
+      // on screen is already a candidate, and recording an edge for it would
+      // only rename a visible component after whatever happens to point at it
+      // — a skip link's #main-content is not a dialog. Dropping visible
+      // targets is also what keeps this list short without a single
+      // framework-specific exception.
+      if (visibleInViewport(target)) return;
+      map.set(target, { via, trigger });
+    };
+
+    let host = document;
+    try { if (scope && scope.querySelectorAll) host = scope; } catch (e) { host = document; }
+    let triggers = [];
+    try { triggers = qsaDeep(host, REL_SEL); } catch (e) { triggers = []; }
+    try {
+      for (const el of qsaDeep(host, PRESSABLE_SEL)) {
+        if (triggers.indexOf(el) !== -1) continue;
+        for (const at of Array.from(el.attributes || [])) {
+          if (/^data-/.test(at.name) && DATA_TRIGGER.test(at.name) && (at.value || '').trim()) {
+            triggers.push(el); break;
+          }
+        }
+      }
+    } catch (e) {}
+
+    for (const trigger of triggers) {
+      if (map.size >= RELATED_CAP) break;
+      // A control nobody can reach cannot reveal anything. This one test is
+      // what keeps a closed drawer's own menu out of the list: the menu is
+      // hidden, and so is the button that opens it.
+      if (!visibleInViewport(trigger)) continue;
+
+      for (const attr of REL_IDREF_ATTRS) {
+        const raw = trigger.getAttribute(attr);
+        if (!raw) continue;
+        // ARIA relationship attributes hold a space-separated ID list, not a
+        // selector — `aria-controls="panel1 panel2"` is two elements.
+        for (const id of raw.trim().split(/\s+/)) {
+          if (!id) continue;
+          try { add(document.getElementById(id), trigger, attr); } catch (e) {}
+        }
+      }
+      // The named list above is a convenience, not the rule. The rule is this
+      // loop, and it is the half that matters in the wild: the fixture page
+      // this repo scores against opens its size guide with
+      // `data-modal-open="sizeModal"` — a name no allowlist was ever going to
+      // contain, holding a bare id rather than a selector. Bootstrap's spelling
+      // is the minority case; every hand-rolled site invents its own.
+      //
+      // What makes this safe without an allowlist is that the VALUE has to
+      // check out. `data-modal-open="sizeModal"` counts because this page
+      // really does contain an element with that id and it really is hidden. A
+      // `data-track="cart"` next to it counts for nothing unless the same is
+      // true of it, in which case the hidden thing it named was worth looking
+      // at anyway.
+      for (const at of Array.from(trigger.attributes || [])) {
+        if (map.size >= RELATED_CAP) break;
+        if (!/^data-/.test(at.name)) continue;
+        if (REL_SELECTOR_ATTRS.indexOf(at.name) !== -1) continue;
+        if (!DATA_TRIGGER.test(at.name)) continue;
+        const raw = (at.value || '').trim();
+        // A value long enough to be prose, or carrying spaces or quotes, is a
+        // label or a JSON blob — not a name for one element.
+        if (!raw || raw.length > 120 || /[\s"'{}]/.test(raw)) continue;
+        try {
+          if (/^[#.\[]/.test(raw)) add(document.querySelector(raw), trigger, at.name);
+          else add(document.getElementById(raw), trigger, at.name);
+        } catch (e) {}
+      }
+      for (const attr of REL_SELECTOR_ATTRS) {
+        const raw = (trigger.getAttribute(attr) || '').trim();
+        if (!raw || raw === '#') continue;
+        try { add(document.querySelector(raw), trigger, attr); } catch (e) {}
+      }
+      // The oldest edge of the lot, and still the one a hand-rolled tab strip
+      // uses. It can only ever ADD a hidden element — an href pointing at
+      // something on screen is dropped by `add` above.
+      if (trigger.tagName === 'A') {
+        const href = trigger.getAttribute('href') || '';
+        if (href.length > 1 && href.charAt(0) === '#') {
+          try { add(document.getElementById(decodeURIComponent(href.slice(1))), trigger, 'href'); } catch (e) {}
+        }
+      }
+    }
+
+    // ── The other half: revealable containers nothing points at ─────────────
+    //
+    // Everything above needs the page to have SAID what opens what. Plenty of
+    // pages never say it — the button is wired in JavaScript, the attribute is
+    // a listener key with no value, the whole thing is a click handler on a
+    // class. The fixture this repo scores against is exactly that page: its
+    // search overlay and its cart drawer are opened by two <button>s carrying
+    // nothing but an id, and no amount of attribute reading will ever join them
+    // up. Both are dialogs. Both were labelled by hand. Neither has ever been
+    // collected.
+    //
+    // So the edge is a way in, not the only way in. A container can also earn
+    // its place by what it IS, with no trigger at all:
+    //
+    //   — it declares a revealable role (dialog, menu, listbox, tabpanel,
+    //     tooltip) or aria-modal, which is the page stating outright that this
+    //     is a thing that gets shown; or
+    //   — it is a hidden box sitting at the top of the document with something
+    //     pressable inside it. Nothing is parked as a direct child of <body>
+    //     and hidden except overlays, drawers, cookie bars and modals; page
+    //     content lives in the layout.
+    //
+    // The trigger comes out empty for these, and that is honest — the mapping
+    // gets a container it can fix and a blank the specialist or a probe fills,
+    // rather than nothing at all.
+    const REVEALABLE_ROLE = /^(dialog|alertdialog|menu|listbox|tabpanel|tooltip)$/;
+    let overlays = [];
+    try {
+      overlays = qsaDeep(host, 'dialog,[aria-modal],[role],[hidden]');
+    } catch (e) { overlays = []; }
+    // Every direct child of <body>, whatever it declares. The selector above
+    // asks the page to have said something — a role, the hidden attribute —
+    // and the sites that need this most say nothing: the same fixture with its
+    // roles stripped and `hidden` rewritten as a class loses both dialogs
+    // outright. `display:none` set from a stylesheet is invisible to any
+    // attribute selector, and it is how most overlays are actually hidden.
+    // Body's own children are a handful of elements on any page, so this is
+    // cheap, and being hidden is then MEASURED below rather than declared.
+    try {
+      const top = (host === document || host === document.body)
+        ? Array.from(document.body ? document.body.children : [])
+        : [];
+      for (const el of top) if (overlays.indexOf(el) === -1) overlays.push(el);
+    } catch (e) {}
+    for (const el of overlays) {
+      if (map.size >= RELATED_CAP) break;
+      if (map.has(el)) continue;
+      if (visibleInViewport(el)) continue;
+      const role = (el.getAttribute('role') || '').toLowerCase();
+      const byRole = el.tagName === 'DIALOG' || el.getAttribute('aria-modal') === 'true' ||
+        REVEALABLE_ROLE.test(role);
+      const atTop = el.parentElement &&
+        (el.parentElement === document.body || el.parentElement === document.documentElement);
+      let byPlacement = false;
+      if (!byRole && atTop) {
+        try { byPlacement = !!el.querySelector(PRESSABLE_SEL); } catch (e) {}
+      }
+      if (!byRole && !byPlacement) continue;
+      // An overlay is usually a backdrop wrapping the box that matters, and it
+      // is the box that gets fixed. When the wrapper holds exactly one element
+      // the choice is not a guess, so the inner one is offered as well and the
+      // reader picks — .cart-drawer-overlay is not the drawer.
+      let inner = null;
+      if (byPlacement && el.children.length === 1) inner = el.children[0];
+      const viaOf = (x) => {
+        const r = (x.getAttribute('role') || '').toLowerCase();
+        if (x.tagName === 'DIALOG' || x.getAttribute('aria-modal') === 'true') return 'hidden dialog';
+        return REVEALABLE_ROLE.test(r) ? 'hidden ' + r : 'hidden overlay';
+      };
+      add(el, null, viaOf(el));
+      if (inner) add(inner, null, viaOf(inner));
+    }
+
+    // One pass over the page's pressable controls, shared by every container
+    // that came out of the block above without an opener.
+    let pressables = null;
+    for (const [target, edge] of map) {
+      if (edge.trigger) continue;
+      if (pressables === null) {
+        try { pressables = qsaDeep(host, PRESSABLE_SEL).filter(visibleInViewport); } catch (e) { pressables = []; }
+      }
+      const opener = guessOpener(target, pressables);
+      if (opener) { edge.trigger = opener; edge.via = edge.via + ' + name'; }
+    }
+    return map;
+  }
+
+  function candidateElements(scope, extras) {
     const rec = root.__u1EventMap;
     let recorded = null;
     try { recorded = rec && typeof rec.all === 'function' ? rec.all() : null; } catch { recorded = null; }
@@ -1643,7 +1966,11 @@
     // merged in DOCUMENT ORDER below rather than appended — the collector's
     // "a component inside a component of the same kind is the same component"
     // rule reads the outermost first and depends on that order.
-    const clusters = fieldClusters(scope).concat(trailCandidates(scope));
+    // `extras` are the hidden targets of declared edges. They are merged HERE
+    // rather than appended, for the same reason the clusters are: the caller's
+    // "a component inside a component of the same kind is the same component"
+    // rule reads the outermost first and depends on document order holding.
+    const clusters = fieldClusters(scope).concat(trailCandidates(scope), extras || []);
     const merge = (base) => {
       if (!clusters.length) return base;
       const set = new Set(base);
@@ -1701,9 +2028,15 @@
     // model's whole list on them.
     const HIDDEN_CAP = 12;
     let hiddenUsed = 0;
+    // An element that a visible control declares it opens is admitted even on
+    // a page-wide scan, and even though it is hidden — that is the entire
+    // point of it. It has its own budget so it cannot be starved by, or starve,
+    // the anonymous-hidden allowance above.
+    const related = relatedTargets(scope);
+    let relatedUsed = 0;
     // Names seen on the page, for telling a real selector from an invented one.
     const pageTokens = new Set();
-    for (const el of candidateElements(scope)) {
+    for (const el of candidateElements(scope, [...related.keys()])) {
       if (out.length >= max) break;
       if (seen.has(el)) continue;
       // Never mark our own overlay — either of them.
@@ -1722,11 +2055,23 @@
       // was asked for, so it is allowed only there, and capped.
       let r = visibleInViewport(el);
       let closed = false;
+      const edge = related.get(el) || null;
       if (!r) {
-        if (scope === document || hiddenUsed >= HIDDEN_CAP || el === scope) continue;
+        // Two ways in for something that is not on screen. An EDGE target is
+        // admitted anywhere, because a visible control has named it and that
+        // is a stronger statement than visibility: the page is telling us this
+        // is a component and telling us how to reach it. Anything else is
+        // admitted only inside a scope somebody pointed at, where "show me
+        // what is in here" plainly includes the closed parts.
+        if (edge) {
+          if (relatedUsed >= RELATED_CAP) continue;
+          relatedUsed++;
+        } else {
+          if (scope === document || hiddenUsed >= HIDDEN_CAP || el === scope) continue;
+          hiddenUsed++;
+        }
         r = el.getBoundingClientRect();
         closed = true;
-        hiddenUsed++;
       }
       // Skip a wrapper whose only content is a single already-listed child —
       // it produces two marks pointing at visually identical boxes.
@@ -1815,6 +2160,18 @@
         // panel. The model must know: it cannot see this one in the screenshot,
         // and "I could not see it" is not a reason to leave it out of the answer.
         closed,
+        // The control that declares it opens this, and the attribute that said
+        // so. Two stages need it and neither could have worked it out: the
+        // survey, so it can answer "listbox" instead of "a button and a list it
+        // cannot see", and the build, so `trigger` is filled from what the page
+        // states rather than guessed from class names.
+        openedBy: (edge && edge.trigger) ? (function () {
+          try {
+            const t = robustSelector(edge.trigger);
+            return isU1Valid(t) ? t : '';
+          } catch (e) { return ''; }
+        })() : '',
+        openedVia: edge ? edge.via : '',
         // Travels with the viewport, so a page-wide scan meets it again at every
         // scroll position. The panel drops these after the first stop.
         sticky: lastWasSticky,
@@ -3417,6 +3774,329 @@
     accordion: 'button', heading: 'heading', link: 'link',
   };
 
+  /**
+   * A form's required fields, read off the page. No model involved.
+   *
+   * Every other component type has one of these — listboxShape, dialogShape,
+   * accordionShape, comboboxShape, tabPanelsFor. `form` had none, and the
+   * consequence was not a worse answer, it was no answer: u1.fix.form requires
+   * submitButton, inputField and invalidField, nothing on this side ever looked
+   * for them, so the model was asked, and a model looking at a screenshot
+   * cannot see which control submits or what class the page adds to a field it
+   * rejects. It returned empty strings, the save guard correctly refused, and
+   * the card said "could not be mapped" on a plain search box with a Go button
+   * sitting in the markup.
+   *
+   * Two of the three are mechanical. The third needs explaining.
+   *
+   * `invalidField` is not a thing on the page — it is what the page WILL put
+   * there once somebody submits something wrong, and nothing is wrong yet. So
+   * it is looked for in this order: a field already marked invalid; then the
+   * page's own stylesheet, which has to contain a rule for the state before the
+   * page can show it; then `[aria-invalid="true"]`, which is the standard and
+   * is what an accessible form is supposed to set regardless. A wrong guess
+   * here costs nothing at load — the selector simply matches nothing until a
+   * field goes bad — which is why a fallback is honest here and would not be
+   * for, say, a trigger.
+   */
+  const INVALID_CLASS_RE = /(^|[.\s>+~,:[])((is-)?invalid|has-error|is-error|error|ng-invalid|field-error|input-error)\b/i;
+
+  function formShape(containerSel) {
+    let c;
+    try { c = document.querySelector(containerSel); } catch (e) { return null; }
+    if (!c) return null;
+
+    const pick = (els, why) => {
+      const r = commonSelectorFor(c, uniq(els), containerSel);
+      return r && r.selector && isU1Valid(r.selector) ? { selector: r.selector, count: r.count, why } : null;
+    };
+
+    // Every control a person fills. Hidden inputs are not fields, and a submit
+    // is a control but not something anyone types into.
+    const inputs = qsa(c, 'input,select,textarea').filter((el) => {
+      const t = (el.getAttribute('type') || '').toLowerCase();
+      return t !== 'hidden' && t !== 'submit' && t !== 'button' && t !== 'image' && t !== 'reset';
+    });
+
+    // What submits. `<button>` inside a form defaults to type=submit, which is
+    // why a bare <button> counts — the Go control on a search box usually is
+    // one and declares nothing.
+    let submits = qsa(c, 'button[type="submit"],input[type="submit"],input[type="image"]');
+    if (!submits.length) {
+      submits = qsa(c, 'button').filter((b) => {
+        const t = (b.getAttribute('type') || '').toLowerCase();
+        return t === '' || t === 'submit';
+      });
+    }
+    if (!submits.length) {
+      // A search box built out of divs still has one control that runs it, and
+      // it is the clickable thing that is not one of the fields.
+      submits = qsa(c, '[role="button"],a[href]').filter((el) => inputs.indexOf(el) === -1);
+    }
+    // "Exactly one", per the schema. Several means the last one is as good a
+    // guess as any, and a guess is worse than the narrower first match.
+    if (submits.length > 1) submits = [submits[0]];
+
+    let invalid = null;
+    const marked = qsa(c, '[aria-invalid="true"],.is-invalid,.has-error,.error,.invalid');
+    if (marked.length) {
+      invalid = pick(marked, 'A field on the page is already marked invalid, so this is the page\'s own marker.');
+    }
+    if (!invalid) {
+      // The page cannot show an error state it has no rule for. Reading the
+      // rule is how the marker is learnt without submitting anything.
+      let cls = '';
+      try {
+        outer:
+        for (const sheet of Array.from(document.styleSheets || [])) {
+          let rules = [];
+          try { rules = Array.from(sheet.cssRules || []); } catch (e) { continue; }  // cross-origin
+          for (const rule of rules) {
+            const sel = rule && rule.selectorText;
+            if (!sel || !INVALID_CLASS_RE.test(sel)) continue;
+            for (const part of sel.split(',')) {
+              const m = part.match(/\.((?:is-)?invalid|has-error|is-error|error|field-error|input-error)\b/i);
+              if (m) { cls = '.' + m[1]; break outer; }
+            }
+          }
+        }
+      } catch (e) {}
+      if (cls && isU1Valid(cls)) {
+        invalid = { selector: cls, count: countOf(cls),
+          why: 'The page\'s own stylesheet has a rule for this class, which is how it shows a bad field.' };
+      }
+    }
+    if (!invalid) {
+      invalid = { selector: '[aria-invalid="true"]', count: countOf('[aria-invalid="true"]'),
+        why: 'Nothing is marked invalid yet and the stylesheet names no class for it, so the standard attribute is used. It matches nothing until a field goes bad, which is the point.' };
+    }
+
+    const inputField = inputs.length ? pick(inputs, `${inputs.length} field${inputs.length === 1 ? '' : 's'} a person fills in.`) : null;
+    const submitButton = submits.length ? pick(submits, 'The control that submits this form.') : null;
+    if (!inputField && !submitButton) return null;
+
+    const out = { invalidField: invalid };
+    if (inputField) out.inputField = inputField;
+    if (submitButton) out.submitButton = submitButton;
+
+    // Optional, and free once the rest is being read.
+    const err = qsa(c, '[role="alert"],[class*="error-message"],[class*="errorMessage"],[class*="help-block"]');
+    if (err.length) {
+      const r = pick(err, 'The element the message for a bad field goes in.');
+      if (r) out.errorMsg = r;
+    }
+    const req = qsa(c, '[required],[aria-required="true"]');
+    if (req.length && req.length !== inputs.length) {
+      const r = pick(req, `${req.length} field${req.length === 1 ? '' : 's'} the form will not go without.`);
+      if (r) out.requiredField = r;
+    }
+    return out;
+  }
+
+  /**
+   * Rename an element that was named in a way U1 cannot resolve.
+   *
+   * U1 puts every selector through jQuery, which refuses a descendant space and
+   * a pseudo-class — silently. So `#state-select-modal h2` is a perfectly good
+   * CSS selector, resolves in one line in the console, points at exactly the
+   * right heading, and would decorate nothing forever. The save guard catches
+   * it and refuses, which is right, and then says "give the element a class if
+   * it has nothing else to point at" — to a person, about an element the tool
+   * is looking straight at.
+   *
+   * There is nothing to ask. The selector RESOLVES; the browser has no trouble
+   * with it. So resolve it, take the elements it points at, and name them again
+   * with the same builder every other selector in this tool comes from —
+   * robustSelector walks up adding `>` compounds until the name is unique, and
+   * every name it emits is U1-valid by construction. `#state-select-modal h2`
+   * becomes `.modal-header>h2`.
+   *
+   * The repair is only accepted if the new name points at the SAME elements, in
+   * the same order. A rename that quietly widens or moves the target would be
+   * worse than the refusal it replaces — that is the failure this whole guard
+   * exists to prevent, and it must not be reintroduced by the repair.
+   */
+  function repairForU1(sel) {
+    if (typeof sel !== 'string' || !sel.trim() || isU1Valid(sel)) return null;
+    let els;
+    try { els = Array.from(document.querySelectorAll(sel)); } catch (e) { return null; }
+    if (!els.length) return null;   // names nothing; a rename cannot help it
+
+    let out = '';
+    if (els.length === 1) {
+      const r = robustSelector(els[0]);
+      if (r && isU1Valid(r)) out = r;
+    } else {
+      const anc = commonAncestor(els);
+      const ancSel = anc && anc !== document.body ? robustSelector(anc) : null;
+      const r = commonSelectorFor(anc || document.body, els, ancSel);
+      if (r && r.selector && isU1Valid(r.selector)) out = r.selector;
+    }
+    if (!out) return null;
+
+    let now;
+    try { now = Array.from(document.querySelectorAll(out)); } catch (e) { return null; }
+    if (now.length !== els.length) return null;
+    for (let i = 0; i < els.length; i++) if (now[i] !== els[i]) return null;
+    return out;
+  }
+
+  // ── Two questions about a component that should be measured, not asked ────
+
+  /**
+   * Is this already accessible without u1?
+   *
+   * A native `<a href>` and a native `<button>` carry their role and their
+   * place in the tab order from the browser, for free. A u1.fix.link on one
+   * adds nothing — it re-announces an element that already announces itself,
+   * which is the double-fixing a specialist would never do by hand and which
+   * has been the single biggest source of padding in an automatic pass: of
+   * twenty-one components produced across two sites in one day, most were
+   * links and buttons that were already links and buttons.
+   *
+   * The prompt has said not to do this in plain words for a long time. It is
+   * still the commonest row on the list, which is the signature of a question
+   * that should be measured instead of asked.
+   *
+   * Three things keep it on the list, and they are the cases u1.fix.link and
+   * u1.fix.button were actually written for:
+   *   — it is NOT native: a <div> or <span> wired with a click handler, which
+   *     the browser gives no role and no tab stop;
+   *   — an <a> with no href, which is not a link at all however it looks;
+   *   — it has no accessible name, so it is announced as "link" and nothing else.
+   */
+  function alreadyNative(sel) {
+    let el;
+    try { el = document.querySelector(sel); } catch (e) { return null; }
+    if (!el) return null;
+    const tag = el.tagName;
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    const isLink = tag === 'A' && el.hasAttribute('href');
+    const isBtn = tag === 'BUTTON' ||
+      (tag === 'INPUT' && /^(button|submit|reset|image)$/i.test(el.getAttribute('type') || ''));
+    if (!isLink && !isBtn) return null;
+    // A role that contradicts the tag is a real defect and stays on the list.
+    if (role && !((isLink && role === 'link') || (isBtn && role === 'button'))) return null;
+    if (el.getAttribute('aria-hidden') === 'true') return null;
+    const name = accName(el);
+    if (!name) return null;
+    // Taken out of the tab order by hand — the browser's free tab stop is gone.
+    const ti = el.getAttribute('tabindex');
+    if (ti != null && parseInt(ti, 10) < 0) return null;
+    return { tag: tag.toLowerCase(), name };
+  }
+
+  /**
+   * A `menu` that is really a listbox.
+   *
+   * u1 draws the line by BEHAVIOUR, not by the word in the markup. fix.menu is
+   * for a standing bar of navigation — several items, arrow keys across them,
+   * usually drop-downs beneath. fix.listbox is for one control that opens one
+   * flat list of options and closes again when you pick one.
+   *
+   * The Sign In drop-down on a real site is the second, and it says
+   * `role="menu"` in its HTML, so it was read as a menu and mapped with
+   * fix.menu — which on that shape does nothing useful and, with submenus,
+   * throws outright. The specialist mapping the same site by hand wrote it as a
+   * listbox with overwriteRole:"menu". The markup's word lost to the shape,
+   * which is the right way round.
+   *
+   * Guarded so a real navigation menu can never fall in here:
+   *   — anything in a <nav> or role="navigation" is left alone. This codebase
+   *     already treats <nav> as deciding for `menu`, and a hamburger revealing
+   *     the site nav is the case that would otherwise be caught;
+   *   — the list must be FLAT. One nested item-list and it is a menu with
+   *     submenus, which is exactly what fix.listbox cannot express;
+   *   — the control must declare or behave like a disclosure: the list hidden
+   *     right now, or aria-haspopup / aria-expanded on the trigger. A list
+   *     standing open with no control over it is not a listbox.
+   */
+  function menuIsReallyListbox(containerSel) {
+    let el;
+    try { el = document.querySelector(containerSel); } catch (e) { return null; }
+    if (!el) return null;
+    try {
+      if (el.closest('nav,[role="navigation"]')) return null;
+    } catch (e) {}
+
+    // The survey names the component, which for this shape is as often the list
+    // as the wrapper holding the list and its button. listboxShape needs the
+    // wrapper, so try both.
+    let shape = listboxShape(containerSel);
+    if (!shape && el.parentElement) {
+      const up = robustSelector(el.parentElement);
+      if (up && isU1Valid(up)) shape = listboxShape(up);
+    }
+    if (!shape || !shape.listbox || !shape.trigger) return null;
+
+    let panel, trigger;
+    try {
+      panel = document.querySelector(shape.listbox);
+      trigger = document.querySelector(shape.trigger);
+    } catch (e) { return null; }
+    if (!panel || !trigger) return null;
+
+    // Flat: no row of this list contains a list of its own.
+    for (const row of Array.from(panel.children)) {
+      let nested = [];
+      try { nested = Array.from(row.querySelectorAll('ul,ol,[role="menu"],[role="listbox"]')); } catch (e) {}
+      for (const n of nested) {
+        let items = 0;
+        for (const k of Array.from(n.children)) if (k.matches(LB_ITEM)) items++;
+        if (items >= 2) return null;
+      }
+    }
+
+    const declares = trigger.hasAttribute('aria-haspopup') || trigger.hasAttribute('aria-expanded');
+    if (!declares && visibleInViewport(panel)) return null;
+
+    return { listbox: shape.listbox, trigger: shape.trigger, options: shape.options,
+      why: 'One control opening one flat list of options — that is a listbox, whatever the role attribute says. fix.menu on this shape decorates nothing.' };
+  }
+
+  /**
+   * The page's own words for what a component is, for the description fields.
+   *
+   * `menuDescription: "Sign in options"` was written by a model looking at a
+   * picture. It is announced to a screen reader user as the name of the thing,
+   * so it should be what the page calls it — the control's own label, the
+   * nav's aria-label, the heading above it — not a phrase composed for it.
+   */
+  function componentWording(containerSel, triggerSel) {
+    const pick = (el) => (el ? accName(el) : '');
+    let el = null, trig = null;
+    try { el = document.querySelector(containerSel); } catch (e) {}
+    try { if (triggerSel) trig = document.querySelector(triggerSel); } catch (e) {}
+    if (!el && !trig) return '';
+
+    // The control that opens it names it better than anything inside it does.
+    if (trig) {
+      const t = (trig.getAttribute('aria-label') || trig.getAttribute('title') || '').trim() ||
+        (trig.textContent || '').trim().replace(/\s+/g, ' ');
+      if (t) return t.slice(0, 60);
+    }
+    if (el) {
+      const own = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+      if (own) return own.slice(0, 60);
+      const by = el.getAttribute('aria-labelledby');
+      if (by) {
+        const parts = by.trim().split(/\s+/).map((id) => {
+          try { return pick(document.getElementById(id)); } catch (e) { return ''; }
+        }).filter(Boolean);
+        if (parts.length) return parts.join(' ').slice(0, 60);
+      }
+      // A heading immediately above is how a section names itself.
+      let prev = el.previousElementSibling;
+      for (let i = 0; i < 3 && prev; i++, prev = prev.previousElementSibling) {
+        if (/^H[1-6]$/.test(prev.tagName)) {
+          const h = pick(prev);
+          if (h) return h.slice(0, 60);
+        }
+      }
+    }
+    return '';
+  }
+
   function authoredRoleConflict(sel, type) {
     var want = ROLE_BY_TYPE[type];
     if (!want) return null;
@@ -3570,6 +4250,7 @@
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
     menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
+    formShape, repairForU1, alreadyNative, menuIsReallyListbox, componentWording,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,

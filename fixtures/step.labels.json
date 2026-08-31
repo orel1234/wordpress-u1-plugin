@@ -86,7 +86,7 @@
       "root": ".search-panel",
       "why": "role=dialog aria-modal=true, opened from the Search button.",
       "fields": {
-        "trigger": "#searchToggle"
+        "trigger": "#searchOpen"
       },
       "hidden": true
     },

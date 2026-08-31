@@ -77,7 +77,7 @@
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['mark', 'label', 'u1Type', 'containerSelector', 'needsWork', 'why'],
+          required: ['mark', 'label', 'u1Type', 'containerSelector', 'triggerSelector', 'needsWork', 'why'],
           properties: {
             mark: { type: 'integer', description: 'The number of the container element, from the list.' },
             label: { type: 'string', description: 'What a person would call it: "Main navigation", "Search button", "Product filter drop-down".' },
@@ -85,6 +85,10 @@
             containerSelector: {
               type: 'string',
               description: 'The selector of the element that component type expects as its root — COPIED from the element list. For menu the list holding the items (not the surrounding nav); for listbox the list that appears (not the button that opens it); for dialog the modal box.',
+            },
+            triggerSelector: {
+              type: 'string',
+              description: 'The control that opens or reveals the container, when the component has one — copied verbatim from an "openedBy" or a "selector" field in the list. Empty string when the component has no single trigger (a standing menu, a form, a table, a heading).',
             },
             needsWork: { type: 'boolean', description: 'true if it currently has an accessibility problem worth fixing; false if it already looks correct.' },
             why: { type: 'string', description: 'One short line: what is wrong, or why it is already fine. Plain English.' },
@@ -114,7 +118,20 @@ RULES
 - Prefer an element whose "matches" is 1 for a container.
 - A native, unmodified <a href="…"> or <button> is ALREADY a link/button as far as accessibility is concerned — the browser gives it the right role and puts it in the tab order for free, with nothing for u1 to add. Set needsWork false for these. The only things actually worth checking on one: does it have an accessible name (visible text, or aria-label if it is icon-only), and — for <a> — does it actually have an href (an <a> with no href is not a link at all, and THAT is worth flagging). Do not suggest link/button mappings for native elements that already pass those checks. This is the single most common way the list gets padded with rows that need no fix.
 - Skip anything you cannot see in the screenshot — EXCEPT an element marked "closed": true. Those are in the page but not showing, which is what a dropdown's list, a collapsed panel or a closed dialog looks like when shut. They are in the list precisely because they are the part that matters, and they are usually the container the component should be rooted on. Use them.
-- So: a trigger button plus a "closed" list beside it is ONE listbox, not a lone button. The list is the containerSelector and the button is the trigger. Never answer that the options list "is not available" when a closed element is in the list.`;
+- So: a trigger button plus a "closed" list beside it is ONE listbox, not a lone button. The list is the containerSelector and the button is the trigger. Never answer that the options list "is not available" when a closed element is in the list.
+
+WHAT "openedBy" MEANS, AND WHY IT OUTRANKS THE PICTURE
+Some entries carry "openedBy" — a selector — and "openedVia" — the attribute it was read from. That element is one the PAGE ITSELF declares a visible control reveals. It is the strongest evidence in the list, stronger than anything you can see, because it is the site's own statement about its own structure rather than an inference from a screenshot.
+- Copy "openedBy" verbatim into "triggerSelector". Do not re-derive it and do not improve it.
+- Treat these as present and mappable. They are not visible in the screenshot BY DEFINITION — that is what makes them worth a row. Never answer that a component "could not be inspected because it is closed", and never leave one out for not appearing in the picture.
+- "openedVia" tells you which kind of component you are looking at, and it is usually decisive:
+  · a control with aria-haspopup, plus a list it controls → listbox (or menu, if it is a standing bar)
+  · a control whose target is a modal box, overlay or drawer → dialog
+  · role="tab" controlling a panel → tabs, rooted on the tab strip
+  · a header with aria-expanded controlling a region → accordion, rooted on the header
+  · an in-page link (openedVia "href") to a hidden panel → whatever that panel is; look at it before deciding
+- These entries are almost always needsWork true. A container that is hidden until pressed is the exact shape that ships without a focus trap, without Escape-to-close, and without an accessible name.
+- THE FAILURE THIS EXISTS TO PREVENT: a whole-page pass that returns links, buttons, menus and headings and NOT ONE dialog, listbox, tab set or accordion. That answer is almost never true of a real site. It is what you get when only what is on screen is considered, because every dialog on every site is hidden until somebody presses something. If your answer has no such component in it, look again at the entries carrying "openedBy" before you finish.`;
 
   // The scan's rules live in a11y-rules.md so they can be changed without
   // touching code. Fetched once and appended to the prompt above; if it cannot
@@ -406,6 +423,11 @@ WHAT "changed nothing" USUALLY MEANS
     // In the DOM but not showing right now. You will not find it in the
     // screenshot, and that is not a reason to leave it out of the answer.
     if (c.closed) o.closed = true;
+    // A visible control on the page DECLARES that it opens this element, and
+    // says so in the markup. This is the difference between "a button, and a
+    // list I cannot see" and "a listbox" — and, for a dialog, the difference
+    // between being found and never being collected at all.
+    if (c.openedBy) { o.openedBy = c.openedBy; o.openedVia = c.openedVia || ''; }
     return o;
   });
 

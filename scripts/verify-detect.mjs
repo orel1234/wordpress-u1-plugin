@@ -87,14 +87,22 @@ function buildPage() {
   // jsdom has no layout and no CSS. Elements get a box unless the page hid
   // them, and computed style is answered from the inline attributes that
   // matter to the collector.
+  // The realistic build hides its overlays the way most sites do — a class the
+  // stylesheet turns into display:none — and jsdom loads no stylesheet. Left
+  // unmodelled, the harness reported the search overlay and the cart drawer as
+  // fully visible, which made the closed-component score meaningless on the one
+  // variant it was written to measure. `is-hidden` is that fixture's word for
+  // it, so the harness stands in for the CSS it cannot run.
+  const isHidden = (el) => !!el && (el.hasAttribute('hidden') ||
+    /(^|\s)is-hidden(\s|$)/.test(el.getAttribute('class') || '') ||
+    !!el.closest('[hidden],.is-hidden'));
   w.HTMLElement.prototype.getBoundingClientRect = function () {
-    const hidden = this.hasAttribute('hidden') || this.closest('[hidden]');
-    return hidden
+    return isHidden(this)
       ? { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }
       : { top: 10, left: 10, right: 210, bottom: 50, width: 200, height: 40 };
   };
   Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', {
-    get() { return this.hasAttribute('hidden') ? 0 : 40; }, configurable: true,
+    get() { return isHidden(this) ? 0 : 40; }, configurable: true,
   });
   const STICKY = /site-header|portal-header/;
   w.getComputedStyle = (el) => ({
@@ -173,6 +181,18 @@ const intel = w.__u1SelectorIntel;
 const got = intel.collectCandidates(2000, null);
 
 // ── Scoring ─────────────────────────────────────────────────────────────────
+
+// U1_DBG=1 prints every hidden container that earned a place and what the page
+// said opened it. The scored rows below say whether the two labelled dialogs
+// came through; this says what ELSE did, which is the only way to see the rule
+// over-reaching — a page full of `hidden overlay` entries with no opener means
+// the placement test is admitting layout, not overlays.
+if (process.env.U1_DBG) {
+  for (const c of got.candidates) {
+    if (!c.openedBy && !c.openedVia) continue;
+    console.log(`EDGE ${(c.selector || '(none)').padEnd(30)} ${(c.openedVia || '').padEnd(22)} ${c.openedBy || ''}`);
+  }
+}
 const scored = labels.components.filter(c => !c.hidden);
 const openable = labels.components.filter(c => c.hidden);
 
@@ -224,6 +244,50 @@ for (const want of scored) {
   }
 }
 
+// ── The closed half ─────────────────────────────────────────────────────────
+// Until now this set was counted in the header and then dropped on the floor:
+// "2 more that only exist while open" and no number after it. That silence is
+// the thing being fixed. A component whose defining element is display:none at
+// the moment anyone looks — every dialog, every closed drawer, every collapsed
+// panel — was never collected, so the model was never able to name it, so the
+// whole type scored zero on every site and nothing said so.
+//
+// Two questions, because they fail independently. Did the container reach the
+// list at all, and did anything come back saying what opens it? A dialog with
+// no trigger is still worth having; a trigger recovered from the page's own
+// markup is what makes it fixable without a person pressing buttons.
+const openRows = [];
+let openFound = 0, openTrig = 0;
+for (const want of openable) {
+  let target = null;
+  try { target = d.querySelector(want.root); } catch { target = null; }
+  if (!target) { openRows.push({ want, verdict: 'label-broken' }); continue; }
+  const cand = got.candidates.find(c => {
+    try { return d.querySelector(`[data-u1-mark="${c.mark}"]`) === target; } catch { return false; }
+  });
+  if (!cand) { openRows.push({ want, verdict: 'not-found' }); continue; }
+  openFound++;
+  const wantTrig = (want.fields || {}).trigger;
+  // A label that names a control the page does not have is a corpus bug, and
+  // reporting it as a detection miss is how a wrong number gets defended. The
+  // first run of this measure blamed the collector for failing to find
+  // `#searchToggle`; the page's button is `#searchOpen` and always was.
+  let trigBroken = false;
+  if (wantTrig) { try { trigBroken = !d.querySelector(wantTrig); } catch { trigBroken = true; } }
+  let trigOk = false;
+  if (wantTrig && !trigBroken && cand.openedBy) {
+    try {
+      const a = [...d.querySelectorAll(cand.openedBy)];
+      const b = d.querySelector(wantTrig);
+      trigOk = !!b && a.includes(b);
+    } catch { trigOk = false; }
+  }
+  if (trigOk) openTrig++;
+  openRows.push({ want, verdict: 'ok', trigOk, trigBroken, via: cand.openedVia || '', got: cand.openedBy || '' });
+}
+const openTrigTotal = openable.filter(c => (c.fields || {}).trigger).length -
+  openRows.filter(r => r.trigBroken).length;
+
 const pct = (a, b) => b ? Math.round((a / b) * 1000) / 10 : 0;
 const bar = (p) => '█'.repeat(Math.round(p / 5)).padEnd(20, '·');
 
@@ -235,6 +299,8 @@ const measures = [
   ['named correctly', typed, scored.length],
   ['selector resolves to it', rooted, scored.length],
   ['label fields still resolve', fieldOk, fieldTotal],
+  ['closed ones collected', openFound, openable.length],
+  ['…and their trigger named', openTrig, openTrigTotal],
 ];
 for (const [name, a, b] of measures) {
   const p = pct(a, b);
@@ -249,6 +315,17 @@ for (const r of rows) {
       : r.verdict === 'not-found' ? '— never collected'
       : r.verdict === 'label-broken' ? '— the LABEL does not resolve; fix the corpus'
       : `— named "${r.gotType}", selector "${r.gotSel}" hits ${r.hits}`));
+}
+
+console.log('\n  Only there once opened:');
+for (const r of openRows) {
+  const mark = r.verdict === 'ok' ? (r.trigOk ? '  ok  ' : ' ~~~  ') : ' MISS ';
+  console.log(`  ${mark} ${r.want.type.padEnd(9)} ${r.want.root.padEnd(28)}` +
+    (r.verdict === 'not-found' ? '— never collected'
+      : r.verdict === 'label-broken' ? '— the LABEL does not resolve; fix the corpus'
+      : r.trigOk ? `— opened by "${r.got}" (${r.via})`
+      : r.trigBroken ? `— the LABEL's trigger does not resolve; fix the corpus`
+      : `— collected via ${r.via || 'nothing'}, trigger not named`));
 }
 
 if (VERBOSE) {
