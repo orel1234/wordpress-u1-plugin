@@ -208,6 +208,20 @@
     },
 
     {
+      "type": "tooltip",
+      "root": "#auditTip",
+      "why": "role=tooltip, hidden until its control is described. The role was never in COMPONENT_BY_ROLE, so it rode in on the edges and then had no name.",
+      "fields": {
+        "trigger": "#auditTipBtn"
+      },
+      "hidden": true
+    },
+    {
+      "type": "none",
+      "root": "#auditSwitch",
+      "why": "role=switch is a checkbox subtype — a PART. Its class says switch-nav, and 'nav' must not make the button a menu. Two rules pinned at once."
+    },
+    {
       "type": "none",
       "root": "#auditMenuToggle",
       "why": "A lone button whose CLASS says menu-toggle, outside any nav, opening nothing on this page. A part-name is not a component."

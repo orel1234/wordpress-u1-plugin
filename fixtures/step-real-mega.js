@@ -1009,6 +1009,21 @@ Mega.widgets = {
     if (clear) clear.addEventListener('click', () => {
       Store.utils.qsa('select', el('auditFilters')).forEach(s => { s.selectedIndex = 0; });
     });
+
+    const tipBtn = el('auditTipBtn'), tip = el('auditTip');
+    if (tipBtn && tip) {
+      const show = () => { tip.classList.toggle('is-hidden', !!(false)); };
+      const hide = () => { tip.classList.toggle('is-hidden', !!(true)); };
+      tipBtn.addEventListener('mouseenter', show);
+      tipBtn.addEventListener('focus', show);
+      tipBtn.addEventListener('mouseleave', hide);
+      tipBtn.addEventListener('blur', hide);
+    }
+
+    const sw = el('auditSwitch');
+    if (sw) sw.addEventListener('click', () => {
+      sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    });
   }
 };
 

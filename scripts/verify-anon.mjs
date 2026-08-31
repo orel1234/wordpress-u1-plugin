@@ -580,17 +580,37 @@ console.log('\na menu that is really a listbox is retyped');
     return d.window.__u1SelectorIntel.menuIsReallyListbox(sel);
   };
 
-  // The real Sign In drop-down: role="menu" in the markup, listbox in behaviour.
+  // The doctrine, decided in the stage-1 brief: listbox vs menu is what the
+  // ITEMS DO, never the trigger count. The Sign In drop-down's rows are REAL
+  // links — they navigate — so it is a MENU wherever it lives, and the
+  // retype must refuse it. (It used to be the retype's showcase, from the
+  // era when the split was "one trigger = listbox".)
   const signin = '<div class="signin"><div class="click-nav">' +
     '<button class="clicker" aria-haspopup="true" aria-expanded="false">Sign In</button>' +
     '<ul class="signin-dropdown" role="menu" style="display:none">' +
     '<li><a href="/m">Member</a></li><li><a href="/h">HCP</a></li></ul></div></div>';
-  const asList = shape(signin, '.signin-dropdown');
-  check('pointed at the list, the shape is still read and the type corrected',
-    !!asList && asList.listbox === '.signin-dropdown' && asList.trigger === '.clicker',
+  check('a drop-down of REAL links stays a menu — items that navigate decide',
+    shape(signin, '.signin-dropdown') === null);
+  check('…pointed at the wrapper too',
+    shape(signin, '.click-nav') === null);
+
+  // A VALUE PICKER retypes: same shape, but the rows select rather than
+  // navigate — a replaced <select> with button options.
+  const picker = '<div class="size-box"><div class="click-nav">' +
+    '<button class="clicker" aria-haspopup="true" aria-expanded="false">Choose size</button>' +
+    '<ul class="size-list" role="menu" style="display:none">' +
+    '<li><button>EU 40</button></li><li><button>EU 41</button></li></ul></div></div>';
+  const asList = shape(picker, '.size-list');
+  check('a drop-down whose items pick a value is retyped to listbox',
+    !!asList && asList.listbox === '.size-list' && asList.trigger === '.clicker',
     asList && `${asList.listbox} / ${asList.trigger}`);
-  check('pointed at the wrapper, the same answer comes back',
-    (() => { const r = shape(signin, '.click-nav'); return !!r && r.listbox === '.signin-dropdown'; })());
+  check('…href="#" and javascript: rows do not count as navigation',
+    (() => {
+      const fake = picker.replace('<button>EU 40</button>', '<a href="#">EU 40</a>')
+        .replace('<button>EU 41</button>', '<a href="javascript:void(0)">EU 41</a>');
+      const r = shape(fake, '.size-list');
+      return !!r && r.listbox === '.size-list';
+    })());
 
   // The guards, each on its own.
   const inNav = '<nav class="main"><div class="click-nav">' +

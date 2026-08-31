@@ -9670,6 +9670,18 @@ async function runSweep(tab) {
   aiSweep = { running: true, abort: false, phase: 'screens', stops: [],
               tabId: tab.id, url: tab.url || '', host: getHostname(tab) };
   aiBulk.failed = [];
+  // "There is nothing there" and "I cannot see in there" used to produce the
+  // same output. A page built on closed shadow roots surveys as empty —
+  // honestly, but silently. One line at the top of the run says which page
+  // this is, and it is the only thing shadowReport's answer can honestly buy.
+  try {
+    const shadow = await inPage(tab.id, () =>
+      window.__u1SelectorIntel.shadowReport && window.__u1SelectorIntel.shadowReport());
+    if (shadow && shadow.closedHosts) {
+      sweepLog(0, `${shadow.closedHosts} closed shadow host${shadow.closedHosts === 1 ? '' : 's'} on this page — ` +
+        `their contents cannot be scanned or mapped from outside`, 'err');
+    }
+  } catch { /* the survey itself is unaffected */ }
   if (log) { log.innerHTML = ''; log.style.display = 'none'; }
   btn.disabled = true;
   stopBtn.style.display = '';

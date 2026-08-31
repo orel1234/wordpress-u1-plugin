@@ -465,13 +465,28 @@ console.log('\n  Delete all mappings:');
   check('…and a way to take that back',
         /id="restoreDeclinedBtn"/.test(panelSrc) && /#restoreDeclinedBtn/.test(panelSrc));
 
-  // The loop the owner hit: adopt 83, delete 83, be offered 83 again.
+  // The loop the owner hit had TWO wrong answers in a row. First: adopt 83,
+  // delete 83, be offered 83 again — answered by recording the delete as a
+  // DECLINE. Then the decline turned out to be the bigger wrong: every
+  // map-apply-delete experiment forged a permanent, team-wide refusal, and
+  // "17 fixes set aside" that nobody remembered refusing. The standing
+  // doctrine: deleting is the OPPOSITE of declining. The leftover on the
+  // page is remembered locally as OURS (so the offer skips it without
+  // forging anyone's no), and any standing decline of the same fix is
+  // LIFTED — deleted means deletable-from-everywhere, re-discoverable,
+  // re-offerable.
   const delBtn = /container\.querySelectorAll\('\.del-btn'\)[\s\S]*?\n  \}\);/.exec(panelSrc);
-  check('deleting one is an ANSWER to the offer, not just a removal',
-        !!delBtn && /rememberDeclinedFixes\(\[mappingKey\(gone\)\]\)/.test(delBtn[0]));
+  check('deleting one never forges a decline',
+        !!delBtn && !/rememberDeclinedFixes\(/.test(delBtn[0]) &&
+        /rememberSelfApplied\(\[mappingKey\(gone\)\]\)/.test(delBtn[0]) &&
+        /forgetDeclinedFixes\(\[mappingKey\(gone\)\]\)/.test(delBtn[0]));
   const delAll = /document\.getElementById\('deleteAllBtn'\)[\s\S]*?\n\}\);/.exec(panelSrc);
-  check('…and so is deleting all of them, which is when the offer is loudest',
-        !!delAll && /rememberDeclinedFixes\(/.test(delAll[0]));
+  check('…and deleting all of them lifts the declines and wipes the slate',
+        !!delAll && !/rememberDeclinedFixes\(/.test(delAll[0]) &&
+        /forgetDeclinedFixes\(goneKeys\)/.test(delAll[0]) &&
+        /storageKey\('declined', currentHostname\)\]: \[\]/.test(delAll[0]));
+  check('…while the offer still recognises this machine\'s own leftovers',
+        /if \(selfApplied\.has\(k\)\) continue;/.test(panelSrc));
 
   // The two lists must not become one. A dismissal hides an element from the
   // SCAN, and the panel promises elsewhere that deleting a mapping brings it

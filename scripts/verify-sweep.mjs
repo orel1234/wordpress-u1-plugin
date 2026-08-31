@@ -1964,7 +1964,10 @@ console.log('\nscreenfuls that used to come back unmarked');
     // camelCase, which the collector could not see until both class lists were
     // made case-insensitive. Named nothing at all before that.
     ['<div class="dealTabs"><button>A</button></div>', 'menu'],
-    ['<div class="photo-gallery"><img alt="x"></div>', 'carousel'],
+    // gallery is a gated word since the stage-1 audit rules: alone it needs
+    // something that can cycle — here, a [hidden] slide waiting its turn.
+    // A static image grid called "gallery" is the pinned negative now.
+    ['<div class="photo-gallery"><img alt="x"><img alt="y" hidden></div>', 'carousel'],
     ['<div class="faq-list"><button>Q</button></div>', 'accordion'],
     ['<div class="cart-drawer"><button>Close</button></div>', 'dialog'],
     ['<div class="breadcrumbs"><a href="#a">Home</a></div>', 'breadcrumb'],

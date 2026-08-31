@@ -945,6 +945,16 @@
         <button type="button" id="auditLeaveCancel">Stay</button>
       </div>
 
+      <!-- tooltip: the role says so, and the target is hidden until described -->
+      <span class="warranty-note">
+        <button type="button" id="auditTipBtn" aria-describedby="auditTip">Warranty</button>
+        <span id="auditTip" role="tooltip" hidden style="position:absolute;background:#222;color:#fff;padding:4px 10px;border-radius:4px">Two years on manufacturing faults, receipts kept for you.</span>
+      </span>
+
+      <!-- none: role=switch is a PART (a checkbox subtype), and its class must
+           not make it a menu -->
+      <button type="button" role="switch" aria-checked="false" class="switch-nav" id="auditSwitch">Dark mode</button>
+
     </div>
   </section>
 

@@ -703,7 +703,9 @@ const sweepCarries = /trigger:\s*c\.triggerSelector/.test(panelSrc) &&
 // that gets thrown away.
 const measuredWins = (() => {
   const meas = panelSrc.indexOf('row.trigger = lbShape.trigger');
-  const used = panelSrc.indexOf('instruction: row.trigger');
+  // The instruction is built as an array now (trigger line + the scan's
+  // finding); the sentence is the stable anchor, not the property syntax.
+  const used = panelSrc.indexOf('The specialist identified');
   const sent = panelSrc.indexOf('value: row.trigger');
   return meas !== -1 && used > meas && sent > meas;
 })();

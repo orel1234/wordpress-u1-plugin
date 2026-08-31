@@ -212,9 +212,16 @@ async function runVariant(browser, variant) {
       return { found, typed, rooted, denom, tabsAsMenu, tp: tp.length, groups: groups.length, fpList, rows };
     };
 
-    const hintDetections = [...hintByEl.entries()]
+    // Only elements still IN the document may testify. A pane that re-renders
+    // between sections (the locator detail, the FAQ answers under a pressed
+    // tab) leaves the earlier collection holding detached elements — which
+    // matched nothing, doubled as "two tables", and turned four accordion
+    // rows into four false positives. Detached is not detected.
+    const live = (list) => list.filter((d) => d.el && d.el.isConnected);
+
+    const hintDetections = live([...hintByEl.entries()]
       .filter(([, h]) => !h.nested)
-      .map(([el, h]) => ({ el, type: h.component, selector: h.selector }));
+      .map(([el, h]) => ({ el, type: h.component, selector: h.selector })));
     const classifyDetections = observed
       .filter((c) => c && c.root && c.type)
       // A detection rooted on <body> or <html> is not a detection of anything
@@ -224,9 +231,10 @@ async function runVariant(browser, variant) {
       // finding about classify worth seeing; it just cannot score.
       .filter((c) => c.root !== document.body && c.root !== document.documentElement)
       .map((c) => ({ el: c.root, type: c.type, selector: S.robustSelector ? S.robustSelector(c.root) : '' }));
+    const classifyLive = live(classifyDetections);
     // Union: hint's element set plus classify's; for a label matched by both,
     // typed counts if EITHER got the type right.
-    const unionDetections = hintDetections.concat(classifyDetections);
+    const unionDetections = hintDetections.concat(classifyLive);
     const union = (() => {
       const base = score(unionDetections);
       let typed = 0;
@@ -259,7 +267,7 @@ async function runVariant(browser, variant) {
 
     return {
       hint: score(hintDetections),
-      classify: score(classifyDetections),
+      classify: score(classifyLive),
       union,
       openFound, openTotal: openable.length,
       builtProbes, pressedTotal, observedList,

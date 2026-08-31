@@ -979,12 +979,24 @@
     // longer name matched no type at all and the label led nowhere — one of the
     // four names the reader could produce that nothing could build.
     radiogroup: 'radio', toolbar: 'toolbar', search: 'form',
+    // A tooltip that says so is a tooltip — the role was simply never listed,
+    // so a hidden [role=tooltip] rode in on the edges and then had no name.
+    tooltip: 'tooltip',
     // Parts, not components. `checkbox` and `radio` are named here explicitly
     // rather than left to fall through: without them a `<div role="checkbox">`
     // carrying a class like "switch-nav" was read by the class rules instead,
-    // and a checkbox came back as a menu.
+    // and a checkbox came back as a menu. `switch` is the same trap with the
+    // same fix — a role=switch wearing class "switch-nav" is a checkbox
+    // subtype, never a menu.
     tabpanel: '', tab: '', option: '', menuitem: '', checkbox: '', radio: '',
+    switch: '',
   };
+  // A control TAG is a part, not a component. button.menu-toggle is a button
+  // that opens a menu somewhere; calling the BUTTON the menu flags the wrong
+  // element and double-counts the right one. For these tags only a role may
+  // speak — no class rule, no shape rule. (The two lone audit buttons wearing
+  // menu-toggle / open-modal classes are the pinned proof.)
+  const PART_TAGS = new Set(['BUTTON', 'A', 'INPUT', 'SUMMARY', 'LABEL']);
   const COMPONENT_BY_TAG = {
     nav: 'menu', form: 'form', table: 'table', dialog: 'dialog',
     video: 'media player', audio: 'media player',
@@ -1265,6 +1277,46 @@
     } catch (e) { return false; }
   }
 
+  /**
+   * Did WE write on this element? The three injection markers are the tell.
+   * Detection must never read the panel's own output back as the site's —
+   * that loop manufactured "fixes the site runs" out of a specialist's own
+   * experiments. Same three names authoredRoleConflict already trusts.
+   */
+  function isOurs(el) {
+    try {
+      return el.hasAttribute('u1st-avoid-change-detection') ||
+             el.hasAttribute('data-u1-revert') ||
+             el.hasAttribute('u1st-trigger-element');
+    } catch (e) { return false; }
+  }
+
+  /**
+   * The two carousel words that lie, and only those two — see the call site.
+   * `evidence` = something that can actually cycle: arrows, a library
+   * fingerprint, or a [hidden] slide waiting its turn. [hidden] only:
+   * aria-hidden="true" is how decorative spans leave the accessibility tree
+   * while staying fully visible, and a static grid of decorated cells is
+   * exactly not a carousel.
+   */
+  function carouselClassVeto(el, cls) {
+    try {
+      const strong = /carousel|slideshow|\bticker\b|marquee|swiper|slick|glide__|embla/i.test(cls);
+      if (strong) return false;
+      if (/\bslider\b/i.test(cls) && el.querySelector('input[type="range"]')) return true;
+      if (/gallery/i.test(cls)) {
+        const btns = el.querySelectorAll('button,[role="button"],a[href]');
+        for (const b of btns) {
+          const face = (b.getAttribute('aria-label') || '') + ' ' + String(b.className || '') + ' ' + (b.textContent || '');
+          if (/prev|next|back|forward|◄|►|‹|›|«|»|←|→|הקודם|הבא/i.test(face)) return false;
+        }
+        if (el.querySelector('[hidden]')) return false;
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  }
+
   function componentHint(el) {
     // A menu is a menu by WHERE IT SITS, not only by what it is called — the
     // rule agreed for this component. Five columns of links in the footer are
@@ -1281,10 +1333,20 @@
     // that is everywhere else a menu is found.
     if (menuish(el) && inPageFooter(el) && !inPageHeader(el)) return null;
 
+    // Roles WE injected are not the site's testimony. A scan between apply
+    // and delete used to read the panel's own handwriting back as the page's
+    // — "aria-controls already wired to it" on markup that carries nothing.
+    const ours = isOurs(el);
+
     const role = (el.getAttribute('role') || '').toLowerCase();
-    if (role && Object.prototype.hasOwnProperty.call(COMPONENT_BY_ROLE, role)) {
+    if (role && !ours && Object.prototype.hasOwnProperty.call(COMPONENT_BY_ROLE, role)) {
       return COMPONENT_BY_ROLE[role] ? { name: COMPONENT_BY_ROLE[role], sure: true } : null;
     }
+    // The author said it out loud: role=presentation/none means "not a
+    // component", and it outranks every shape test below — a 3×3 layout table
+    // wearing the role was still being called a table.
+    if (role === 'presentation' || role === 'none') return null;
+    if (PART_TAGS.has(el.tagName)) return null;
     // Ahead of the tag rule, and only for this one case.
     //
     // A breadcrumb is written `<nav aria-label="Breadcrumb">` — that IS the
@@ -1348,7 +1410,18 @@
     if (cls) {
       const flat = classWords(cls);
       for (const [re, name] of COMPONENT_BY_CLASS) {
-        if (re.test(cls) || re.test(flat)) return { name, sure: false };
+        if (!(re.test(cls) || re.test(flat))) continue;
+        // The CONTENT of tabs is not the tabs: tabs-content / tabs-panel /
+        // tabs-pane name what the strip switches, not the strip.
+        if (name === 'menu' && /tabs?[-_](content|panel|pane)\b/i.test(cls)) continue;
+        // Two carousel words carry a known lie and only those two are gated —
+        // "carousel"/"slideshow"/library fingerprints stay trusted words:
+        //   · slider + input[type=range] inside = a VALUE slider, never a
+        //     carousel (unless a real carousel word also appears);
+        //   · gallery, when it is the ONLY carousel word, must show something
+        //     that can cycle — arrows, a lib fingerprint, a [hidden] slide.
+        if (name === 'carousel' && carouselClassVeto(el, cls)) continue;
+        return { name, sure: false };
       }
     }
 
@@ -1390,16 +1463,17 @@
 
       var fields = el.querySelectorAll(FIELD).length;
       if (fields >= 2 && !el.closest('form')) {
-        var submits = el.querySelectorAll(SUBMITISH).length;
+        var submits = countSubmits(el);
         // No submit, no form. A row of filter selects that applies on change is
-        // a real thing and it is not this; it has no send.
+        // a real thing and it is not this; it has no send — and a "Clear"
+        // button beside them is not a send either, which is what countSubmits
+        // now enforces.
         if (submits >= 1) {
           // Still the tightest answer: if a child already holds a whole form —
           // its own fields AND its own submit — then this element is the
           // wrapper around several, and each child is the form.
           var packaging = Array.prototype.some.call(el.children, function (ch) {
-            return ch.querySelectorAll(FIELD).length >= 2 &&
-                   ch.querySelectorAll(SUBMITISH).length >= 1;
+            return ch.querySelectorAll(FIELD).length >= 2 && countSubmits(ch) >= 1;
           });
           if (!packaging) return { name: 'form', sure: false };
         }
@@ -1572,6 +1646,34 @@
    * what it is CALLED.
    */
   const SUBMITISH = 'button,input[type="submit"],input[type="button"],[role="button"]';
+  // What actually SENDS. A bare clickable next to fields is not it — three
+  // filter selects with a type=button "Clear" were being called a form. A
+  // button counts only when it says so: type=submit, a typeless <button>
+  // inside a real <form> (the default nobody remembers), or an accessible
+  // name that is a sending word. Word-bounded on purpose: "Logo" contains
+  // "go" and submits nothing.
+  // `find` is on the list beyond the agreed eight: "Find my shoe" / "Find
+  // stores" is how a search submit is labelled on this very corpus, and find
+  // is search wearing retail clothes.
+  // Beyond the agreed eight: `find` ("Find my shoe" is search in retail
+  // clothes), and the joining words — join / sign in / log in — because a
+  // login box is two fields and a button, named after the act of entering.
+  // What stays out is the rule's whole point: Clear, Reset, Cancel.
+  const SUBMIT_NAME = /(^|\s)(submit|send|search|find|apply|go|join|sign ?in|log ?in|שלח|חפש|החל|התחבר|הצטרפ)(\s|$)/i;
+  function countSubmits(root) {
+    let n = 0;
+    try {
+      for (const b of root.querySelectorAll(SUBMITISH)) {
+        const type = (b.getAttribute('type') || '').toLowerCase();
+        if (b.tagName === 'INPUT') { if (type === 'submit' || type === 'image') n++; continue; }
+        if (type === 'submit') { n++; continue; }
+        if (b.tagName === 'BUTTON' && !type && b.closest('form')) { n++; continue; }
+        const name = ((b.getAttribute('aria-label') || '') || b.textContent || '').trim().replace(/\s+/g, ' ');
+        if (SUBMIT_NAME.test(name)) n++;
+      }
+    } catch (e) {}
+    return n;
+  }
 
   function fieldClusters(scope) {
     const out = [];
@@ -1777,6 +1879,8 @@
       if (map.size >= RELATED_CAP) return;
       if (!target || target.nodeType !== 1 || target === trigger) return;
       if (map.has(target)) return;
+      // Edges WE wrote are not the page's statements — see isOurs.
+      if (isOurs(target) || (trigger && isOurs(trigger))) return;
       if (trigger) {
         const pair = idOf(trigger.parentElement) + '>' + idOf(target.parentElement) + '>' + via;
         if (pairSeen.has(pair)) return;
@@ -1941,6 +2045,11 @@
       };
       add(el, null, viaOf(el));
       if (inner) add(inner, null, viaOf(inner));
+      // When the pair went in together, the wrapper is the BACKDROP and the
+      // inner box is the component. The wrapper stays collected — "there is a
+      // veil here" is information — but flagged, so it is never offered as a
+      // candidate in its own right beside the thing it veils.
+      if (inner && map.has(el) && map.has(inner)) map.get(el).backdrop = true;
     }
 
     // One pass over the page's pressable controls, shared by every container
@@ -2149,7 +2258,9 @@
         maybe: hint ? !hint.sure : false,
         // Inside another component of the same kind, so it is a PART of that
         // one rather than a second one. Counted and drawn once, at the top.
-        nested,
+        // A backdrop wrapper collected alongside its inner box is nested by
+        // the same logic: one component, two elements.
+        nested: nested || !!(edge && edge.backdrop),
         // A table taller than the window is on this screenful AND the next one,
         // and nothing else says they are the same table — so a specialist could
         // tick only the second and map its bottom half. These two flags say
@@ -2210,6 +2321,36 @@
         text: (h.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 70),
         selector: robustSelector(h),
       }));
+
+    // ── One component seen through its items ────────────────────────────────
+    // Two or more DIRECT SIBLINGS wearing the same class-hint are not that
+    // many components; they are one component's items — #faqPanel's rows each
+    // said "accordion", and the survey drew four accordions inside a fifth.
+    // The hint moves to their parent and the items become nested. Class hints
+    // only (`maybe`): a row of role=dialog siblings really is several dialogs,
+    // and a role is not overruled by arithmetic.
+    try {
+      const elOf = (c) => {
+        try { return document.querySelector('[data-u1-mark="' + c.mark + '"]'); } catch (e) { return null; }
+      };
+      const byParent = new Map();
+      for (const c of out) {
+        if (!c.component || !c.maybe || c.nested) continue;
+        const el = elOf(c);
+        if (!el || !el.parentElement) continue;
+        if (!byParent.has(el.parentElement)) byParent.set(el.parentElement, []);
+        byParent.get(el.parentElement).push(c);
+      }
+      for (const [parent, kids] of byParent) {
+        const same = kids.filter((k) => k.component === kids[0].component);
+        if (same.length < 2) continue;
+        const name = same[0].component;
+        const parentCand = out.find((c) => elOf(c) === parent);
+        if (!parentCand || parentCand.nested) continue;
+        if (!parentCand.component) { parentCand.component = name; parentCand.maybe = true; }
+        if (parentCand.component === name) for (const k of same) k.nested = true;
+      }
+    } catch (e) { /* a promotion that cannot run leaves the hints as found */ }
 
     return {
       candidates: out,
@@ -4050,6 +4191,25 @@
     const declares = trigger.hasAttribute('aria-haspopup') || trigger.hasAttribute('aria-expanded');
     if (!declares && visibleInViewport(panel)) return null;
 
+    // A drop-down whose rows are REAL links is a menu wherever it lives —
+    // "My account" outside <nav> included. Only rows that navigate count:
+    // href="#" and javascript: are buttons wearing <a>. Half or more linky
+    // rows means the items lead somewhere, and things that lead somewhere
+    // are a menu, not a value picker.
+    try {
+      const panelEl = document.querySelector(shape.listbox);
+      if (panelEl) {
+        const rows = Array.prototype.filter.call(panelEl.children, (r) => r.nodeType === 1);
+        const linky = rows.filter((r) => {
+          const a = r.matches && r.matches('a[href]') ? r : r.querySelector && r.querySelector('a[href]');
+          if (!a) return false;
+          const href = a.getAttribute('href') || '';
+          return href && !/^#/.test(href) && !/^javascript:/i.test(href);
+        });
+        if (rows.length && linky.length * 2 >= rows.length) return null;
+      }
+    } catch (e) {}
+
     return { listbox: shape.listbox, trigger: shape.trigger, options: shape.options,
       why: 'One control opening one flat list of options — that is a listbox, whatever the role attribute says. fix.menu on this shape decorates nothing.' };
   }
@@ -4304,6 +4464,9 @@
     describeComponent, elementForMark, elementsForMarks, commonAncestor, ITEM_FIELD,
     // the headings review, and the "Read more" cards beside it
     headingOutline, cardDescriptions, ambiguousLink,
+    // "there is nothing there" and "I cannot see in there" are different
+    // answers, and this is the only honest source of the second one
+    shadowReport,
   };
 
   root.__u1SelectorIntel = api;
