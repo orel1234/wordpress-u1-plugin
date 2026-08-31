@@ -842,9 +842,13 @@
   // budget actually cost.
   var runCarry = [];    // [{ el, docY, rank }]
   var runStarved = [];  // same shape — starved twice, given up on
+  // Presses whose restore did not complete, with what stayed behind. The
+  // stage-4 closing report lists these by name; a walk that cannot put the
+  // page back must say so, not shrug.
+  var runResidue = [];  // [{ el, residue }]
   function resetRun() {
     runResults = []; runPressed = []; runExtras = []; runPlan = null;
-    runCarry = []; runStarved = [];
+    runCarry = []; runStarved = []; runResidue = [];
     everPressed = new WeakSet();
     everTyped = new WeakSet();
   }
@@ -2386,6 +2390,7 @@
         everPressed.add(list[i]);
         pressed.push(list[i]);
         runPressed.push(list[i]);
+        if (r.restored === false) runResidue.push({ el: list[i], residue: r.residue || null });
         finishFamily(list[i]);
         if (r.opened.length || r.moved.length || r.rerendered.length) {
           var entry = { trigger: list[i], panel: r.panel,
@@ -2570,6 +2575,14 @@
     },
     // Who the budget actually cost: starved twice, plus anyone still waiting
     // for a second chance when the walk ran out of bands.
+    residueSnapshot: function () {
+      return runResidue.map(function (p) {
+        return { id: p.el.id || '',
+                 cls: String(p.el.className || '').split(' ')[0] || p.el.tagName,
+                 residue: p.residue ? { appeared: p.residue.appeared || 0,
+                                        classes: !!p.residue.classes } : null };
+      });
+    },
     starvedSnapshot: function () {
       return runStarved.concat(runCarry).map(function (p) {
         return { docY: Math.round(p.docY), rank: p.rank,

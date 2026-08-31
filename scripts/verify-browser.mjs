@@ -335,6 +335,7 @@ async function runVariant(browser, variant) {
       builtProbes, pressedTotal, observedList,
       plannedCount: planned, planSections,
       starved: P.starvedSnapshot ? P.starvedSnapshot() : [],
+      residue: P.residueSnapshot ? P.residueSnapshot() : [],
     };
   }, { labels, OVERLAP, PROBE_OPTS });
 
@@ -433,6 +434,14 @@ for (const variant of ONLY) {
     console.log(`  observed, unclassified (type:null — reported, never scored): ` +
       r.unclassified.slice(0, 8).join(' · ') +
       (r.unclassified.length > 8 ? ` · +${r.unclassified.length - 8} more` : ''));
+  }
+  if ((r.residue || []).length) {
+    console.log(`  restored:false — presses whose undo did not complete: ` +
+      r.residue.slice(0, 8).map((p) => (p.id ? '#' + p.id : p.cls) +
+        (p.residue ? ` (${p.residue.appeared} left showing${p.residue.classes ? ', classes' : ''})` : '')).join(' · ') +
+      (r.residue.length > 8 ? ` · +${r.residue.length - 8} more` : ''));
+  } else {
+    console.log('  restored:false — none: every press was put back');
   }
   if ((r.starved || []).length) {
     console.log(`  starved (budget cost them their press, even with one spillover): ` +
