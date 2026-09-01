@@ -462,6 +462,9 @@ console.log('\nnames U1 itself writes never enter a mapping');
     S.robustSelector(d.window.document.querySelector('.click-nav')) === '.click-nav');
   check('u1- ids are graded volatile', S.VOLATILE_ID.test('u1-anchor-f9u36-1'));
   check('u1st- ids too', S.VOLATILE_ID.test('u1st-9f8e7d'));
+  // Our own patch mints these at apply time — anchoring on one maps the same
+  // element twice (molina: LISTBOX .signin-dropdown AND #u1p-listbox-wcvryke).
+  check('u1p- ids — the patch\'s own runtime anchors — too', S.VOLATILE_ID.test('u1p-listbox-wcvryke') && S.VOLATILE_ID.test('u1p-acc-h-58x4rno'));
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }
 

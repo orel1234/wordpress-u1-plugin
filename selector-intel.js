@@ -59,7 +59,11 @@
 
   // GENERATED ids (U1's own, Angular Material, framework uuids) — they change on
   // every reload, so a mapping built on one breaks silently.
-  const VOLATILE_ID = /^(u1st-|u1-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  // u1p- is OUR OWN patch talking: u1-patch.js mints u1p-listbox-*/u1p-acc-*
+  // ids at apply time, and a later scan that anchors on one maps the same
+  // element twice — molina shipped LISTBOX .signin-dropdown AND LISTBOX
+  // #u1p-listbox-wcvryke, one mapping per name for one widget (2026-09-02).
+  const VOLATILE_ID = /^(u1st-|u1p?-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
   // Which pseudo-classes may appear in a mapping.
   //
@@ -3553,6 +3557,21 @@
         var from = t;
         if (from.parentElement && /^H[1-6]$/.test(from.parentElement.tagName)) from = from.parentElement;
         panel = from.nextElementSibling;
+      }
+      // A validation message is not a panel. Pressing a search's Go with the
+      // input empty reveals its error span, and the structural fallback here
+      // read exactly that as the Go button's "content" — molina shipped
+      // fix.accordion('.btn.btn-secondary', { contentSelector:
+      // '.show-error-field' }). An element that says error/alert about
+      // itself belongs to a FORM's story, never an accordion's.
+      if (panel) {
+        try {
+          var role = (panel.getAttribute && panel.getAttribute('role')) || '';
+          if (/(^|[\s_-])(error|invalid|danger|warning|validation)([\s_-]|$)/i.test(String(panel.className || '')) ||
+              /error|invalid/i.test(String(panel.id || '')) ||
+              role === 'alert' || role === 'status' ||
+              (panel.hasAttribute && panel.hasAttribute('aria-live'))) panel = null;
+        } catch (e2) {}
       }
       if (panel && panels.indexOf(panel) === -1) panels.push(panel);
     }

@@ -1891,6 +1891,21 @@
       // mapping and no fix — reporting it was noise, not detection.
       if (r.trigger.tagName === 'SUMMARY' ||
           (r.trigger.closest && r.trigger.closest('details'))) return;
+      // 4.4: what a press revealed can be the FORM talking, not a component.
+      // Pressing a search's Go with the input empty shows the validation
+      // message — "it revealed and hid a region", true and useless, and the
+      // sink branch filed molina's header search as
+      //   fix.accordion('.btn.btn-secondary', { contentSelector: '.show-error-field' })
+      // — an accordion whose panel was an error string. A panel that says
+      // error/alert about itself is a form's behaviour; the form voice
+      // (typeable field + a send) is the one that should carry this widget.
+      var saysError = false;
+      try {
+        saysError = !!(panel.closest && panel.closest('[role="alert"],[role="status"],[aria-live]')) ||
+          /(^|[\s_-])(error|invalid|danger|warning|validation)([\s_-]|$)/i.test(String(panel.className || '')) ||
+          /error|invalid/i.test(String(panel.id || ''));
+      } catch (e) {}
+      if (saysError) return;
       // 7.4: a panel that IS a month — running day numbers plus a second
       // witness (a weekday row or a year) — is a datepicker before it is
       // anything else, floating signals notwithstanding: every date popup

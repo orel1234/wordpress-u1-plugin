@@ -501,6 +501,33 @@ console.log('\n4.2 — the accordion bucket closes to the unexplained');
     out.components.map((x) => x.type).join() || '(nothing)');
 }
 
+// ── 4.4: a validation message revealing is the FORM talking ────────────────
+// Molina's header search: pressing Go with the input empty shows the error
+// span, and the sink branch shipped fix.accordion('.btn.btn-secondary',
+// { contentSelector: '.show-error-field' }) — an accordion whose panel was an
+// error string. A panel that says error/alert about itself is never a
+// component's content.
+console.log('\n4.4 — pressing Go on an empty search is not an accordion');
+{
+  const w = page(`
+    <div id="w">
+      <div class="input-group">
+        <input id="q" type="text" placeholder="Search">
+        <button id="go" class="btn btn-secondary" type="button">Go</button>
+        <span class="small show-error-field" id="q-error" hidden>Enter a keyword</span>
+      </div>
+    </div>`);
+  w.document.getElementById('go').addEventListener('click', () => {
+    const e = w.document.getElementById('q-error'); e.hidden = !e.hidden;
+  });
+  const out = await w.__u1Probe.probeAll(w.document.getElementById('w'), { settle: 0 });
+  check('the revealed error span is never an accordion (or anything else)',
+    !out.components.some((x) => x.type === 'accordion') &&
+    !out.components.some((x) => x.parts && x.parts.panel &&
+      x.parts.panel[0] === w.document.getElementById('q-error')),
+    out.components.map((x) => x.type + ':' + x.why).join(' | ') || '(nothing)');
+}
+
 // ── 4.5: the walk types, and a combobox answers ─────────────────────────────
 console.log('\n4.5 — one letter into an untouched field finds the autocomplete');
 {
