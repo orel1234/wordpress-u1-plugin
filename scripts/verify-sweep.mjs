@@ -1049,8 +1049,13 @@ console.log('\nholding after each section');
     /async function confirmedToMapping\(pick, stop, tab\)/.test(src) &&
     /const built = rowFromParts\(\{/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]) &&
     /await prepareOne\(built\.row, tab\)/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]));
+  // triggerRequired ONLY — dialog is firstArgFrom:'trigger' with an OPTIONAL
+  // trigger, and ORing triggerFirstType in sent every dialog through the
+  // panel hunt with itself as the "trigger": on molina each dialog shipped
+  // with trigger:'.signin-dropdown' (2026-09-01).
   check('…and a trigger-rooted type still gets its panel supplied',
-    /triggerRequired\(pick\.type\) \|\| triggerFirstType\(pick\.type\)/.test(src));
+    /if \(triggerRequired\(pick\.type\)\) \{/.test(src) &&
+    !/triggerRequired\(pick\.type\) \|\| triggerFirstType\(pick\.type\)/.test(src));
   // A redraw of the list would take the pause's own host with it.
   check('an open pause is not destroyed by a redraw of the list it lives in',
     /if \(sweepLabel\.resolve\) return;/.test(src));

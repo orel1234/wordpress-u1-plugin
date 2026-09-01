@@ -4043,12 +4043,26 @@
       if (byId) return byId;
     }
 
+    // 1.5 The popup may live INSIDE the element asked about — a wrapper
+    //     holding the button and the closed list together. Look down before
+    //     looking around: this is what kept the wrapper case working when
+    //     the neighbourhood search below stopped reaching the whole page.
+    try {
+      var byDown = pick(t.querySelector(POPUP_ROLE));
+      if (byDown) return byDown;
+    } catch (e) {}
+
     // 2. A role says so, in the trigger's own neighbourhood — a popup is a
     //    sibling or a cousin of its trigger, never the far side of the page.
     var node = t, guard = 0;
     while (node && guard++ < 4) {
       var scope = node.parentElement;
       if (!scope) break;
+      // "Neighbourhood" stops at body. Climbing into <body> made this a
+      // whole-document querySelector, and the first [role=listbox] anywhere
+      // on the page — a header dropdown a runtime engine had decorated —
+      // became the answer for every element asked about (2026-09-01).
+      if (scope === document.body || scope === document.documentElement) break;
       var roled = null;
       try { roled = scope.querySelector(POPUP_ROLE); } catch (e) {}
       var byRole = pick(roled);
@@ -4062,6 +4076,7 @@
     //    which is the ordinary case and the one that matters.
     node = t; guard = 0;
     while (node && guard++ < 3) {
+      if (node === document.body) break;
       var sib = node.nextElementSibling;
       while (sib) {
         var items = 0;

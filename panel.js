@@ -5705,7 +5705,10 @@ async function confirmedToMapping(pick, stop, tab) {
   // the other half, best evidence first, as the bulk path uses.
   let container = '';
   let openWhy = '';
-  if (triggerRequired(pick.type) || triggerFirstType(pick.type)) {
+  // triggerRequired ONLY — a dialog's sel is the dialog itself and its
+  // trigger is optional; hunting a "panel" for it filed some unrelated
+  // popup as its trigger. See the bulk path for the molina incident.
+  if (triggerRequired(pick.type)) {
     const seen = (stop.probed || []).find((p) =>
       p.parts && (p.parts.trigger === sel || p.root === sel) && p.parts.panel);
     container = (seen && seen.parts.panel) ||
@@ -11921,6 +11924,33 @@ async function scanPickedScreens(numbers) {
         stop.found.push(row);
         if (held) heldAt.set(c.containerSelector, { stop, f: row });
       }
+      // The missing trace (2026-09-01): everything this section ASKED about
+      // that nothing answered. A candidate the hint layer flagged, sent to
+      // the model, that came back in no row — not the model's, not the
+      // probe's — used to vanish without a word, and "why is the listbox
+      // missing" had no log line to point at. Now each one gets a line
+      // saying which stage went silent.
+      try {
+        const coveredBy = (sel) =>
+          stop.found.some((f) => f.sel === sel || f.trigger === sel) || handled.has(sel);
+        for (const c of asking) {
+          if (!c.component || !c.selector) continue;
+          if (coveredBy(c.selector)) continue;
+          const pressedIt = (stop.probed || []).find((p) => p && (p.root === c.selector ||
+            (p.parts && p.parts.trigger && p.parts.trigger === c.selector)));
+          sweepLog(stop.n, `asked about ${c.selector} (${c.component}${c.maybe ? '?' : ''}) — ` +
+            (pressedIt && !pressedIt.type
+              ? 'pressed it and something happened, but no pattern matched'
+              : pressedIt
+                ? `the press read it as ${pressedIt.type}, but no row was published for it`
+                : 'nothing came back: not from the model, not from a press'), 'skip');
+        }
+        for (const p of (stop.probed || [])) {
+          if (p && !p.type && p.root) {
+            sweepLog(stop.n, `pressed ${p.root} — ${p.why || 'something changed, no pattern matched'}`, 'skip');
+          }
+        }
+      } catch {}
       stop.scanned = true;
       stop.cost = aiCost - before;
       stop.secs = Math.round((Date.now() - beganAt) / 1000);
@@ -12228,7 +12258,15 @@ async function buildPickedComponents() {
       let container = '';
       let found = f.sel;
       let openWhy = '';
-      if (triggerRequired(f.type) || triggerFirstType(f.type)) {
+      // Gate on triggerRequired ONLY. A dialog is firstArgFrom:'trigger' too,
+      // but its row's sel is the DIALOG itself and its trigger is optional —
+      // sending it through this hunt asked the markup read "what does this
+      // dialog open", and on a page where a runtime engine had decorated a
+      // dropdown with role=listbox, the answer was that dropdown: every
+      // dialog on molinahealthcare.com shipped with
+      // trigger:'.signin-dropdown' (2026-09-01). A dialog's trigger comes
+      // from the survey, below.
+      if (triggerRequired(f.type)) {
         const seen = (stop.probed || []).find(p =>
           p.parts && (p.parts.trigger === f.sel || p.root === f.sel) && p.parts.panel);
         container = (seen && seen.parts.panel) ||
