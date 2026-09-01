@@ -1028,6 +1028,19 @@ console.log('\nholding after each section');
   check('…and a trigger-rooted type still gets its panel supplied',
     /if \(triggerRequired\(pick\.type\)\) \{/.test(src) &&
     !/triggerRequired\(pick\.type\) \|\| triggerFirstType\(pick\.type\)/.test(src));
+  // A listbox row rooted on the LIST (menuIsReallyListbox does that) reads
+  // its shape from markup — climbing to the parent, because listboxShape
+  // reads the wrapper and answers null on the list itself. BOTH build paths,
+  // before anything that guesses or presses a hidden <ul>. verify-signin
+  // pins the necessary-and-sufficient facts on the real molina markup.
+  {
+    const cm = /async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0];
+    const climbs = src.match(/const up = S\.robustSelector\(el\.parentElement\);\s*\n\s*if \(up && S\.isU1Valid\(up\)\) sh = S\.listboxShape\(up\);/g) || [];
+    check('a list-rooted listbox row reads its shape before pressing, in the autonomous path',
+      /pick\.type === 'listbox'/.test(cm) && /S\.listboxShape\(x\)/.test(cm));
+    check('…and the shape read climbs to the parent, in both build paths', climbs.length >= 2,
+      String(climbs.length));
+  }
   // A redraw of the list would take the pause's own host with it.
   check('an open pause is not destroyed by a redraw of the list it lives in',
     /if \(sweepLabel\.resolve\) return;/.test(src));
@@ -2322,7 +2335,7 @@ console.log('\na running scan owns the panel');
   // Molina sign-in defeated all three: closed, silent markup, never pressed.
   // The fourth source is the machine pressing it now. Order matters: opening
   // a widget is the last resort, after every free read has had its turn.
-  const buildFn = /let container = '';\s*\n\s*let found = f\.sel;[\s\S]{0,4000}?rowFromParts\(\{/.exec(panelSrc);
+  const buildFn = /let container = '';\s*\n\s*let found = f\.sel;[\s\S]{0,6000}?rowFromParts\(\{/.exec(panelSrc);
   check('the sweep build opens the widget itself when nothing else finds the other half',
     !!buildFn && /if \(!container\) \{\s*\n\s*const cap = await autoOpenCapture\(tab, found, f\.type\);/.test(buildFn[0]));
   check('…after the probe, the markup and the closed shape have all had their turn',

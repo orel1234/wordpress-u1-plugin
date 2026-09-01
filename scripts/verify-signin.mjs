@@ -82,6 +82,26 @@ console.log('\nR0 — THE DOCTRINE, pinned. Do not change without an explicit ow
     !!verdict && verdict.overwriteRole === 'menu', verdict && JSON.stringify(verdict.overwriteRole));
 }
 
+console.log('\na row rooted on the LIST still finds its shape — one level up');
+// menuIsReallyListbox roots its retyped row on the list itself, and the build
+// hunts then start from that selector. listboxShape reads the WRAPPER, so
+// pointed at the list it answers null — and the Sign-In, correctly surveyed
+// and correctly retyped, was refused at the very last step with "open it on
+// the page" (2026-09-01). Both build paths climb to the parent now; this pins
+// the two facts that make the climb necessary and sufficient.
+{
+  check('listboxShape on the list itself is null — the climb is NECESSARY',
+    S.listboxShape('.signin-dropdown') === null,
+    JSON.stringify(S.listboxShape('.signin-dropdown')));
+  const el = w.document.querySelector('.signin-dropdown');
+  const up = S.robustSelector(el.parentElement);
+  const viaParent = up && S.isU1Valid(up) ? S.listboxShape(up) : null;
+  check('…and from its parent the full shape comes back — the climb is SUFFICIENT',
+    !!viaParent && viaParent.listbox === '.signin-dropdown' &&
+    viaParent.trigger === '.clicker' && viaParent.options === '.signin-dropdown>li>a',
+    JSON.stringify(viaParent));
+}
+
 console.log('\nwhat the raw page does NOT say');
 const t = w.document.querySelector('.clicker');
 check('no aria-controls, aria-haspopup or aria-expanded in the real markup — a scan reporting them is reading experiment leftovers',

@@ -5707,8 +5707,36 @@ async function confirmedToMapping(pick, stop, tab) {
   if (triggerRequired(pick.type)) {
     const seen = (stop.probed || []).find((p) =>
       p.parts && (p.parts.trigger === sel || p.root === sel) && p.parts.panel);
-    container = (seen && seen.parts.panel) ||
-      (await inPage(tab.id, (x) => window.__u1SelectorIntel.openedBy(x), [sel])) || '';
+    container = (seen && seen.parts.panel) || '';
+    // The row does not always hold the control. A menu row retyped by
+    // menuIsReallyListbox is rooted on the LIST itself, and this hunt then
+    // asked "what does the list open" and pressed a hidden <ul> — so the
+    // molina Sign-In, correctly surveyed and correctly retyped, was refused
+    // at the last step with "open it on the page", addressed to nobody. The
+    // shape reader answers from markup alone for every spelling — the list,
+    // the wrapper or the button (climbing to the parent for the first) — so
+    // for a listbox it goes before anything that guesses or presses.
+    if (!container && pick.type === 'listbox') {
+      const lb = await inPage(tab.id, (x) => {
+        const S = window.__u1SelectorIntel;
+        let sh = S.listboxShape(x);
+        if (!sh) {
+          try {
+            const el = document.querySelector(x);
+            if (el && el.parentElement) {
+              const up = S.robustSelector(el.parentElement);
+              if (up && S.isU1Valid(up)) sh = S.listboxShape(up);
+            }
+          } catch (e) {}
+        }
+        return sh || null;
+      }, [sel]);
+      if (lb && lb.listbox && lb.trigger) { container = lb.listbox; sel = lb.trigger; }
+    }
+    if (!container) {
+      container =
+        (await inPage(tab.id, (x) => window.__u1SelectorIntel.openedBy(x), [sel])) || '';
+    }
     // Neither the sweep nor the markup knows the other half: press the trigger
     // and read what appears, the same way the card route does.
     if (!container) {
@@ -12270,8 +12298,23 @@ async function buildPickedComponents() {
         // already being called one step later, in prepareOne — one step after
         // the refusal that made sure prepareOne was never reached.
         if (!container && f.type === 'listbox') {
-          const lb = await inPage(tab.id,
-            (s) => window.__u1SelectorIntel.listboxShape(s), [f.sel]);
+          // Climbing to the parent as well: listboxShape reads the WRAPPER,
+          // and a row rooted on the list itself (menuIsReallyListbox does
+          // that) answers only from one level up.
+          const lb = await inPage(tab.id, (s) => {
+            const S = window.__u1SelectorIntel;
+            let sh = S.listboxShape(s);
+            if (!sh) {
+              try {
+                const el = document.querySelector(s);
+                if (el && el.parentElement) {
+                  const up = S.robustSelector(el.parentElement);
+                  if (up && S.isU1Valid(up)) sh = S.listboxShape(up);
+                }
+              } catch (e) {}
+            }
+            return sh || null;
+          }, [f.sel]);
           if (lb && lb.listbox) { container = lb.listbox; found = lb.trigger || f.sel; }
         }
         // Fourth source, for the component that defeats all three reads: it
