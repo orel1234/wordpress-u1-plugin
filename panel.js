@@ -3514,6 +3514,7 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
   const statusDot  = document.getElementById('statusDot');
   if (statusText) statusText.textContent = 'Injecting…';
 
+  try {
   // Arm a CSP violation detector before injecting
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -3555,10 +3556,26 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
     },
     args: [jsLink],
   });
+  } catch (err) {
+    // The tab died mid-injection — a frozen page the user exited, a
+    // navigation, a crash. Say so; "Frame with ID 0 was removed" used to
+    // land in the extension's error log while the status said Injecting…
+    // forever.
+    if (statusText) statusText.textContent = 'The page went away mid-injection (' + (err && err.message || err) + ') — reload the site and try again';
+    if (statusDot) statusDot.className = 'status-dot inactive';
+    return;
+  }
 
   setTimeout(async () => {
+    // The whole verification pass is guarded: any throw in here used to die
+    // silently and leave the status on "Injecting…" forever — which reads
+    // as "it does not inject" when the injection itself already happened.
+    try {
     const freshTab = await getTab();
-    if (!freshTab || freshTab.id !== tab.id) return;
+    if (!freshTab || freshTab.id !== tab.id) {
+      if (statusText) statusText.textContent = 'Tab changed mid-check — press Inject again on the site\'s tab';
+      return;
+    }
 
     const checkRes = await chrome.scripting.executeScript({
       target: { tabId: freshTab.id },
@@ -3603,6 +3620,11 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
       // Persist injection so background.js re-injects on every navigation for this hostname
       await U1Store.set({ [`manualInject_${currentHostname}`]: { cssLink, jsLink } });
       await refreshSetupTab(freshTab);
+    }
+    } catch (err) {
+      if (statusText) statusText.textContent = 'Injection check failed: ' + (err && err.message || err);
+      if (statusDot) statusDot.className = 'status-dot inactive';
+      console.error('[U1 Studio] injection verification failed', err);
     }
   }, 2500);
 });

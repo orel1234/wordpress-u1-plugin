@@ -137,23 +137,42 @@
   P.correct = function (fn) { P.correctors.push(fn); };
 
   var queued = false;
+  // The corrector pass is BUDGETED, twice over, because an unbounded pass
+  // froze molinahealthcare.com outright (2026-09-01): U1's own initial scan
+  // writes ARIA across the whole page, every write re-triggers the observer,
+  // and "all correctors, every frame" saturated the main thread on a large
+  // DOM. Now: passes start at most every 250ms, each pass spends at most
+  // ~30ms and then yields, resuming from where it stopped — correction
+  // latency degrades on huge pages; the page never does.
+  var cursor = 0, lastStart = 0;
   var run = function () {
     queued = false;
-    // The correctors correct what the U1 ENGINE produced — nothing else.
-    // Until u1 exists on the page there is nothing to correct, and running
-    // them anyway meant: the moment a site gained stored mappings (an
-    // import), every page load armed the subtree observer at document_start
-    // and the whole corrector pass ran on every frame of a hydrating SPA.
-    // On molinahealthcare.com that froze the load outright (2026-09-01).
+    // Until u1 exists there is nothing to correct — the correctors correct
+    // what the U1 ENGINE produced, nothing else. (The other half of the
+    // molina freeze: an import handed the site its first mappings and this
+    // whole machinery started riding every page load.)
     if (W.u1 === undefined && W.U1 === undefined && W.user1st === undefined) return;
-    for (var i = 0; i < P.correctors.length; i++) {
+    lastStart = Date.now();
+    var began = lastStart;
+    var n = P.correctors.length;
+    for (var step = 0; step < n; step++) {
+      var i = (cursor + step) % n;
       try { P.correctors[i](); } catch (e) { /* one bad fix must not stop the rest */ }
+      if (Date.now() - began > 30 && step < n - 1) {
+        cursor = (i + 1) % n;
+        queued = true;
+        setTimeout(run, 100);   // finish the rest of the round shortly
+        return;
+      }
     }
+    cursor = 0;
   };
   var schedule = function () {
     if (queued) return;
     queued = true;
-    (W.requestAnimationFrame || setTimeout)(run, 0);
+    var wait = Math.max(0, 250 - (Date.now() - lastStart));
+    if (wait > 0) setTimeout(run, wait);
+    else (W.requestAnimationFrame || setTimeout)(run, 0);
   };
   P.schedule = schedule;
 
