@@ -356,65 +356,37 @@ console.log('\ncounting what is on a section, locally');
   check('nothing at all is an empty string', inv([]) === '', inv([]));
 }
 
-// ── Why a section yielded nothing ─────────────────────────────────────────
-// "Already mapped" is finished work. "Dismissed" is a judgement made once,
-// possibly on another machine, and it is the only one of the two you might want
-// to take back. They were reported as one sentence, so a run that returned
-// nothing because everything had been dismissed read as "the tool found
-// nothing".
-console.log('\nwhy a section yielded nothing');
+// ── Every scan starts fresh — the dismissed list is gone ───────────────────
+// A ✕ pressed on a survey row used to write that selector to a shared
+// per-site "dismissed" list that every later scan silently filtered out,
+// forever, on every machine. On molina that standing judgement ate the
+// sign-in listbox run after run, and from the outside it read as "the AI
+// keeps missing it". Owner decision (2026-09-01): a scan starts fresh every
+// time — the only selectors filtered out are the ones a saved MAPPING holds.
+console.log('\nevery scan starts fresh — no dismissed list');
 {
-  const collect = (candidates, handled) => {
-    const bin = (handled && handled.dismissed) || new Set();
-    let dismissedOut = 0;
-    const kept = candidates.filter((c) => {
-      if (c.selector && handled.has(c.selector)) {
-        if (bin.has(c.selector)) dismissedOut++;
-        return false;
-      }
-      return true;
-    });
-    return { kept: kept.length, skipped: candidates.length - kept.length, dismissed: dismissedOut };
-  };
-  const handled = new Set(['.a', '.b', '.c']);
-  handled.dismissed = new Set(['.a', '.b']);
-  const r = collect([{ selector: '.a' }, { selector: '.b' }, { selector: '.c' }], handled);
-  check('the two reasons are counted apart', r.skipped === 3 && r.dismissed === 2,
-    JSON.stringify(r));
-
-  // The wording the run puts on the row, lifted from the real source so it
-  // cannot drift from what ships.
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
-  check('a section lost entirely to dismissals says the word',
-    /collected\.dismissed === collected\.skipped \? 'DISMISSED earlier'/.test(src));
-  check('a mixed section still names how many were dismissed',
-    /of them DISMISSED earlier/.test(src));
+  check('alreadyHandled reads mappings and nothing else',
+    /async function alreadyHandled\(\) \{\s*\n\s*const out = new Set\(\);/.test(src) &&
+    !/dismissedSelectors/.test(src));
+  check('nothing persists a dismissal any more', !/rememberDismissed/.test(src));
+  check('no scan filter consults a dismissed set', !/handled\.dismissed/.test(src));
   // And the run's own summary has to lead with what it did, cost and got.
   check('the summary states sections, cost and components found',
     /Searched \$\{ran\.length\} section/.test(src) && /\$\$\{spent\.toFixed\(2\)\}/.test(src) &&
     /\$\{total\} component/.test(src));
-  check('an empty run caused by dismissals offers to clear them',
-    /offerResetDismissed\(status\)/.test(src) && /data-reset-dismissed/.test(src));
   // A run that found nothing still read those sections and still paid for them.
   check('a run persists what it read whatever the outcome',
     /if \(aiSweep\.phase === 'screens'\) renderSweepScreens\(\);\n[\s\S]{0,400}?\n    saveSweep\(\);/.test(src));
 }
 
-// ── What a run will leave out, said before it is paid for ───────────────────
-// Twenty-six sections, $3.38, nothing returned — because everything on the page
-// was on the dismissed list. That list was only ever shown AFTER a run came
-// back empty, which is the one moment the information is worth nothing.
+// ── The cost dialog no longer warns about a list that no longer gates ───────
 {
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
   const body = /async function confirmSweepCost[\s\S]*?\n}/.exec(src)[0];
-  check('the cost dialog reads the dismissed list', /dismissedSelectors\(\)/.test(body));
-  check('…and says it will be left out of every section',
-    /on the dismissed list/.test(body) && /left out of every section/.test(body));
-  check('…and names it as the reason an empty run was empty',
-    /coming back empty, this is why/.test(body));
-  check('…with the undo on the dialog itself', /data-reset-dismissed/.test(body));
-  check('clearing it from the dialog retracts the warning it was under',
-    /inDialog/.test(src) && /Dismissed list cleared — this run will look at everything/.test(src));
+  check('the cost dialog no longer reads a dismissed list', !/dismissed/.test(body));
+  check('no clear-the-dismissed-list affordance survives anywhere',
+    !/data-reset-dismissed/.test(src) && !/aiResetDismissed/.test(src));
 }
 
 // ── Throwing the survey away ────────────────────────────────────────────────
@@ -1066,17 +1038,15 @@ console.log('\nholding after each section');
     /root = rootOverride;/.test(src));
   check('…and a corrected selector is checked against the page before it is used',
     /That selector is not valid CSS/.test(src) && /That selector matches nothing on this page/.test(src));
-  // A wrapper div guessed as a form is wrong every time, and unticking only
-  // says "not this time" — without a way to say "never", it comes back on
-  // every scan of every page.
-  check('a wrong guess can be dismissed from the row, for good',
+  // A ✕ takes the row off THIS list and remembers nothing — every scan
+  // starts fresh (owner decision, 2026-09-01; a remembered ✕ ate the molina
+  // sign-in listbox for weeks).
+  check('a wrong guess can be removed from the row, for this run only',
     /class="lbl-dismiss" data-dismiss="\$\{c\.mark\}"/.test(src) &&
-    /await rememberDismissed\(c\.selector\);/.test(src));
+    /The next scan starts fresh, so it will be suggested again/.test(src));
   check('…which suppresses the default of a button inside a <label>',
     /closest\('\[data-dismiss\]'\)/.test(src) &&
     /\[data-dismiss\]'\);?\s*\n\s*if \(dis\) \{\s*\n\s*e\.preventDefault\(\);/.test(src));
-  check('…and says where the undo lives',
-    /Undo from the dismissed list on the cost dialog/.test(src));
   // .lbl-why is flex-basis 100%, which only wraps onto its own line if the row
   // may wrap at all — on a no-wrap row it demanded a full row's width INLINE
   // and crushed the two fields beside it into slivers behind a scrollbar.
@@ -2754,7 +2724,7 @@ console.log('\nwhat the survey guessed against what the search found');
   check('everything left out of the call is counted, not just what came back',
     /const held = \(collected\.skipped \|\| 0\) \+ seenAgain;/.test(scan));
   check('…and the outcome says why those are missing',
-    /left out — already mapped, dismissed, or found in an earlier section/.test(scan));
+    /left out — already mapped, or found in an earlier section/.test(scan));
   check('a section where everything was already handled says so plainly',
     /nothing new to map — all \$\{held\} thing/.test(scan));
 

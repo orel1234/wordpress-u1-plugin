@@ -5336,14 +5336,12 @@ function labelScreen(stop, collected, tab) {
           : `Nothing here reads as a component. Everything on this section is ordinary links and text, ` +
             `or the model has not been asked yet.`}</span>
         <!-- The one honest answer to "it is right there in the picture and not
-             in the list". Everything already mapped or dismissed is filtered
-             out before this screen — correct, and completely invisible, so a
-             component you built an hour ago reads as one the tool has stopped
-             finding. -->
+             in the list". Everything already mapped is filtered out before
+             this screen — correct, and completely invisible, so a component
+             you built an hour ago reads as one the tool has stopped finding. -->
         ${collected.skipped ? `<span class="lbl-sub lbl-skipped">${collected.skipped} element${
           collected.skipped === 1 ? ' on this section is' : 's on this section are'} not listed:
-          already mapped${collected.dismissed ? `, or dismissed (${collected.dismissed})` : ''},
-          or found on an earlier section. They are in the picture; they are not work any more.</span>` : ''}
+          already mapped, or found on an earlier section. They are in the picture; they are not work any more.</span>` : ''}
       </div>
 
       <div class="lbl-list">${components.map(compRow).join('')}</div>
@@ -5508,22 +5506,20 @@ function labelScreen(stop, collected, tab) {
       if (sweepLabel.busy) return;
 
       // ✕ on a component row: this is not a component at all — a wrapper div
-      // guessed as a form, a cookie bar guessed as a dialog. Off the list now,
-      // and onto the site's dismissed list so no later scan suggests it again.
-      // Inside a <label>, so the default (toggling the row's checkbox) has to
-      // be suppressed before the row is removed.
+      // guessed as a form, a cookie bar guessed as a dialog. Off THIS list,
+      // and nothing more: it used to also go onto a shared per-site dismissed
+      // list that silently gated every later scan, which is how a ✕ pressed
+      // once ate the molina sign-in listbox for weeks. Owner decision
+      // (2026-09-01): every scan starts fresh. Inside a <label>, so the
+      // default (toggling the row's checkbox) has to be suppressed before the
+      // row is removed.
       const dis = e.target.closest('[data-dismiss]');
       if (dis) {
         e.preventDefault();
         e.stopPropagation();
         const rowEl = dis.closest('.lbl-row');
-        const c = components.find((x) => x.mark === Number(dis.dataset.dismiss));
-        if (c && c.selector) await rememberDismissed(c.selector);
         rowEl?.remove();
-        showNotice(status, c && c.selector
-          ? `Removed. ${c.selector} is on this site's dismissed list now — scans will skip it. ` +
-            `Undo from the dismissed list on the cost dialog.`
-          : 'Removed from this list.', 'success', 7000);
+        showNotice(status, 'Removed from this list. The next scan starts fresh, so it will be suggested again.', 'success', 7000);
         return;
       }
 
@@ -6984,24 +6980,12 @@ async function collectRegion(tab, scopeSel, handled, opts) {
 
   const drop = (opts && opts.drop) || null;
   const before = context.candidates.length;
-  const bin = (handled && handled.dismissed) || new Set();
-  let dismissedOut = 0;
-  // Which selectors the dismissed list ate, by name. A ✕ pressed weeks ago
-  // removes a candidate from every later scan with no trace at all — "the AI
-  // keeps missing my listbox" on molina was exactly this shape of silence.
-  const dismissedSels = [];
   const candidates = context.candidates.filter((c) => {
-    if (c.selector && handled.has(c.selector)) {
-      if (bin.has(c.selector)) {
-        dismissedOut++;
-        dismissedSels.push(c.selector + (c.component ? ` (${c.component}${c.maybe ? '?' : ''})` : ''));
-      }
-      return false;
-    }
+    if (c.selector && handled.has(c.selector)) return false;
     return !(drop && drop(c));
   });
   const skipped = before - candidates.length;
-  if (!candidates.length) return { candidates: [], headings: [], skipped, dismissed: dismissedOut, dismissedSels };
+  if (!candidates.length) return { candidates: [], headings: [], skipped };
 
   // The survey's own picture, with a labelled box round each component that was
   // recognised. It is what the sections list is chosen from, so it shows the
@@ -7042,7 +7026,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     // never calls the model, so it stops here — and leaves the page untouched,
     // since the numbers were never drawn.
     return {
-      shot: null, thumb, candidates, skipped, dismissed: dismissedOut, dismissedSels, truncated: !!context.truncated,
+      shot: null, thumb, candidates, skipped, truncated: !!context.truncated,
       headings: context.headings || [], title: context.title || '', url: context.url || '',
       tokens: context.tokens || [],
     };
@@ -7082,7 +7066,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   if (!shot) return { err: 'Could not capture the page.' };
 
   return {
-    shot, thumb, candidates, skipped, dismissed: dismissedOut, dismissedSels,
+    shot, thumb, candidates, skipped,
     headings: context.headings || [],
     title: context.title || '',
     url: context.url || '',
@@ -7554,8 +7538,8 @@ function renderAiComponents(found) {
     `<div class="ai-hint-line">Only ${found.scope ? `<code>${escapeHtml(found.scope)}</code>` : 'what was on screen'}` +
     ` was scanned. A dialog, dropdown or datepicker that is closed does not exist in the page
       yet — open one and use <strong>⏱ Scan in 5s</strong>, or name it in the container box.` +
-    (found.skipped ? ` <strong>${found.skipped}</strong> already mapped or skipped on this site were left out —
-      <button class="btn-ghost btn-xs" id="aiResetDismissed">show them again</button>.` : '') +
+    (found.skipped ? ` <strong>${found.skipped}</strong> already mapped on this site were left out —
+      delete a mapping to see its element again.` : '') +
     // A row vanishing without a word is its own kind of wrong, even when the
     // reason is good. These two say what was decided and why, so the reading
     // can be argued with rather than just trusted.
@@ -8011,38 +7995,16 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   } finally { eye.disabled = false; }
 });
 
-// Selectors the specialist has already dealt with on this site, either by
-// skipping them or by mapping them. Kept per site, like everything else.
-async function dismissedSelectors() {
-  try {
-    const key = storageKey('dismissed', currentHostname);
-    return (await U1Store.get([key]))[key] || [];
-  } catch { return []; }
-}
-
-async function rememberDismissed(sel) {
-  if (!sel) return;
-  try {
-    const key = storageKey('dismissed', currentHostname);
-    const list = (await U1Store.get([key]))[key] || [];
-    if (list.includes(sel)) return;
-    list.push(sel);
-    await U1Store.set({ [key]: list.slice(-300) });
-  } catch {}
-}
-
-// Everything already settled on this site: skipped, or already mapped.
-// Everything the scan should not look at again — and WHY, kept apart.
-//
-// The two reasons are not equivalent and were being reported as one. "Already
-// mapped" is finished work. "Dismissed" is a judgement you made once, months
-// ago perhaps, on another machine — dismissals are per-project and shared —
-// and it is the only one of the two you might want to take back. A run that
-// returns nothing because everything on the page was dismissed must say that
-// word, or the only available reading is "the tool found nothing".
+// Everything already settled on this site — which means MAPPED, and nothing
+// else. There used to be a second, persistent reason: a ✕ pressed on a survey
+// row wrote that selector to a shared per-site "dismissed" list that every
+// later scan silently filtered out, forever, on every machine. On molina that
+// standing judgement ate the sign-in listbox run after run, and from the
+// outside it read as "the AI keeps missing it". Owner decision (2026-09-01):
+// a scan starts fresh every time — ✕ takes a row off the CURRENT list only,
+// and nothing a person skipped once is held against the next run.
 async function alreadyHandled() {
-  const dismissed = new Set(await dismissedSelectors());
-  const out = new Set(dismissed);
+  const out = new Set();
   try {
     const key = storageKey('mappings', currentHostname);
     for (const m of (await U1Store.get([key]))[key] || []) {
@@ -8050,8 +8012,6 @@ async function alreadyHandled() {
       if (m && m.firstArg) out.add(m.firstArg);
     }
   } catch {}
-  // A property on the Set, so every `handled.has(...)` call site is untouched.
-  out.dismissed = dismissed;
   return out;
 }
 
@@ -8125,15 +8085,6 @@ document.getElementById('aiScopeInput')?.addEventListener('input', () => {
   if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
 });
 
-document.addEventListener('click', async (e) => {
-  if (!e.target.closest('#aiResetDismissed')) return;
-  try {
-    await U1Store.remove([storageKey('dismissed', currentHostname)]);
-    showNotice(document.getElementById('aiStatus'),
-      'Skipped items are back on the list. Mapped ones stay out — delete the mapping to see them again.', 'success', 5000);
-  } catch {}
-});
-
 // Map ONE component, on demand, from its own card. No ticking, no batch: the
 // button you press is about the element you are looking at.
 document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
@@ -8144,10 +8095,8 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
   if (skipBtn) {
     const comp = skipBtn.closest('.ai-comp');
     comp.dataset.done = '1';
-    // Remember it. The same page gets scanned repeatedly — that is how you
-    // reach a dialog or a datepicker that only exists while open — and without
-    // this every pass hands back the same rows to dismiss again.
-    rememberDismissed((comp.querySelector('.ai-comp-sel')?.value || '').trim());
+    // For this list only — a skip is not remembered, so the next scan offers
+    // the row again. Every scan starts fresh (owner decision, 2026-09-01).
     const left = document.querySelectorAll('#aiCompTrack .ai-comp:not([data-done])').length;
     if (left) showCompSlide(Math.min(carouselAt.aiComp || 0, left - 1));
     else {
@@ -9834,7 +9783,7 @@ async function runSweep(tab) {
   // components nowhere near what is on the page behind it.
   const startedAt = (await sweepMeasure(tab))?.y || 0;
 
-  // Selectors already dealt with — saved mappings and dismissals — plus, as the
+  // Selectors already dealt with — saved mappings — plus, as the
   // sweep goes, everything it has already found. Without the second half the
   // sticky header is discovered again at every scroll position.
   const handled = await alreadyHandled();
@@ -10129,16 +10078,7 @@ async function runSweep(tab) {
 
   const total = aiSweep.stops.reduce((s, x) => s + x.count, 0);
   if (!total) {
-    // The commonest reason a survey comes back empty is the skip list: a handful
-    // of "Skip" presses in an earlier session, still in force and invisible. The
-    // way to undo that has to be offered here, not found.
-    const skipped = (await dismissedSelectors()).length;
     showNotice(status, 'Nothing on this page that is not already mapped.', 'success', 0);
-    if (skipped) {
-      status.insertAdjacentHTML('beforeend',
-        ` ${skipped} element${skipped === 1 ? ' was' : 's were'} left out because ${skipped === 1 ? 'it was' : 'they were'} skipped in an earlier scan — ` +
-        `<button class="btn-ghost btn-xs" id="aiResetDismissed">show them again</button>.`);
-    }
     return;
   }
   status.style.display = 'none';
@@ -11701,14 +11641,6 @@ async function scanPickedScreens(numbers) {
         await markScreenFailed(stop, collected.err);
         continue;
       }
-      // Name what the dismissed list ate, one line each. A ✕ pressed on a row
-      // weeks ago removes that selector from every later scan with no visible
-      // trace — and "it keeps missing my listbox" is what that silence sounds
-      // like from the outside.
-      for (const s of collected.dismissedSels || []) {
-        sweepLog(stop.n, `skipped ${s} — it is on this site's dismissed list (someone pressed ✕ on it once). ` +
-          `Clear the dismissed list to scan it again`, 'skip');
-      }
       // Every candidate on this section was filtered out before the model was
       // called: either already mapped, already found on an earlier section, or
       // part of the sticky header which is counted once. Nothing was charged.
@@ -11721,9 +11653,7 @@ async function scanPickedScreens(numbers) {
       if (!collected.candidates.length) {
         const why = collected.skipped
           ? `nothing new — all ${collected.skipped} element${collected.skipped === 1 ? '' : 's'} here were ` +
-            (collected.dismissed === collected.skipped ? 'DISMISSED earlier'
-             : collected.dismissed ? `already mapped or found earlier (${collected.dismissed} of them DISMISSED earlier)`
-             : 'already found in an earlier section or already mapped')
+            'already found in an earlier section or already mapped'
           : 'nothing on this section to read';
         sweepLog(stop.n, why, 'skip');
         stop.scanned = true;
@@ -11976,7 +11906,7 @@ async function scanPickedScreens(numbers) {
       //
       // seenAgain only counts things the model returned that we already had —
       // the small half. The big half is dropped BEFORE the call: every
-      // candidate already mapped, already dismissed, or already found in an
+      // candidate already mapped, or already found in an
       // earlier section is filtered out of what gets sent, and that count
       // (collected.skipped) went nowhere. So a section the survey described as
       // "6 menus · form · dialog? · carousel?" came back as "2 components" with
@@ -11988,9 +11918,9 @@ async function scanPickedScreens(numbers) {
       stop.outcome = (found.length || named)
         ? `${k} component${k === 1 ? '' : 's'} to map` +
           (named ? ` · ${named} you named, free` : '') +
-          (held ? ` · ${held} left out — already mapped, dismissed, or found in an earlier section` : '')
+          (held ? ` · ${held} left out — already mapped, or found in an earlier section` : '')
         : held
-        ? `nothing new to map — all ${held} thing${held === 1 ? '' : 's'} here are already mapped, dismissed, or were found in an earlier section`
+        ? `nothing new to map — all ${held} thing${held === 1 ? '' : 's'} here are already mapped or were found in an earlier section`
         : 'read, and nothing on it needs mapping';
       sweepLog(stop.n, stop.outcome, k ? '' : 'skip', stop.cost);
 
@@ -12120,6 +12050,25 @@ async function scanPickedScreens(numbers) {
     // still exists — it is the workflow of "stop at each section", and the
     // way back in after a pressed Stop.
     if (!sweepPause.on) {
+      // The autonomous run builds inline, section by section, and never goes
+      // through the bulk-build button — so its dialogs' insides and the
+      // page-wide finishing pass (headings, vague links) have to run HERE.
+      // They only ran on the manual path, which is why an autonomous molina
+      // run produced no heading or vague-link mappings at all.
+      try {
+        const din = await dialogInteriorScan(tab);
+        if (din.dialogs) {
+          sweepLog(0, `dialog interiors: looked inside ${din.dialogs} dialog${din.dialogs === 1 ? '' : 's'}, ` +
+            `mapped ${din.made} component${din.made === 1 ? '' : 's'} in there`, 'info');
+        }
+      } catch {}
+      try {
+        const fin = await sweepFinishingPass(tab);
+        if (fin.headings || fin.links) {
+          sweepLog(0, `finishing pass: ${fin.headings} heading level${fin.headings === 1 ? '' : 's'} ` +
+            `and ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped automatically`, 'info');
+        }
+      } catch {}
       const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
       const failedC = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done && f.failed).length), 0);
       aiSweep.phase = 'screens';
@@ -12135,16 +12084,10 @@ async function scanPickedScreens(numbers) {
     return;
   }
 
-  // Nothing found. The reason decides what to say, because one of the three is
-  // yours to undo and the other two are not.
-  const dismissedRun = ran.some(s => /DISMISSED/.test(s.outcome || ''));
-  showNotice(status, head + ' ' + (dismissedRun
-    ? 'Most of what is here was DISMISSED in an earlier session — dismissals belong to the project and are shared, so they may not be yours. Reset them below and read again if that is wrong.'
-    : empty.length
-      ? 'Everything on these sections is already mapped, or was found in a section searched earlier.'
-      : 'Nothing on these sections needs mapping.'),
-    dismissedRun ? 'warn' : 'info', 20000);
-  if (dismissedRun) offerResetDismissed(status);
+  // Nothing found at all.
+  showNotice(status, head + ' ' + (empty.length
+    ? 'Everything on these sections is already mapped, or was found in a section searched earlier.'
+    : 'Nothing on these sections needs mapping.'), 'info', 20000);
 }
 
 // ▶ on a single row: read that one section and stop.
@@ -12378,6 +12321,14 @@ async function buildPickedComponents() {
   // waiting. Hiding it left the review on screen and nothing else, which reads
   // as the end of the job on a page with twenty-five sections left in it.
   renderSweepPicks();
+  // Inside every dialog this batch built: a dialog is a page of its own.
+  try {
+    const din = await dialogInteriorScan(tab);
+    if (din.dialogs) {
+      sweepLog(0, `dialog interiors: looked inside ${din.dialogs} dialog${din.dialogs === 1 ? '' : 's'}, ` +
+        `mapped ${din.made} component${din.made === 1 ? '' : 's'} in there`, 'info');
+    }
+  } catch {}
   // The page-wide finishing pass: heading outline and vague links, written
   // automatically once the components of this batch are built.
   try {
@@ -14436,6 +14387,85 @@ let filterShape = null;
  * Both dedupe against alreadyHandled(), so re-running a sweep on the same page
  * writes nothing twice. The manual review screens stay, for overrides.
  */
+/**
+ * Inside every dialog this run detected (owner decision, 2026-09-01): a dialog
+ * is a page of its own — a state selector, a search form, a close-listbox live
+ * in there, and a sweep that maps the dialog and walks past its insides has
+ * done half the job. For each dialog built this run, collect INSIDE it (a
+ * named scope admits closed/hidden descendants — the page-wide walk never
+ * sees them), ask the model about that one region, audit the answer the same
+ * way a survey row is audited, and build what comes back through
+ * confirmedToMapping — the exact path the autonomous sweep already trusts.
+ * One model call per dialog, each one logged with what it cost to skip.
+ */
+async function dialogInteriorScan(tab) {
+  const out = { dialogs: 0, made: 0 };
+  if (isReadonly()) return out;
+  const sels = [];
+  for (const s of (aiSweep.stops || [])) {
+    for (const f of (s.found || [])) {
+      if (f && f.done && f.type === 'dialog' && f.sel && !sels.includes(f.sel)) sels.push(f.sel);
+    }
+  }
+  out.dialogs = sels.length;
+  if (!sels.length) return out;
+  if (!(await U1AI.getKey())) return out;
+  const handled = await alreadyHandled();
+  for (const dSel of sels) {
+    if (aiSweep.abort) break;
+    let collected = null;
+    try { collected = await collectRegion(tab, dSel, handled); } catch (e) {}
+    if (!collected || collected.err || !(collected.candidates || []).length) {
+      sweepLog(0, `inside ${dSel}: nothing new to map` +
+        (collected && collected.err ? ` (${collected.err})` : ''), 'skip');
+      continue;
+    }
+    let part = null;
+    try {
+      part = await U1AI.discover({
+        screenshot: collected.shot,
+        context: { candidates: collected.candidates, headings: collected.headings,
+                   title: collected.title, url: collected.url },
+        scope: dSel,
+      });
+    } catch (e) { part = { err: e.message }; }
+    if (!part || part.err) {
+      sweepLog(0, `inside ${dSel}: the model gave no answer` +
+        (part && part.err ? ` (${part.err})` : ''), 'err');
+      continue;
+    }
+    aiCost += U1AI.estimateCost(part.usage) || 0;
+    // The dialog itself is already mapped — this pass is about what it holds.
+    let comps = (part.components || []).filter((c) =>
+      c && c.containerSelector && c.containerSelector !== dSel &&
+      c.u1Type !== 'dialog' && !handled.has(c.containerSelector));
+    try { const audit = await auditSurveyComponents(comps, tab); comps = audit.comps; } catch (e) {}
+    if (!comps.length) {
+      sweepLog(0, `inside ${dSel}: nothing worth mapping beyond the dialog itself`, 'skip');
+      continue;
+    }
+    for (const c of comps) {
+      if (aiSweep.abort) break;
+      try {
+        const res = await confirmedToMapping(
+          { mark: null, type: c.u1Type, sel: c.containerSelector,
+            why: c.why || `found inside the dialog ${dSel}` },
+          { n: 0, probed: [] }, tab);
+        if (res && res.err) {
+          sweepLog(0, `inside ${dSel}: ${c.u1Type} ${c.containerSelector} could not be built — ${res.err}`, 'err');
+        } else {
+          out.made++;
+          handled.add(c.containerSelector);
+          sweepLog(0, `inside ${dSel}: mapped ${c.u1Type} ${c.containerSelector}`, 'info');
+        }
+      } catch (err) {
+        sweepLog(0, `inside ${dSel}: ${c.u1Type} ${c.containerSelector} — ${err.message}`, 'err');
+      }
+    }
+  }
+  return out;
+}
+
 async function sweepFinishingPass(tab) {
   const made = { headings: 0, links: 0 };
   if (isReadonly()) return made;
@@ -15398,13 +15428,7 @@ function confirmSweepClear() {
 }
 
 /**
- * The cost of a sweep run, stated before it is spent — and what will be left
- * out of it.
- *
- * A run of twenty-six sections cost $3.38 and returned nothing, because
- * everything on the page was on the dismissed list. That list is invisible
- * until AFTER a run comes back empty, which is the one moment the information
- * is worth nothing. It belongs on the dialog that spends the money.
+ * The cost of a sweep run, stated before it is spent.
  */
 async function confirmSweepCost(sections, rereading, elements, calls) {
   const dlg = document.getElementById('sweepCostDialog');
@@ -15414,9 +15438,6 @@ async function confirmSweepCost(sections, rereading, elements, calls) {
   // dialog that spends the money says how many, or the first busy page comes in
   // at twice what was agreed to.
   if (calls == null) calls = sections;
-
-  let skipped = 0;
-  try { skipped = (await dismissedSelectors()).length; } catch {}
 
   document.getElementById('sweepCostBody').innerHTML =
     escapeHtml(`Searching ${sections} section${sections === 1 ? '' : 's'} for components — that is ${calls} call${calls === 1 ? '' : 's'} to Claude` +
@@ -15433,12 +15454,6 @@ async function confirmSweepCost(sections, rereading, elements, calls) {
     (rereading
       ? `<br><br><strong>Screen ${rereading} has already been searched and paid for.</strong> ` +
         `Reading it again is a second call, and replaces what it found.`
-      : '') +
-    (skipped
-      ? `<br><br><strong>${skipped} element${skipped === 1 ? '' : 's'} on this site ${skipped === 1 ? 'is' : 'are'} on the dismissed list</strong> ` +
-        `and will be left out of every section. Dismissals belong to the project and are shared, so they may not be yours. ` +
-        `If a run has been coming back empty, this is why. ` +
-        `<button class="btn-outline btn-xs" data-reset-dismissed>Clear the dismissed list</button>`
       : '');
 
   return new Promise((resolve) => {
@@ -15457,32 +15472,6 @@ async function confirmSweepCost(sections, rereading, elements, calls) {
     dlg.showModal();
   });
 }
-
-// The one cause of an empty run that you can undo, with the undo attached.
-function offerResetDismissed(status) {
-  if (!status || status.querySelector('[data-reset-dismissed]')) return;
-  status.insertAdjacentHTML('beforeend',
-    ' <button class="btn-outline btn-xs" data-reset-dismissed>Clear the dismissed list</button>');
-}
-
-document.addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-reset-dismissed]');
-  if (!btn) return;
-  await U1Store.remove([storageKey('dismissed', currentHostname)]);
-  // It can be pressed from inside the cost dialog, where the warning it belongs
-  // to is still on screen and would otherwise go on claiming a list that is now
-  // empty. Take the paragraph out rather than leaving a stale reason up.
-  const inDialog = btn.closest('#sweepCostDialog');
-  if (inDialog) {
-    const body = document.getElementById('sweepCostBody');
-    if (body) body.innerHTML = body.innerHTML.replace(/<br><br><strong>[\s\S]*$/, '') +
-      '<br><br><em>Dismissed list cleared — this run will look at everything.</em>';
-    return;
-  }
-  showNotice(document.getElementById('sweepPicksStatus'),
-    'Dismissed list cleared for this site. Tick the sections again and read — they will come back with everything on them.',
-    'success', 10000);
-});
 
 // A one-click way to act on that, since the fix is always the same.
 function offerReload(status) {
