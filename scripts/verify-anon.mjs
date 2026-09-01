@@ -582,17 +582,20 @@ console.log('\na menu that is really a listbox is retyped');
 
   // The doctrine, decided in the stage-1 brief: listbox vs menu is what the
   // ITEMS DO, never the trigger count. The Sign In drop-down's rows are REAL
-  // links — they navigate — so it is a MENU wherever it lives, and the
-  // retype must refuse it. (It used to be the retype's showcase, from the
-  // era when the split was "one trigger = listbox".)
+  // R0 (owner doctrine, 2026-09-01): one trigger over one flat list IS the
+  // retype's showcase again — link rows change the FLAVOR, not the type:
+  // overwriteRole:'menu' on the listbox engine. The 1.7 items-decide rule
+  // is cancelled by explicit decision; verify-signin pins the same truth
+  // on the real Molina markup.
   const signin = '<div class="signin"><div class="click-nav">' +
     '<button class="clicker" aria-haspopup="true" aria-expanded="false">Sign In</button>' +
     '<ul class="signin-dropdown" role="menu" style="display:none">' +
     '<li><a href="/m">Member</a></li><li><a href="/h">HCP</a></li></ul></div></div>';
-  check('a drop-down of REAL links stays a menu — items that navigate decide',
-    shape(signin, '.signin-dropdown') === null);
+  check('a drop-down of REAL links retypes to listbox + overwriteRole:menu (R0)',
+    (() => { const r = shape(signin, '.signin-dropdown'); return !!r && r.overwriteRole === 'menu'; })(),
+    JSON.stringify(shape(signin, '.signin-dropdown')));
   check('…pointed at the wrapper too',
-    shape(signin, '.click-nav') === null);
+    (() => { const r = shape(signin, '.click-nav'); return !!r && r.overwriteRole === 'menu'; })());
 
   // A VALUE PICKER retypes: same shape, but the rows select rather than
   // navigate — a replaced <select> with button options.
@@ -612,13 +615,24 @@ console.log('\na menu that is really a listbox is retyped');
       return !!r && r.listbox === '.size-list';
     })());
 
-  // The guards, each on its own.
-  const inNav = '<nav class="main"><div class="click-nav">' +
+  // The guards, each on its own. R0 sharpens "inside a nav": only a nav
+  // where the dropdown is ONE OF two or more top-level items keeps it a
+  // menu (a submenu); a nav whose ONLY trigger this is holds a lone
+  // dropdown, and a lone dropdown is a listbox wherever it lives.
+  const inNav = '<nav class="main">' +
+    '<a href="/home">Home</a><a href="/shop">Shop</a>' +
+    '<div class="click-nav"><button class="clicker" aria-haspopup="true">Menu</button>' +
+    '<ul class="nav-list" style="display:none"><li><a href="/a">A</a></li>' +
+    '<li><a href="/b">B</a></li></ul></div></nav>';
+  check('a dropdown that is ONE OF a nav\'s top-level items stays a menu (submenu)',
+    shape(inNav, '.nav-list') === null);
+  const lonelyNav = '<nav class="main"><div class="click-nav">' +
     '<button class="clicker" aria-haspopup="true">Menu</button>' +
     '<ul class="nav-list" style="display:none"><li><a href="/a">A</a></li>' +
     '<li><a href="/b">B</a></li></ul></div></nav>';
-  check('a hamburger revealing the site nav stays a menu — <nav> decides',
-    shape(inNav, '.nav-list') === null);
+  check('a nav whose ONLY trigger is the dropdown retypes it — a lone dropdown is a listbox (R0)',
+    (() => { const r = shape(lonelyNav, '.nav-list'); return !!r && r.overwriteRole === 'menu'; })(),
+    JSON.stringify(shape(lonelyNav, '.nav-list')));
 
   const nested = '<div class="click-nav"><button class="clicker" aria-haspopup="true">More</button>' +
     '<ul class="drop" style="display:none"><li><a href="/a">A</a>' +

@@ -577,7 +577,10 @@
     var after = fingerprint(els);
     var classAfter = classesOf(els);
     var d = diff(before, after);
-    var slid = outermost(shifted(whereBefore, geometry(els)));
+    var slidRaw = shifted(whereBefore, geometry(els));
+    var slid = outermost(slidRaw);
+    // outermost() returns a fresh array — carry the slide magnitude across.
+    slid.maxDx = slidRaw.maxDx;
     var swapped = replaced(textBefore, contentOf(els));
     // 7.8: did a visible list GROW — three-plus new children joining the
     // ones already showing? Read off the fingerprint's own child counts;
@@ -1675,6 +1678,47 @@
       // on the common ancestor of controls AND panels: that reaches up past
       // the strip and u1's fixes walk the root's own children.
       var stripRoot = groupKey || commonAncestor(tabs.concat(panels));
+      // R4 (survey round 2): MOVEMENT outranks the strip rule, even at
+      // items == controls where the counting arm cannot decide. A press
+      // that also SLID a run of siblings is a carousel — a two-slide rail
+      // with two controls read as tabs on Salesforce because its caption
+      // swap pulled it in here.
+      var slidRun = null;
+      for (var sg = 0; sg < group.length && !slidRun; sg++) {
+        if (!group[sg].moved || !group[sg].moved.length) continue;
+        // The same magnitude test as 7.1's reflow rule: a rail slides by an
+        // item's width (hundreds of px); a panel swap that nudges its
+        // neighbours moves them by tens. Without this the vertical tabs
+        // fixture read as a carousel the moment its panels' widths differed.
+        if ((group[sg].moved.maxDx || 0) <= 80) continue;
+        var srun = siblingRun(group[sg].moved, pressed.concat(siblings), group[sg].moved);
+        // A rail is a TRACK: the run's parent holds slides, and the controls
+        // live OUTSIDE it. When the run's parent contains the trigger, what
+        // moved is the widget's own layout re-flowing around the swap — the
+        // vertical-tabs fixture's columns shifted 100px when a wider panel
+        // came in, and read as a two-item rail.
+        if (srun && srun.items.length >= 2 && !srun.parent.contains(group[sg].trigger) &&
+            !srun.parent.contains(siblings[0])) slidRun = srun;
+      }
+      if (slidRun) {
+        var carParts4 = { slide: slidRun.items };
+        tabs.forEach(function (t4) {
+          var role4 = arrowRole(t4);
+          if (role4 && !carParts4[role4]) carParts4[role4] = [t4];
+        });
+        var carRoot4 = commonAncestor(tabs.concat(slidRun.items));
+        if (!badCarouselRoot(carRoot4)) {
+          comps.push({
+            type: 'carousel',
+            shape: 'strip',
+            root: carRoot4,
+            parts: carParts4,
+            why: 'its controls SLID a rail of ' + slidRun.items.length +
+                 ' items — movement outranks the panel swap',
+          });
+          return;
+        }
+      }
       var anyNav = group.some(function (r) { return r.navigated; });
       var allLinks = panels.length > 0 && panels.every(function (p) { return mostlyLinks(p); });
       var sameParent = panels.length > 1 && panels.every(function (p) {
@@ -1778,6 +1822,9 @@
     // watching it move on its own.
     results.forEach(function (r) {
       if (used.has(r.trigger) || !r.moved || !r.moved.length) return;
+      // R0 round: the same magnitude gate as everywhere — a rail slides by
+      // an item's width; a layout nudge of tens of pixels is typography.
+      if ((r.moved.maxDx || 0) <= 80) return;
       var run = siblingRun(r.moved, pressed, r.moved);
       if (!run || run.items.length < 2) return;
       used.add(r.trigger);
@@ -1906,15 +1953,15 @@
         });
         return;
       }
-      // 4.4: listbox vs menu, decided by what the ITEMS are. The ladder:
-      // the page SAYS it (role=option / aria-haspopup=listbox / role=menuitem),
-      // or the panel fronts a hidden native <select>, or — with no words at
-      // all — what the items hold: majority real links lead AWAY (menu, and
-      // mostlyLinks above already took most of those), majority non-href
-      // controls SELECT (listbox). Mixed is a menu, said with low confidence.
-      // Prose bullets are nobody's options: no pressable items, no ladder.
-      var lbType = null, lbWhy = '', lbOptions = null;
-      if (!dialogBy && !linksPanel && !r.headerDropdown) {
+      // R0 (owner doctrine, 2026-09-01): the type is WHICH u1.fix WORKS,
+      // not ARIA semantics. A single control that opens ONE flat list is a
+      // LISTBOX — whether the items are links, buttons or options; linky
+      // items only set overwriteRole:'menu' (menu semantics on the listbox
+      // engine). A standing bar with two or more top-level items, or a
+      // hamburger that reveals such a bar, is a MENU. Trigger count
+      // decides, not item content. verify-signin IS this doctrine.
+      var lbType = null, lbWhy = '', lbOptions = null, lbOverwrite = null;
+      if (!dialogBy) {
         try {
           var optEls = panel.querySelectorAll('[role="option"]');
           var menuItemEls = panel.querySelectorAll('[role="menuitem"]');
@@ -1928,6 +1975,7 @@
               if (!shown(sels[si2])) { hiddenSelect = sels[si2]; break; }
             }
           } catch (e2) {}
+          // The items, whatever they are made of.
           var realLinks = 0, ctlItems = [];
           var pressables = panel.querySelectorAll('a[href],button,input,[role="button"],[tabindex]');
           for (var pi2 = 0; pi2 < pressables.length; pi2++) {
@@ -1936,8 +1984,6 @@
             if (it.tagName === 'A' && href && href !== '#' && !/^javascript:/i.test(href)) realLinks++;
             else ctlItems.push(it);
           }
-          // The hostile shape: items are bare divs whose only tell is the
-          // pointer cursor — the one signal a page cannot help giving.
           if (!realLinks && !ctlItems.length) {
             var bare = panel.querySelectorAll('div,span,li');
             for (var bi2 = 0; bi2 < bare.length && ctlItems.length < 20; bi2++) {
@@ -1949,48 +1995,96 @@
               } catch (e3) {}
             }
           }
-          // R1 (survey round 2): the ladder, with listbox EARNING the word.
-          // Positive evidence only — the page saying it (א), a hidden native
-          // select, or the ITEM PRESS showing selection (ג). Counting alone
-          // (ב) never says listbox any more: a panel of dead controls is a
-          // menu said with low confidence (ד). And navigation chrome speaks
-          // first: a panel whose home is nav/header is a menu before any
-          // counting — the Bootstrap hamburger of href="#" placeholders.
-          var navish = false;
+          var itemCount = realLinks + ctlItems.length;
+
+          // Is this trigger ONE OF a standing bar — two or more pressable
+          // top-level siblings (through the li climb)? Then the panel is
+          // that menu's SUBMENU, and the strip rules own the strip.
+          var famKin = 0;
           try {
-            navish = !!(panel.closest && panel.closest('nav,header,[role="navigation"],[role="banner"]')) ||
-                     !!(r.trigger.closest && r.trigger.closest('nav,header,[role="navigation"],[role="banner"]'));
+            var anchor44 = stripAnchor(r.trigger);
+            var par44 = anchor44.parentElement;
+            if (par44) for (var fk44 = 0; fk44 < par44.children.length; fk44++) {
+              var sib44 = par44.children[fk44];
+              // The PANEL is not a bar-sibling of its own trigger.
+              if (sib44 === panel || sib44.contains(panel) || panel.contains(sib44)) continue;
+              try {
+                if (sib44.matches(PRESS_POOL) || sib44.querySelector(PRESS_POOL)) famKin++;
+              } catch (e4) {}
+            }
           } catch (e2) {}
+
+          // Is the panel FLAT — one list of leaf items — or a BAR: nested
+          // lists of their own, or a second content block beside the list?
+          var flat = itemCount >= 2;
+          try {
+            var nests = panel.querySelectorAll('ul ul,ol ol,ul ol,ol ul,[role="menu"] ul,[role="listbox"] ul');
+            if (nests.length) flat = false;
+            if (flat) {
+              var lists44 = panel.querySelectorAll('ul,ol');
+              if (lists44.length > 1) flat = false;
+            }
+            if (flat && itemCount >= 2) {
+              // A LIST is items and little else. Prose with two links in it
+              // is a disclosure; a hamburger's about-block beside a contact
+              // list is a bar. Measure the free text — everything in the
+              // panel that is not the items themselves.
+              var itemsText44 = 0;
+              try {
+                var allItems44 = [];
+                var la44 = panel.querySelectorAll('a[href]');
+                for (var li44 = 0; li44 < la44.length; li44++) allItems44.push(la44[li44]);
+                for (var ci44 = 0; ci44 < ctlItems.length; ci44++) allItems44.push(ctlItems[ci44]);
+                for (var ti44 = 0; ti44 < allItems44.length; ti44++) {
+                  itemsText44 += ((allItems44[ti44].textContent || '').trim()).length;
+                }
+              } catch (e5) {}
+              var panelText44 = ((panel.textContent || '').replace(/\s+/g, ' ').trim()).length;
+              var freeText44 = Math.max(0, panelText44 - itemsText44);
+              if (freeText44 > 40 && freeText44 > itemsText44) flat = false;
+            }
+          } catch (e2) {}
+
           var ip = r.itemPress || null;
-          if (optEls.length >= 2 || saysListbox) {
-            lbType = 'listbox';
-            lbWhy = optEls.length >= 2 ? 'its items say role=option — the page calls them options'
-                                       : 'its trigger says aria-haspopup=listbox';
-            lbOptions = optEls.length >= 2 ? Array.prototype.slice.call(optEls) : (ctlItems.length ? ctlItems : null);
-          } else if (menuItemEls.length >= 2) {
+          if (menuItemEls.length >= 2 && famKin >= 2) {
             lbType = 'menu';
-            lbWhy = 'its items say role=menuitem';
-          } else if (navish && realLinks + ctlItems.length >= 2) {
+            lbWhy = 'its items say role=menuitem and its trigger stands in a bar of ' + famKin;
+          } else if (famKin >= 2 && itemCount >= 2) {
             lbType = 'menu';
-            lbWhy = 'it lives in the site\'s navigation chrome (nav/header) — a menu before any counting';
-          } else if (hiddenSelect && ctlItems.length >= 2) {
+            lbWhy = 'its trigger is one of ' + famKin + ' top-level items — this panel is that menu\'s submenu';
+          } else if (flat && itemCount >= 2) {
             lbType = 'listbox';
-            lbWhy = 'it fronts a hidden native <select> — a replaced select control';
-            lbOptions = ctlItems;
-          } else if (ip && ip.selected) {
-            lbType = 'listbox';
-            lbWhy = 'pressing one item SELECTED it — the trigger took its text and the list closed';
             lbOptions = ctlItems.length ? ctlItems : null;
-          } else if (ip && ip.navigated) {
-            lbType = 'menu';
-            lbWhy = 'pressing one item tried to NAVIGATE — items lead away';
-          } else if (realLinks + ctlItems.length >= 3) {
-            if (realLinks > ctlItems.length) {
-              lbType = 'menu';
-              lbWhy = 'most of its items are real links — they lead away';
+            var selecty44 = (optEls.length >= 2) || saysListbox || !!hiddenSelect || (ip && ip.selected);
+            var linky44 = (ip && ip.navigated) || realLinks * 2 >= itemCount;
+            if (selecty44) {
+              lbWhy = 'one control opening one flat list, and ' +
+                (ip && ip.selected ? 'pressing an item SELECTED it' :
+                 optEls.length >= 2 ? 'its items say role=option' :
+                 saysListbox ? 'its trigger says aria-haspopup=listbox' :
+                 'it fronts a hidden native <select>');
+            } else if (linky44) {
+              lbOverwrite = 'menu';
+              lbWhy = 'one control opening one flat list of links — a listbox carrying overwriteRole:menu, menu semantics on the listbox engine';
             } else {
+              lbWhy = 'one control opening one flat list of controls — the listbox shape by trigger count';
+            }
+          } else if (!flat && itemCount >= 2) {
+            // A BAR holds its navigation in LIST BLOCKS — a <ul> of two or
+            // more links — even with prose beside it (the album hamburger:
+            // an about-column next to a contact list). Prose whose links
+            // sit inline in sentences has no list block and falls through
+            // to the accordion evidence.
+            var barList = false;
+            try {
+              var uls44 = panel.querySelectorAll('ul,ol');
+              for (var ul44 = 0; ul44 < uls44.length && !barList; ul44++) {
+                if (uls44[ul44].querySelectorAll('a[href],button').length >= 2) barList = true;
+              }
+            } catch (e5) {}
+            if (barList || mostlyLinks(panel)) {
               lbType = 'menu';
-              lbWhy = 'its items are controls but nothing showed SELECTION — read as a menu, with low confidence';
+              lbWhy = 'a lone trigger revealing a BAR — a list block of items with content beside it — a hamburger menu';
             }
           }
         } catch (e) {}
@@ -2004,7 +2098,7 @@
       // accordion with single:true. No evidence at all is reported as
       // exactly what it is: observed, unclassified.
       var accEvidence = null, accSingle = false;
-      if (!dialogBy && !linksPanel && !r.headerDropdown && !lbType) {
+      if (!dialogBy && !lbType) {
         var sibPanel = false, kin = 0;
         try {
           var anchor = stripAnchor(r.trigger);
@@ -2021,17 +2115,15 @@
           : null;
         accSingle = !!accEvidence && kin < 2;
       }
+      // R0: linksPanel and headerDropdown no longer force MENU for a lone
+      // trigger — item content does not decide the type; the ladder above
+      // does. linksPanel keeps gating the dialog's floating rung only.
       var type = dialogBy ? 'dialog'
-        : linksPanel ? 'menu'
-        : r.headerDropdown ? 'menu'
         : lbType ? lbType
         : accEvidence ? 'accordion'
         : null;
       var why = type === 'dialog' ? dialogBy
         : lbType ? 'it opened a list — ' + lbWhy
-        : type === 'menu'
-        ? (linksPanel ? 'it revealed a panel of links and nothing else'
-           : 'it dropped a panel across its own header bar')
         : type === 'accordion'
         ? 'it revealed and hid a region — ' + accEvidence
         : 'revealed something, no pattern matched';
@@ -2055,6 +2147,7 @@
       }
       comps.push({
         type: type,
+        overwriteRole: type === 'listbox' && lbOverwrite ? lbOverwrite : undefined,
         subtype: type === 'dialog' && r.drawer ? 'drawer' : undefined,
         single: type === 'accordion' && accSingle ? true : undefined,
         root: type === 'dialog' ? panel
@@ -2177,7 +2270,10 @@
       }
       // A ticker that scrolls itself hides nothing at all, so the visibility
       // comparison above will never see it however long it watches.
-      var slid = outermost(shifted(whereBefore, geometry(els)));
+      var slidRaw = shifted(whereBefore, geometry(els));
+    var slid = outermost(slidRaw);
+    // outermost() returns a fresh array — carry the slide magnitude across.
+    slid.maxDx = slidRaw.maxDx;
       if (slid.length) return { moved: slid, gone: [], slid: true, ms: waited + step };
     }
     return null;

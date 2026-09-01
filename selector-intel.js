@@ -4577,8 +4577,19 @@
     let el;
     try { el = document.querySelector(containerSel); } catch (e) { return null; }
     if (!el) return null;
+    // R0: "inside a nav" is only a veto when the dropdown is ONE OF two or
+    // more top-level items — then it is that menu's SUBMENU. A nav or
+    // header whose ONLY trigger this is holds a lone dropdown, and a lone
+    // dropdown is a listbox wherever it lives.
     try {
-      if (el.closest('nav,[role="navigation"]')) return null;
+      const navHome = el.closest('nav,[role="navigation"]');
+      if (navHome) {
+        let topItems = 0;
+        for (const kid of navHome.querySelectorAll('button,[role="button"],[aria-haspopup],[aria-expanded],a[href]')) {
+          if (!el.contains(kid) && !kid.contains(el)) topItems++;
+          if (topItems >= 2) return null;
+        }
+      }
     } catch (e) {}
 
     // The survey names the component, which for this shape is as often the list
@@ -4612,11 +4623,15 @@
     const declares = trigger.hasAttribute('aria-haspopup') || trigger.hasAttribute('aria-expanded');
     if (!declares && visibleInViewport(panel)) return null;
 
-    // A drop-down whose rows are REAL links is a menu wherever it lives —
-    // "My account" outside <nav> included. Only rows that navigate count:
-    // href="#" and javascript: are buttons wearing <a>. Half or more linky
-    // rows means the items lead somewhere, and things that lead somewhere
-    // are a menu, not a value picker.
+    // R0 (owner doctrine): item content does NOT change the type — a lone
+    // control over one flat list is a listbox whether its rows are links,
+    // buttons or options, because that is the shape u1.fix.listbox works
+    // on. What linky rows change is the FLAVOR: overwriteRole:'menu', so
+    // the reader hears menu semantics on a listbox engine. (The 1.7 rule
+    // that returned null on majority-links stood from 2026-08 to 2026-09-01
+    // and is cancelled by explicit decision — see verify-signin, which IS
+    // this doctrine.)
+    let linkFlavored = false;
     try {
       const panelEl = document.querySelector(shape.listbox);
       if (panelEl) {
@@ -4627,12 +4642,17 @@
           const href = a.getAttribute('href') || '';
           return href && !/^#/.test(href) && !/^javascript:/i.test(href);
         });
-        if (rows.length && linky.length * 2 >= rows.length) return null;
+        linkFlavored = rows.length > 0 && linky.length * 2 >= rows.length;
       }
     } catch (e) {}
 
-    return { listbox: shape.listbox, trigger: shape.trigger, options: shape.options,
-      why: 'One control opening one flat list of options — that is a listbox, whatever the role attribute says. fix.menu on this shape decorates nothing.' };
+    const out = { listbox: shape.listbox, trigger: shape.trigger, options: shape.options,
+      why: 'One control opening one flat list — that is a listbox, whatever the role attribute says. fix.menu on this shape decorates nothing.' };
+    if (linkFlavored) {
+      out.overwriteRole = 'menu';
+      out.why += ' Its rows are links, so the mapping carries overwriteRole:menu — menu semantics on the listbox engine.';
+    }
+    return out;
   }
 
   /**

@@ -575,18 +575,16 @@ console.log('\n4.4 — a replaced <select> is a listbox, a list of links is a me
     out.components.some((c) => c.type === 'listbox'),
     out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 
-  // R1b (survey round 2): counting alone is NOT positive evidence. A panel
-  // of dead controls that never reacts to a press is read as a MENU with
-  // low confidence — listbox has to EARN the word.
+  // R0 (owner doctrine): a single control over ONE flat list is a listbox
+  // by trigger count — whatever the items are made of.
   const bare = page(`
     <div id="w">
       <div><button id="t">Choose a size</button><span>x</span></div>
       <ul id="p" hidden><li><button>S</button></li><li><button>M</button></li><li><button>L</button></li><li><button>XL</button></li></ul>
     </div>`);
   out = await open(bare);
-  check('controls that never SHOW selection are a menu, said with low confidence',
-    out.components.some((c) => c.type === 'menu' && /low confidence/.test(c.why)) &&
-    !out.components.some((c) => c.type === 'listbox'),
+  check('one trigger over one flat list of controls is a LISTBOX by trigger count',
+    out.components.some((c) => c.type === 'listbox' && !c.overwriteRole),
     out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 
   // R1c: the item-press rung. One non-navigating item pressed while open —
@@ -617,8 +615,9 @@ console.log('\n4.4 — a replaced <select> is a listbox, a list of links is a me
     lb && lb.parts.trigger && lb.parts.trigger[0] === selecty.document.getElementById('t'),
     lb && JSON.stringify(Object.keys(lb.parts)));
 
-  // R1a: the same dead-controls panel INSIDE the site's navigation chrome
-  // is a menu before any counting — the Bootstrap hamburger case.
+  // R0: the ONLY trigger in a header, over one flat list — a lone dropdown
+  // is a listbox wherever it lives. (A hamburger revealing a BAR — items in
+  // more than one block — is the menu case, tested with the album pin.)
   const navish = page(`
     <div id="w"><header>
       <div><button id="t">Menu</button><span>x</span></div>
@@ -628,9 +627,8 @@ console.log('\n4.4 — a replaced <select> is a listbox, a list of links is a me
     const p = navish.document.getElementById('p'); p.hidden = !p.hidden;
   });
   out = await navish.__u1Probe.probeAll(navish.document.getElementById('w'), { settle: 0, idle: 0 });
-  check('dead-href links under a header are a MENU, never a listbox',
-    out.components.some((c) => c.type === 'menu') &&
-    !out.components.some((c) => c.type === 'listbox'),
+  check('a header\'s LONE dropdown over one flat list is a listbox',
+    out.components.some((c) => c.type === 'listbox'),
     out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 
   // The other side of the ladder: links stay a menu.
@@ -640,10 +638,9 @@ console.log('\n4.4 — a replaced <select> is a listbox, a list of links is a me
       <ul id="p" hidden><li><a href="/orders">Orders</a></li><li><a href="/returns">Returns</a></li><li><a href="/settings">Settings</a></li></ul>
     </div>`);
   out = await open(links);
-  check('majority real links stays a menu, never a listbox',
-    out.components.some((c) => c.type === 'menu') &&
-    !out.components.some((c) => c.type === 'listbox'),
-    out.components.map((c) => c.type).join() || '(nothing)');
+  check('one trigger over a flat list of LINKS is a listbox carrying overwriteRole:menu',
+    out.components.some((c) => c.type === 'listbox' && c.overwriteRole === 'menu'),
+    out.components.map((c) => c.type + (c.overwriteRole ? '+' + c.overwriteRole : '')).join() || '(nothing)');
 
   // Prose bullets are nobody's options.
   const prose = page(`
@@ -1523,9 +1520,10 @@ console.log('\na panel with links in it is judged on what ELSE is in it');
 
   const links = mk(`<a href="/a">Men</a><a href="/b">Women</a><a href="/c">Kids</a>`);
   out = await links.__u1Probe.probeAll(links.document.getElementById('w'), { settle: 0 });
-  check('…while links and nothing else is still a menu',
-    out.components.length === 1 && out.components[0].type === 'menu',
-    out.components.map(c => c.type).join());
+  check('…while links and nothing else, one trigger, is a LISTBOX with overwriteRole:menu (R0)',
+    out.components.length === 1 && out.components[0].type === 'listbox' &&
+    out.components[0].overwriteRole === 'menu',
+    out.components.map(c => c.type + (c.overwriteRole ? '+' + c.overwriteRole : '')).join());
 
   // 4.8: the RATIO. The mega-panel case verbatim — 22 links and a
   // 120-character category blurb is a menu; the old flat 40-character
@@ -1535,9 +1533,13 @@ console.log('\na panel with links in it is judged on what ELSE is in it');
   mega += `<p>${'x'.repeat(120)}</p>`;
   const megaW = mk(mega);
   out = await megaW.__u1Probe.probeAll(megaW.document.getElementById('w'), { settle: 0 });
-  check('22 links with a 120-char blurb is a MENU — ratio, not a flat threshold',
-    out.components.length === 1 && out.components[0].type === 'menu',
-    out.components.map(c => c.type).join());
+  // R0: even 22 links — one trigger, one flat list is the listbox SHAPE;
+  // the reader still hears menu through overwriteRole. (A real mega panel
+  // is a SUBMENU — its trigger stands in a bar — and stays menu that way.)
+  check('22 links under ONE trigger is a listbox carrying overwriteRole:menu (R0)',
+    out.components.length === 1 && out.components[0].type === 'listbox' &&
+    out.components[0].overwriteRole === 'menu',
+    out.components.map(c => c.type + (c.overwriteRole ? '+' + c.overwriteRole : '')).join());
 
   // 4.6: href="#" and javascript: do not count as links. Two of them beside
   // prose leave the panel an accordion, not a menu.
@@ -1604,6 +1606,78 @@ console.log('\na small dialog is still a dialog');
   check('an in-flow content reveal is still an accordion',
     out.components.length === 1 && out.components[0].type === 'accordion',
     out.components.map(c => c.type).join());
+}
+
+// ── R4 (survey round 2): sliding beats the strip rule at the minimum ────────
+//
+// Salesforce's two-slide carousel with two controls read as TABS — at
+// items == controls the counting arm cannot decide. Movement can: a press
+// that SLID a run of siblings is a carousel however few controls it has.
+console.log('\nR4 — two slides that MOVE are a carousel, not tabs');
+{
+  const w = page(`
+    <div id="w"><div id="car">
+      <div id="track"><div class="pane">One</div><div class="pane">Two</div></div>
+      <div id="ctl"><button id="c1">1</button><button id="c2">2</button></div>
+    </div></div>`);
+  const d = w.document;
+  let at = 0;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.classList && this.classList.contains('pane')) {
+      const idx = [...this.parentElement.children].indexOf(this);
+      const x = (idx - at) * 320;
+      return { top: 10, bottom: 210, left: x, right: x + 320, width: 320, height: 200 };
+    }
+    return { top: 300, bottom: 330, left: 10, right: 110, width: 100, height: 30 };
+  };
+  const swap = (n) => {
+    at = n;
+    for (const [i, p] of [...d.querySelectorAll('.pane')].entries()) {
+      p.classList.toggle('is-on', i === at);
+      p.classList.toggle('is-off', i !== at);
+    }
+  };
+  swap(0);
+  d.getElementById('c1').addEventListener('click', () => swap(0));
+  d.getElementById('c2').addEventListener('click', () => swap(1));
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  check('two controls sliding two panes are a CAROUSEL, never tabs',
+    out.components.some((x) => x.type === 'carousel') &&
+    !out.components.some((x) => x.type === 'tabs'),
+    out.components.map((x) => x.type + ':' + (x.why || '').slice(0, 60)).join(' | ') || '(nothing)');
+}
+{
+  // The Salesforce shape exactly: the panes SLIDE *and* their captions
+  // swap visibility — the swap pulls the press into the group branch,
+  // where at items == controls the counting arm cannot decide and the
+  // strip rule said TABS. Movement must outrank it.
+  const w = page(`
+    <div id="w"><div id="car">
+      <div id="track"><div class="pane">One<span class="cap">A</span></div><div class="pane">Two<span class="cap" hidden>B</span></div></div>
+      <div id="ctl"><button id="c1">1</button><button id="c2">2</button></div>
+    </div></div>`);
+  const d = w.document;
+  let at = 0;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.classList && this.classList.contains('pane')) {
+      const idx = [...this.parentElement.children].indexOf(this);
+      const x = (idx - at) * 320;
+      return { top: 10, bottom: 210, left: x, right: x + 320, width: 320, height: 200 };
+    }
+    if (this.hasAttribute && this.hasAttribute('hidden')) return { width: 0, height: 0, top: 0, bottom: 0, left: 0, right: 0 };
+    return { top: 300, bottom: 330, left: 10, right: 110, width: 100, height: 30 };
+  };
+  const swap = (n) => {
+    at = n;
+    [...d.querySelectorAll('.cap')].forEach((c, i) => { c.hidden = i !== at; });
+  };
+  d.getElementById('c1').addEventListener('click', () => swap(0));
+  d.getElementById('c2').addEventListener('click', () => swap(1));
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  check('sliding + a caption swap is still a CAROUSEL — movement outranks the strip',
+    out.components.some((x) => x.type === 'carousel') &&
+    !out.components.some((x) => x.type === 'tabs'),
+    out.components.map((x) => x.type + ':' + (x.why || '').slice(0, 60)).join(' | ') || '(nothing)');
 }
 
 // ── A carousel is not a tab strip, and counting is what says so ────────────
@@ -2412,7 +2486,10 @@ console.log('\na page with no semantics at all');
   // means TABS, by name. `shape: 'strip'` stays because the RESTORE depends
   // on it: a strip cannot undo itself by being pressed a second time.
   const strips = out.components.filter(c => c.shape === 'strip');
-  const opened = out.components.filter(c => c.type === 'menu' && c.shape !== 'strip');
+  // R0: each drop-down stands alone — one trigger, one flat list of links —
+  // so each is a LISTBOX carrying overwriteRole:menu. The reader still
+  // hears menu; the engine that can actually decorate the shape runs it.
+  const opened = out.components.filter(c => c.type === 'listbox' && c.overwriteRole === 'menu');
 
   check('the strip is found, and reported as tabs', strips.length === 1 && strips[0].type === 'tabs',
     out.components.map(c => c.type + (c.shape ? ':' + c.shape : '')).join());
@@ -2424,12 +2501,12 @@ console.log('\na page with no semantics at all');
   check('…rooted on the direct parent of the controls, not above the panels',
     strips.length === 1 && strips[0].root === d.getElementById('t1').parentElement,
     strips[0] && strips[0].root && (strips[0].root.id || strips[0].root.className));
-  check('both drop-downs are found, and called menus because they hold links',
+  check('both drop-downs are found — listbox + overwriteRole:menu each (R0)',
     opened.length === 2, String(opened.length));
   check('…each paired with the panel IT opens, not another one',
     opened.length === 2 &&
-    opened.every(c => c.parts.trigger[0].id.replace('n', 'np') === c.parts.panel[0].id),
-    opened.map(c => c.parts.trigger[0].id + '→' + c.parts.panel[0].id).join(' '));
+    opened.every(c => c.parts.trigger[0].id.replace('n', 'np') === c.parts.listbox[0].id),
+    opened.map(c => c.parts.trigger[0].id + '→' + (c.parts.listbox && c.parts.listbox[0].id)).join(' '));
   check('the accordion is found, and NOT called a menu — it holds no links',
     of('accordion').length === 1 && of('accordion')[0].parts.panel[0].id === 'a1');
 

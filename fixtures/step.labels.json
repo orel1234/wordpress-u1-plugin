@@ -169,18 +169,18 @@
       "fields": {}
     },
     {
-      "type": "menu",
+      "type": "listbox",
       "root": "#auditAccountList",
-      "why": "My account: a button opening a list of five real links, OUTSIDE any <nav>. A dropdown of links is a menu wherever it lives — the footer demotion and the nav requirement must not eat it.",
+      "why": "R0 (owner doctrine): ONE control over ONE flat list is a listbox — item content does not change the type. The rows are links, so the mapping carries overwriteRole:'menu' — menu semantics on the listbox engine. (Labelled menu from 2026-08 to 2026-09-01 under the cancelled items-decide rule.)",
       "fields": {
         "trigger": "#auditAccountBtn"
       },
       "hidden": true
     },
     {
-      "type": "menu",
+      "type": "listbox",
       "root": "#auditDropdownMenu",
-      "why": "A Bootstrap-style dropdown: data-toggle=dropdown, no aria-controls, real hrefs inside. The commonest dropdown dialect on the web; deliberately edge-poor so only class or behaviour can find it.",
+      "why": "R0: the Bootstrap dropdown dialect — one Help trigger over one flat list of links ⇒ listbox with overwriteRole:'menu'. (Was menu under the cancelled rule.)",
       "fields": {
         "trigger": "#auditDropdownBtn"
       },

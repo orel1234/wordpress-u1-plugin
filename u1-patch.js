@@ -34,7 +34,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-08-20d' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-01a' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -139,6 +139,13 @@
   var queued = false;
   var run = function () {
     queued = false;
+    // The correctors correct what the U1 ENGINE produced — nothing else.
+    // Until u1 exists on the page there is nothing to correct, and running
+    // them anyway meant: the moment a site gained stored mappings (an
+    // import), every page load armed the subtree observer at document_start
+    // and the whole corrector pass ran on every frame of a hydrating SPA.
+    // On molinahealthcare.com that froze the load outright (2026-09-01).
+    if (W.u1 === undefined && W.U1 === undefined && W.user1st === undefined) return;
     for (var i = 0; i < P.correctors.length; i++) {
       try { P.correctors[i](); } catch (e) { /* one bad fix must not stop the rest */ }
     }

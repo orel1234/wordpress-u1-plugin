@@ -19,9 +19,9 @@
       "fields": {}
     },
     {
-      "type": "menu",
+      "type": "listbox",
       "root": ".lang-container ul",
-      "why": "The language switcher: a button revealing a panel of language links, marked open with .open. Observed live: pressed, revealed links and nothing else.",
+      "why": "R0: the language switcher — one button over one flat list of language links ⇒ listbox with overwriteRole:'menu'. (Was menu under the cancelled rule.) Behaviour-only on this inert pin; outside the floor.",
       "fields": {},
       "hidden": true
     },

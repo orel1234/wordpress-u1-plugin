@@ -69,6 +69,19 @@ check('the trigger is the button that opens it',
 check('the options are the things a person activates — the links, not the rows',
   shape && shape.options === '.signin-dropdown>li>a');
 
+console.log('\nR0 — THE DOCTRINE, pinned. Do not change without an explicit owner decision.');
+// The type is which u1.fix WORKS, not ARIA semantics. Sign-In is ONE control
+// over ONE flat list whose rows are links: a LISTBOX carrying
+// overwriteRole:'menu' — menu semantics on the listbox engine. This is the
+// mapping Orel builds by hand on the real site, and it is the reference.
+{
+  const verdict = S.menuIsReallyListbox('.click-nav') || S.menuIsReallyListbox('.signin-dropdown');
+  check('Sign-In is a LISTBOX — one trigger over one flat list, whatever role="menu" says',
+    !!verdict && verdict.listbox === '.signin-dropdown', JSON.stringify(verdict));
+  check('…carrying overwriteRole:menu, because its rows are links',
+    !!verdict && verdict.overwriteRole === 'menu', verdict && JSON.stringify(verdict.overwriteRole));
+}
+
 console.log('\nwhat the raw page does NOT say');
 const t = w.document.querySelector('.clicker');
 check('no aria-controls, aria-haspopup or aria-expanded in the real markup — a scan reporting them is reading experiment leftovers',
