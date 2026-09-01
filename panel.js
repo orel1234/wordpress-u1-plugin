@@ -9616,9 +9616,32 @@ function sweepLog(n, what, kind, cost) {
     wrap.className = 'sweep-log-wrap';
     wrap.innerHTML =
       '<summary><span class="sweep-log-title">Scan log</span>' +
-      '<span class="sweep-log-live"></span></summary>' +
+      '<span class="sweep-log-live"></span>' +
+      // Reading a long run back means scrolling a small box and photographing
+      // it a screenful at a time. One press hands the whole thing over as
+      // text — every section's rows, whether or not its fold is open.
+      '<button type="button" class="btn-ghost btn-xs sweep-log-copy">Copy</button></summary>' +
       '<div class="sweep-log-body"></div>';
     box.appendChild(wrap);
+    const copyBtn = wrap.querySelector('.sweep-log-copy');
+    copyBtn.addEventListener('click', async (e) => {
+      // Inside a <summary>: without this the press also toggles the drawer.
+      e.preventDefault();
+      e.stopPropagation();
+      const lines = [];
+      wrap.querySelectorAll('.sweep-log-body .sweep-log-row, .sweep-log-body summary').forEach((el) => {
+        const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+        if (t) lines.push(el.tagName === 'SUMMARY' ? '## ' + t : t);
+      });
+      try {
+        await navigator.clipboard.writeText(lines.join('\n'));
+        copyBtn.textContent = 'Copied';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+      } catch {
+        copyBtn.textContent = 'Could not copy';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2500);
+      }
+    });
   }
   const body = wrap.querySelector('.sweep-log-body');
 
