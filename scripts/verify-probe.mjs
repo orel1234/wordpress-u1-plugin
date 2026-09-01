@@ -695,6 +695,51 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 7.2: a switch flips aria-checked; a radio unmarks its sibling ───────────
+console.log('\n7.2 — checked-state vocabulary makes it a checkbox or a radio');
+{
+  // role=switch on a real <button>: still a component — checkbox/switch.
+  const sw = page(`
+    <div id="w"><button id="s" role="switch" aria-checked="false" class="switch-nav">Dark mode</button></div>`);
+  sw.document.getElementById('s').addEventListener('click', function () {
+    this.setAttribute('aria-checked', this.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+  });
+  let out = await sw.__u1Probe.probeAll(sw.document.getElementById('w'), { settle: 0, idle: 0 });
+  let c = out.components.find((x) => x.type === 'checkbox');
+  check('role=switch whose aria-checked flips is a checkbox',
+    !!c && c.subtype === 'switch',
+    out.components.map((x) => x.type + ':' + (x.subtype || '')).join() || '(nothing)');
+
+  // The roleless radio: three divs, choosing one unmarks the previous.
+  const rd = page(`
+    <div id="w"><div id="g">
+      <div id="o1" tabindex="0" data-checked="true">Pickup</div>
+      <div id="o2" tabindex="0" data-checked="false">Courier</div>
+      <div id="o3" tabindex="0" data-checked="false">Branch</div>
+    </div></div>`);
+  const dg = rd.document;
+  dg.getElementById('g').addEventListener('click', (e) => {
+    const opt = e.target.closest && e.target.closest('[data-checked]');
+    if (!opt) return;
+    for (const o of dg.querySelectorAll('[data-checked]')) o.setAttribute('data-checked', String(o === opt));
+  });
+  out = await rd.__u1Probe.probeAll(dg.getElementById('w'), { settle: 0, idle: 0 });
+  c = out.components.find((x) => x.type === 'radio');
+  check('choosing one and unmarking the sibling is a RADIO, rooted on the parent',
+    !!c && c.root === dg.getElementById('g'),
+    out.components.map((x) => x.type + ':' + (x.root.id || '')).join() || '(nothing)');
+  check('…never also reported as loose buttons',
+    !out.components.some((x) => x.type === 'button'));
+
+  // The native negative: label > input[hidden] + span. Nothing to emit.
+  const nat = page(`
+    <div id="w"><label id="l"><input type="checkbox" hidden><span>Gift wrap</span></label></div>`);
+  out = await nat.__u1Probe.probeAll(nat.document.getElementById('w'), { settle: 0, idle: 0 });
+  check('a styled NATIVE checkbox is left to the browser',
+    !out.components.some((x) => x.type === 'checkbox' || x.type === 'button'),
+    out.components.map((x) => x.type).join() || '(nothing)');
+}
+
 // ── 7.1: a button is what a press SAYS it is, whatever the tag ──────────────
 //
 // An <a href="#"> that flips its own state and goes nowhere; a bare div with

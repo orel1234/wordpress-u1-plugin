@@ -966,6 +966,9 @@
   // apart by what the panels DO (swapped in one place = tabs, items lead
   // away = menu), so the hint may finally say the word the page said.
   const COMPONENT_BY_ROLE = {
+    // 7.2: role=switch IS a component — checkbox, subtype switch (owner
+    // decision, superseding the earlier "a part" reading).
+    switch: 'checkbox',
     tablist: 'tabs', menu: 'menu', menubar: 'menu', navigation: 'menu',
     dialog: 'dialog', alertdialog: 'dialog', listbox: 'listbox',
     combobox: 'combobox', grid: 'grid', table: 'table', tree: 'menu',

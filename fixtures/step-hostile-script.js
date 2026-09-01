@@ -152,7 +152,7 @@ Store.SHOE_SOLE_PATH = 'M14,88 L202,88 C210,88 216,93 215,100 C214,104 209,106 2
 Store.SHOE_LACES_PATH = 'M68,36 L76,50 M78,32 L86,46 M88,29 L96,43';
 
 Store.shoeIconSVG = (color, extraClass = '') => `
-  <svg class="cbc ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
+  <svg class="cbf ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
     <path d="${Store.SHOE_ICON_PATH}" fill="currentColor"/>
     <path d="${Store.SHOE_SOLE_PATH}" fill="currentColor" opacity="0.5"/>
     <path d="${Store.SHOE_LACES_PATH}" fill="none" stroke="rgba(0,0,0,0.3)" stroke-width="3" stroke-linecap="round"/>
@@ -323,7 +323,7 @@ Store.header = (() => {
     const { product, size, colorName, qty, index } = item;
     const color = product.colors.find(c => c.name === colorName) || product.colors[0];
     return `
-      <div class="cb0" data-xu="${index}">
+      <div class="cb2" data-xv="${index}">
         <div class="c4v" style="background:${color.hex}">
           ${Store.shoeIconSVG('rgba(255,255,255,0.92)')}
         </div>
@@ -331,23 +331,23 @@ Store.header = (() => {
           <div class="c5x">${Store.utils.escapeHtml(product.name)}</div>
           <div class="c5w">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
           <div class="c6q">
-            <div class="c9o" data-xa>
-              <div class="c5i" data-x10="-1">−</div>
+            <div class="c9p" data-xa>
+              <div class="c5i" data-x11="-1">−</div>
               <span class="c3h">${qty}</span>
-              <div class="c5i" data-x10="1">+</div>
+              <div class="c5i" data-x11="1">+</div>
             </div>
           </div>
         </div>
         <div class="c2y">
           <span class="c4u">${Store.utils.formatPrice(product.price * qty)}</span>
-          <div class="c3q" data-xq>Remove</div>
+          <div class="c3q" data-xr>Remove</div>
         </div>
       </div>`;
   }
 
   function renderDrawer() {
-    const itemsEl = document.getElementById('eo');
-    const footerEl = document.getElementById('ed');
+    const itemsEl = document.getElementById('eq');
+    const footerEl = document.getElementById('ee');
     if (!itemsEl) return;
     const items = Store.cart.withProducts();
 
@@ -360,12 +360,12 @@ Store.header = (() => {
     itemsEl.innerHTML = items.map(lineTemplate).join('');
     const { subtotal, shipping, discount, total } = Store.cart.totals();
     footerEl.innerHTML = `
-      <div class="ca2"><span>Subtotal</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
-      ${discount ? `<div class="ca2"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
-      <div class="ca2"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
-      <div class="ca2 c3n"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
-      <a class="ccl c8c ca5" href="cart.html">View Cart</a>
-      <a class="ccl c8b ca5" href="checkout.html">Checkout</a>`;
+      <div class="ca4"><span>Subtotal</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
+      ${discount ? `<div class="ca4"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
+      <div class="ca4"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
+      <div class="ca4 c3n"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
+      <a class="ccp c8c ca7" href="cart.html">View Cart</a>
+      <a class="ccp c8b ca7" href="checkout.html">Checkout</a>`;
   }
 
   function openDrawer() {
@@ -380,18 +380,18 @@ Store.header = (() => {
   }
 
   function handleDrawerClick(e) {
-    const stepBtn = e.target.closest('[data-x10]');
-    const removeBtn = e.target.closest('[data-xq]');
+    const stepBtn = e.target.closest('[data-x11]');
+    const removeBtn = e.target.closest('[data-xr]');
     if (stepBtn) {
-      const line = stepBtn.closest('.cb0');
-      const index = Number(line.dataset.xu);
+      const line = stepBtn.closest('.cb2');
+      const index = Number(line.dataset.xv);
       const items = Store.cart.read();
-      const delta = Number(stepBtn.dataset.x10);
+      const delta = Number(stepBtn.dataset.x11);
       Store.cart.updateQty(index, items[index].qty + delta);
       renderDrawer();
     } else if (removeBtn) {
-      const line = removeBtn.closest('.cb0');
-      Store.cart.remove(Number(line.dataset.xu));
+      const line = removeBtn.closest('.cb2');
+      Store.cart.remove(Number(line.dataset.xv));
       renderDrawer();
     }
   }
@@ -411,10 +411,10 @@ Store.header = (() => {
     renderBadge();
     document.addEventListener('cart:change', renderBadge);
 
-    const cartBtn = document.getElementById('e22');
-    const closeBtn = document.getElementById('en');
+    const cartBtn = document.getElementById('e24');
+    const closeBtn = document.getElementById('ep');
     const overlay = document.getElementById('e3');
-    const itemsEl = document.getElementById('eo');
+    const itemsEl = document.getElementById('eq');
 
     if (cartBtn) cartBtn.addEventListener('click', openDrawer);
     if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
@@ -442,7 +442,7 @@ Store.header = (() => {
    ========================================================================== */
 Store.homePage = (() => {
   function renderCategories() {
-    const el = document.getElementById('e1h');
+    const el = document.getElementById('e1j');
     if (!el) return;
     const palette = ['#b5432b', '#233150', '#5b3a22', '#3c5a44', '#8a8577'];
     el.innerHTML = Store.CATEGORIES.map((cat, i) => {
@@ -464,7 +464,7 @@ Store.homePage = (() => {
     return `
       <div class="c8s">
         ${badgeHtml}
-        <div class="c3c" data-xo="false" data-x11="${p.id}">♥</div>
+        <div class="c3c" data-xp="false" data-x12="${p.id}">♥</div>
         <a class="c28" style="background:${p.colors[0].hex}" href="product.html?id=${p.id}">
           ${Store.shoeIconSVG('#fff')}
         </a>
@@ -485,15 +485,15 @@ Store.homePage = (() => {
   }
 
   function renderFeatured() {
-    const el = document.getElementById('e1i');
+    const el = document.getElementById('e1k');
     if (!el) return;
     el.innerHTML = Array.from({ length: 4 }, () => `
       <div class="c8s ct">
-        <div class="c28"><span class="cbv c6j"></span></div>
+        <div class="c28"><span class="cbz c6j"></span></div>
         <div class="c3a">
-          <span class="cbv c79" style="width:40%"></span>
-          <span class="cbv c79" style="width:80%"></span>
-          <span class="cbv c79" style="width:50%"></span>
+          <span class="cbz c79" style="width:40%"></span>
+          <span class="cbz c79" style="width:80%"></span>
+          <span class="cbz c79" style="width:50%"></span>
         </div>
       </div>`).join('');
 
@@ -505,20 +505,20 @@ Store.homePage = (() => {
 
   function handleGridClick(e) {
     const quickAdd = e.target.closest('[data-xh]');
-    const wish = e.target.closest('[data-x11]');
+    const wish = e.target.closest('[data-x12]');
     if (quickAdd) {
       const product = Store.getProduct(quickAdd.dataset.xh);
       Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
       Store.toast.show(`${product.name} added to cart`, 'success');
     } else if (wish) {
-      const pressed = wish.dataset.xo === 'true';
-      wish.dataset.xo = String(!pressed);
+      const pressed = wish.dataset.xp === 'true';
+      wish.dataset.xp = String(!pressed);
       wish.classList.toggle('c5', !pressed);
     }
   }
 
   function init() {
-    if (!document.getElementById('e1i')) return;
+    if (!document.getElementById('e1k')) return;
     renderCategories();
     renderFeatured();
     document.body.addEventListener('click', handleGridClick);
@@ -565,7 +565,7 @@ Store.shopPage = (() => {
     if (state.badge) chips.push({ type: 'badge', value: state.badge, label: state.badge === 'sale' ? 'Sale' : 'New Arrivals' });
 
     el.innerHTML = chips.map(c => `
-      <span class="c9d" data-xg="${c.type}" data-x9="${c.value}">
+      <span class="c9e" data-xg="${c.type}" data-x9="${c.value}">
         ${c.label} <div>✕</div>
       </span>`).join('');
   }
@@ -584,7 +584,7 @@ Store.shopPage = (() => {
     const sizeGroup = document.getElementById('sizeFilterGroup');
     const allSizes = Array.from(new Set(Store.PRODUCTS.flatMap(p => p.sizes))).sort((a, b) => a - b);
     sizeGroup.innerHTML = allSizes.map(s => `
-      <div class="cbd ${state.sizes.has(s) ? 'c4l' : ''}" data-xz="${s}">${s}</div>`).join('');
+      <div class="cbg ${state.sizes.has(s) ? 'c4l' : ''}" data-x10="${s}">${s}</div>`).join('');
 
     document.getElementById('priceRange').value = state.maxPrice;
     document.getElementById('priceRangeValue').textContent = Store.utils.formatPrice(state.maxPrice);
@@ -611,11 +611,11 @@ Store.shopPage = (() => {
   function renderPagination(totalPages) {
     const el = document.getElementById('shopPagination');
     if (totalPages <= 1) { el.innerHTML = ''; return; }
-    let html = `<div class="c6c" data-xy="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''}>‹</div>`;
+    let html = `<div class="c6c" data-xz="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''}>‹</div>`;
     for (let i = 1; i <= totalPages; i++) {
-      html += `<div class="c5e ${i === state.page ? 'cc' : ''}" data-xy="${i}">${i}</div>`;
+      html += `<div class="c5e ${i === state.page ? 'cc' : ''}" data-xz="${i}">${i}</div>`;
     }
-    html += `<div class="c6c" data-xy="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''}>›</div>`;
+    html += `<div class="c6c" data-xz="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''}>›</div>`;
     el.innerHTML = html;
   }
 
@@ -629,9 +629,9 @@ Store.shopPage = (() => {
   }
 
   function handleSidebarClick(e) {
-    const sizeChip = e.target.closest('.cbd');
+    const sizeChip = e.target.closest('.cbg');
     if (sizeChip) {
-      const size = Number(sizeChip.dataset.xz);
+      const size = Number(sizeChip.dataset.x10);
       state.sizes.has(size) ? state.sizes.delete(size) : state.sizes.add(size);
       state.page = 1;
       renderGrid();
@@ -646,7 +646,7 @@ Store.shopPage = (() => {
   function handleChipsClick(e) {
     const btn = e.target.closest('.filter-chip button');
     if (!btn) return;
-    const chip = btn.closest('.c9d');
+    const chip = btn.closest('.c9e');
     const { chipType, chipValue } = chip.dataset;
     if (chipType === 'cat') state.categories.delete(chipValue);
     if (chipType === 'size') state.sizes.delete(Number(chipValue));
@@ -657,9 +657,9 @@ Store.shopPage = (() => {
   }
 
   function handleGridClick(e) {
-    const pageBtn = e.target.closest('#shopPagination [data-xy]');
+    const pageBtn = e.target.closest('#shopPagination [data-xz]');
     if (pageBtn) {
-      const page = Number(pageBtn.dataset.xy);
+      const page = Number(pageBtn.dataset.xz);
       if (page >= 1) { state.page = page; renderGrid(); window.scrollTo({ top: document.getElementById('shopGrid').offsetTop - 100, behavior: 'smooth' }); }
     }
   }
@@ -675,14 +675,14 @@ Store.shopPage = (() => {
     document.getElementById('shopPagination').addEventListener('click', handleGridClick);
     document.getElementById('shopGrid').addEventListener('click', e => {
       const quickAdd = e.target.closest('[data-xh]');
-      const wish = e.target.closest('[data-x11]');
+      const wish = e.target.closest('[data-x12]');
       if (quickAdd) {
         const product = Store.getProduct(quickAdd.dataset.xh);
         Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
         Store.toast.show(`${product.name} added to cart`, 'success');
       } else if (wish) {
-        const pressed = wish.dataset.xo === 'true';
-        wish.dataset.xo = String(!pressed);
+        const pressed = wish.dataset.xp === 'true';
+        wish.dataset.xp = String(!pressed);
         wish.classList.toggle('c5', !pressed);
       }
     });
@@ -718,14 +718,14 @@ Store.productPage = (() => {
     const thumbs = document.getElementById('galleryThumbs');
     thumbs.innerHTML = product.colors.map(c => `
       <div class="cu ${c.name === selectedColor.name ? 'c0' : ''}"
-        style="background:${c.hex}" data-xt="${Store.utils.escapeHtml(c.name)}">
+        style="background:${c.hex}" data-xu="${Store.utils.escapeHtml(c.name)}">
         ${Store.shoeIconSVG('#fff')}
       </div>`).join('');
   }
 
   function renderColors() {
     document.getElementById('colorOptions').innerHTML = product.colors.map(c => `
-      <div class="c8f ${c.name === selectedColor.name ? 'c1a' : ''}" data-xt="${Store.utils.escapeHtml(c.name)}">
+      <div class="c8f ${c.name === selectedColor.name ? 'c1a' : ''}" data-xu="${Store.utils.escapeHtml(c.name)}">
         <span class="c31" style="background:${c.hex}"></span>
       </div>`).join('');
     document.getElementById('selectedColorLabel').textContent = selectedColor.name;
@@ -733,7 +733,7 @@ Store.productPage = (() => {
 
   function renderSizes() {
     document.getElementById('sizeOptions').innerHTML = product.sizes.map(s => `
-      <div class="cbd ${s === c8x ? 'c4l' : ''}" data-xz="${s}">${s}</div>`).join('');
+      <div class="cbg ${s === c8x ? 'c4l' : ''}" data-x10="${s}">${s}</div>`).join('');
   }
 
   function renderInfo() {
@@ -754,7 +754,7 @@ Store.productPage = (() => {
 
     document.getElementById('descPanel').textContent = product.desc;
     document.getElementById('detailsPanel').innerHTML = `
-      <div class="cbf">
+      <div class="cbi">
         <div><span>Upper material</span><strong>${product.details.material}</strong></div>
         <div><span>Sole</span><strong>${product.details.sole}</strong></div>
         <div><span>Country of origin</span><strong>${product.details.origin}</strong></div>
@@ -768,14 +768,14 @@ Store.productPage = (() => {
   }
 
   function handleOptionClick(e) {
-    const colorBtn = e.target.closest('[data-xt]');
-    const sizeBtn = e.target.closest('.cbd');
+    const colorBtn = e.target.closest('[data-xu]');
+    const sizeBtn = e.target.closest('.cbg');
     if (colorBtn) {
-      selectedColor = product.colors.find(c => c.name === colorBtn.dataset.xt);
+      selectedColor = product.colors.find(c => c.name === colorBtn.dataset.xu);
       renderGallery();
       renderColors();
     } else if (sizeBtn) {
-      selectedSize = Number(sizeBtn.dataset.xz);
+      selectedSize = Number(sizeBtn.dataset.x10);
       renderSizes();
       document.getElementById('sizeError').classList.remove('c2n');
     }
@@ -784,9 +784,9 @@ Store.productPage = (() => {
   function initQtyStepper() {
     const valueEl = document.getElementById('qtyValue');
     document.getElementById('qtyStepper').addEventListener('click', e => {
-      const btn = e.target.closest('[data-x10]');
+      const btn = e.target.closest('[data-x11]');
       if (!btn) return;
-      const next = Math.max(1, Number(valueEl.textContent) + Number(btn.dataset.x10));
+      const next = Math.max(1, Number(valueEl.textContent) + Number(btn.dataset.x11));
       valueEl.textContent = next;
     });
   }
@@ -844,7 +844,7 @@ Store.cartPage = (() => {
     const { product, size, colorName, qty, index } = item;
     const color = product.colors.find(c => c.name === colorName) || product.colors[0];
     return `
-      <div data-t="t4" data-xu="${index}">
+      <div data-t="t4" data-xv="${index}">
         <div data-t="t6">
           <div class="c1v">
             <div class="c3r" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
@@ -856,14 +856,14 @@ Store.cartPage = (() => {
         </div>
         <div data-t="t6">${Store.utils.formatPrice(product.price)}</div>
         <div data-t="t6">
-          <div class="c9o" data-xj>
-            <div class="c5i" data-x10="-1">−</div>
+          <div class="c9p" data-xj>
+            <div class="c5i" data-x11="-1">−</div>
             <span class="c3h">${qty}</span>
-            <div class="c5i" data-x10="1">+</div>
+            <div class="c5i" data-x11="1">+</div>
           </div>
         </div>
         <div data-t="t6"><strong>${Store.utils.formatPrice(product.price * qty)}</strong></div>
-        <div data-t="t6"><div class="c3q" data-xq>Remove</div></div>
+        <div data-t="t6"><div class="c3q" data-xr>Remove</div></div>
       </div>`;
   }
 
@@ -910,17 +910,17 @@ Store.cartPage = (() => {
   }
 
   function handleTableClick(e) {
-    const stepBtn = e.target.closest('[data-x10]');
-    const removeBtn = e.target.closest('[data-xq]');
+    const stepBtn = e.target.closest('[data-x11]');
+    const removeBtn = e.target.closest('[data-xr]');
     if (stepBtn) {
       const row = stepBtn.closest('tr');
-      const index = Number(row.dataset.xu);
+      const index = Number(row.dataset.xv);
       const items = Store.cart.read();
-      Store.cart.updateQty(index, items[index].qty + Number(stepBtn.dataset.x10));
+      Store.cart.updateQty(index, items[index].qty + Number(stepBtn.dataset.x11));
       render();
     } else if (removeBtn) {
       const row = removeBtn.closest('tr');
-      Store.cart.remove(Number(row.dataset.xu));
+      Store.cart.remove(Number(row.dataset.xv));
       Store.toast.show('Item removed from cart', 'info');
       render();
     }
@@ -996,7 +996,7 @@ Store.checkoutPage = (() => {
     el.innerHTML = items.map(item => {
       const color = item.product.colors.find(c => c.name === item.colorName) || item.product.colors[0];
       return `
-        <div class="cb0">
+        <div class="cb2">
           <div class="c4v" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
           <div>
             <div class="c5x">${Store.utils.escapeHtml(item.product.name)}</div>
@@ -1030,7 +1030,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('cc2', !ok);
+      input.classList.toggle('cc6', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });
@@ -1090,7 +1090,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('cc2', !ok);
+      input.classList.toggle('cc6', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });

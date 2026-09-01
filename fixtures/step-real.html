@@ -975,6 +975,16 @@
            not make it a menu -->
       <button type="button" aria-checked="false" class="switch-nav" id="auditSwitch">Dark mode</button>
 
+      <!-- 7.2 radio without a role: three styled divs, choosing one unmarks
+           its sibling. Beside it the native negative — a label wrapping a
+           hidden checkbox input, which the browser already handles. -->
+      <div class="ship-choice" id="auditShipChoice">
+        <div class="ship-opt" tabindex="0" data-checked="true" style="cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid #888">Pickup point</div>
+        <div class="ship-opt" tabindex="0" data-checked="false" style="cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid #888">Courier</div>
+        <div class="ship-opt" tabindex="0" data-checked="false" style="cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid #888">Branch pickup</div>
+      </div>
+      <label class="fancy-check" id="auditNativeCheck"><input type="checkbox" class="is-hidden"><span>Gift wrap</span></label>
+
     </div>
   </section>
 

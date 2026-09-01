@@ -1070,6 +1070,17 @@ Mega.widgets = {
     if (sw) sw.addEventListener('click', () => {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
+
+    // 7.2: the roleless radio — choosing one unmarks the sibling.
+    const ship = el('auditShipChoice');
+    if (ship) ship.addEventListener('click', (e) => {
+      const opt = e.target.closest('.ship-opt');
+      if (!opt) return;
+      Store.utils.qsa('.ship-opt', ship).forEach((o) => {
+        o.setAttribute('data-checked', String(o === opt));
+        o.classList.toggle('is-picked', o === opt);
+      });
+    });
   }
 };
 

@@ -261,9 +261,21 @@
       "why": "7.1's negative: a REAL link (href=/sale) styled with the same btn classes as its neighbours. Styling must not make a working link a button — and a healthy link is not a component to publish."
     },
     {
-      "type": "none",
+      "type": "checkbox",
       "root": "#auditSwitch",
-      "why": "role=switch is a checkbox subtype — a PART. Its class says switch-nav, and 'nav' must not make the button a menu. Two rules pinned at once."
+      "why": "7.2 (owner spec): role=switch IS a component — checkbox, subtype switch, state in aria-checked. Relabelled from the earlier pinned negative, whose real point survives: the class says switch-nav and 'nav' must still never make it a menu.",
+      "fields": {}
+    },
+    {
+      "type": "radio",
+      "root": "#auditShipChoice",
+      "why": "7.2: a radio with no role anywhere — three styled sibling divs, choosing one marks it (data-checked + class) and unmarks the previous choice. The mutual exclusion is the tell; root is the common parent.",
+      "fields": {}
+    },
+    {
+      "type": "none",
+      "root": "#auditNativeCheck",
+      "why": "7.2's negative: label > input[type=checkbox][hidden] + span — the native checkbox under styling. The browser already runs it; mapping it would announce it twice."
     },
     {
       "type": "none",

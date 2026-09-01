@@ -536,6 +536,33 @@
     var focusBefore = doc.activeElement;
     var expandedBefore = null;
     try { expandedBefore = el.getAttribute('aria-expanded'); } catch (e) {}
+    // 7.2: the checked-state of the trigger AND its siblings, before the
+    // press — a switch flips its own, a radio also unmarks a brother.
+    var checkedBefore = null, wasOnSelf = false, sibsOnBefore = [];
+    // …and, VOCABULARY-FREE, the raw attributes of the trigger and its
+    // siblings. On a hostile page every state word is renamed, but the page
+    // still has to keep working state SOMEWHERE — a boolean attribute
+    // flipping, or a marker class hopping from the old choice to the new,
+    // is readable with no dictionary at all.
+    var attrSnap = function (node) {
+      var m = {};
+      try {
+        var names = node.getAttributeNames();
+        for (var an = 0; an < names.length; an++) m[names[an]] = node.getAttribute(names[an]);
+      } catch (e) {}
+      return m;
+    };
+    var attrsBefore = {}, sibAttrsBefore = [];
+    try {
+      checkedBefore = el.getAttribute('aria-checked');
+      wasOnSelf = isOn(el);
+      attrsBefore = attrSnap(el);
+      var sibs72 = el.parentElement ? el.parentElement.children : [];
+      for (var sb = 0; sb < sibs72.length; sb++) {
+        sibsOnBefore.push(isOn(sibs72[sb]));
+        sibAttrsBefore.push(attrSnap(sibs72[sb]));
+      }
+    } catch (e) {}
     // Who was shut out. aria-hidden and inert on everything ELSE is the most
     // diagnostic modal signal there is — "it hid the rest of the page" — and
     // it used to be squashed into an anonymous `touched` count nobody read.
@@ -629,6 +656,70 @@
     try {
       expandedFlipped = el.getAttribute('aria-expanded') !== expandedBefore &&
                         el.getAttribute('aria-expanded') != null;
+    } catch (e) {}
+    // 7.2: did the CHECKED state move — on the trigger, and on which
+    // siblings it went OUT on. Same deadline: measured while the press's
+    // work is still on the page.
+    var checkedFlipped = false, onFlipped = false, sibUnmarked = [];
+    var boolFlip = false, attrFlipped = false;
+    try {
+      var checkedNow = el.getAttribute('aria-checked');
+      checkedFlipped = checkedNow != null && checkedNow !== checkedBefore;
+      onFlipped = isOn(el) !== wasOnSelf;
+      // Vocabulary-free self-state: which of the trigger's own attributes
+      // moved, and whether any of them is a boolean flipping.
+      var attrsNow = attrSnap(el);
+      var flippedTrue = {};
+      var keysAll = {};
+      var kb73 = Object.keys(attrsBefore), kn73 = Object.keys(attrsNow);
+      for (var ku = 0; ku < kb73.length; ku++) keysAll[kb73[ku]] = 1;
+      for (var kv = 0; kv < kn73.length; kv++) keysAll[kn73[kv]] = 1;
+      for (var k73 in keysAll) {
+        if (attrsNow[k73] === attrsBefore[k73]) continue;
+        attrFlipped = true;
+        // aria-expanded is DISCLOSURE state, not checked state — an
+        // accordion whose panel sat outside the watch must not read as a
+        // switch just because its boolean flipped.
+        if (k73 === 'aria-expanded') continue;
+        // A boolean attribute that only APPEARS on the first press —
+        // `sw.setAttribute(state, was==='true' ? 'false' : 'true')` with no
+        // initial value — is the same statement: absent reads as false.
+        var was73 = attrsBefore[k73] == null ? 'false' : String(attrsBefore[k73]);
+        var now73 = attrsNow[k73] == null ? 'false' : String(attrsNow[k73]);
+        if (was73 !== now73 && /^(true|false)$/.test(was73) && /^(true|false)$/.test(now73)) {
+          boolFlip = true;
+          if (now73 === 'true') flippedTrue[k73] = true;
+        }
+      }
+      // Class tokens the trigger GAINED — a marker class hopping from the
+      // old choice to the new one is the third dialect of the same fact.
+      var clsWas73 = String(attrsBefore['class'] || '').split(/\s+/);
+      var clsNow73 = String(attrsNow['class'] || '').split(/\s+/);
+      var gained73 = [];
+      for (var g73 = 0; g73 < clsNow73.length; g73++) {
+        if (clsNow73[g73] && clsWas73.indexOf(clsNow73[g73]) === -1) gained73.push(clsNow73[g73]);
+      }
+      var sibs73 = el.parentElement ? el.parentElement.children : [];
+      for (var sb2 = 0; sb2 < sibs73.length; sb2++) {
+        if (sibs73[sb2] === el) continue;
+        if (sibsOnBefore[sb2] === true && !isOn(sibs73[sb2])) { sibUnmarked.push(sibs73[sb2]); continue; }
+        var sNow = attrSnap(sibs73[sb2]);
+        var sWas = sibAttrsBefore[sb2] || {};
+        var hit73 = false;
+        // The same attribute that went TRUE on the trigger went FALSE on a
+        // sibling — mutual exclusion with no dictionary.
+        for (var fk in flippedTrue) {
+          if (sWas[fk] === 'true' && sNow[fk] === 'false') { hit73 = true; break; }
+        }
+        if (!hit73 && gained73.length) {
+          var sClsWas = String(sWas['class'] || '').split(/\s+/);
+          var sClsNow = String(sNow['class'] || '').split(/\s+/);
+          for (var l73 = 0; l73 < gained73.length; l73++) {
+            if (sClsWas.indexOf(gained73[l73]) !== -1 && sClsNow.indexOf(gained73[l73]) === -1) { hit73 = true; break; }
+          }
+        }
+        if (hit73) sibUnmarked.push(sibs73[sb2]);
+      }
     } catch (e) {}
 
     // Did focus follow what opened?
@@ -773,6 +864,11 @@
       drawer: isDrawer,
       nearSmall: nearSmall,
       expandedFlipped: expandedFlipped,
+      checkedFlipped: checkedFlipped,
+      onFlipped: onFlipped,
+      sibUnmarked: sibUnmarked,
+      boolFlip: boolFlip,
+      attrFlipped: attrFlipped,
       hidOthers: hidOthers,
       scrollLocked: scrollLocked,
       backdrop: backdrop,
@@ -2176,10 +2272,19 @@
     // has to have with the site's developers.
     var byAbsence = !!checkedClasses.length && !uncheckedClasses.length;
 
+    // 7.2: three states, not two. aria-checked="mixed" is a real answer —
+    // a parent checkbox over a half-ticked list — and reading it as plain
+    // off would map the control to announce a state it never has.
+    var triState = false;
+    try {
+      triState = el.getAttribute('aria-checked') === 'mixed';
+    } catch (e) {}
+
     return {
       skipped: false,
       wasOn: wasOn,
       toggled: nowOn !== wasOn,
+      triState: triState,
       checkedClass: checkedClasses[0] || null,
       uncheckedClass: uncheckedClasses[0] || null,
       saysOffByAbsence: byAbsence,
@@ -2194,6 +2299,13 @@
       if (typeof el.checked === 'boolean') return el.checked;
       var a = el.getAttribute('aria-checked');
       if (a != null) return a === 'true';
+      // 7.2: the data- dialects of the same statement. A page that keeps its
+      // checked state in data-checked/data-state says so as plainly as aria
+      // does — and on the hostile build it is the only voice left.
+      var dc = el.getAttribute('data-checked');
+      if (dc != null) return dc === 'true';
+      var ds = el.getAttribute('data-state');
+      if (ds != null) return /^(on|checked|selected|active|open)$/i.test(ds);
       return /(^|[^a-z])(checked|selected|active|on)([^a-z]|$)/i.test(el.className || '');
     } catch (e) { return false; }
   }
@@ -2304,6 +2416,8 @@
     scope = scope || doc.body;
     var net = armNet();
     var results = [], pressed = [], skipped = 0, comps = [];
+    // 7.2: one radio comp per parent, however many of its members get pressed.
+    var radioParents = new Set();
     // The state to come back to, taken once for the whole run. Restoring after
     // each individual press is not possible for a tab strip — pressing a tab a
     // second time re-selects it, it does not undo it — and treating that as a
@@ -2469,13 +2583,63 @@
         // label grew (tens of pixels); a rail slides by an item's width
         // (hundreds). shifted() carries the largest dx on the array.
         var reflow71 = !r.moved.length || ((r.moved.maxDx || 0) <= 80);
-        if (!r.navigated &&
+        var quiet71 = !r.navigated &&
             !r.opened.length && reflow71 &&
-            (!r.rerendered.length || selfRr71) &&
+            (!r.rerendered.length || selfRr71);
+        var tag71 = el71.tagName;
+        var role71 = null;
+        try { role71 = el71.getAttribute('role'); } catch (e) {}
+        // 7.2 comes FIRST: checked-state vocabulary beats the generic button
+        // read. A control that wraps a hidden NATIVE checkbox/radio is the
+        // browser's own; it needs nobody.
+        var wrapsNative = false;
+        try {
+          var inner72 = el71.querySelector('input[type="checkbox"],input[type="radio"]');
+          wrapsNative = !!(inner72 && !shown(inner72));
+        } catch (e) {}
+        var switchy = role71 === 'switch' ||
+          /(^|[\s_-])(switch|toggle)([\s_-]|$)/i.test(String(el71.className || ''));
+        if (quiet71 && !wrapsNative &&
+            (r.checkedFlipped || (switchy && r.onFlipped) ||
+             ((r.onFlipped || r.boolFlip || r.stateClass) && r.sibUnmarked.length) ||
+             (r.boolFlip && !r.stateClass))) {
+          if (r.sibUnmarked.length) {
+            // Choosing this one UNMARKED a sibling: mutual exclusion, the
+            // radio's whole signature. Rooted on the common parent, once.
+            if (!radioParents.has(el71.parentElement)) {
+              radioParents.add(el71.parentElement);
+              var members72 = [];
+              try {
+                var par72 = el71.parentElement.children;
+                for (var mi72 = 0; mi72 < par72.length; mi72++) {
+                  if (isOn(par72[mi72]) || par72[mi72].getAttribute('aria-checked') != null ||
+                      par72[mi72].getAttribute('data-checked') != null) members72.push(par72[mi72]);
+                }
+              } catch (e) {}
+              var radComp = {
+                type: 'radio',
+                root: el71.parentElement,
+                parts: { radio: members72.length ? members72 : [el71] },
+                why: 'choosing it marked it and UNMARKED its sibling — mutual exclusion, a radio group with no role anywhere',
+              };
+              comps.push(radComp);
+              runExtras.push(radComp);
+            }
+          } else {
+            var swComp = {
+              type: 'checkbox',
+              subtype: 'switch',
+              root: el71,
+              parts: { checkbox: [el71] },
+              why: (r.checkedFlipped ? 'its aria-checked flipped with the press'
+                    : 'its class says switch/toggle and its state flipped') +
+                   ' — a two-state control: checkbox, subtype switch',
+            };
+            comps.push(swComp);
+            runExtras.push(swComp);
+          }
+        } else if (quiet71 && !wrapsNative &&
             (r.stateClass || r.touched > 0 || selfRr71)) {
-          var tag71 = el71.tagName;
-          var role71 = null;
-          try { role71 = el71.getAttribute('role'); } catch (e) {}
           var href71 = null;
           try { if (tag71 === 'A') href71 = el71.getAttribute('href') || ''; } catch (e) {}
           var deadHref = href71 !== null &&
