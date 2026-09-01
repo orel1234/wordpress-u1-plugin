@@ -695,6 +695,70 @@
       }
     } catch (e) {}
 
+    // R1c (survey round 2): the ITEM PRESS. When what opened is a list of
+    // non-link controls, one of them is pressed WHILE THE PANEL IS OPEN,
+    // under the same safety net, and the page answers the only question
+    // that separates a listbox from a menu: did pressing an item SELECT
+    // (the trigger's text becomes the item's / aria-selected moves / a
+    // native select's value changes, and the panel closes) — or did it
+    // try to NAVIGATE. One item, one press, per trigger.
+    var itemPress = null;
+    try {
+      if (panel && !transient) {
+        var ipItems = [];
+        var ipPressables = panel.querySelectorAll('button,[role="option"],[tabindex],a[href="#"],a:not([href])');
+        for (var ipi = 0; ipi < ipPressables.length && ipItems.length < 20; ipi++) ipItems.push(ipPressables[ipi]);
+        if (!ipItems.length) {
+          var ipBare = panel.querySelectorAll('div,span,li');
+          for (var ipb = 0; ipb < ipBare.length && ipItems.length < 20; ipb++) {
+            try {
+              if (root.getComputedStyle(ipBare[ipb]).cursor !== 'pointer') continue;
+              var ipp = ipBare[ipb].parentElement;
+              if (ipp && root.getComputedStyle(ipp).cursor === 'pointer') continue;
+              ipItems.push(ipBare[ipb]);
+            } catch (e2) {}
+          }
+        }
+        var ipRealLinks = panel.querySelectorAll('a[href]:not([href="#"])').length;
+        if (ipItems.length >= 2 && ipRealLinks < ipItems.length) {
+          var ipEl = ipItems[0];
+          var ipNet = armNet();
+          var ipNavBefore = ipNet && ipNet.blocked ? ipNet.blocked.length : 0;
+          var ipTrigText = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          var ipItemText = (ipEl.textContent || '').replace(/\s+/g, ' ').trim();
+          var ipSelBefore = null;
+          try { ipSelBefore = panel.querySelector('[aria-selected="true"]'); } catch (e2) {}
+          var ipSelects = [], ipSelVals = [];
+          try {
+            var ipScope = panel.parentElement || panel;
+            var ipSels = ipScope.querySelectorAll('select');
+            for (var ips = 0; ips < ipSels.length; ips++) { ipSelects.push(ipSels[ips]); ipSelVals.push(ipSels[ips].value); }
+          } catch (e2) {}
+          try { ipEl.click(); } catch (e2) {}
+          await raf();
+          if (settle) await wait(Math.min(settle, 120));
+          var ipTrigNow = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          var ipSelNow = null;
+          try { ipSelNow = panel.querySelector('[aria-selected="true"]'); } catch (e2) {}
+          var ipValMoved = false;
+          for (var ipv = 0; ipv < ipSelects.length; ipv++) {
+            if (ipSelects[ipv].value !== ipSelVals[ipv]) ipValMoved = true;
+          }
+          var ipClosed = !shown(panel);
+          var ipSelected =
+            (ipTrigNow !== ipTrigText && ipItemText && ipTrigNow.indexOf(ipItemText) !== -1) ||
+            (ipSelNow !== ipSelBefore && ipSelNow != null) ||
+            ipValMoved;
+          itemPress = {
+            tried: true,
+            selected: !!(ipSelected && (ipClosed || ipValMoved)),
+            navigated: !!(ipNet && ipNet.blocked && ipNet.blocked.length > ipNavBefore),
+            closed: ipClosed,
+          };
+        }
+      }
+    } catch (e) {}
+
     // 7.2: did the CHECKED state move — on the trigger, and on which
     // siblings it went OUT on. Same deadline: measured while the press's
     // work is still on the page.
@@ -904,6 +968,7 @@
       drawer: isDrawer,
       nearSmall: nearSmall,
       expandedFlipped: expandedFlipped,
+      itemPress: itemPress,
       checkedFlipped: checkedFlipped,
       onFlipped: onFlipped,
       sibUnmarked: sibUnmarked,
@@ -1845,6 +1910,19 @@
               } catch (e3) {}
             }
           }
+          // R1 (survey round 2): the ladder, with listbox EARNING the word.
+          // Positive evidence only — the page saying it (א), a hidden native
+          // select, or the ITEM PRESS showing selection (ג). Counting alone
+          // (ב) never says listbox any more: a panel of dead controls is a
+          // menu said with low confidence (ד). And navigation chrome speaks
+          // first: a panel whose home is nav/header is a menu before any
+          // counting — the Bootstrap hamburger of href="#" placeholders.
+          var navish = false;
+          try {
+            navish = !!(panel.closest && panel.closest('nav,header,[role="navigation"],[role="banner"]')) ||
+                     !!(r.trigger.closest && r.trigger.closest('nav,header,[role="navigation"],[role="banner"]'));
+          } catch (e2) {}
+          var ip = r.itemPress || null;
           if (optEls.length >= 2 || saysListbox) {
             lbType = 'listbox';
             lbWhy = optEls.length >= 2 ? 'its items say role=option — the page calls them options'
@@ -1853,21 +1931,27 @@
           } else if (menuItemEls.length >= 2) {
             lbType = 'menu';
             lbWhy = 'its items say role=menuitem';
+          } else if (navish && realLinks + ctlItems.length >= 2) {
+            lbType = 'menu';
+            lbWhy = 'it lives in the site\'s navigation chrome (nav/header) — a menu before any counting';
           } else if (hiddenSelect && ctlItems.length >= 2) {
             lbType = 'listbox';
             lbWhy = 'it fronts a hidden native <select> — a replaced select control';
             lbOptions = ctlItems;
+          } else if (ip && ip.selected) {
+            lbType = 'listbox';
+            lbWhy = 'pressing one item SELECTED it — the trigger took its text and the list closed';
+            lbOptions = ctlItems.length ? ctlItems : null;
+          } else if (ip && ip.navigated) {
+            lbType = 'menu';
+            lbWhy = 'pressing one item tried to NAVIGATE — items lead away';
           } else if (realLinks + ctlItems.length >= 3) {
             if (realLinks > ctlItems.length) {
               lbType = 'menu';
               lbWhy = 'most of its items are real links — they lead away';
-            } else if (ctlItems.length > realLinks) {
-              lbType = 'listbox';
-              lbWhy = 'its items are controls, not links — pressing one selects a value';
-              lbOptions = ctlItems;
             } else {
               lbType = 'menu';
-              lbWhy = 'its items are a mix of links and controls — read as a menu, with low confidence';
+              lbWhy = 'its items are controls but nothing showed SELECTION — read as a menu, with low confidence';
             }
           }
         } catch (e) {}
@@ -2917,7 +3001,7 @@
           }
         }
         if (r.opened.length || r.moved.length || r.rerendered.length) {
-          var entry = { trigger: list[i], panel: r.panel, transient: r.transient,
+          var entry = { trigger: list[i], panel: r.panel, transient: r.transient, itemPress: r.itemPress,
                         opened: r.opened, closed: r.closed,
                         moved: r.moved, rerendered: r.rerendered,
                         stateClass: r.stateClass,

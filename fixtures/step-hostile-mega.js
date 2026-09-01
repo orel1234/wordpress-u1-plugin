@@ -967,7 +967,7 @@ Mega.widgets = {
     if (sizeToggle && sizeList) {
       sizeToggle.addEventListener('click', () => { sizeList.hidden = !sizeList.hidden; });
       sizeList.addEventListener('click', e => {
-        const opt = e.target.closest('button');
+        const opt = e.target.closest('[data-x17]');
         if (!opt) return;
         sizeToggle.textContent = opt.textContent;
         if (sizeNative) sizeNative.value = opt.textContent;
@@ -1098,7 +1098,7 @@ Mega.widgets = {
     // 7.8: the pager selects; load-more grows the list.
     const pager = el('e2u');
     if (pager) pager.addEventListener('click', (e) => {
-      const b = e.target.closest('button');
+      const b = e.target.closest('[data-x18]');
       if (!b || b.getAttribute('rel')) return;
       Store.utils.qsa('button', pager).forEach((x) => x.removeAttribute('data-s2'));
       b.setAttribute('data-s2', 'page');

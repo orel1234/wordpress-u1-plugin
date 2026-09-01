@@ -1,0 +1,35 @@
+{
+  "url": "https://getbootstrap.com/docs/5.3/examples/album/",
+  "note": [
+    "Pin #2 (survey round 2, R1): Bootstrap's own Album example, captured",
+    "2026-09-01 WITH its scripts inlined — the frozen page still presses like",
+    "the live one, offline. This pin exists because the live walk read the",
+    "hamburger collapse and the header dropdown as LISTBOX: their items are",
+    "href=\"#\" placeholders, and the counting rung mistook dead links for",
+    "value-selecting controls. The R1 rules (nav/header ancestry speaks before",
+    "counting; listbox must EARN the word through selection evidence) must",
+    "keep both as MENU here, forever.",
+    "Walked at 390px: the hamburger only exists on the mobile viewport."
+  ],
+  "components": [
+    {
+      "type": "menu",
+      "root": "#navbarHeader",
+      "why": "The hamburger collapse: a header-anchored panel of href=\"#\" placeholder links. Read LISTBOX by the pre-R1 counting rung — the pinned wrong answer. nav/header ancestry says menu before any counting.",
+      "fields": {
+        "trigger": "[data-bs-target=\"#navbarHeader\"]"
+      },
+      "hidden": true
+    },
+    {
+      "type": "menu",
+      "root": ".navbar",
+      "why": "The navbar itself — the class hint's menu, kept as the wrapper-level truth.",
+      "fields": {}
+    }
+  ],
+  "viewport": {
+    "width": 390,
+    "height": 800
+  }
+}

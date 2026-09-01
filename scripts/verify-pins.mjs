@@ -24,6 +24,10 @@ const FLOORS = {
   // slide) — an inert pin can never fire them, and their labels stay to
   // document the full page; the floor covers the hint layer's share.
   'govil-home': { found: 5, typed: 5 },
+  // 2/2 measured at capture (2026-09-01, scripts AND styles inlined so the
+  // frozen page behaves). The R1 gate lives here: #navbarHeader read
+  // LISTBOX before round 2, and must stay MENU forever.
+  'bootstrap-album': { found: 2, typed: 2 },
 };
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
@@ -46,7 +50,8 @@ for (const html of readdirSync(PINS).filter((f) => f.endsWith('.html'))) {
   if (!existsSync(labelsFile)) { console.log(`  ${name}: no labels — skipped`); continue; }
   const labels = JSON.parse(readFileSync(labelsFile, 'utf8'));
 
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const vp = labels.viewport || { width: 1280, height: 800 };
+  const page = await browser.newPage({ viewport: vp });
   await page.goto(`http://127.0.0.1:${PORT}/${html}`, { waitUntil: 'load' });
   await page.addScriptTag({ path: join(ROOT, 'selector-intel.js') });
   await page.addScriptTag({ path: join(ROOT, 'probe.js') });

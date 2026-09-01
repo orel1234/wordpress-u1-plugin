@@ -914,10 +914,10 @@
       <div class="size-picker" id="auditSizePicker">
         <button type="button" class="size-picker__toggle" id="auditSizeToggle">Choose size</button>
         <ul class="size-picker__list is-hidden" id="auditSizeList" style="list-style:none;padding:8px;margin:4px 0 0;border:1px solid #ddd;background:#fff">
-          <li><button type="button">EU 40</button></li>
-          <li><button type="button">EU 41</button></li>
-          <li><button type="button">EU 42</button></li>
-          <li><button type="button">EU 43</button></li>
+          <li><button data-opt="1" type="button">EU 40</button></li>
+          <li><button data-opt="1" type="button">EU 41</button></li>
+          <li><button data-opt="1" type="button">EU 42</button></li>
+          <li><button data-opt="1" type="button">EU 43</button></li>
         </ul>
         <select id="auditSizeNative" aria-hidden="true" tabindex="-1" style="position:absolute;left:-9999px">
           <option>EU 40</option><option>EU 41</option><option>EU 42</option><option>EU 43</option>
@@ -1090,13 +1090,13 @@
          below it — a button whose press ADDS siblings to a list. -->
     <nav id="auditPager" aria-label="Fitting history pages" style="margin-top:24px">
       <button type="button" rel="prev">‹</button>
-      <button type="button">1</button>
+      <button type="button" data-pg="1">1</button>
       <span>…</span>
-      <button type="button">4</button>
-      <button type="button" data-current="page">5</button>
-      <button type="button">6</button>
+      <button type="button" data-pg="1">4</button>
+      <button type="button" data-pg="1" data-current="page">5</button>
+      <button type="button" data-pg="1">6</button>
       <span>…</span>
-      <button type="button">12</button>
+      <button type="button" data-pg="1">12</button>
       <button type="button" rel="next">›</button>
     </nav>
     <div id="auditMoreWrap" style="margin-top:16px;max-width:420px">

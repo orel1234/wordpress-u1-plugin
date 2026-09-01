@@ -575,20 +575,63 @@ console.log('\n4.4 — a replaced <select> is a listbox, a list of links is a me
     out.components.some((c) => c.type === 'listbox'),
     out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 
-  // Rung 2: no words at all — items that are controls, not links.
+  // R1b (survey round 2): counting alone is NOT positive evidence. A panel
+  // of dead controls that never reacts to a press is read as a MENU with
+  // low confidence — listbox has to EARN the word.
   const bare = page(`
     <div id="w">
       <div><button id="t">Choose a size</button><span>x</span></div>
       <ul id="p" hidden><li><button>S</button></li><li><button>M</button></li><li><button>L</button></li><li><button>XL</button></li></ul>
     </div>`);
   out = await open(bare);
-  check('majority non-href controls in the panel = listbox',
-    out.components.some((c) => c.type === 'listbox'),
+  check('controls that never SHOW selection are a menu, said with low confidence',
+    out.components.some((c) => c.type === 'menu' && /low confidence/.test(c.why)) &&
+    !out.components.some((c) => c.type === 'listbox'),
     out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
+
+  // R1c: the item-press rung. One non-navigating item pressed while open —
+  // the trigger's text becomes the item's and the panel closes: SELECTION,
+  // the positive evidence a listbox needs.
+  const selecty = page(`
+    <div id="w">
+      <div><button id="t">Choose a size</button><span>x</span></div>
+      <ul id="p" hidden><li><button>S</button></li><li><button>M</button></li><li><button>L</button></li><li><button>XL</button></li></ul>
+    </div>`);
+  {
+    const d = selecty.document;
+    d.getElementById('t').addEventListener('click', () => {
+      const p = d.getElementById('p'); p.hidden = !p.hidden;
+    });
+    d.getElementById('p').addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      d.getElementById('t').textContent = b.textContent;
+      d.getElementById('p').hidden = true;
+    });
+  }
+  out = await selecty.__u1Probe.probeAll(selecty.document.getElementById('w'), { settle: 0, idle: 0 });
   const lb = out.components.find((c) => c.type === 'listbox');
+  check('an item press that SELECTS (trigger text becomes the item, panel closes) = listbox',
+    !!lb, out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
   check('…with the trigger always filled',
-    lb && lb.parts.trigger && lb.parts.trigger[0] === bare.document.getElementById('t'),
+    lb && lb.parts.trigger && lb.parts.trigger[0] === selecty.document.getElementById('t'),
     lb && JSON.stringify(Object.keys(lb.parts)));
+
+  // R1a: the same dead-controls panel INSIDE the site's navigation chrome
+  // is a menu before any counting — the Bootstrap hamburger case.
+  const navish = page(`
+    <div id="w"><header>
+      <div><button id="t">Menu</button><span>x</span></div>
+      <div id="p" hidden><ul><li><a href="#">Track order</a></li><li><a href="#">Returns</a></li><li><a href="#">Help</a></li></ul></div>
+    </header></div>`);
+  navish.document.getElementById('t').addEventListener('click', () => {
+    const p = navish.document.getElementById('p'); p.hidden = !p.hidden;
+  });
+  out = await navish.__u1Probe.probeAll(navish.document.getElementById('w'), { settle: 0, idle: 0 });
+  check('dead-href links under a header are a MENU, never a listbox',
+    out.components.some((c) => c.type === 'menu') &&
+    !out.components.some((c) => c.type === 'listbox'),
+    out.components.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 
   // The other side of the ladder: links stay a menu.
   const links = page(`
