@@ -1,6 +1,6 @@
 /* ==========================================================================
-   STEP | mega.cd0 — heavy portal-style homepage components.
-   Loaded after styles.cd0. Reuses the same CSS variables and BEM naming.
+   STEP | mega.cd1 — heavy portal-style homepage components.
+   Loaded after styles.cd1. Reuses the same CSS variables and BEM naming.
    Sections: utility bar, ticker, mega menu, search overlay, hero carousel,
    finder widget, deals, carousels, club, tables, editorial, locator, FAQ,
    mega footer, floating UI.
@@ -28,7 +28,7 @@
 /* ---------------------------------------------------------------------- */
 /* UTILITY BAR                                                            */
 /* ---------------------------------------------------------------------- */
-.cca {
+.ccb {
   background: var(--color-navy-dark); color: #cdd5e4;
   font-size: 12.5px; height: var(--util-height);
 }
@@ -50,7 +50,7 @@
 /* ---------------------------------------------------------------------- */
 /* TICKER                                                                 */
 /* ---------------------------------------------------------------------- */
-.ccq {
+.ccr {
   background: var(--color-accent); color: #fff; height: var(--ticker-height);
   display: flex; align-items: center; overflow: hidden; position: relative;
 }
@@ -89,14 +89,14 @@
 .c26 { display: flex; align-items: center; gap: 10px; font-family: var(--font-serif); font-size: 26px; font-weight: 700; color: var(--color-accent); }
 .c26 svg { width: 46px; }
 .c1g { margin-inline-start: auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.cc9 {
+.cca {
   display: inline-flex; align-items: center; gap: 7px; background: transparent;
   border: 1px solid var(--color-border); border-radius: var(--radius-pill);
   padding: 8px 14px; font-size: 13.5px; font-weight: 500; color: var(--color-ink);
   position: relative; white-space: nowrap;
 }
-.cc9:hover { border-color: var(--color-accent); color: var(--color-accent); }
-.cc9 svg { width: 18px; height: 18px; }
+.cca:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.cca svg { width: 18px; height: 18px; }
 .c6o {
   position: absolute; top: -6px; inset-inline-end: -4px; background: var(--color-accent);
   color: #fff; border-radius: var(--radius-pill); font-size: 11px; min-width: 18px;
@@ -106,7 +106,7 @@
 .c4r:hover { background: var(--color-accent-dark); color: #fff; }
 
 /* Mega nav */
-.cc2 { border-top: 1px solid var(--color-border); background: var(--color-surface); }
+.cc3 { border-top: 1px solid var(--color-border); background: var(--color-surface); }
 .c72 {
   max-width: 1400px; margin-inline: auto; padding-inline: var(--space-5);
   display: flex; gap: 2px; align-items: stretch;
@@ -144,7 +144,7 @@
 .c10 { font-size: 11px; font-weight: 700; color: var(--color-accent); text-transform: uppercase; letter-spacing: .08em; }
 .ch { font-size: 17px; }
 .co { font-size: 13px; color: var(--color-ink-soft); line-height: 1.6; }
-.c46 .cbn { width: 100%; height: 70px; }
+.c46 .cbo { width: 100%; height: 70px; }
 
 /* ---------------------------------------------------------------------- */
 /* SEARCH OVERLAY                                                         */
@@ -177,7 +177,7 @@
 }
 .c84:hover { background: var(--color-surface-alt); border-color: var(--color-border); }
 .c1m { width: 46px; height: 46px; border-radius: var(--radius-sm); display: grid; place-items: center; flex: none; }
-.c1m .cbn { width: 34px; }
+.c1m .cbo { width: 34px; }
 .c2k { font-weight: 600; font-size: 14.5px; }
 .c2j { font-size: 12.5px; color: var(--color-ink-soft); }
 .c1l { margin-inline-start: auto; font-weight: 700; color: var(--color-accent); }
@@ -210,7 +210,7 @@
   width: 300px; height: 300px; border-radius: 50%; display: grid; place-items: center;
   background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
 }
-.cm .cbn { width: 200px; }
+.cm .cbo { width: 200px; }
 .c1c {
   position: absolute; top: 50%; transform: translateY(-50%); z-index: 3;
   width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3);
@@ -227,7 +227,7 @@
 /* ---------------------------------------------------------------------- */
 /* FINDER WIDGET (booking-style)                                          */
 /* ---------------------------------------------------------------------- */
-.cco { margin-top: -56px; position: relative; z-index: 20; }
+.ccp { margin-top: -56px; position: relative; z-index: 20; }
 .c8j {
   background: var(--color-surface); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg); overflow: hidden;
@@ -269,7 +269,7 @@
 /* ---------------------------------------------------------------------- */
 /* COUNTDOWN / FLASH SALE                                                 */
 /* ---------------------------------------------------------------------- */
-.ccr {
+.ccs {
   background: linear-gradient(120deg, var(--color-navy) 0%, var(--color-navy-dark) 100%);
   color: #f6f2ea; border-radius: var(--radius-lg); padding: var(--space-6);
   display: grid; grid-template-columns: 1.2fr auto; gap: var(--space-6); align-items: center;
@@ -284,7 +284,7 @@
 /* ---------------------------------------------------------------------- */
 /* DEALS (tabbed grid)                                                    */
 /* ---------------------------------------------------------------------- */
-.ccm { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-5); }
+.ccn { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-5); }
 .c92 {
   background: var(--color-surface); border: 1px solid var(--color-border);
   border-radius: var(--radius-pill); padding: 9px 18px; font-size: 14px; font-weight: 500;
@@ -297,7 +297,7 @@
 }
 .cbd:hover { box-shadow: var(--shadow-md); }
 .c51 { height: 128px; display: grid; place-items: center; position: relative; }
-.c51 .cbn { width: 116px; }
+.c51 .cbo { width: 116px; }
 .c3w {
   position: absolute; top: 10px; inset-inline-start: 10px; background: var(--color-gold);
   color: #241d06; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: var(--radius-pill);
@@ -316,20 +316,20 @@
 /* ---------------------------------------------------------------------- */
 /* HORIZONTAL CAROUSEL (products, reviews, articles)                      */
 /* ---------------------------------------------------------------------- */
-.ccy { position: relative; }
+.ccz { position: relative; }
 .c75 { overflow-x: auto; scroll-behavior: smooth; scroll-snap-type: x mandatory; padding-bottom: 8px; }
 .c75::-webkit-scrollbar { height: 8px; }
 .c75::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: var(--radius-pill); }
 .c9v { display: flex; gap: var(--space-4); }
 .c9v > * { flex: 0 0 clamp(210px, 22vw, 260px); scroll-snap-align: start; }
 .c4e > * { flex: 0 0 clamp(280px, 32vw, 360px); }
-.cbm {
+.cbn {
   position: absolute; top: 42%; z-index: 4; width: 40px; height: 40px; border-radius: 50%;
   background: var(--color-surface); border: 1px solid var(--color-border); box-shadow: var(--shadow-md); font-size: 16px;
 }
 .c6j { inset-inline-start: -18px; }
 .c6i { inset-inline-end: -18px; }
-.cbm:hover { background: var(--color-ink); color: #fff; }
+.cbn:hover { background: var(--color-ink); color: #fff; }
 
 /* ---------------------------------------------------------------------- */
 /* BRAND STRIP + MOSAIC                                                   */
@@ -343,23 +343,23 @@
 .c3p:hover { color: var(--color-accent); border-color: var(--color-accent); }
 .c4u { font-family: var(--font-sans); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-ink-faint); }
 
-.ccp { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 156px; gap: var(--space-4); }
+.ccq { display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: 156px; gap: var(--space-4); }
 .c8s {
   border-radius: var(--radius-md); padding: var(--space-5); color: #fff; display: flex;
   flex-direction: column; justify-content: flex-end; position: relative; overflow: hidden;
 }
 .c5b { grid-column: span 2; grid-row: span 2; }
 .c38 { grid-column: span 2; }
-.c8s .cbn { position: absolute; inset-block-start: 12px; inset-inline-end: 12px; width: 90px; opacity: .28; }
+.c8s .cbo { position: absolute; inset-block-start: 12px; inset-inline-end: 12px; width: 90px; opacity: .28; }
 .c8r { font-size: 22px; font-family: var(--font-serif); }
 .c81 { font-size: 13px; opacity: .82; margin-top: 4px; }
 
 /* ---------------------------------------------------------------------- */
 /* CLUB / TIERS                                                           */
 /* ---------------------------------------------------------------------- */
-.ccv { background: var(--color-navy-soft); }
-.cbv { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); }
-.cbu {
+.ccw { background: var(--color-navy-soft); }
+.cbw { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); }
+.cbv {
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
   padding: var(--space-5); display: flex; flex-direction: column; gap: 10px; position: relative;
 }
@@ -391,21 +391,21 @@
   border-radius: var(--radius-md); overflow: hidden; display: flex; flex-direction: column;
 }
 .c1p { height: 150px; display: grid; place-items: center; }
-.c1p .cbn { width: 120px; }
+.c1p .cbo { width: 120px; }
 .c2s { padding: var(--space-4); display: flex; flex-direction: column; gap: 8px; flex: 1; }
 .c3o { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--color-accent); }
 .c1q { font-size: 18px; line-height: 1.35; }
 .cw { font-size: 13.5px; color: var(--color-ink-soft); line-height: 1.65; }
 .c2t { margin-top: auto; padding-top: var(--space-3); font-size: 12.5px; color: var(--color-ink-faint); display: flex; gap: 10px; }
 
-.ccd { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-.cce { aspect-ratio: 1; border-radius: var(--radius-sm); display: grid; place-items: center; position: relative; overflow: hidden; }
-.cce .cbn { width: 62%; }
+.cce { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.ccf { aspect-ratio: 1; border-radius: var(--radius-sm); display: grid; place-items: center; position: relative; overflow: hidden; }
+.ccf .cbo { width: 62%; }
 .c58 {
   position: absolute; inset: 0; background: rgba(26,23,18,.55); color: #fff;
   display: grid; place-items: center; gap: 4px; opacity: 0; transition: opacity var(--transition-fast); font-size: 13px;
 }
-.cce:hover .c58 { opacity: 1; }
+.ccf:hover .c58 { opacity: 1; }
 
 .cb5 {
   background: var(--color-ink); color: #f6f2ea; border-radius: var(--radius-lg);
@@ -424,12 +424,12 @@
 /* ---------------------------------------------------------------------- */
 /* STATS + REVIEWS                                                        */
 /* ---------------------------------------------------------------------- */
-.cbs { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-4); }
-.cbr { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; }
+.cbt { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-4); }
+.cbs { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; }
 .c7b { font-family: var(--font-serif); font-size: 38px; font-weight: 700; color: var(--color-accent); font-variant-numeric: tabular-nums; }
 .c5m { font-size: 13.5px; color: var(--color-ink-soft); margin-top: 4px; }
 
-.ccj { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: var(--space-6); align-items: start; }
+.cck { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: var(--space-6); align-items: start; }
 .c76 { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-5); text-align: center; }
 .c14 { font-size: 54px; font-family: var(--font-serif); font-weight: 700; line-height: 1; }
 .c15 { color: var(--color-gold); font-size: 20px; margin-top: 6px; }
@@ -450,7 +450,7 @@
 /* ---------------------------------------------------------------------- */
 /* STORE LOCATOR                                                          */
 /* ---------------------------------------------------------------------- */
-.ccg { display: grid; grid-template-columns: 380px 1fr; gap: var(--space-5); }
+.cch { display: grid; grid-template-columns: 380px 1fr; gap: var(--space-5); }
 .c7x { max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-inline-end: 6px; }
 .c7w {
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
@@ -508,7 +508,7 @@
 /* ---------------------------------------------------------------------- */
 /* NEWSLETTER PREFERENCES                                                 */
 /* ---------------------------------------------------------------------- */
-.cbt { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
+.cbu { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); }
 .c6m { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); align-items: start; }
 .c4p { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: var(--space-4); }
 .c5o { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--color-ink-soft); }
@@ -530,8 +530,8 @@
   margin-top: var(--space-7); padding-top: var(--space-5); border-top: 1px solid rgba(255,255,255,.12);
   display: flex; flex-wrap: wrap; gap: var(--space-5); align-items: center; justify-content: space-between;
 }
-.cc5, .ca6, .cba { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.cc4, .cb9 {
+.cc6, .ca6, .cba { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cc5, .cb9 {
   border: 1px solid rgba(255,255,255,.2); border-radius: var(--radius-sm);
   padding: 6px 12px; font-size: 12px; letter-spacing: .04em;
 }
@@ -560,12 +560,12 @@
 .c1y { display: flex; flex-wrap: wrap; gap: 10px; }
 
 .cbf { position: fixed; inset-inline-end: 20px; bottom: 20px; z-index: 90; display: flex; flex-direction: column; gap: 10px; }
-.cd1 {
+.cd2 {
   width: 52px; height: 52px; border-radius: 50%; border: 0; box-shadow: var(--shadow-md);
   display: grid; place-items: center; font-size: 20px; background: var(--color-surface); color: var(--color-ink);
 }
 .c9f { background: var(--color-accent); color: #fff; }
-.cd1:hover { transform: translateY(-2px); }
+.cd2:hover { transform: translateY(-2px); }
 
 .c9d {
   position: fixed; inset-inline-end: 20px; bottom: 88px; z-index: 95; width: 320px;
@@ -575,14 +575,14 @@
 .c9d[hidden] { display: none; }
 .c3u { background: var(--color-accent); color: #fff; padding: var(--space-4); display: flex; align-items: center; justify-content: space-between; }
 .c3s { padding: var(--space-4); display: flex; flex-direction: column; gap: 10px; max-height: 260px; overflow-y: auto; }
-.cbw { font-size: 13.5px; line-height: 1.6; padding: 9px 13px; border-radius: var(--radius-md); max-width: 85%; }
+.cbx { font-size: 13.5px; line-height: 1.6; padding: 9px 13px; border-radius: var(--radius-md); max-width: 85%; }
 .c7k { background: var(--color-surface-alt); }
 .c8g { background: var(--color-accent-soft); margin-inline-start: auto; }
 .c3t { border-top: 1px solid var(--color-border); padding: 10px; display: flex; gap: 8px; }
 .c2z { flex: 1; border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: 8px 14px; font-size: 13.5px; }
 
-.ccs { position: fixed; inset: 0; z-index: 140; background: rgba(26,23,18,.6); display: grid; place-items: center; padding: var(--space-5); }
-.ccs[hidden] { display: none; }
+.cct { position: fixed; inset: 0; z-index: 140; background: rgba(26,23,18,.6); display: grid; place-items: center; padding: var(--space-5); }
+.cct[hidden] { display: none; }
 .cat { background: var(--color-surface); border-radius: var(--radius-lg); max-width: 720px; width: 100%; max-height: 84vh; overflow: auto; box-shadow: var(--shadow-lg); }
 .c9s { padding: var(--space-5); border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
 .c9r { padding: var(--space-5); }
@@ -590,11 +590,11 @@
 /* ---------------------------------------------------------------------- */
 /* BREADCRUMB + SEO TEXT                                                  */
 /* ---------------------------------------------------------------------- */
-.ccn { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--color-ink-soft); padding-block: var(--space-4); list-style: none; margin: 0; padding-inline: 0; }
-.ccn li + li::before { content: "›"; margin-inline-end: 8px; color: var(--color-ink-faint); }
-.cc6 { columns: 2; column-gap: var(--space-7); font-size: 13.5px; line-height: 1.9; color: var(--color-ink-soft); }
-.cc6 h3 { font-size: 16px; margin-bottom: 6px; color: var(--color-ink); break-after: avoid; }
-.cc6 p { margin-bottom: var(--space-4); }
+.cco { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; color: var(--color-ink-soft); padding-block: var(--space-4); list-style: none; margin: 0; padding-inline: 0; }
+.cco li + li::before { content: "›"; margin-inline-end: 8px; color: var(--color-ink-faint); }
+.cc7 { columns: 2; column-gap: var(--space-7); font-size: 13.5px; line-height: 1.9; color: var(--color-ink-soft); }
+.cc7 h3 { font-size: 16px; margin-bottom: 6px; color: var(--color-ink); break-after: avoid; }
+.cc7 p { margin-bottom: var(--space-4); }
 
 /* ---------------------------------------------------------------------- */
 /* RESPONSIVE                                                             */
@@ -608,17 +608,17 @@
      letting the rail scroll. The document was 2986px wide at a 760px
      viewport and 4298px at 1600px: the page scrolled sideways at every
      size, which is a WCAG 1.4.10 Reflow failure. */
-  .ccj, .ccg, .cb5, .cb2, .c6m, .ccr { grid-template-columns: minmax(0, 1fr); }
-  .ccp { grid-template-columns: repeat(2, 1fr); }
+  .cck, .cch, .cb5, .cb2, .c6m, .ccs { grid-template-columns: minmax(0, 1fr); }
+  .ccq { grid-template-columns: repeat(2, 1fr); }
   .car { min-width: min(92vw, 640px); grid-template-columns: repeat(2, 1fr); }
-  .cc6 { columns: 1; }
+  .cc7 { columns: 1; }
 }
 @media (max-width: 760px) {
   .c16 { display: none; }
   .c72 { overflow-x: auto; }
   .c1d { height: 520px; }
-  .cco { margin-top: var(--space-5); }
-  .ccp { grid-template-columns: 1fr; }
+  .ccp { margin-top: var(--space-5); }
+  .ccq { grid-template-columns: 1fr; }
   .c5b, .c38 { grid-column: span 1; grid-row: span 1; }
   .c3v { grid-template-columns: 1fr; }
 }

@@ -280,6 +280,8 @@ async function runVariant(browser, variant) {
     const hintDetections = live([...hintByEl.entries()]
       .filter(([, h]) => !h.nested)
       .map(([el, h]) => ({ el, type: h.component, selector: h.selector })));
+    const dpDump = hintDetections.filter((d) => d.type === 'datepicker')
+      .map((d) => d.selector || (S.robustSelector ? S.robustSelector(d.el) : '?'));
     // 4.2: observed-but-unclassified is its own column, never a score.
     const unclassified = finalComps
       .filter((c) => c && c.root && !c.type)
@@ -340,7 +342,7 @@ async function runVariant(browser, variant) {
       hint: score(hintDetections),
       classify: score(classifyLive),
       union,
-      openFound, openNamed, openTotal: openable.length, openDetail, unclassified,
+      openFound, openNamed, openTotal: openable.length, openDetail, unclassified, dpDump,
       builtProbes, pressedTotal, observedList,
       plannedCount: planned, planSections,
       starved: P.starvedSnapshot ? P.starvedSnapshot() : [],
@@ -436,6 +438,7 @@ for (const variant of ONLY) {
   } else if (VERBOSE) {
     console.log('  Built by the page\'s own JavaScript: ' + r.builtProbes.map((b) => `${b.sel}=${b.n}`).join(' · '));
   }
+  if ((r.dpDump || []).length) console.log('  [debug] datepicker hint detections: ' + r.dpDump.join(' · '));
   console.log(`  ${r.pressedTotal} presses across the walk · ` +
     (r.openTotal ? `closed collected ${r.openFound}/${r.openTotal} · closed NAMED right ${r.openNamed}/${r.openTotal}` : ''));
   for (const d of r.openDetail || []) {

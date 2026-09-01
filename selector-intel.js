@@ -1229,6 +1229,31 @@
       var ragged = counts.filter(function (n) { return n !== max; }).length;
       if (ragged > counts.length / 2) return true;
 
+      // 7.7: three more layout tells. Cells that are ALL images are a photo
+      // arrangement; a colspan stretching across most rows is a page being
+      // laid out; and a SMALL table with no <th> and no <caption> is a
+      // schedule snippet, not data — the role=presentation it forgot to
+      // keep. Bigger headerless tables stay data tables with a finding.
+      var cells = el.querySelectorAll('td');
+      if (cells.length) {
+        var imgy = 0;
+        for (var ci7 = 0; ci7 < cells.length; ci7++) {
+          var c7 = cells[ci7];
+          if (c7.querySelector('img,svg') && !(c7.textContent || '').trim()) imgy++;
+        }
+        if (imgy === cells.length) return true;
+      }
+      var spanned = 0;
+      for (var ri7 = 0; ri7 < rows.length; ri7++) {
+        var sp7 = rows[ri7].querySelector('td[colspan],th[colspan]');
+        if (sp7 && Number(sp7.getAttribute('colspan')) >= max) spanned++;
+      }
+      if (spanned > rows.length / 2) return true;
+      // "No th and no caption" is deliberately NOT a layout tell on its own:
+      // a headerless table of values is a data table whose missing headers
+      // are the defect worth reporting — the corpus pins that, and a 3-row
+      // schedule and a 3-row price list are structurally identical.
+
       return false;
     } catch (e) { return false; }
   }
@@ -1251,11 +1276,13 @@
    */
   function looksLikeCalendar(el) {
     try {
-      // A month is a SMALL thing. A page section that happens to CONTAIN a
-      // calendar somewhere inside it is not itself the calendar — and once a
-      // popup month was painted into the page, every big ancestor started
-      // passing the count and one detection "touched" half the labels.
-      if (el.querySelectorAll('*').length > 160) return false;
+      // A month is MOSTLY month. A section that merely CONTAINS a painted
+      // calendar is not itself the calendar — once a popup month existed in
+      // the page, every big-enough ancestor passed the raw count and one
+      // detection "touched" half the labels. The day cells must be a real
+      // fraction of the candidate's own tree, and the tree must be small.
+      var treeSize = el.querySelectorAll('*').length;
+      if (treeSize > 160) return false;
       var kids = el.querySelectorAll('td,th,li,button,span,div,a');
       var byParent = new Map();
       for (var i = 0; i < kids.length; i++) {
@@ -1279,30 +1306,57 @@
         if (rising >= nums.length * 0.7) hit = true;
       });
       if (!hit) return false;
-      // 7.4: the count alone is NOT enough — a locker picker is thirty-two
-      // running numbers and no calendar at all. A month gives a second
-      // witness in every language: a WEEKDAY ROW (a run of ≥7 short
-      // non-numeric labels under one parent) or a YEAR beside the grid
-      // (month names vary by tongue; the four digits do not).
-      var second = false;
-      try {
-        var wrap = el.parentElement || el;
-        if (/\b(19|20)\d{2}\b/.test((wrap.textContent || '').slice(0, 4000))) second = true;
-        if (!second) {
-          var rows = el.querySelectorAll('*');
-          for (var ri = 0; ri < rows.length && !second; ri++) {
-            var rk = rows[ri].children;
-            if (rk.length < 7) continue;
-            var shorts = 0;
-            for (var ci = 0; ci < rk.length; ci++) {
-              var tx = (rk[ci].textContent || '').trim();
-              if (tx && tx.length <= 3 && !/\d/.test(tx)) shorts++;
-            }
-            if (shorts >= 7) second = true;
+      // The candidate must BE the month's wrapper, not a section that
+      // contains one: the day cells' parent within two levels of it. And
+      // the SECOND WITNESS is judged there too, not on the candidate — a
+      // locker grid numbered 1..32 with an orders table beside it gave a
+      // whole section "a run of days" and "a year", and the section became
+      // a datepicker. The witness must sit ON the month: the day parent's
+      // own header — up to two PRECEDING siblings, each small (≤8
+      // elements) — carrying a year or a weekday row.
+      var dayParent = null;
+      byParent.forEach(function (nums, key) {
+        if (!dayParent && nums.length >= 28 && nums.length <= 62) dayParent = key;
+      });
+      if (!dayParent) return false;
+      var hops = 0, node = dayParent;
+      while (node && node !== el && hops <= 2) { node = node.parentElement; hops++; }
+      if (node !== el || hops > 2) return false;
+      return calendarWitness(dayParent);
+    } catch (e) { return false; }
+  }
+
+  /**
+   * 7.4's second witness, LOCAL to the month: the day parent's own header —
+   * up to two preceding siblings, each small — carrying a year (language-
+   * free) or a weekday row (≥7 short non-numeric labels under one parent).
+   */
+  function calendarWitness(dayParent) {
+    try {
+      var checkRow = function (holder) {
+        var rows = [holder].concat(Array.prototype.slice.call(holder.querySelectorAll('*')));
+        for (var ri = 0; ri < rows.length; ri++) {
+          var rk = rows[ri].children;
+          if (rk.length < 7) continue;
+          var shorts = 0;
+          for (var ci = 0; ci < rk.length; ci++) {
+            var tx = (rk[ci].textContent || '').trim();
+            if (tx && tx.length <= 3 && !/\d/.test(tx)) shorts++;
           }
+          if (shorts >= 7) return true;
         }
-      } catch (e) {}
-      return second;
+        return false;
+      };
+      var sib = dayParent.previousElementSibling, seen = 0;
+      while (sib && seen < 2) {
+        if (sib.querySelectorAll('*').length <= 8) {
+          if (/\b(19|20)\d{2}\b/.test(sib.textContent || '')) return true;
+          if (checkRow(sib)) return true;
+        }
+        sib = sib.previousElementSibling; seen++;
+      }
+      // …or the weekday row INSIDE the day parent itself (table calendars).
+      return checkRow(dayParent);
     } catch (e) { return false; }
   }
 
@@ -1408,6 +1462,19 @@
 
     if (el.tagName === 'TABLE') {
       if (looksLikeLayoutTable(el)) return null;
+      // 7.7: a table whose cells are a third CONTROLS is a grid — people
+      // operate it, they do not read it. u1.fix.grid manages the arrow-key
+      // cell navigation a data table never needs.
+      try {
+        var tds7 = el.querySelectorAll('td');
+        if (tds7.length >= 4) {
+          var ctl7 = 0;
+          for (var t7 = 0; t7 < tds7.length; t7++) {
+            if (tds7[t7].querySelector('button,input,select,a[href],[role="button"]')) ctl7++;
+          }
+          if (ctl7 >= tds7.length * 0.3) return { name: 'grid', sure: true };
+        }
+      } catch (e) {}
       // A data table with no header cells anywhere is still a data table, and
       // the missing headers are the defect worth reporting rather than a reason
       // to skip it. Marked as a guess, because "rows and columns of values with
@@ -1415,6 +1482,27 @@
       var headed = false;
       try { headed = !!el.querySelector('th'); } catch (e) {}
       return { name: 'table', sure: headed };
+    }
+    // 7.7: the responsive div-table — display:table markup with agreeing
+    // rows and columns. display:grid is deliberately NOT here: half the
+    // modern web lays itself out with grid, and a maybe on all of it would
+    // be noise, not detection (reported deviation from the spec line).
+    if (el.tagName === 'DIV') {
+      try {
+        var disp7 = getComputedStyle(el).display;
+        if (disp7 === 'table') {
+          var rws7 = Array.from(el.children).filter(function (k) {
+            return getComputedStyle(k).display === 'table-row';
+          });
+          if (rws7.length >= 2) {
+            var cols7 = rws7.map(function (rw) { return rw.children.length; });
+            var colMax7 = Math.max.apply(null, cols7);
+            if (colMax7 >= 2 && cols7.every(function (n) { return n === colMax7; })) {
+              return { name: 'table', sure: false };
+            }
+          }
+        }
+      } catch (e) {}
     }
 
     const tag = el.tagName.toLowerCase();
@@ -1631,7 +1719,7 @@
     // is a rule that can never fire — see the check in verify-detect.
     'tab', 'carousel', 'slider', 'slideshow', 'gallery', 'ticker', 'marquee',
     'accordion', 'collapsible', 'faq',
-    'datepicker', 'calendar', 'pagination', 'pager',
+    'datepicker', 'calendar', 'pagination', 'pager', 'table',
     'tooltip', 'popover', 'breadcrumb',
   ];
 

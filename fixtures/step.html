@@ -1061,6 +1061,22 @@
       <strong style="grid-column:1/-1">Pick a locker</strong>
     </div>
 
+    <!-- 7.7 the GRID: a table people OPERATE — a third of its cells hold
+         controls. And the responsive div-table beside it: display:table
+         markup with agreeing rows, table by shape with no <table> in sight. -->
+    <table id="auditOrdersGrid" style="margin-top:24px">
+      <caption>Recent fittings</caption>
+      <tr><th>Date</th><th>Branch</th><th>Action</th></tr>
+      <tr><td>2027-02-11</td><td>Tel Aviv</td><td><button type="button">Rebook</button></td></tr>
+      <tr><td>2027-01-28</td><td>Haifa</td><td><button type="button">Rebook</button></td></tr>
+      <tr><td>2026-12-02</td><td>Eilat</td><td><button type="button">Rebook</button></td></tr>
+    </table>
+    <div id="auditDivTable" class="fit-table" style="display:table;margin-top:16px;border-collapse:collapse">
+      <div style="display:table-row"><span style="display:table-cell;padding:4px 12px">Narrow fit</span><span style="display:table-cell;padding:4px 12px">B width</span></div>
+      <div style="display:table-row"><span style="display:table-cell;padding:4px 12px">Standard fit</span><span style="display:table-cell;padding:4px 12px">D width</span></div>
+      <div style="display:table-row"><span style="display:table-cell;padding:4px 12px">Wide fit</span><span style="display:table-cell;padding:4px 12px">2E width</span></div>
+    </div>
+
     <!-- 7.6 the WIZARD: one form walked through in steps — two sibling
          panels of fields, one showing, next/back between them. Beside it
          the pinned negative: an input+button pair whose button only COPIES

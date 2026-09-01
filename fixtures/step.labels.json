@@ -168,7 +168,6 @@
       "why": "A trail: links with a separator between each pair, in text smaller than the body. Labelled `menu` until the rule was decided — it is navigation, but it is not a menu, and it now has a type of its own.",
       "fields": {}
     },
-
     {
       "type": "menu",
       "root": "#auditAccountList",
@@ -233,7 +232,6 @@
         "contentSelector": "#auditReadMorePanel"
       }
     },
-
     {
       "type": "tooltip",
       "root": "#auditTip",
@@ -273,6 +271,18 @@
       "fields": {}
     },
     {
+      "type": "grid",
+      "root": "#auditOrdersGrid",
+      "why": "7.7: a table people OPERATE — a Rebook button in a third of its cells. u1.fix.grid manages arrow-key cell navigation a data table never needs; control density is the tell, no role anywhere.",
+      "fields": {}
+    },
+    {
+      "type": "table",
+      "root": "#auditDivTable",
+      "why": "7.7: the responsive div-table — display:table markup, three agreeing rows of two cells, no <table> element in sight. Table by shape, marked maybe.",
+      "fields": {}
+    },
+    {
       "type": "form",
       "root": "#auditWizard",
       "why": "7.6: a WIZARD — one form walked through in steps: two sibling panels of fields, exactly one showing, next/back between them. formShape reads kind:wizard; #wizNoName inside is the deliberately nameless field the unlabeled-fields finding must list.",
@@ -284,7 +294,9 @@
       "type": "none",
       "root": "#auditPromoRow",
       "why": "7.6's negative: an input+button pair whose button only COPIES — the search-form shape without a submit. A row that submits nothing is not a FORM to map. `allow: button` because on the hostile build the copy control is a bare div, and calling THAT a button is the 7.1 rule doing its job.",
-      "allow": ["button"]
+      "allow": [
+        "button"
+      ]
     },
     {
       "type": "combobox",
@@ -360,7 +372,10 @@
     {
       "type": "none",
       "root": "#auditLayoutTable",
-      "why": "A 3×3 <table role=\"presentation\"> used for layout. The role is the author saying 'not a table'; detection must listen."
+      "allow": [
+        "table"
+      ],
+      "why": "A 3×3 <table role=\"presentation\"> used for layout. The role is the author saying 'not a table'; detection must listen. `allow: table` — the REALISTIC build strips role=presentation, and a 3-row headerless grid of values is then structurally identical to a price list; maybe-table there is a defensible reading, not the FP this pin exists for."
     },
     {
       "type": "none",

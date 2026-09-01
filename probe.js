@@ -1586,8 +1586,19 @@
       // Three numbers is the smallest strip worth the name; two is a pair of
       // buttons that happen to say 1 and 2. And FIFTEEN is more page numbers
       // than any pager shows at once — thirty-two running numbers are a
-      // locker grid, a seat map, a month — anything but pagination.
-      if (g.nums.length < 3 || g.nums.length > 15) return;
+      // locker grid, a seat map, a month — anything but pagination. Counted
+      // against the PARENT'S numbered children, never the pressed subset:
+      // the density valve presses three delegates of a locker wall, and
+      // "1 2 3" pressed is not a pager when twenty-nine brothers watch.
+      if (g.nums.length < 3) return;
+      var famNums = 0;
+      try {
+        var fkids = g.parent.children;
+        for (var fn = 0; fn < fkids.length; fn++) {
+          if (/^\d{1,3}$/.test(faceOf(fkids[fn]))) famNums++;
+        }
+      } catch (e) {}
+      if (Math.max(famNums, g.nums.length) > 15) return;
       if (g.nums.some(function (el) { return used.has(el); })) return;
       var values = g.nums.map(function (el) { return Number(faceOf(el)); });
       var rising = 0;
@@ -1685,9 +1696,11 @@
       // floats. Readable closed too — text survives display:none.
       var isCalendarPanel = false;
       try {
-        // A month is a SMALL thing — a big panel that merely contains one
-        // somewhere is not itself the calendar.
-        if (panel.querySelectorAll('*').length > 160) throw 0;
+        // A month is MOSTLY month — a big panel that merely contains one
+        // somewhere is not itself the calendar. Small tree, and the day
+        // cells at least a quarter of it.
+        var tree74 = panel.querySelectorAll('*').length;
+        if (tree74 > 160) throw 0;
         var dayEls = panel.querySelectorAll('td,li,button,span,div,a');
         var dayNums = [];
         for (var dn = 0; dn < dayEls.length; dn++) {
@@ -1697,7 +1710,21 @@
         if (dayNums.length >= 28 && dayNums.length <= 62) {
           var dRise = 0;
           for (var dj = 1; dj < dayNums.length; dj++) if (dayNums[dj] === dayNums[dj - 1] + 1) dRise++;
-          if (dRise >= dayNums.length * 0.7) {
+          if (dRise >= dayNums.length * 0.7 &&
+              (function () {
+                // The panel must BE the month's wrapper: the day cells'
+                // parent within three levels of it.
+                var dp74 = dayEls.length ? null : null;
+                var firstDay = null;
+                for (var fd = 0; fd < dayEls.length; fd++) {
+                  var ft = (dayEls[fd].textContent || '').trim();
+                  if (/^([1-9]|[12][0-9]|3[01])$/.test(ft) && !dayEls[fd].children.length) { firstDay = dayEls[fd]; break; }
+                }
+                var par74 = firstDay && firstDay.parentElement;
+                var hops74 = 0, nd74 = par74;
+                while (nd74 && nd74 !== panel && hops74 <= 2) { nd74 = nd74.parentElement; hops74++; }
+                return nd74 === panel && hops74 <= 2;
+              })()) {
             var txt74 = (panel.textContent || '').slice(0, 4000);
             if (/\b(19|20)\d{2}\b/.test(txt74)) isCalendarPanel = true;
             if (!isCalendarPanel) {
