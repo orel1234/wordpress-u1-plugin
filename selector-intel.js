@@ -4656,7 +4656,10 @@
       var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
 
       var problem = null, should = lvl;
-      if (!text) problem = 'empty';
+      // 7.11: an h1 that is ONLY a logo image says the site's name to the
+      // eye and nothing to the reader — its own finding, not merely "empty".
+      if (!text && el.querySelector('img,svg')) problem = 'holds only a logo image';
+      else if (!text) problem = 'empty';
       else if (lvl === 1 && seenH1) problem = 'second h1';
       else if (!lvl) { problem = 'no level'; should = prev ? prev + 1 : 2; }
       else if (prev && lvl > prev + 1) { problem = 'skips ' + (lvl - prev - 1); should = prev + 1; }
@@ -4672,6 +4675,52 @@
         should: problem && should !== lvl ? should : null,
       });
     }
+    // 7.11: the VISUAL headings — a div/p/span set big and bold, a dozen
+    // words at most, with content following it. Not a component: a row in
+    // this list, with a suggested level, because the reader scanning by
+    // headings never hears it at all. Cheap text filters run first so the
+    // style read is paid only on plausible candidates; capped at 40.
+    try {
+      var bodyPx = 16;
+      try { bodyPx = parseFloat(getComputedStyle(document.body).fontSize) || 16; } catch (e) {}
+      var vis = [], cands = qsaDeep(document, 'div,p,span,strong,b');
+      for (var vi = 0; vi < cands.length && vis.length < 40; vi++) {
+        var vEl = cands[vi];
+        var vTx = (vEl.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!vTx || vTx.length > 80 || vTx.split(' ').length > 12) continue;
+        if (vEl.children.length > 1) continue;
+        if (vEl.closest('h1,h2,h3,h4,h5,h6,[role="heading"],button,a,nav,label')) continue;
+        var vCs;
+        try { vCs = getComputedStyle(vEl); } catch (e) { continue; }
+        if (parseFloat(vCs.fontSize) < bodyPx * 1.3) continue;
+        if (Number(vCs.fontWeight) < 600 && vCs.fontWeight !== 'bold') continue;
+        var after = vEl.nextElementSibling || (vEl.parentElement && vEl.parentElement.nextElementSibling);
+        if (!after || !(after.textContent || '').trim()) continue;
+        vis.push(vEl);
+      }
+      // 7.11: a heading REPEATED across cards — same first class, twice or
+      // more — is one kind of thing and gets ONE suggested level for all.
+      var byCls = {};
+      for (var vj = 0; vj < vis.length; vj++) {
+        var vk = String(vis[vj].className || '').split(/\s+/)[0] || '';
+        (byCls[vk] = byCls[vk] || []).push(vis[vj]);
+      }
+      for (var vk2 in byCls) {
+        var groupShould = prev ? Math.min(prev + 1, 6) : 2;
+        for (var vg = 0; vg < byCls[vk2].length; vg++) {
+          var gEl2 = byCls[vk2][vg];
+          out.push({
+            selector: robustSelector(gEl2),
+            level: null,
+            text: (gEl2.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+            problem: 'visual heading — styled as one, announced as nothing',
+            should: groupShould,
+            visual: true,
+          });
+        }
+      }
+    } catch (e) {}
+
     // A page with no top-level heading at all is a fact about the OUTLINE
     // rather than about any one heading, so it rides along rather than being
     // pinned on whichever heading happens to be first.

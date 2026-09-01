@@ -768,6 +768,41 @@ console.log('\na form\'s required fields are read off the page, not asked for');
     w1 && w1.unlabeledFields && w1.unlabeledFields.selector);
 }
 
+console.log('\n7.11 — the headings nobody hears');
+{
+  const d = new JSDOM(`<html><body style="font-size:16px">
+    <h1>Store</h1>
+    <h2>Deals</h2>
+    <div class="card"><div class="card-head" style="font-size:22px;font-weight:700">Runner Pro</div><p>A shoe.</p></div>
+    <div class="card"><div class="card-head" style="font-size:22px;font-weight:700">Trail Max</div><p>Another.</p></div>
+    <header><h1><img alt=""></h1></header>
+  </body></html>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+  const w = d.window;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { width: 200, height: 40, top: 10, bottom: 50, left: 10, right: 210 };
+  };
+  Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return 40; }, configurable: true });
+  const realGCS = w.getComputedStyle.bind(w);
+  w.getComputedStyle = (el) => {
+    const inline = (el.getAttribute && el.getAttribute('style')) || '';
+    const fs = /font-size:\s*(\d+)px/.exec(inline);
+    const fw = /font-weight:\s*(\d+)/.exec(inline);
+    return { fontSize: fs ? fs[1] + 'px' : '16px', fontWeight: fw ? fw[1] : '400',
+             display: 'block', visibility: 'visible', opacity: '1', position: 'static' };
+  };
+  w.eval(INTEL);
+  const list = w.__u1SelectorIntel.headingOutline();
+  const visuals = list.filter((h) => h.visual);
+  check('a big bold div followed by content is a VISUAL heading with a should',
+    visuals.length === 2 && visuals.every((h) => h.should >= 2 && h.should <= 6),
+    JSON.stringify(visuals.map((h) => ({ t: h.text, s: h.should }))));
+  check('…and repeated card heads share ONE suggested level',
+    visuals.length === 2 && visuals[0].should === visuals[1].should);
+  check('an h1 holding only a logo image is its own finding',
+    list.some((h) => h.problem === 'holds only a logo image'),
+    JSON.stringify(list.map((h) => h.problem).filter(Boolean)));
+}
+
 console.log('\na listbox is read off the structure, not asked about');
 {
   // Inside the container: the clickable thing is the trigger (it has the
