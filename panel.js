@@ -6986,15 +6986,22 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   const before = context.candidates.length;
   const bin = (handled && handled.dismissed) || new Set();
   let dismissedOut = 0;
+  // Which selectors the dismissed list ate, by name. A ✕ pressed weeks ago
+  // removes a candidate from every later scan with no trace at all — "the AI
+  // keeps missing my listbox" on molina was exactly this shape of silence.
+  const dismissedSels = [];
   const candidates = context.candidates.filter((c) => {
     if (c.selector && handled.has(c.selector)) {
-      if (bin.has(c.selector)) dismissedOut++;
+      if (bin.has(c.selector)) {
+        dismissedOut++;
+        dismissedSels.push(c.selector + (c.component ? ` (${c.component}${c.maybe ? '?' : ''})` : ''));
+      }
       return false;
     }
     return !(drop && drop(c));
   });
   const skipped = before - candidates.length;
-  if (!candidates.length) return { candidates: [], headings: [], skipped, dismissed: dismissedOut };
+  if (!candidates.length) return { candidates: [], headings: [], skipped, dismissed: dismissedOut, dismissedSels };
 
   // The survey's own picture, with a labelled box round each component that was
   // recognised. It is what the sections list is chosen from, so it shows the
@@ -7035,7 +7042,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
     // never calls the model, so it stops here — and leaves the page untouched,
     // since the numbers were never drawn.
     return {
-      shot: null, thumb, candidates, skipped, dismissed: dismissedOut, truncated: !!context.truncated,
+      shot: null, thumb, candidates, skipped, dismissed: dismissedOut, dismissedSels, truncated: !!context.truncated,
       headings: context.headings || [], title: context.title || '', url: context.url || '',
       tokens: context.tokens || [],
     };
@@ -7075,7 +7082,7 @@ async function collectRegion(tab, scopeSel, handled, opts) {
   if (!shot) return { err: 'Could not capture the page.' };
 
   return {
-    shot, thumb, candidates, skipped, dismissed: dismissedOut,
+    shot, thumb, candidates, skipped, dismissed: dismissedOut, dismissedSels,
     headings: context.headings || [],
     title: context.title || '',
     url: context.url || '',
@@ -11693,6 +11700,14 @@ async function scanPickedScreens(numbers) {
         // is still worth a retry — but it says what happened.
         await markScreenFailed(stop, collected.err);
         continue;
+      }
+      // Name what the dismissed list ate, one line each. A ✕ pressed on a row
+      // weeks ago removes that selector from every later scan with no visible
+      // trace — and "it keeps missing my listbox" is what that silence sounds
+      // like from the outside.
+      for (const s of collected.dismissedSels || []) {
+        sweepLog(stop.n, `skipped ${s} — it is on this site's dismissed list (someone pressed ✕ on it once). ` +
+          `Clear the dismissed list to scan it again`, 'skip');
       }
       // Every candidate on this section was filtered out before the model was
       // called: either already mapped, already found on an earlier section, or
