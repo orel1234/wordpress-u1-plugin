@@ -1060,6 +1060,15 @@
     <div class="locker-grid" id="auditNumGrid" style="display:grid;grid-template-columns:repeat(8,36px);gap:4px;margin-top:24px">
       <strong style="grid-column:1/-1">Pick a locker</strong>
     </div>
+
+    <!-- 7.5 the PORTAL combobox: the suggestion list is not inside the
+         wrapper at all — it lives at the end of <body>, the way every
+         floating-ui/portal library renders it — and only aria-owns names
+         the connection. -->
+    <div class="city-pick" id="auditCityBox" style="position:relative;max-width:320px;margin-top:24px">
+      <label class="visually-hidden" for="auditCityInput">Branch city</label>
+      <input id="auditCityInput" type="text" role="combobox" aria-expanded="false" aria-autocomplete="list" aria-owns="auditCityList" placeholder="Branch city…" autocomplete="off">
+    </div>
   </section>
 
 </main>
@@ -1180,6 +1189,9 @@
     </div>
   </div>
 </div>
+
+<!-- 7.5: the portal list itself — parked at body end like a real portal. -->
+<ul id="auditCityList" role="listbox" style="list-style:none;margin:0;padding:0;position:absolute;background:#fff;border:1px solid #ddd;display:none"></ul>
 
 <script src="step-script.js"></script>
 <script src="step-mega.js"></script>

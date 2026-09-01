@@ -152,7 +152,7 @@ Store.SHOE_SOLE_PATH = 'M14,88 L202,88 C210,88 216,93 215,100 C214,104 209,106 2
 Store.SHOE_LACES_PATH = 'M68,36 L76,50 M78,32 L86,46 M88,29 L96,43';
 
 Store.shoeIconSVG = (color, extraClass = '') => `
-  <svg class="cbl ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
+  <svg class="cbm ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
     <path d="${Store.SHOE_ICON_PATH}" fill="currentColor"/>
     <path d="${Store.SHOE_SOLE_PATH}" fill="currentColor" opacity="0.5"/>
     <path d="${Store.SHOE_LACES_PATH}" fill="none" stroke="rgba(0,0,0,0.3)" stroke-width="3" stroke-linecap="round"/>
@@ -364,8 +364,8 @@ Store.header = (() => {
       ${discount ? `<div class="ca8"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
       <div class="ca8"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
       <div class="ca8 c3n"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
-      <a class="ccx c8e cac" href="cart.html">View Cart</a>
-      <a class="ccx c8d cac" href="checkout.html">Checkout</a>`;
+      <a class="ccy c8e cac" href="cart.html">View Cart</a>
+      <a class="ccy c8d cac" href="checkout.html">Checkout</a>`;
   }
 
   function openDrawer() {
@@ -411,7 +411,7 @@ Store.header = (() => {
     renderBadge();
     document.addEventListener('cart:change', renderBadge);
 
-    const cartBtn = document.getElementById('e2d');
+    const cartBtn = document.getElementById('e2g');
     const closeBtn = document.getElementById('er');
     const overlay = document.getElementById('e3');
     const itemsEl = document.getElementById('es');
@@ -442,7 +442,7 @@ Store.header = (() => {
    ========================================================================== */
 Store.homePage = (() => {
   function renderCategories() {
-    const el = document.getElementById('e1s');
+    const el = document.getElementById('e1v');
     if (!el) return;
     const palette = ['#b5432b', '#233150', '#5b3a22', '#3c5a44', '#8a8577'];
     el.innerHTML = Store.CATEGORIES.map((cat, i) => {
@@ -485,15 +485,15 @@ Store.homePage = (() => {
   }
 
   function renderFeatured() {
-    const el = document.getElementById('e1t');
+    const el = document.getElementById('e1w');
     if (!el) return;
     el.innerHTML = Array.from({ length: 4 }, () => `
       <div class="c8v ct">
-        <div class="c28"><span class="cc6 c6k"></span></div>
+        <div class="c28"><span class="cc7 c6k"></span></div>
         <div class="c3a">
-          <span class="cc6 c7a" style="width:40%"></span>
-          <span class="cc6 c7a" style="width:80%"></span>
-          <span class="cc6 c7a" style="width:50%"></span>
+          <span class="cc7 c7a" style="width:40%"></span>
+          <span class="cc7 c7a" style="width:80%"></span>
+          <span class="cc7 c7a" style="width:50%"></span>
         </div>
       </div>`).join('');
 
@@ -518,7 +518,7 @@ Store.homePage = (() => {
   }
 
   function init() {
-    if (!document.getElementById('e1t')) return;
+    if (!document.getElementById('e1w')) return;
     renderCategories();
     renderFeatured();
     document.body.addEventListener('click', handleGridClick);
@@ -584,7 +584,7 @@ Store.shopPage = (() => {
     const sizeGroup = document.getElementById('sizeFilterGroup');
     const allSizes = Array.from(new Set(Store.PRODUCTS.flatMap(p => p.sizes))).sort((a, b) => a - b);
     sizeGroup.innerHTML = allSizes.map(s => `
-      <div class="cbm ${state.sizes.has(s) ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
+      <div class="cbn ${state.sizes.has(s) ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
 
     document.getElementById('priceRange').value = state.maxPrice;
     document.getElementById('priceRangeValue').textContent = Store.utils.formatPrice(state.maxPrice);
@@ -629,7 +629,7 @@ Store.shopPage = (() => {
   }
 
   function handleSidebarClick(e) {
-    const sizeChip = e.target.closest('.cbm');
+    const sizeChip = e.target.closest('.cbn');
     if (sizeChip) {
       const size = Number(sizeChip.dataset.x11);
       state.sizes.has(size) ? state.sizes.delete(size) : state.sizes.add(size);
@@ -733,7 +733,7 @@ Store.productPage = (() => {
 
   function renderSizes() {
     document.getElementById('sizeOptions').innerHTML = product.sizes.map(s => `
-      <div class="cbm ${s === c90 ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
+      <div class="cbn ${s === c90 ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
   }
 
   function renderInfo() {
@@ -754,7 +754,7 @@ Store.productPage = (() => {
 
     document.getElementById('descPanel').textContent = product.desc;
     document.getElementById('detailsPanel').innerHTML = `
-      <div class="cbo">
+      <div class="cbp">
         <div><span>Upper material</span><strong>${product.details.material}</strong></div>
         <div><span>Sole</span><strong>${product.details.sole}</strong></div>
         <div><span>Country of origin</span><strong>${product.details.origin}</strong></div>
@@ -769,7 +769,7 @@ Store.productPage = (() => {
 
   function handleOptionClick(e) {
     const colorBtn = e.target.closest('[data-xv]');
-    const sizeBtn = e.target.closest('.cbm');
+    const sizeBtn = e.target.closest('.cbn');
     if (colorBtn) {
       selectedColor = product.colors.find(c => c.name === colorBtn.dataset.xv);
       renderGallery();
@@ -1030,7 +1030,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('ccd', !ok);
+      input.classList.toggle('cce', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });
@@ -1090,7 +1090,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('ccd', !ok);
+      input.classList.toggle('cce', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });

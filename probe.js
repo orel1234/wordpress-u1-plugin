@@ -2071,6 +2071,13 @@
       if (up) for (var nj = 0; nj < up.children.length; nj++) {
         if (up.children[nj] !== input.parentElement) near.push(up.children[nj]);
       }
+      // 7.5: the PORTAL — the field itself names its list when the list is
+      // rendered at body end (aria-owns / aria-controls). Follow the edge.
+      var ownRef = (input.getAttribute('aria-owns') || input.getAttribute('aria-controls') || '').trim();
+      if (ownRef) {
+        var owned = doc.getElementById(ownRef.split(/\s+/)[0]);
+        if (owned && near.indexOf(owned) === -1) near.push(owned);
+      }
     } catch (e) {}
     var addNear = function (map) {
       for (var na = 0; na < near.length; na++) {
@@ -2085,7 +2092,41 @@
       }
       return map;
     };
-    var countBefore = addNear(listCounts(scope));
+    // …and, vocabulary-free for the hostile page where aria-owns is renamed
+    // away: every list-shaped element in the DOCUMENT is counted too. A
+    // portal list at body end that goes 0 → N on the keystroke is the same
+    // statement wherever it parks. listCounts caps itself at 60 lists.
+    var addDoc = function (map) {
+      try {
+        var docLists = listCounts(doc.body);
+        docLists.forEach(function (n, el2) { if (!map.has(el2)) map.set(el2, n); });
+        // The hostile portal is a bare <div> at body end — no list selector
+        // can know it. The ANATOMY can: portals park shallow, so body's
+        // children and grandchildren are counted whatever their tag.
+        var top75 = doc.body ? doc.body.children : [];
+        var added75 = 0;
+        var consider75 = function (el3) {
+          if (added75 >= 150 || !el3 || map.has(el3)) return;
+          var kids75 = 0;
+          try {
+            for (var ck = 0; ck < el3.children.length; ck++) {
+              if (shown(el3.children[ck])) kids75++;
+            }
+          } catch (e) {}
+          map.set(el3, kids75); added75++;
+        };
+        // ALL of body's own children first — a portal parks at body end, and
+        // spending the cap on the first section's grandchildren would never
+        // reach it. Grandchildren take whatever budget remains.
+        for (var tp = 0; tp < top75.length && added75 < 150; tp++) consider75(top75[tp]);
+        for (var tq = 0; tq < top75.length && added75 < 150; tq++) {
+          var gks = top75[tq].children;
+          for (var gk = 0; gk < gks.length && added75 < 150; gk++) consider75(gks[gk]);
+        }
+      } catch (e) {}
+      return map;
+    };
+    var countBefore = addDoc(addNear(listCounts(scope)));
 
     var fire = function (el) {
       ['input', 'keyup', 'change'].forEach(function (name) {
@@ -2105,7 +2146,7 @@
     await raf();
     if (settle) await wait(settle);
     var onTouch = diff(before, fingerprint(els));
-    var countTouched = addNear(listCounts(scope));
+    var countTouched = addDoc(addNear(listCounts(scope)));
     var openedOnTouch = outermost(onTouch.appeared);
     countBefore.forEach(function (was, el) {
       var now = countTouched.get(el);
@@ -2125,7 +2166,7 @@
     if (settle) await wait(settle);
 
     var d = diff(beforeTyping, fingerprint(els));
-    var countAfter = addNear(listCounts(scope));
+    var countAfter = addDoc(addNear(listCounts(scope)));
 
     // Put the letter back before anything else. A field left with a stray
     // character in it is the most visible thing this whole file could do.
@@ -2872,9 +2913,16 @@
           if (!typed || typed.skipped || typed.kind !== 'combobox') continue;
           var pop = typed.openedOnTouch[0] || typed.revealed[0] ||
                     (typed.filled[0] && typed.filled[0].list) || null;
+          // A PORTAL list drags the common ancestor up to <body>, and a
+          // detection rooted on the page is a detection of nothing — the
+          // component lives where its FIELD lives; the far list is a part.
+          var cbRoot = pop ? commonAncestor([boxes[tb], pop]) : null;
+          if (!cbRoot || cbRoot === doc.body || cbRoot === doc.documentElement) {
+            cbRoot = boxes[tb].parentElement || boxes[tb];
+          }
           var cbComp = {
             type: 'combobox',
-            root: pop ? commonAncestor([boxes[tb], pop]) : (boxes[tb].parentElement || boxes[tb]),
+            root: cbRoot,
             parts: pop ? { textbox: [boxes[tb]], listbox: [pop] } : { textbox: [boxes[tb]] },
             why: typed.openedOnTouch.length
               ? 'touching the field opened a list of suggestions'

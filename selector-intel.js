@@ -1013,6 +1013,7 @@
     [/carousel|slideshow|gallery|\bslider\b|\bticker\b|marquee/i, 'carousel'],
     [/accordion|collapsible|\bfaq\b/i, 'accordion'],
     [/datepicker|calendar|pikaday|air-datepicker|MuiPickers|MuiDateCalendar/i, 'datepicker'],
+    [/typeahead|tagify|tom-select|MuiAutocomplete|ng-select|vs__dropdown|ant-select/i, 'combobox'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
     [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
@@ -1365,6 +1366,16 @@
     const ours = isOurs(el);
 
     const role = (el.getAttribute('role') || '').toLowerCase();
+    // 7.5, BEFORE the role speaks: a list some field OWNS (aria-owns /
+    // aria-controls) is the portal-rendered half of a combobox — a PART,
+    // whatever its own role says.
+    if ((role === 'listbox' || role === 'menu') && el.id) {
+      try {
+        if (document.querySelector('[aria-owns~="' + el.id + '"],[aria-controls~="' + el.id + '"]')) {
+          return null;
+        }
+      } catch (e) {}
+    }
     if (role && !ours && Object.prototype.hasOwnProperty.call(COMPONENT_BY_ROLE, role)) {
       return COMPONENT_BY_ROLE[role] ? { name: COMPONENT_BY_ROLE[role], sure: true } : null;
     }
@@ -1462,6 +1473,20 @@
     try {
       for (const attr of el.getAttributeNames()) {
         for (const [re, name] of COMPONENT_BY_ATTR) if (re.test(attr)) return { name, sure: true };
+      }
+    } catch (e) {}
+
+    // 7.5: the field SAYS it completes. aria-autocomplete (or role=searchbox
+    // beside a list) is the page's own word for a combobox — surer than any
+    // class name.
+    try {
+      if (el.hasAttribute('aria-autocomplete') &&
+          (el.getAttribute('aria-autocomplete') || '').toLowerCase() !== 'none') {
+        return { name: 'combobox', sure: true };
+      }
+      if ((el.getAttribute('role') || '').toLowerCase() === 'searchbox' &&
+          (el.getAttribute('aria-owns') || el.getAttribute('aria-controls'))) {
+        return { name: 'combobox', sure: true };
       }
     } catch (e) {}
 
@@ -1630,6 +1655,9 @@
     // apostrophes in these comments: verify-detect pairs quotes to read the
     // list, and a stray one shifts every string after it.
     'pikaday', 'MuiPickers',
+    // 7.5 combobox libraries.
+    'typeahead', 'tagify', 'tom-select', 'MuiAutocomplete', 'ng-select',
+    'vs__dropdown', 'ant-select',
   ];
 
   // Elements worth showing the model: anything interactive, plus the structural
@@ -3433,6 +3461,34 @@
                 'input[type="email"],input[type="tel"],input[type="url"],[contenteditable="true"]';
     var LISTY = 'ul,ol,[role="listbox"],[role="menu"],[role="grid"],[data-options],[class*="option" i],' +
                 '[class*="suggest" i],[class*="result" i],[class*="dropdown" i],[class*="autocomplete" i]';
+
+    // 7.5 first, before any climb: the PORTAL. When the input itself names
+    // its list (aria-owns / aria-controls) and that list lives outside the
+    // wrapper — body-end, the way floating-ui renders — the page has already
+    // answered the "belong together" question, and climbing would never
+    // reach an element holding both halves.
+    try {
+      var portalInput = el.matches && el.matches(TEXTY) ? el : el.querySelector(TEXTY);
+      if (portalInput) {
+        var ownIds = (portalInput.getAttribute('aria-owns') ||
+                      portalInput.getAttribute('aria-controls') || '').trim();
+        if (ownIds) {
+          var ownEl = document.getElementById(ownIds.split(/\s+/)[0]);
+          if (ownEl && !el.contains(ownEl)) {
+            var pOpts = Array.prototype.slice.call(ownEl.children).filter(function (c) {
+              return c.nodeType === 1;
+            });
+            return {
+              combobox: rootSel,
+              textbox: robustSelector(portalInput),
+              listbox: robustSelector(ownEl),
+              options: pOpts.length ? robustSelector(ownEl) + '>' + pOpts[0].tagName.toLowerCase() : null,
+              why: 'the input names its list with aria-owns; the list is rendered in a portal at body end',
+            };
+          }
+        }
+      }
+    } catch (e) {}
 
     // Climb until one element holds both halves. An autocomplete is exactly
     // "these two things belong together", and its wrapper is the smallest thing

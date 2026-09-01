@@ -273,6 +273,20 @@
       "fields": {}
     },
     {
+      "type": "combobox",
+      "root": "#auditCityBox",
+      "why": "7.5: the PORTAL combobox — the suggestion list lives at the end of <body>, the way floating-ui/portal libraries render it, and only aria-owns names the connection. The typing pass must find the far list; comboboxShape must accept it.",
+      "fields": {
+        "textbox": "#auditCityInput",
+        "listbox": "#auditCityList"
+      }
+    },
+    {
+      "type": "none",
+      "root": "#locatorFilter",
+      "why": "7.5's negative, formalised: a page FILTER — typing narrows a list that was always visible. probeTyping tells it from a combobox by when the list existed; pinned so the distinction never regresses."
+    },
+    {
       "type": "datepicker",
       "root": "#auditDatePanel",
       "why": "7.4: a popup month — weekday row, thirty running day buttons, a month-and-year header — opened from the calendar button beside a date field. The counting alone is NOT enough (see the locker grid); the weekday row or the month name is the necessary second witness.",

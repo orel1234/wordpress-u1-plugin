@@ -1071,6 +1071,35 @@ Mega.widgets = {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
 
+    // 7.5: the portal combobox — the list lives at body end; typing fills
+    // and places it under the field.
+    const cityIn = el('auditCityInput'), cityList = el('auditCityList');
+    if (cityIn && cityList) {
+      const CITIES = ['Tel Aviv', 'Jerusalem', 'Haifa', 'Beer Sheva', 'Netanya',
+        'Ashdod', 'Rishon', 'Petah Tikva', 'Holon', 'Eilat'];
+      cityIn.addEventListener('input', () => {
+        const q = cityIn.value.trim().toLowerCase();
+        const hits = q ? CITIES.filter((c) => c.toLowerCase().includes(q)) : [];
+        cityList.innerHTML = hits.map((c) =>
+          `<li style="padding:6px 10px;cursor:pointer">${c}</li>`).join('');
+        const r = cityIn.getBoundingClientRect();
+        cityList.style.left = (r.left + scrollX) + 'px';
+        cityList.style.top = (r.bottom + scrollY) + 'px';
+        cityList.style.width = r.width + 'px';
+        cityList.style.display = hits.length ? 'block' : 'none';
+        cityIn.setAttribute('data-expanded', String(hits.length > 0));
+      });
+      cityIn.addEventListener('blur', () => setTimeout(() => {
+        cityList.style.display = 'none'; cityIn.setAttribute('data-expanded', 'false');
+      }, 150));
+      cityList.addEventListener('click', (e) => {
+        const opt = e.target.closest('li');
+        if (!opt) return;
+        cityIn.value = opt.textContent;
+        cityList.style.display = 'none';
+      });
+    }
+
     // 7.4: the popup month — weekday row, running days, a month name.
     const dateBtn = el('auditDateBtn'), datePanel = el('auditDatePanel'),
           dateInput = el('auditDateInput');

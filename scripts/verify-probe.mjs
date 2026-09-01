@@ -695,6 +695,26 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 7.5: the portal combobox — the list lives at body end ───────────────────
+console.log('\n7.5 — a suggestion list parked in a portal is still found');
+{
+  const w = page(`
+    <div id="w">
+      <div id="box"><input id="q" type="text" aria-owns="far" placeholder="City"></div>
+    </div>
+    <ul id="far"></ul>`);
+  const d = w.document;
+  d.getElementById('q').addEventListener('input', () => {
+    d.getElementById('far').innerHTML = d.getElementById('q').value
+      ? '<li>Tel Aviv</li><li>Haifa</li>' : '';
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  const cb = out.components.find((c) => c.type === 'combobox');
+  check('typing fills a list OUTSIDE the walked scope — still a combobox',
+    !!cb && cb.parts.listbox && cb.parts.listbox[0] === d.getElementById('far'),
+    out.components.map((c) => c.type).join() || '(nothing)');
+}
+
 // ── 7.4: a month needs a second witness ─────────────────────────────────────
 console.log('\n7.4 — a popup month is a datepicker; running numbers alone are not');
 {
