@@ -7719,8 +7719,15 @@ document.getElementById('deleteAllBtn')?.addEventListener('click', async () => {
     // a clean slate stayed haunted — a scan on an emptied site still refused
     // to look at things nobody remembered refusing. Through set(), so the
     // server hears it too.
+    //
+    // Except the wholesale '*': that one is a judgement about the SITE'S OWN
+    // deployment, not about the work being deleted here, and clearing it made
+    // every clean-slate test cycle resurrect the "already running N U1 fixes"
+    // offer that had been turned down for good. Deleting your mappings says
+    // nothing about whether you want theirs.
+    const keepAll = (await declinedFixKeys()).has('*');
     await U1Store.set({
-      [storageKey('declined', currentHostname)]: [],
+      [storageKey('declined', currentHostname)]: keepAll ? ['*'] : [],
       [storageKey('dismissed', currentHostname)]: [],
     });
     // And the page itself: U1 keeps whatever it already wrote until a
