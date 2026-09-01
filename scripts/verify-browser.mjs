@@ -494,6 +494,43 @@ for (const variant of ONLY) {
     for (const o of r.observedList) console.log(`    ${o.type.padEnd(11)} ${o.root}  — ${o.why}`);
   }
 
+  // 7.15: every type the panel's picker offers, as its own row — zeros
+  // included, because "no coverage" is a finding and silence is not.
+  {
+    const ALL_TYPES = ['button', 'link', 'menu', 'accordion', 'carousel', 'datepicker',
+      'dialog', 'listbox', 'combobox', 'checkbox', 'radio', 'tabs', 'form', 'table',
+      'grid', 'pagination', 'loading', 'tooltip', 'heading', 'breadcrumb', 'aria-label'];
+    console.log('\n  coverage by type (labels: visible + openable · union named right):');
+    const tally = {};
+    for (const t of ALL_TYPES) tally[t] = { total: 0, right: 0 };
+    for (let i = 0; i < r.hint.rows.length; i++) {
+      const h = r.hint.rows[i], c = r.classify.rows[i];
+      if (!tally[h.type]) tally[h.type] = { total: 0, right: 0 };
+      tally[h.type].total++;
+      if (h.got === h.type || (c && c.got === h.type)) tally[h.type].right++;
+    }
+    for (const dd of r.openDetail || []) {
+      if (!tally[dd.type]) tally[dd.type] = { total: 0, right: 0 };
+      tally[dd.type].total++;
+      if (dd.named) tally[dd.type].right++;
+    }
+    // Three types have no component labels ON PURPOSE: a healthy link is
+    // not a component to publish (the styled-link pinned negative), heading
+    // rides the outline list (7.11), and aria-label is proposed from
+    // cardDescriptions/ambiguousLink findings (7.13) — not detected as an
+    // element on the page.
+    const OTHER_CHANNEL = {
+      link: 'covered by the pinned negative + 7.1 button split',
+      heading: 'covered by the heading outline (7.11)',
+      'aria-label': 'covered by cardDescriptions/ambiguousLink (7.13)',
+    };
+    for (const t of Object.keys(tally)) {
+      const v = tally[t];
+      console.log(`    ${t.padEnd(11)} ${String(v.right).padStart(2)}/${v.total}` +
+        (v.total === 0 ? `  — ${OTHER_CHANNEL[t] || 'NO FIXTURE YET'}` : ''));
+    }
+  }
+
   // Floor: on the non-hostile builds the UNION must hold recall and precision.
   if (variant !== '-hostile') {
     const worst = Math.min(pct(r.union.found, r.union.denom),
