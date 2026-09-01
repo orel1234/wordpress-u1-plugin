@@ -1206,11 +1206,10 @@ let recRecords = false, recAllTypes = false, recHarmless = false, recConverts = 
   // than half-adopted.
   recDropsUnknown = conv({ type: 'notathing', selector: '.z', props: {} }) === null;
 
-  // Adopting goes through the ONE save path, so an adopted mapping meets the
-  // same required-field refusal and role question as a hand-built one. A
-  // recorded call is evidence of what the site asked for, not proof it was right.
-  const adopts = /closest\('#adoptExistingBtn'\)[\s\S]{0,1200}saveMappingEntry\(tpl, \{ refreshUi: false \}\)/.test(panelSrc);
-  if (!adopts) recConverts = false;
+  // The adopt-the-site's-fixes OFFER is gone (owner, 2026-09-02) — nothing
+  // is offered and nothing is asked. mappingFromRecordedCall stays as the one
+  // honest reading of a recorded call, checked above; the pin on the adopt
+  // button's save path went with the button.
 }
 console.log(`  ${recRecords ? '✅' : '❌'} the patch records every fix the SITE runs — type, selector and props`);
 if (!recRecords) failed++;
