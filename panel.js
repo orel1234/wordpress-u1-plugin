@@ -970,10 +970,45 @@ async function applyConfig(config) {
         // write to window.u1 namespace object instead and try hooks on the raw value.
         const u1AsObj = (typeof u1Raw === 'object' && u1Raw !== null) ? u1Raw : null;
 
+        // The engine's visual focus is CSS variables on <body>, written ONCE —
+        // VisualFocusFixer arms a one-shot keydown and reads the config at the
+        // first Tab press, then removes its listener. So a colour changed
+        // after that moment was stored, previewed, exported — and never drawn:
+        // "the border does not change when I change colours". The variables
+        // themselves are the whole contract (read out of the real engine,
+        // u1_vanilla-js-a11y.js, VisualFocusFixer.setVisualFocus /
+        // setDoubleBorder / setRegularBorder — fetched 2026-09-01), so paint
+        // them directly and the next Tab shows the new border, no reload.
+        // The regular path also REMOVES --outer-border: the engine's own
+        // regular path leaves a stale double-border shadow standing.
+        let painted = false;
+        const paintFocusVars = () => {
+          try {
+            const st = (cfg.visualFocus && cfg.visualFocus.style) || {};
+            const b = document.body;
+            if (!b) return;
+            b.style.setProperty('--outline-color', st.color || 'black');
+            b.style.setProperty('--secondary-outline-color', st.secondaryColor || 'white');
+            if (st.doubleBorder) {
+              b.style.setProperty('--outline-width', '2px');
+              b.style.setProperty('--outline-offset', '0px');
+              b.style.setProperty('--outer-border', '0 0 0 4px ' + (st.secondaryColor || 'white'));
+            } else {
+              const w = !st.width ? 3 : (st.width <= 2 ? 2 : st.width);
+              b.style.setProperty('--outline-width', w + 'px');
+              b.style.setProperty('--outline-offset', (st.offset != null ? st.offset : 2) + 'px');
+              b.style.removeProperty('--outer-border');
+            }
+            painted = true;
+          } catch (e) {}
+        };
+
         if (!hasU1) {
-          // U1 global not found yet — pre-set config so U1 reads it on init
+          // U1 global not found yet — pre-set config so U1 reads it on init,
+          // and leave the variables ready for when its stylesheet arrives.
           window.u1 = { config: cfg };
-          return { ok: true, hasU1: false, calledHook: null };
+          paintFocusVars();
+          return { ok: true, hasU1: false, calledHook: null, painted };
         }
 
         // 3) Merge config (preserve any existing values U1 set on itself)
@@ -994,22 +1029,22 @@ async function applyConfig(config) {
         if (cfg.direction) u1.dir = cfg.direction;
         if (cfg.language) u1.lang = cfg.language;
 
-        // 4) Try known refresh entry-points
-        const hooks = ['applyConfig', 'refresh', 'init', 'run', 'start'];
-        for (const name of hooks) {
-          if (typeof u1[name] === 'function') {
-            try {
-              u1[name](cfg);
-              return { ok: true, hasU1: true, calledHook: name };
-            } catch (e) {
-              return { ok: false, hasU1: true, calledHook: name, err: String(e && e.message ? e.message : e) };
-            }
-          }
+        // 4) The engine's real configuration API — the only one it has. The
+        // old list here ('applyConfig', 'refresh', 'init', 'run', 'start')
+        // was guessed names, none of which the engine exposes; it exports
+        // exactly { fix, test, setConfiguration, setLanguage, images }.
+        // setConfiguration REPLACES window.u1.config (verified in the
+        // engine source), which is fine — cfg is the complete object.
+        let calledHook = null;
+        if (typeof u1.setConfiguration === 'function') {
+          try { u1.setConfiguration(cfg); calledHook = 'setConfiguration'; } catch (e) {}
         }
-
-        // 5) No live hook — signal caller to use background reload
+        // 5) And draw it. setConfiguration only stores; the engine reads the
+        // colours at the first Tab press and never again, so the change is
+        // painted here whether or not the API existed.
+        paintFocusVars();
         try { window.dispatchEvent(new CustomEvent('u1:configchanged', { detail: cfg })); } catch {}
-        return { ok: true, hasU1: true, calledHook: null, noRefreshHook: true };
+        return { ok: true, hasU1: true, calledHook, painted };
       },
       args: [config],
     });
@@ -3883,8 +3918,9 @@ async function maybeAutoApply() {
     const stored = await U1Store.get([skipKey]);
     const cfg = buildConfigObject(stored[skipKey] || []);
     const result = await applyConfig(cfg);
-    // No live refresh hook — reload the page so the change still takes effect.
-    if (result && result.ok && !result.calledHook) {
+    // The colours are painted live now (see applyConfig) — a reload is only
+    // for the case where even that failed (no <body> yet, page mid-load).
+    if (result && result.ok && !result.painted && !result.calledHook) {
       const tab = await getTab();
       if (tab) chrome.runtime.sendMessage({ action: 'injectConfigOnReload', tabId: tab.id, config: cfg });
     }
@@ -4176,8 +4212,11 @@ document.getElementById('runConfigBtn').addEventListener('click', async () => {
   const result = await applyConfig(cfg);
 
   if (result.ok) {
-    if (result.calledHook) {
-      showNotice(status, `Config applied via u1.${result.calledHook}().`, 'success');
+    if (result.painted || result.calledHook) {
+      // The border only ever shows while keyboard focus is on something —
+      // that is what visual focus IS — so "nothing changed" after a colour
+      // change usually means nobody pressed Tab. Say so.
+      showNotice(status, 'Applied. Click the page and press Tab — the focus border draws in the new colors.', 'success', 8000);
     } else {
       // No live refresh possible (CSP, no hook, or U1 not yet initialized) —
       // ask background.js to inject config at document_start on next load.
