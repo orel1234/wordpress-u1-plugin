@@ -271,6 +271,21 @@
       "fields": {}
     },
     {
+      "type": "dialog",
+      "root": "#auditRichTip",
+      "why": "7.10's split: a describedby target that HOLDS A BUTTON is a popover — a small dialog — not a tooltip. A 'tooltip' nobody can reach the control inside of is the classic trap; the pressable inside is the tell.",
+      "fields": {
+        "trigger": "#auditRichTipBtn"
+      },
+      "hidden": true
+    },
+    {
+      "type": "tooltip",
+      "root": "#auditBsTip",
+      "why": "7.10: the Bootstrap dialect — data-bs-toggle=tooltip on the trigger, content created at runtime. The trigger is the only element there is to point at, so the mapping roots there.",
+      "fields": {}
+    },
+    {
       "type": "loading",
       "root": "#auditSpinner",
       "why": "7.9: a spinner that appears on the press and hides itself 600ms later, under 20 characters of text the whole time. u1.fix.loading needs exactly one part — loadingBar, announced when it appears — so the transient element itself is the root. Behavioural: appeared, then vanished with nobody un-pressing.",

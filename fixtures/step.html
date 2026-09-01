@@ -1061,6 +1061,18 @@
       <strong style="grid-column:1/-1">Pick a locker</strong>
     </div>
 
+    <!-- 7.10 tooltip vs popover: the rich "tip" holds a BUTTON, so it is a
+         small dialog whatever the describedby suggests; and the Bootstrap
+         dialect — data-bs-toggle="tooltip", content created at runtime, the
+         trigger is all there is to point at. -->
+    <div style="margin-top:24px">
+      <button type="button" id="auditRichTipBtn" aria-describedby="auditRichTip">Insurance coverage</button>
+      <div id="auditRichTip" hidden style="position:absolute;background:#fff;border:1px solid #ccc;padding:10px;max-width:260px">
+        Fittings are covered by most insurers. <button type="button">Check my policy</button>
+      </div>
+      <button type="button" id="auditBsTip" data-bs-toggle="tooltip" title="Free within 30 days">Returns?</button>
+    </div>
+
     <!-- 7.9 loading: a spinner that lives 600ms after the press; a skeleton
          the page swaps for content on its own; and the pinned negative — a
          progressbar with aria-valuenow, which is PROGRESS, not a loading

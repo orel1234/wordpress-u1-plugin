@@ -1017,6 +1017,7 @@
     [/datepicker|calendar|pikaday|air-datepicker|MuiPickers|MuiDateCalendar/i, 'datepicker'],
     [/typeahead|tagify|tom-select|MuiAutocomplete|ng-select|vs__dropdown|ant-select/i, 'combobox'],
     [/\bspinner\b|\bloader\b|skeleton|shimmer/i, 'loading'],
+    [/tippy|popper__|MuiTooltip|ant-tooltip/i, 'tooltip'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
     [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
@@ -1440,6 +1441,24 @@
     // component", and it outranks every shape test below — a 3×3 layout table
     // wearing the role was still being called a table.
     if (role === 'presentation' || role === 'none') return null;
+    // Exceptions to "controls are parts" — a trigger that IS the whole
+    // mapping. Bootstrap's tooltip lives on its trigger (the content is
+    // created at runtime), and an <a> with a dead href plus a click
+    // affordance is a button someone built out of the wrong tag (7.1's
+    // markup arm — unreachable below this line, where A is a part).
+    try {
+      if ((el.getAttribute('data-bs-toggle') || '').toLowerCase() === 'tooltip') {
+        return { name: 'tooltip', sure: true };
+      }
+      if (el.tagName === 'A') {
+        const hA = el.getAttribute('href');
+        const tiA = el.getAttribute('tabindex');
+        const clickyA = el.hasAttribute('onclick') || (tiA != null && Number(tiA) >= 0);
+        if (/^javascript:/i.test(hA || '') || (!hA && clickyA)) {
+          return { name: 'button', sure: false };
+        }
+      }
+    } catch (e) {}
     if (PART_TAGS.has(el.tagName)) return null;
     // Ahead of the tag rule, and only for this one case.
     //
@@ -1567,6 +1586,24 @@
       }
     } catch (e) {}
 
+    // 7.10 tooltip. A hidden element some control DESCRIBES ITSELF BY is a
+    // tooltip — unless it holds something pressable, in which case it is a
+    // POPOVER wearing tooltip clothes: a small dialog, because a "tooltip"
+    // nobody can reach the button inside of is the classic trap. And the
+    // Bootstrap dialect: data-bs-toggle="tooltip" on the trigger, content
+    // created at runtime — the trigger is the only element there is to
+    // point at.
+    try {
+      if (el.id && (el.hasAttribute('hidden') || el.getBoundingClientRect().width === 0)) {
+        if (!el.closest('form') && !el.closest('[role="alert"]') &&
+            document.querySelector('[aria-describedby~="' + el.id + '"]')) {
+          return el.querySelector('button,a[href],input,[tabindex]')
+            ? { name: 'dialog', sure: true }
+            : { name: 'tooltip', sure: true };
+        }
+      }
+    } catch (e) {}
+
     // 7.9 loading. aria-busy is the page saying it outright. A progressbar
     // WITH aria-valuenow is a PROGRESS METER — it reports a value, it does
     // not announce a loading state — and is nobody's component here. A bare
@@ -1625,12 +1662,7 @@
       const t71 = el.tagName;
       const ti71 = el.getAttribute('tabindex');
       const clicky71 = el.hasAttribute('onclick') || (ti71 != null && Number(ti71) >= 0);
-      if (t71 === 'A') {
-        const h71 = el.getAttribute('href');
-        if (/^javascript:/i.test(h71 || '') || (!h71 && clicky71)) {
-          return { name: 'button', sure: false };
-        }
-      } else if ((t71 === 'DIV' || t71 === 'SPAN') && clicky71 &&
+      if ((t71 === 'DIV' || t71 === 'SPAN') && clicky71 &&
                  !el.getAttribute('role') && (el.textContent || '').trim().length <= 40 &&
                  el.children.length === 0) {
         return { name: 'button', sure: false };
@@ -1780,7 +1812,7 @@
     // "calendar" — the two words the hand list already collects. No
     // apostrophes in these comments: verify-detect pairs quotes to read the
     // list, and a stray one shifts every string after it.
-    'pikaday', 'MuiPickers',
+    'pikaday', 'MuiPickers', 'tippy', 'popper__', 'MuiTooltip', 'ant-tooltip',
     // 7.5 combobox libraries.
     'typeahead', 'tagify', 'tom-select', 'MuiAutocomplete', 'ng-select',
     'vs__dropdown', 'ant-select',
@@ -2007,7 +2039,7 @@
   // knows that an attribute whose name ends in `target` holds a selector, and
   // that ARIA's relationship attributes hold ID references. A framework that
   // spells its own attribute the same way is picked up for free.
-  const REL_IDREF_ATTRS = ['aria-controls', 'aria-owns', 'popovertarget'];
+  const REL_IDREF_ATTRS = ['aria-controls', 'aria-owns', 'popovertarget', 'aria-describedby'];
   const REL_SELECTOR_ATTRS = [
     'data-target', 'data-bs-target', 'data-modal-target', 'data-drawer-target',
     'data-dropdown-target', 'data-menu-target', 'data-collapse-target',

@@ -1071,6 +1071,17 @@ Mega.widgets = {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
 
+    // 7.10: the rich tip opens on hover/focus — a popover, not a tooltip.
+    const rtBtn = el('auditRichTipBtn'), rt = el('auditRichTip');
+    if (rtBtn && rt) {
+      const showRt = () => { rt.hidden = false; };
+      const hideRt = () => { rt.hidden = true; };
+      rtBtn.addEventListener('mouseenter', showRt);
+      rtBtn.addEventListener('focus', showRt);
+      rtBtn.addEventListener('mouseleave', hideRt);
+      rtBtn.addEventListener('blur', hideRt);
+    }
+
     // 7.9: the spinner lives 600ms; the skeleton swaps itself for content.
     const checkBtn = el('auditCheckBtn'), spin = el('auditSpinner'), checkOut = el('auditCheckResult');
     if (checkBtn && spin) {

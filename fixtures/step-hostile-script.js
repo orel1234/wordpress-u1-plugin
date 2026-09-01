@@ -323,7 +323,7 @@ Store.header = (() => {
     const { product, size, colorName, qty, index } = item;
     const color = product.colors.find(c => c.name === colorName) || product.colors[0];
     return `
-      <div class="cb9" data-xw="${index}">
+      <div class="cb9" data-xx="${index}">
         <div class="c4w" style="background:${color.hex}">
           ${Store.shoeIconSVG('rgba(255,255,255,0.92)')}
         </div>
@@ -332,21 +332,21 @@ Store.header = (() => {
           <div class="c5x">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
           <div class="c6r">
             <div class="c9u" data-xa>
-              <div class="c5j" data-x12="-1">−</div>
+              <div class="c5j" data-x13="-1">−</div>
               <span class="c3h">${qty}</span>
-              <div class="c5j" data-x12="1">+</div>
+              <div class="c5j" data-x13="1">+</div>
             </div>
           </div>
         </div>
         <div class="c2y">
           <span class="c4v">${Store.utils.formatPrice(product.price * qty)}</span>
-          <div class="c3q" data-xr>Remove</div>
+          <div class="c3q" data-xs>Remove</div>
         </div>
       </div>`;
   }
 
   function renderDrawer() {
-    const itemsEl = document.getElementById('ev');
+    const itemsEl = document.getElementById('ew');
     const footerEl = document.getElementById('ei');
     if (!itemsEl) return;
     const items = Store.cart.withProducts();
@@ -380,18 +380,18 @@ Store.header = (() => {
   }
 
   function handleDrawerClick(e) {
-    const stepBtn = e.target.closest('[data-x12]');
-    const removeBtn = e.target.closest('[data-xr]');
+    const stepBtn = e.target.closest('[data-x13]');
+    const removeBtn = e.target.closest('[data-xs]');
     if (stepBtn) {
       const line = stepBtn.closest('.cb9');
-      const index = Number(line.dataset.xw);
+      const index = Number(line.dataset.xx);
       const items = Store.cart.read();
-      const delta = Number(stepBtn.dataset.x12);
+      const delta = Number(stepBtn.dataset.x13);
       Store.cart.updateQty(index, items[index].qty + delta);
       renderDrawer();
     } else if (removeBtn) {
       const line = removeBtn.closest('.cb9');
-      Store.cart.remove(Number(line.dataset.xw));
+      Store.cart.remove(Number(line.dataset.xx));
       renderDrawer();
     }
   }
@@ -411,10 +411,10 @@ Store.header = (() => {
     renderBadge();
     document.addEventListener('cart:change', renderBadge);
 
-    const cartBtn = document.getElementById('e2u');
-    const closeBtn = document.getElementById('eu');
+    const cartBtn = document.getElementById('e2x');
+    const closeBtn = document.getElementById('ev');
     const overlay = document.getElementById('e4');
-    const itemsEl = document.getElementById('ev');
+    const itemsEl = document.getElementById('ew');
 
     if (cartBtn) cartBtn.addEventListener('click', openDrawer);
     if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
@@ -442,7 +442,7 @@ Store.header = (() => {
    ========================================================================== */
 Store.homePage = (() => {
   function renderCategories() {
-    const el = document.getElementById('e27');
+    const el = document.getElementById('e29');
     if (!el) return;
     const palette = ['#b5432b', '#233150', '#5b3a22', '#3c5a44', '#8a8577'];
     el.innerHTML = Store.CATEGORIES.map((cat, i) => {
@@ -464,7 +464,7 @@ Store.homePage = (() => {
     return `
       <div class="c8w">
         ${badgeHtml}
-        <div class="c3c" data-xp="false" data-x14="${p.id}">♥</div>
+        <div class="c3c" data-xq="false" data-x15="${p.id}">♥</div>
         <a class="c28" style="background:${p.colors[0].hex}" href="product.html?id=${p.id}">
           ${Store.shoeIconSVG('#fff')}
         </a>
@@ -480,12 +480,12 @@ Store.homePage = (() => {
             ${p.colors.map(c => `<span class="c1i" style="background:${c.hex}" title="${c.name}"></span>`).join('')}
           </div>
         </div>
-        <div class="c48" data-xh="${p.id}">Add to Cart</div>
+        <div class="c48" data-xi="${p.id}">Add to Cart</div>
       </div>`;
   }
 
   function renderFeatured() {
-    const el = document.getElementById('e28');
+    const el = document.getElementById('e2a');
     if (!el) return;
     el.innerHTML = Array.from({ length: 4 }, () => `
       <div class="c8w ct">
@@ -504,21 +504,21 @@ Store.homePage = (() => {
   }
 
   function handleGridClick(e) {
-    const quickAdd = e.target.closest('[data-xh]');
-    const wish = e.target.closest('[data-x14]');
+    const quickAdd = e.target.closest('[data-xi]');
+    const wish = e.target.closest('[data-x15]');
     if (quickAdd) {
-      const product = Store.getProduct(quickAdd.dataset.xh);
+      const product = Store.getProduct(quickAdd.dataset.xi);
       Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
       Store.toast.show(`${product.name} added to cart`, 'success');
     } else if (wish) {
-      const pressed = wish.dataset.xp === 'true';
-      wish.dataset.xp = String(!pressed);
+      const pressed = wish.dataset.xq === 'true';
+      wish.dataset.xq = String(!pressed);
       wish.classList.toggle('c5', !pressed);
     }
   }
 
   function init() {
-    if (!document.getElementById('e28')) return;
+    if (!document.getElementById('e2a')) return;
     renderCategories();
     renderFeatured();
     document.body.addEventListener('click', handleGridClick);
@@ -565,7 +565,7 @@ Store.shopPage = (() => {
     if (state.badge) chips.push({ type: 'badge', value: state.badge, label: state.badge === 'sale' ? 'Sale' : 'New Arrivals' });
 
     el.innerHTML = chips.map(c => `
-      <span class="c9i" data-xg="${c.type}" data-x9="${c.value}">
+      <span class="c9i" data-xh="${c.type}" data-x9="${c.value}">
         ${c.label} <div>✕</div>
       </span>`).join('');
   }
@@ -584,7 +584,7 @@ Store.shopPage = (() => {
     const sizeGroup = document.getElementById('sizeFilterGroup');
     const allSizes = Array.from(new Set(Store.PRODUCTS.flatMap(p => p.sizes))).sort((a, b) => a - b);
     sizeGroup.innerHTML = allSizes.map(s => `
-      <div class="cbq ${state.sizes.has(s) ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
+      <div class="cbq ${state.sizes.has(s) ? 'c4m' : ''}" data-x12="${s}">${s}</div>`).join('');
 
     document.getElementById('priceRange').value = state.maxPrice;
     document.getElementById('priceRangeValue').textContent = Store.utils.formatPrice(state.maxPrice);
@@ -611,11 +611,11 @@ Store.shopPage = (() => {
   function renderPagination(totalPages) {
     const el = document.getElementById('shopPagination');
     if (totalPages <= 1) { el.innerHTML = ''; return; }
-    let html = `<div class="c6d" data-x10="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''}>‹</div>`;
+    let html = `<div class="c6d" data-x11="${state.page - 1}" ${state.page === 1 ? 'disabled' : ''}>‹</div>`;
     for (let i = 1; i <= totalPages; i++) {
-      html += `<div class="c5f ${i === state.page ? 'cc' : ''}" data-x10="${i}">${i}</div>`;
+      html += `<div class="c5f ${i === state.page ? 'cc' : ''}" data-x11="${i}">${i}</div>`;
     }
-    html += `<div class="c6d" data-x10="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''}>›</div>`;
+    html += `<div class="c6d" data-x11="${state.page + 1}" ${state.page === totalPages ? 'disabled' : ''}>›</div>`;
     el.innerHTML = html;
   }
 
@@ -631,7 +631,7 @@ Store.shopPage = (() => {
   function handleSidebarClick(e) {
     const sizeChip = e.target.closest('.cbq');
     if (sizeChip) {
-      const size = Number(sizeChip.dataset.x11);
+      const size = Number(sizeChip.dataset.x12);
       state.sizes.has(size) ? state.sizes.delete(size) : state.sizes.add(size);
       state.page = 1;
       renderGrid();
@@ -657,9 +657,9 @@ Store.shopPage = (() => {
   }
 
   function handleGridClick(e) {
-    const pageBtn = e.target.closest('#shopPagination [data-x10]');
+    const pageBtn = e.target.closest('#shopPagination [data-x11]');
     if (pageBtn) {
-      const page = Number(pageBtn.dataset.x10);
+      const page = Number(pageBtn.dataset.x11);
       if (page >= 1) { state.page = page; renderGrid(); window.scrollTo({ top: document.getElementById('shopGrid').offsetTop - 100, behavior: 'smooth' }); }
     }
   }
@@ -674,15 +674,15 @@ Store.shopPage = (() => {
     document.getElementById('activeFilterChips').addEventListener('click', handleChipsClick);
     document.getElementById('shopPagination').addEventListener('click', handleGridClick);
     document.getElementById('shopGrid').addEventListener('click', e => {
-      const quickAdd = e.target.closest('[data-xh]');
-      const wish = e.target.closest('[data-x14]');
+      const quickAdd = e.target.closest('[data-xi]');
+      const wish = e.target.closest('[data-x15]');
       if (quickAdd) {
-        const product = Store.getProduct(quickAdd.dataset.xh);
+        const product = Store.getProduct(quickAdd.dataset.xi);
         Store.cart.add(product.id, product.sizes[Math.floor(product.sizes.length / 2)], product.colors[0].name, 1);
         Store.toast.show(`${product.name} added to cart`, 'success');
       } else if (wish) {
-        const pressed = wish.dataset.xp === 'true';
-        wish.dataset.xp = String(!pressed);
+        const pressed = wish.dataset.xq === 'true';
+        wish.dataset.xq = String(!pressed);
         wish.classList.toggle('c5', !pressed);
       }
     });
@@ -718,14 +718,14 @@ Store.productPage = (() => {
     const thumbs = document.getElementById('galleryThumbs');
     thumbs.innerHTML = product.colors.map(c => `
       <div class="cu ${c.name === selectedColor.name ? 'c0' : ''}"
-        style="background:${c.hex}" data-xv="${Store.utils.escapeHtml(c.name)}">
+        style="background:${c.hex}" data-xw="${Store.utils.escapeHtml(c.name)}">
         ${Store.shoeIconSVG('#fff')}
       </div>`).join('');
   }
 
   function renderColors() {
     document.getElementById('colorOptions').innerHTML = product.colors.map(c => `
-      <div class="c8i ${c.name === selectedColor.name ? 'c1a' : ''}" data-xv="${Store.utils.escapeHtml(c.name)}">
+      <div class="c8i ${c.name === selectedColor.name ? 'c1a' : ''}" data-xw="${Store.utils.escapeHtml(c.name)}">
         <span class="c31" style="background:${c.hex}"></span>
       </div>`).join('');
     document.getElementById('selectedColorLabel').textContent = selectedColor.name;
@@ -733,7 +733,7 @@ Store.productPage = (() => {
 
   function renderSizes() {
     document.getElementById('sizeOptions').innerHTML = product.sizes.map(s => `
-      <div class="cbq ${s === c91 ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
+      <div class="cbq ${s === c91 ? 'c4m' : ''}" data-x12="${s}">${s}</div>`).join('');
   }
 
   function renderInfo() {
@@ -768,14 +768,14 @@ Store.productPage = (() => {
   }
 
   function handleOptionClick(e) {
-    const colorBtn = e.target.closest('[data-xv]');
+    const colorBtn = e.target.closest('[data-xw]');
     const sizeBtn = e.target.closest('.cbq');
     if (colorBtn) {
-      selectedColor = product.colors.find(c => c.name === colorBtn.dataset.xv);
+      selectedColor = product.colors.find(c => c.name === colorBtn.dataset.xw);
       renderGallery();
       renderColors();
     } else if (sizeBtn) {
-      selectedSize = Number(sizeBtn.dataset.x11);
+      selectedSize = Number(sizeBtn.dataset.x12);
       renderSizes();
       document.getElementById('sizeError').classList.remove('c2n');
     }
@@ -784,9 +784,9 @@ Store.productPage = (() => {
   function initQtyStepper() {
     const valueEl = document.getElementById('qtyValue');
     document.getElementById('qtyStepper').addEventListener('click', e => {
-      const btn = e.target.closest('[data-x12]');
+      const btn = e.target.closest('[data-x13]');
       if (!btn) return;
-      const next = Math.max(1, Number(valueEl.textContent) + Number(btn.dataset.x12));
+      const next = Math.max(1, Number(valueEl.textContent) + Number(btn.dataset.x13));
       valueEl.textContent = next;
     });
   }
@@ -844,7 +844,7 @@ Store.cartPage = (() => {
     const { product, size, colorName, qty, index } = item;
     const color = product.colors.find(c => c.name === colorName) || product.colors[0];
     return `
-      <div data-t="t4" data-xw="${index}">
+      <div data-t="t4" data-xx="${index}">
         <div data-t="t6">
           <div class="c1v">
             <div class="c3r" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
@@ -856,14 +856,14 @@ Store.cartPage = (() => {
         </div>
         <div data-t="t6">${Store.utils.formatPrice(product.price)}</div>
         <div data-t="t6">
-          <div class="c9u" data-xj>
-            <div class="c5j" data-x12="-1">−</div>
+          <div class="c9u" data-xk>
+            <div class="c5j" data-x13="-1">−</div>
             <span class="c3h">${qty}</span>
-            <div class="c5j" data-x12="1">+</div>
+            <div class="c5j" data-x13="1">+</div>
           </div>
         </div>
         <div data-t="t6"><strong>${Store.utils.formatPrice(product.price * qty)}</strong></div>
-        <div data-t="t6"><div class="c3q" data-xr>Remove</div></div>
+        <div data-t="t6"><div class="c3q" data-xs>Remove</div></div>
       </div>`;
   }
 
@@ -910,17 +910,17 @@ Store.cartPage = (() => {
   }
 
   function handleTableClick(e) {
-    const stepBtn = e.target.closest('[data-x12]');
-    const removeBtn = e.target.closest('[data-xr]');
+    const stepBtn = e.target.closest('[data-x13]');
+    const removeBtn = e.target.closest('[data-xs]');
     if (stepBtn) {
       const row = stepBtn.closest('tr');
-      const index = Number(row.dataset.xw);
+      const index = Number(row.dataset.xx);
       const items = Store.cart.read();
-      Store.cart.updateQty(index, items[index].qty + Number(stepBtn.dataset.x12));
+      Store.cart.updateQty(index, items[index].qty + Number(stepBtn.dataset.x13));
       render();
     } else if (removeBtn) {
       const row = removeBtn.closest('tr');
-      Store.cart.remove(Number(row.dataset.xw));
+      Store.cart.remove(Number(row.dataset.xx));
       Store.toast.show('Item removed from cart', 'info');
       render();
     }
