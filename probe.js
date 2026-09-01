@@ -1072,14 +1072,18 @@
   // stage-4 closing report lists these by name; a walk that cannot put the
   // page back must say so, not shrug.
   var runResidue = [];  // [{ el, residue }]
+  // R2: dots stashed at press time, handed to their carousel at the run pass.
+  var runDots = [];
+  var runDotsSeen = new Set();
   function resetRun() {
     runResults = []; runPressed = []; runExtras = []; runPlan = null;
-    runCarry = []; runStarved = []; runResidue = [];
+    runCarry = []; runStarved = []; runResidue = []; runDots = []; runDotsSeen = new Set();
     everPressed = new WeakSet();
     everTyped = new WeakSet();
   }
   function classifyRun() {
     var comps = classify(runResults, runPressed, { climb: true });
+
     // The observations nobody pressed for — the idle-watch's carousels and
     // the overlays that opened themselves — are not in the press ledger, and
     // the first run-level pass silently dropped every one of them. They ride
@@ -1090,6 +1094,20 @@
           (o.root === c.root || o.root.contains(c.root) || c.root.contains(o.root));
       });
       if (!dup) comps.push(c);
+    });
+    // R2: hand each stashed dots strip to the carousel it belongs to — the
+    // comp whose root contains the dots' parent, or sits beside it under
+    // one grandparent.
+    runDots.forEach(function (dg) {
+      for (var ci = 0; ci < comps.length; ci++) {
+        var c = comps[ci];
+        if (c.type !== 'carousel' || !c.root) continue;
+        var near = c.root.contains(dg.parent) ||
+          (dg.parent.parentElement && dg.parent.parentElement.contains(c.root)) ||
+          (dg.parent.parentElement && dg.parent.parentElement.parentElement &&
+           dg.parent.parentElement.parentElement.contains(c.root));
+        if (near) { if (!c.parts.dots) c.parts.dots = dg.dots; break; }
+      }
     });
     return comps;
   }
@@ -1533,6 +1551,8 @@
 
     byParent.forEach(function (siblings, groupKey) {
       if (siblings.length < 2) return;
+      // R2: a strip of dots is the carousel's paging, not tabs or a menu.
+      try { if (looksLikeDots(siblings[0])) return; } catch (e) {}
       // 4.3 swap-in-place: a press that opened NOTHING but closed two or
       // more things and re-rendered a container is a reveal too — the strip
       // that rebuilds its region in place (dealTabs) produced opened:[] on
@@ -1696,6 +1716,8 @@
       // the density valve presses three delegates of a locker wall, and
       // "1 2 3" pressed is not a pager when twenty-nine brothers watch.
       if (g.nums.length < 3) return;
+      // R2: tiny numbered dots beside a track are the carousel's, not pages.
+      if (looksLikeDots(g.nums[0])) return;
       var famNums = 0;
       try {
         var fkids = g.parent.children;
@@ -2049,6 +2071,57 @@
    * It costs real time — a slide sits for seconds — so the window is a
    * parameter and the whole thing is skipped when it is zero.
    */
+  // R2 (survey round 2): the ONE guard before radio, pagination and the
+  // strip rules alike. Three-plus small (≤24px) same-shape pressable
+  // siblings, sitting beside a run of bigger same-kind panes (a track) or
+  // saying "slide" in an aria-label, are a carousel's DOTS — parts of it,
+  // nobody's component. gov.il's gallery dots read as three radio groups.
+  function looksLikeDots(el) {
+    try {
+      var par = el.parentElement;
+      if (!par) return null;
+      // Same TAG is identity enough — the active dot usually wears an
+      // extra class (gov.il: src_active on one of two), and a two-page
+      // gallery has exactly two dots.
+      var kin = [], tag = el.tagName;
+      for (var i = 0; i < par.children.length; i++) {
+        var k = par.children[i];
+        if (k.tagName !== tag) continue;
+        kin.push(k);
+      }
+      if (kin.length < 2) return null;
+      for (var j = 0; j < kin.length; j++) {
+        var r = kin[j].getBoundingClientRect();
+        if (r.width > 24 || r.height > 24) return null;
+      }
+      var label = ((el.getAttribute('aria-label') || '') + ' ' +
+                   (par.getAttribute('aria-label') || '') + ' ' +
+                   String(par.className || ''));
+      if (/slide|שקופית|pager|\bdots?\b|bullet/i.test(label)) return { parent: par, dots: kin };
+      // Beside a track: some sibling of the dots' parent (or of its parent)
+      // holds ≥3 same-tag children each bigger than a dot.
+      var homes = [par.parentElement, par.parentElement && par.parentElement.parentElement];
+      for (var h = 0; h < homes.length; h++) {
+        var home = homes[h];
+        if (!home) continue;
+        for (var s = 0; s < home.children.length; s++) {
+          var sib = home.children[s];
+          if (sib === par || sib.contains(par)) continue;
+          var kids = sib.children;
+          if (kids.length < 3) continue;
+          var big = 0, t0 = kids[0].tagName;
+          for (var kx = 0; kx < kids.length; kx++) {
+            if (kids[kx].tagName !== t0) { big = 0; break; }
+            var kr = kids[kx].getBoundingClientRect();
+            if (kr.width > 24 && kr.height > 24) big++;
+          }
+          if (big >= 3) return { parent: par, dots: kin };
+        }
+      }
+      return null;
+    } catch (e) { return null; }
+  }
+
   // 7.14: anything that could stop the motion — a pause/stop control by
   // word, symbol or aria-label, anywhere under the carousel's root.
   function hasPauseControl(rootEl) {
@@ -2940,7 +3013,15 @@
         } catch (e) {}
         var switchy = role71 === 'switch' ||
           /(^|[\s_-])(switch|toggle)([\s_-]|$)/i.test(String(el71.className || ''));
-        if (quiet71 && !wrapsNative &&
+        // R2: dots first — a carousel's paging dots wear the radio shape
+        // (mutual exclusion) and must never become one. Stashed for the
+        // run pass to hand to their carousel.
+        var dots71 = looksLikeDots(el71);
+        if (dots71 && !runDotsSeen.has(dots71.parent)) {
+          runDotsSeen.add(dots71.parent);
+          runDots.push(dots71);
+        }
+        if (!dots71 && quiet71 && !wrapsNative &&
             (r.checkedFlipped || (switchy && r.onFlipped) ||
              ((r.onFlipped || r.boolFlip || r.stateClass) && r.sibUnmarked.length) ||
              (r.boolFlip && !r.stateClass))) {
@@ -2979,7 +3060,7 @@
             comps.push(swComp);
             runExtras.push(swComp);
           }
-        } else if (quiet71 && !wrapsNative &&
+        } else if (!dots71 && quiet71 && !wrapsNative &&
             (r.stateClass || r.touched > 0 || selfRr71)) {
           var href71 = null;
           try { if (tag71 === 'A') href71 = el71.getAttribute('href') || ''; } catch (e) {}

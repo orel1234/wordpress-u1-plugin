@@ -917,6 +917,52 @@ console.log('\n7.3 — vertical tabs are still tabs');
     out.components.map((c) => c.type + ':' + (c.root.id || '')).join() || '(nothing)');
 }
 
+// ── R2 (survey round 2): dots belong to the carousel ────────────────────────
+//
+// gov.il's gallery paging dots — tiny identical siblings whose marking is
+// mutually exclusive — read as RADIO. And tiny numbered dots would read as
+// pagination. One guard before both: ≥3 small (≤24px) same-shape pressable
+// siblings beside a track are the carousel's dots — parts of it, nobody's
+// component.
+console.log('\nR2 — tiny mutually-exclusive siblings beside a track are dots');
+{
+  const mk = (dotsHtml) => {
+    const w = page(`
+      <div id="w"><div id="gal">
+        <div id="track">
+          <div class="slide">one</div><div class="slide">two</div><div class="slide">three</div>
+        </div>
+        <div id="dots">${dotsHtml}</div>
+      </div></div>`);
+    const d = w.document;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.closest && this.closest('#dots')) return { width: 10, height: 10, top: 300, bottom: 310, left: 10, right: 20 };
+      return { width: 300, height: 200, top: 10, bottom: 210, left: 10, right: 310 };
+    };
+    return w;
+  };
+
+  // The radio shape: choosing a dot marks it and unmarks its brother.
+  const w1 = mk(`<button class="dot" data-checked="true">•</button><button class="dot" data-checked="false">•</button><button class="dot" data-checked="false">•</button>`);
+  const d1 = w1.document;
+  d1.getElementById('dots').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    for (const x of d1.querySelectorAll('.dot')) x.setAttribute('data-checked', String(x === b));
+  });
+  let out = await w1.__u1Probe.probeAll(d1.getElementById('w'), { settle: 0, idle: 0 });
+  check('mutually-exclusive DOTS are not a radio',
+    !out.components.some((c) => c.type === 'radio'),
+    out.components.map((c) => c.type).join() || '(nothing)');
+
+  // The pagination shape: tiny numbered dots.
+  const w2 = mk(`<button class="dot">1</button><button class="dot">2</button><button class="dot">3</button>`);
+  out = await w2.__u1Probe.probeAll(w2.document.getElementById('w'), { settle: 0, idle: 0 });
+  check('tiny numbered dots are not pagination',
+    !out.components.some((c) => c.type === 'pagination'),
+    out.components.map((c) => c.type).join() || '(nothing)');
+}
+
 // ── 7.2: a switch flips aria-checked; a radio unmarks its sibling ───────────
 console.log('\n7.2 — checked-state vocabulary makes it a checkbox or a radio');
 {
