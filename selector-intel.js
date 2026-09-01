@@ -1125,16 +1125,53 @@
         // The bare-text case: <a>Home</a> / <a>Shoes</a>, with the slash as a
         // text node rather than an element of its own.
         var between = text;
-        for (var j = 0; j < links.length; j++) {
-          between = between.replace((links[j].textContent || '').trim(), ' ');
+        // Remove EVERY element child's text, not only the links' — the
+        // non-link last item ("Runner Pro") otherwise survives into the
+        // gaps and reads as a failed separator.
+        var kidEls = el.querySelectorAll('*');
+        for (var j = 0; j < kidEls.length; j++) {
+          var kt = (kidEls[j].textContent || '').trim();
+          if (kt) between = between.replace(kt, ' ');
         }
         var gaps = between.split(' ').filter(function (g) { return g.trim(); });
         separated = gaps.length >= 1 && gaps.every(function (g) { return SEPARATOR_RE.test(g); });
       }
+      if (!separated) {
+        // 7.12: separators drawn by CSS — `li::before { content: "/" }` —
+        // leave no text for the rules above to find. Read the pseudo-element
+        // of the first few children; a content string that is a separator
+        // character is the same statement.
+        try {
+          for (var pi = 0; pi < el.children.length && pi < 4 && !separated; pi++) {
+            var pc = getComputedStyle(el.children[pi], '::before').content || '';
+            var inner = pc.replace(/^["']|["']$/g, '');
+            if (inner && inner !== 'none' && SEPARATOR_RE.test(inner)) separated = true;
+          }
+        } catch (e) {}
+      }
       if (!separated) return false;
 
-      // …and smaller than the page's body text. Read last, because this is the
-      // only call here that costs anything.
+      // 7.12: the trail's OWN grammar decides, not its font. The last item
+      // is where you ARE — not a link, or marked aria-current=page — and
+      // the trail sits before the page's content (main / the first h1), not
+      // after it. The font stays only as a tie-break when the last item is
+      // itself a link (some sites link the current page too).
+      var last = null;
+      for (var li = el.children.length - 1; li >= 0; li--) {
+        var lk = el.children[li];
+        if ((lk.textContent || '').trim() && !SEPARATOR_RE.test((lk.textContent || '').trim())) { last = lk; break; }
+      }
+      var lastIsCurrent = !!last && (
+        !last.matches('a[href]') && !last.querySelector('a[href]') ||
+        !!el.querySelector('[aria-current="page"]'));
+      var beforeMain = true;
+      try {
+        var mainEl = document.querySelector('main,[role="main"],h1');
+        if (mainEl && !(el.compareDocumentPosition(mainEl) & 4)) beforeMain = false;   // 4 = el precedes main
+      } catch (e) {}
+      if (lastIsCurrent && beforeMain) return true;
+      if (!beforeMain) return false;
+      // Tie-break only: a fully-linked trail before main, in smaller type.
       var size = parseFloat((getComputedStyle(el) || {}).fontSize) || 0;
       var base = parseFloat((getComputedStyle(document.body) || {}).fontSize) || 16;
       return !!size && size < base;
@@ -1526,6 +1563,17 @@
     }
 
     const tag = el.tagName.toLowerCase();
+    // 7.12: schema.org microdata says it outright, whatever the tag.
+    try {
+      if (/BreadcrumbList/i.test(el.getAttribute('itemtype') || '')) {
+        return { name: 'breadcrumb', sure: true };
+      }
+    } catch (e) {}
+    // 7.12 before the tag speaks: a <nav> that IS a trail — links with
+    // separators, the last item where you are, before the page's content —
+    // is a breadcrumb, not a menu. The word rules above already took every
+    // trail that says the word; this is for the ones that do not.
+    if (tag === 'nav' && looksLikeBreadcrumb(el)) return { name: 'breadcrumb', sure: false };
     if (COMPONENT_BY_TAG[tag]) return { name: COMPONENT_BY_TAG[tag], sure: true };
 
     // A strip of role="tab" with no role="tablist" around it. Extremely common —

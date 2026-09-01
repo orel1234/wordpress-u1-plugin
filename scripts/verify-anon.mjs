@@ -768,6 +768,45 @@ console.log('\na form\'s required fields are read off the page, not asked for');
     w1 && w1.unlabeledFields && w1.unlabeledFields.selector);
 }
 
+console.log('\n7.12 — a trail is grammar, not a font size');
+{
+  const mk = (body) => {
+    const d = new JSDOM(`<html><body>${body}<main><h1>Page</h1></main></body></html>`,
+      { runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = d.window;
+    w.HTMLElement.prototype.getBoundingClientRect = function () {
+      return { width: 200, height: 20, top: 10, bottom: 30, left: 10, right: 210 };
+    };
+    Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return 40; }, configurable: true });
+    w.eval(INTEL);
+    return w;
+  };
+  // Same-size text, but the grammar is complete: links, separators, a
+  // non-link last item, before <main>. The font must not be required.
+  const w1 = mk(`<nav id="bc"><a href="/">Home</a> › <a href="/shoes">Shoes</a> › <span>Runner Pro</span></nav>`);
+  const c1 = w1.__u1SelectorIntel.collectCandidates(100, null).candidates.find((x) => x.selector === '#bc');
+  check('links + separator + non-link last item, before main — a breadcrumb at any size',
+    !!c1 && c1.component === 'breadcrumb', c1 && (c1.component || '(none)'));
+  // The trail AFTER main is a footer nav, not a breadcrumb.
+  const d2 = new JSDOM(`<html><body><main><h1>Page</h1></main>
+    <nav id="ft"><a href="/">Home</a> › <a href="/shoes">Shoes</a> › <span>Runner Pro</span></nav></body></html>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true });
+  const w2 = d2.window;
+  w2.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { width: 200, height: 20, top: 10, bottom: 30, left: 10, right: 210 };
+  };
+  Object.defineProperty(w2.HTMLElement.prototype, 'offsetWidth', { get() { return 40; }, configurable: true });
+  w2.eval(INTEL);
+  const c2 = w2.__u1SelectorIntel.collectCandidates(100, null).candidates.find((x) => x.selector === '#ft');
+  check('the same trail AFTER main is not a breadcrumb',
+    !!c2 && c2.component !== 'breadcrumb', c2 && (c2.component || '(none)'));
+  // schema.org microdata says it outright.
+  const w3 = mk(`<nav id="sd" itemtype="https://schema.org/BreadcrumbList"><a href="/">Home</a></nav>`);
+  const c3 = w3.__u1SelectorIntel.collectCandidates(100, null).candidates.find((x) => x.selector === '#sd');
+  check('microdata BreadcrumbList is sure', !!c3 && c3.component === 'breadcrumb' && !c3.maybe,
+    c3 && (c3.component || '(none)'));
+}
+
 console.log('\n7.11 — the headings nobody hears');
 {
   const d = new JSDOM(`<html><body style="font-size:16px">
