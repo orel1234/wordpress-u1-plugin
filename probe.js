@@ -1095,6 +1095,23 @@
       });
       if (!dup) comps.push(c);
     });
+    // R3 (survey round 2): one component, one row. Pressing six members of
+    // one family produced six identical comps on the same root — the panel
+    // merged them later by selector, but every consumer upstream of the
+    // panel (the harness, the survey, the model's brief) saw the noise.
+    var dedup3 = [], seen3 = new Set();
+    for (var di3 = 0; di3 < comps.length; di3++) {
+      var c3 = comps[di3];
+      var key3 = c3.type + '|';
+      try { key3 += c3.root ? (c3.root.id || '') + '#' + (c3.root.tagName || '') : ''; } catch (e) {}
+      var dupOf = null;
+      for (var dj3 = 0; dj3 < dedup3.length; dj3++) {
+        if (dedup3[dj3].type === c3.type && dedup3[dj3].root === c3.root) { dupOf = dedup3[dj3]; break; }
+      }
+      if (dupOf) continue;
+      dedup3.push(c3);
+    }
+    comps = dedup3;
     // R2: hand each stashed dots strip to the carousel it belongs to — the
     // comp whose root contains the dots' parent, or sits beside it under
     // one grandparent.
