@@ -489,6 +489,22 @@
 
     if (/^(button|link|menuitem|menuitemcheckbox|menuitemradio|tab|checkbox|switch|option)$/.test(role)) signals.push('role=' + role);
     if (el.onclick || el.hasAttribute('onclick')) signals.push('onclick');
+    // 7.13: a link that is only a picture with no name — no text, an image
+    // without alt or an svg without a title, nothing aria to fall back on.
+    // A reader hears "link" and nothing else; the signal rides to the model
+    // and the audit.
+    try {
+      if (tag === 'a' && el.hasAttribute('href') &&
+          !(el.textContent || '').trim() &&
+          !el.getAttribute('aria-label') && !el.getAttribute('aria-labelledby') &&
+          !el.getAttribute('title')) {
+        const im = el.querySelector('img,svg');
+        if (im && !(im.getAttribute('alt') || '').trim() &&
+            !im.querySelector('title') && !im.getAttribute('aria-label')) {
+          signals.push('unnamed-icon-link');
+        }
+      }
+    } catch (e) {}
     for (const a of ['aria-haspopup', 'aria-expanded', 'aria-controls']) {
       if (el.hasAttribute(a)) signals.push(a);
     }
@@ -4780,7 +4796,7 @@
   // card and describes none of them.
   // Trailing punctuation is part of the pattern, not a disqualifier — the
   // Molina cards write "Learn more." with the full stop in the anchor.
-  const VAGUE = /^(?:(?:read|learn|find out|see|view|discover)\s*(?:more|all)?|more|details|continue|go|here|click here|(?:קרא|קראו)\s*עוד|עוד|פרטים|המשך|לחצו כאן|לפרטים)\s*[.…!]?$/i;
+  const VAGUE = /^(?:(?:read|learn|find out|see|view|discover|open)\s*(?:more|all)?|more|details|continue|go|here|click here|open|view|(?:קרא|קראו)\s*עוד|עוד|פרטים|המשך|לחצו כאן|לחץ כאן|לחצו|לפרטים|קרא|ראה|ראו)\s*[.…!]?$/i;
 
   /**
    * Cards: a heading, a picture, some text, and a link that says "Read more".
@@ -4814,6 +4830,21 @@
       var card = null, heading = null;
       for (var p = el.parentElement, up = 0; p && up < 5; p = p.parentElement, up++) {
         var h = p.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+        // 7.13: a card that NAMES itself (aria-labelledby) hands us its
+        // heading directly; and a card with no heading element at all still
+        // has a first element with text, which is what a reader would call
+        // it by.
+        if (!h || !(h.textContent || '').trim()) {
+          var lb = p.getAttribute && p.getAttribute('aria-labelledby');
+          if (lb) h = document.getElementById(lb.split(/\s+/)[0]);
+        }
+        if ((!h || !(h.textContent || '').trim()) && up === 4) {
+          var kids13 = p.children;
+          for (var f13 = 0; f13 < kids13.length; f13++) {
+            if ((kids13[f13].textContent || '').trim() && kids13[f13] !== el &&
+                !kids13[f13].contains(el)) { h = kids13[f13]; break; }
+          }
+        }
         if (h && (h.textContent || '').trim()) { card = p; heading = h; break; }
       }
       if (!card || !heading) return;
@@ -4850,6 +4881,30 @@
         says: (g.links[0].textContent || '').replace(/\s+/g, ' ').trim(),
         example: (g.headings[0].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
       });
+      // 7.13: the same card also linking its image AND its title AND its
+      // button to one href — a reader tabs through the same destination
+      // three times. Counted per card, reported once per kind.
+      try {
+        var dupCards = 0;
+        for (var dc = 0; dc < g.cards.length; dc++) {
+          var seen13 = {}, dup13 = false;
+          var cardLinks = g.cards[dc].querySelectorAll('a[href]');
+          for (var dl = 0; dl < cardLinks.length; dl++) {
+            var hrf = cardLinks[dl].getAttribute('href');
+            if (seen13[hrf]) { dup13 = true; break; }
+            seen13[hrf] = 1;
+          }
+          if (dup13) dupCards++;
+        }
+        if (dupCards >= 2) {
+          out.push({
+            kind: 'duplicate-links',
+            target: linkSel.selector,
+            count: dupCards,
+            says: 'several links in one card lead to the same place',
+          });
+        }
+      } catch (e) {}
     });
     return out;
   }

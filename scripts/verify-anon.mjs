@@ -768,6 +768,33 @@ console.log('\na form\'s required fields are read off the page, not asked for');
     w1 && w1.unlabeledFields && w1.unlabeledFields.selector);
 }
 
+console.log('\n7.13 — names nobody gave');
+{
+  const d = new JSDOM(`<html><body>
+    <div class="card"><h3 id="t1">Runner Pro</h3><a href="/p/1"><img src="x.png"></a>
+      <a href="/p/1">לחץ כאן</a></div>
+    <div class="card"><h3>Trail Max</h3><a href="/p/2"><img src="y.png"></a>
+      <a href="/p/2">ראה</a></div>
+  </body></html>`, { runScripts: 'outside-only', pretendToBeVisual: true });
+  const w = d.window;
+  w.HTMLElement.prototype.getBoundingClientRect = function () {
+    return { width: 200, height: 40, top: 10, bottom: 50, left: 10, right: 210 };
+  };
+  Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return 40; }, configurable: true });
+  w.eval(INTEL);
+  const cands = w.__u1SelectorIntel.collectCandidates(100, null).candidates;
+  check('an icon link with no name of any kind carries the unnamed-icon-link signal',
+    cands.some((c) => (c.signals || []).includes('unnamed-icon-link')),
+    JSON.stringify(cands.map((c) => c.signals).filter((s) => s && s.length)));
+  const cd = w.__u1SelectorIntel.cardDescriptions();
+  check('לחץ כאן and ראה are vague enough to group',
+    cd.some((r) => !r.kind && r.count === 2),
+    JSON.stringify(cd));
+  check('two links per card to one href is the duplicate-links finding',
+    cd.some((r) => r.kind === 'duplicate-links' && r.count === 2),
+    JSON.stringify(cd.filter((r) => r.kind)));
+}
+
 console.log('\n7.12 — a trail is grammar, not a font size');
 {
   const mk = (body) => {
