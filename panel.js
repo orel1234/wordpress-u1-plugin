@@ -7428,7 +7428,9 @@ function confidenceOf(row, hintRows) {
   const src = row.source || 'model';
   if (/observed/.test(src)) s += 0.5;
   if (/model/.test(src)) s += 0.3;
-  if (row.shapeConfirmed) s += 0.4;
+  // The shape reader's +0.4 is NOT here: it lands in prepareOne, directly
+  // on detConf, because at merge time no shape has been read yet. A
+  // shapeConfirmed parameter lived here dead for a day — R6 removed it.
   return Math.min(1, Math.round(s * 10) / 10);
 }
 

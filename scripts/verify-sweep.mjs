@@ -2464,8 +2464,11 @@ console.log('\na running scan owns the panel');
       confidenceOf(row('observed'), []) === 0.5);
     check('pressing + model crosses the line at 0.8',
       confidenceOf(row('model+observed'), []) === 0.8);
-    check('a confirmed shape adds 0.4',
-      confidenceOf(row('observed', { shapeConfirmed: true }), []) === 0.9);
+    // The shape reader's +0.4 is applied in prepareOne on detConf itself
+    // (no shape exists at merge time); the pin below guards that path.
+    check('the shape bump is prepareOne\'s, once, directly on detConf',
+      /row\.detConf = Math\.min\(1, Math\.round\(\(row\.detConf \+ 0\.4\)/.test(panelSrc) &&
+      !/shapeConfirmed\) s \+=/.test(panelSrc));
     check('an unnamed hint is silence, not testimony',
       confidenceOf(row('model'), [{ component: '', selector: '#x' }]) === 0.3);
   }
