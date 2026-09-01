@@ -2098,15 +2098,28 @@ document.addEventListener('click', async (e) => {
 // ── Element screenshots (for the close-out report) ─────────────────────────
 // Scrolls the element into view, grabs the visible tab, crops to the element.
 // Works only on the currently open page, so we capture at mapping-add time.
-async function captureElementScreenshot(primary) {
+async function captureElementScreenshot(primary, fallback) {
   const tab = await getTab();
   if (!isInjectable(tab)) return null;
   try {
     const rectRes = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (sel) => {
-        let el = null;
-        try { el = document.querySelector(sel); } catch { return null; }
+      // A listbox's or dialog's primary is the thing that APPEARS, which is
+      // display:none right now — a zero rect, no picture, and the row sits
+      // in the drawer with no thumbnail while its trigger is plainly on
+      // screen. When the primary has no box, photograph the fallback (the
+      // firstArg — the trigger) instead: a picture of the button IS the
+      // honest picture of a closed dropdown.
+      func: (sel, alt) => {
+        const box = (x) => {
+          let el = null;
+          try { el = document.querySelector(x); } catch { return null; }
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          if (r.width < 1 || r.height < 1) return null;
+          return el;
+        };
+        const el = box(sel) || (alt ? box(alt) : null);
         if (!el) return null;
         el.scrollIntoView({ block: 'center', inline: 'center' });
         const r = el.getBoundingClientRect();
@@ -2115,7 +2128,7 @@ async function captureElementScreenshot(primary) {
           dpr: window.devicePixelRatio || 1,
         };
       },
-      args: [primary],
+      args: [primary, fallback || ''],
     });
     const rect = rectRes?.[0]?.result;
     if (!rect || rect.width < 1 || rect.height < 1) return null;
@@ -15820,7 +15833,7 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   if (existingIdx < 0) existingIdx = list.findIndex(m => mappingKey(m) === newKey);
 
   const tab = await getTab();
-  const screenshot = await captureElementScreenshot(template.primary);
+  const screenshot = await captureElementScreenshot(template.primary, template.firstArg);
   const prev = existingIdx >= 0 ? list[existingIdx] : null;
   const entry = {
     type: template.type,
@@ -17212,17 +17225,17 @@ async function renderExistingFixes() {
     // Not silence. The site is still running them, and a person who cannot
     // remember saying no has no way to find out otherwise.
     box.style.display = refused ? '' : 'none';
-    box.className = 'advisor-note';
+    // The standing decline earns ONE quiet line, not a standing paragraph —
+    // it was answered noise the moment it was answered, and a box that
+    // re-explains a settled decision above the mappings list every day reads
+    // as the question coming back ("it still gives me this", 2026-09-01).
+    box.className = 'input-hint';
+    box.style.margin = '4px 0 10px';
     box.innerHTML = refused
-      ? `<strong>${refused} fix${refused === 1 ? '' : 'es'} the site runs ${refused === 1 ? 'is' : 'are'} set aside</strong> — ` +
-        (declineAll
-          ? `the site's own deployment was turned down wholesale, here or on another machine, ` +
-            `so nothing it runs is offered — today's recording or a future load's.`
-          : `you turned ${refused === 1 ? 'it' : 'them'} down, here or on another machine, and ` +
-            `${refused === 1 ? 'it is' : 'they are'} not being offered again.`) +
-        ` The site still runs ${refused === 1 ? 'it' : 'them'}; only the offer is gone.` +
-        `<div class="btn-row"><button class="btn-outline btn-xs" id="restoreDeclinedBtn">` +
-        `Offer ${refused === 1 ? 'it' : 'them'} again</button></div>`
+      ? `${refused} fix${refused === 1 ? '' : 'es'} the site runs ${refused === 1 ? 'is' : 'are'} set aside` +
+        (declineAll ? ' (the whole deployment)' : '') +
+        ` · <button class="btn-ghost btn-xs" id="restoreDeclinedBtn" ` +
+        `title="The site's own U1 fixes are not offered for adoption. Press to offer them again.">Offer ${refused === 1 ? 'it' : 'them'} again</button>`
       : '';
     return;
   }
@@ -17495,17 +17508,35 @@ async function loadMappingsList() {
       const m = list[parseInt(head.dataset.idx, 10)];
       const sel = m && typeof m === 'object' ? (m.primary || m.firstArg || '') : '';
       if (!sel || sel === hoverSel) return;
+      // A listbox's or dialog's primary is the thing that APPEARS — hidden
+      // right now, so highlighting it draws nothing while its trigger sits
+      // plainly on screen. When the primary has no box, light the firstArg
+      // (the trigger) instead, and say so on the row.
+      const alt = (m && typeof m === 'object' && m.firstArg && m.firstArg !== sel) ? m.firstArg : '';
       hoverSel = sel;
       clearTimeout(hoverTimer);
       hoverTimer = setTimeout(async () => {
         const tab = await getTab();
         if (!tab || !isInjectable(tab)) return;
-        const n = await inPage(tab.id,
-          (s) => window.__u1SelectorIntel.highlightSelector(s), [sel]);
+        const res = await inPage(tab.id, (s, a) => {
+          const S = window.__u1SelectorIntel;
+          const shown = (x) => {
+            try {
+              const el = document.querySelector(x);
+              if (!el) return false;
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            } catch { return false; }
+          };
+          if (!shown(s) && a && shown(a)) return { n: S.highlightSelector(a), fell: true };
+          return { n: S.highlightSelector(s), fell: false };
+        }, [sel, alt]);
+        const n = res && res.n;
         // Only report the empty case, and only on the row itself: a mapping
         // that matches nothing on the page in front of you is usually just a
         // mapping for another page, not a fault.
-        head.title = n === 0 ? `${sel} matches nothing on this page right now`
+        head.title = res && res.fell ? `${sel} is closed right now — its trigger ${alt} is highlighted instead`
+                   : n === 0 ? `${sel} matches nothing on this page right now`
                    : n === -1 ? `${sel} is not a valid selector`
                    : n > 1 ? `${sel} matches ${n} elements` : '';
       }, 180);
@@ -17685,7 +17716,7 @@ async function loadMappingsList() {
       const status = document.getElementById('applyAllStatus');
       const original = btn.textContent;
       btn.textContent = '…';
-      const shot = await captureElementScreenshot(m.primary);
+      const shot = await captureElementScreenshot(m.primary, m.firstArg);
       btn.textContent = original;
       if (!shot) {
         showNotice(status, 'Could not capture — open the page with this element first.', 'error', 4000);

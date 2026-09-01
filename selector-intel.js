@@ -1799,7 +1799,20 @@
       if (el.tagName === 'FORM') return { name: 'form', sure: true };
 
       var fields = el.querySelectorAll(FIELD).length;
-      if (fields >= 2 && !el.closest('form')) {
+      // One TYPEABLE field with a send is a form too — a search box, a
+      // newsletter signup, a keyword filter with a Go button. The two-field
+      // floor was written for clusters of selects and left the commonest form
+      // on the web uncollected (owner: "an input with a submit button and an
+      // error IS a form", 2026-09-01). Typeable only: a lone <select> beside
+      // a button is a jump menu, and a picker's input + toggle is a combobox
+      // — countSubmits already refuses toggles, so the send is what gates it.
+      var typeable = 0;
+      try {
+        typeable = el.querySelectorAll(
+          'textarea,input:not([type]),input[type="text"],input[type="search"],input[type="email"],' +
+          'input[type="tel"],input[type="url"],input[type="number"],input[type="password"]').length;
+      } catch (e2) {}
+      if ((fields >= 2 || typeable >= 1) && !el.closest('form')) {
         var submits = countSubmits(el);
         // No submit, no form. A row of filter selects that applies on change is
         // a real thing and it is not this; it has no send — and a "Clear"
@@ -1810,7 +1823,14 @@
           // its own fields AND its own submit — then this element is the
           // wrapper around several, and each child is the form.
           var packaging = Array.prototype.some.call(el.children, function (ch) {
-            return ch.querySelectorAll(FIELD).length >= 2 && countSubmits(ch) >= 1;
+            var chFields = ch.querySelectorAll(FIELD).length;
+            var chTypeable = 0;
+            try {
+              chTypeable = ch.querySelectorAll(
+                'textarea,input:not([type]),input[type="text"],input[type="search"],input[type="email"],' +
+                'input[type="tel"],input[type="url"],input[type="number"],input[type="password"]').length;
+            } catch (e3) {}
+            return (chFields >= 2 || chTypeable >= 1) && countSubmits(ch) >= 1;
           });
           if (!packaging) return { name: 'form', sure: false };
         }
@@ -2025,9 +2045,33 @@
     const out = [];
     let fields;
     try { fields = qsaDeep(scope, FIELD); } catch { return out; }
-    if (fields.length < 3) return out;
 
     const count = (el, sel) => { try { return el.querySelectorAll(sel).length; } catch { return 0; } };
+
+    // Owner rule (2026-09-01): one TYPEABLE field with a send is a form too.
+    // A site search or a newsletter signup is a bare div holding an input and
+    // a Go button — it announces nothing, clusters with nothing, and the form
+    // hint (which knows this rule) never got an element to run on. Tight on
+    // purpose: a real <form> is already collected by tag, and the climb stops
+    // four levels up so one search box yields its box, not the header.
+    const TYPEABLE = 'textarea,input:not([type]),input[type="text"],input[type="search"],' +
+      'input[type="email"],input[type="tel"],input[type="url"],input[type="number"],input[type="password"]';
+    try {
+      const seen = new Set(out);
+      for (const f of qsaDeep(scope, TYPEABLE)) {
+        if (f.closest && f.closest('form')) continue;      // the <form> tag is collected already
+        let node = f.parentElement;
+        for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
+          if (node === document.body || node === document.documentElement) break;
+          if (countSubmits(node) >= 1) {
+            if (!seen.has(node)) { seen.add(node); out.push(node); }
+            break;
+          }
+        }
+      }
+    } catch (e) {}
+
+    if (fields.length < 3) return out;
     const walked = new Set();
 
     for (const f of fields) {

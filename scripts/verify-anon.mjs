@@ -1048,6 +1048,20 @@ console.log('\na <form> is a form');
   check('the divs inside a form are still not each a form', c.name('#group') !== 'form', c.name('#group'));
   check('…while the form itself is', c.name('#outer') === 'form', c.name('#outer'));
 
+  // Owner rule (2026-09-01): "an input with a submit button and an error IS a
+  // form." The commonest form on the web is a bare div holding one typeable
+  // field and a send — a site search, a newsletter signup — and the two-field
+  // floor left it uncollected unless the site happened to use a real <form>.
+  const d = collectIn(`<div id="sitesearch" class="searchbox">
+      <input id="kw" type="text" placeholder="Enter a keyword"><button type="submit">Go</button>
+      <span class="error" style="display:none">Enter a keyword</span></div>`);
+  check('a DIV with one typeable field and a send is a form too', d.name('#sitesearch') === 'form', d.name('#sitesearch'));
+
+  // But not everything beside an input is a send, and not every field types.
+  const e2 = collectIn(`<div id="filters">
+      <select><option>Any brand</option></select><button>Clear</button></div>`);
+  check('a lone select with a Clear button still is not', e2.name('#filters') !== 'form', e2.name('#filters'));
+
   // ── The thing the fields ADD UP TO ──────────────────────────────────────
   //
   // Reported by putting the page beside the results: the shoe finder — five
