@@ -1012,7 +1012,7 @@
     // two unexplained buttons.
     [/carousel|slideshow|gallery|\bslider\b|\bticker\b|marquee/i, 'carousel'],
     [/accordion|collapsible|\bfaq\b/i, 'accordion'],
-    [/datepicker|calendar/i, 'datepicker'],
+    [/datepicker|calendar|pikaday|air-datepicker|MuiPickers|MuiDateCalendar/i, 'datepicker'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
     [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
@@ -1248,6 +1248,11 @@
    */
   function looksLikeCalendar(el) {
     try {
+      // A month is a SMALL thing. A page section that happens to CONTAIN a
+      // calendar somewhere inside it is not itself the calendar — and once a
+      // popup month was painted into the page, every big ancestor started
+      // passing the count and one detection "touched" half the labels.
+      if (el.querySelectorAll('*').length > 160) return false;
       var kids = el.querySelectorAll('td,th,li,button,span,div,a');
       var byParent = new Map();
       for (var i = 0; i < kids.length; i++) {
@@ -1270,7 +1275,31 @@
         for (var j = 1; j < nums.length; j++) if (nums[j] === nums[j - 1] + 1) rising++;
         if (rising >= nums.length * 0.7) hit = true;
       });
-      return hit;
+      if (!hit) return false;
+      // 7.4: the count alone is NOT enough — a locker picker is thirty-two
+      // running numbers and no calendar at all. A month gives a second
+      // witness in every language: a WEEKDAY ROW (a run of ≥7 short
+      // non-numeric labels under one parent) or a YEAR beside the grid
+      // (month names vary by tongue; the four digits do not).
+      var second = false;
+      try {
+        var wrap = el.parentElement || el;
+        if (/\b(19|20)\d{2}\b/.test((wrap.textContent || '').slice(0, 4000))) second = true;
+        if (!second) {
+          var rows = el.querySelectorAll('*');
+          for (var ri = 0; ri < rows.length && !second; ri++) {
+            var rk = rows[ri].children;
+            if (rk.length < 7) continue;
+            var shorts = 0;
+            for (var ci = 0; ci < rk.length; ci++) {
+              var tx = (rk[ci].textContent || '').trim();
+              if (tx && tx.length <= 3 && !/\d/.test(tx)) shorts++;
+            }
+            if (shorts >= 7) second = true;
+          }
+        }
+      } catch (e) {}
+      return second;
     } catch (e) { return false; }
   }
 
@@ -1596,6 +1625,11 @@
     'mat-expansion', 'MuiAccordion', 'MuiMenu', 'MuiDialog',
     'mat-dialog', 'ReactModal', 'headlessui',
     'swiper', 'glide__', 'embla',
+    // 7.4 datepicker libraries whose names contain neither "datepicker" nor
+    // "calendar" — the two words the hand list already collects. No
+    // apostrophes in these comments: verify-detect pairs quotes to read the
+    // list, and a stray one shifts every string after it.
+    'pikaday', 'MuiPickers',
   ];
 
   // Elements worth showing the model: anything interactive, plus the structural

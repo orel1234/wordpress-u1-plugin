@@ -1051,7 +1051,22 @@
     }
     try {
       scope.querySelectorAll(PRESS_POOL).forEach(function (el) {
-        push(el, declaresOpen(el) ? 1 : 2);
+        // 7.1's dead-href anchors: one DRESSED as a button (a btn class, an
+        // onclick) earns a real seat — that is the archetype the arm exists
+        // for. The dozens of bare placeholder links in a footer rank 4,
+        // after even the pointer-divs, and are owed nothing: at rank 2 they
+        // ate whole bands' budgets and starved real components out of the
+        // hostile walk.
+        var rank = declaresOpen(el) ? 1 : 2;
+        if (el.tagName === 'A') {
+          var btnish = false;
+          try {
+            btnish = /(^|[\s_-])(btn|button)([\s_-]|$)/i.test(String(el.className || '')) ||
+                     el.hasAttribute('onclick');
+          } catch (e) {}
+          rank = btnish ? 2 : 4;
+        }
+        push(el, rank);
       });
     } catch (e) {}
     try {
@@ -1063,6 +1078,31 @@
         if (root.getComputedStyle(el).cursor !== 'pointer') continue;
         if (p && root.getComputedStyle(p).cursor === 'pointer') continue;
         push(el, 3);
+      }
+    } catch (e) {}
+    // The density valve: a family of ten-plus same-tag siblings (a locker
+    // grid, a seat map, a swatch wall) keeps THREE full-rank delegates; the
+    // rest drop to rank 4 — pressed when there is room, owed nothing. If a
+    // delegate reveals something, decision A's family completion pulls the
+    // brothers in anyway; if it reveals nothing, thirty presses were never
+    // going to say more than three. Declaring or seeded members keep their
+    // seats.
+    try {
+      var famCount2 = new Map();
+      for (var pv = 0; pv < plan.length; pv++) {
+        var pe2 = plan[pv];
+        if (pe2.rank <= 1 || pe2.seeded || pe2.dec) continue;
+        var par2 = pe2.el.parentElement;
+        if (!par2) continue;
+        var fk2 = par2;
+        var rec2 = famCount2.get(fk2);
+        if (!rec2) { rec2 = { tags: {} }; famCount2.set(fk2, rec2); }
+        var tg2 = pe2.el.tagName;
+        rec2.tags[tg2] = (rec2.tags[tg2] || 0) + 1;
+        if (rec2.tags[tg2] > 3) {
+          var total2 = par2.children.length;
+          if (total2 >= 10) pe2.rank = Math.max(pe2.rank, 4);
+        }
       }
     } catch (e) {}
     plan.sort(function (a, b) { return a.rank - b.rank || a.docY - b.docY; });
@@ -1544,8 +1584,10 @@
     Object.keys(numbered).forEach(function (key) {
       var g = numbered[key];
       // Three numbers is the smallest strip worth the name; two is a pair of
-      // buttons that happen to say 1 and 2.
-      if (g.nums.length < 3) return;
+      // buttons that happen to say 1 and 2. And FIFTEEN is more page numbers
+      // than any pager shows at once — thirty-two running numbers are a
+      // locker grid, a seat map, a month — anything but pagination.
+      if (g.nums.length < 3 || g.nums.length > 15) return;
       if (g.nums.some(function (el) { return used.has(el); })) return;
       var values = g.nums.map(function (el) { return Number(faceOf(el)); });
       var rising = 0;
@@ -1637,6 +1679,52 @@
       // mapping and no fix — reporting it was noise, not detection.
       if (r.trigger.tagName === 'SUMMARY' ||
           (r.trigger.closest && r.trigger.closest('details'))) return;
+      // 7.4: a panel that IS a month — running day numbers plus a second
+      // witness (a weekday row or a year) — is a datepicker before it is
+      // anything else, floating signals notwithstanding: every date popup
+      // floats. Readable closed too — text survives display:none.
+      var isCalendarPanel = false;
+      try {
+        // A month is a SMALL thing — a big panel that merely contains one
+        // somewhere is not itself the calendar.
+        if (panel.querySelectorAll('*').length > 160) throw 0;
+        var dayEls = panel.querySelectorAll('td,li,button,span,div,a');
+        var dayNums = [];
+        for (var dn = 0; dn < dayEls.length; dn++) {
+          var dt = (dayEls[dn].textContent || '').trim();
+          if (/^([1-9]|[12][0-9]|3[01])$/.test(dt) && !dayEls[dn].children.length) dayNums.push(Number(dt));
+        }
+        if (dayNums.length >= 28 && dayNums.length <= 62) {
+          var dRise = 0;
+          for (var dj = 1; dj < dayNums.length; dj++) if (dayNums[dj] === dayNums[dj - 1] + 1) dRise++;
+          if (dRise >= dayNums.length * 0.7) {
+            var txt74 = (panel.textContent || '').slice(0, 4000);
+            if (/\b(19|20)\d{2}\b/.test(txt74)) isCalendarPanel = true;
+            if (!isCalendarPanel) {
+              var rows74 = panel.querySelectorAll('*');
+              for (var rw = 0; rw < rows74.length && !isCalendarPanel; rw++) {
+                var rk74 = rows74[rw].children;
+                if (rk74.length < 7) continue;
+                var sh74 = 0;
+                for (var rc = 0; rc < rk74.length; rc++) {
+                  var rt74 = (rk74[rc].textContent || '').trim();
+                  if (rt74 && rt74.length <= 3 && !/\d/.test(rt74)) sh74++;
+                }
+                if (sh74 >= 7) isCalendarPanel = true;
+              }
+            }
+          }
+        }
+      } catch (e) {}
+      if (isCalendarPanel) {
+        comps.push({
+          type: 'datepicker',
+          root: panel,
+          parts: { trigger: [r.trigger], calendar: [panel] },
+          why: 'it opened a MONTH — running day numbers with a weekday row or a year beside them',
+        });
+        return;
+      }
       // 4.4: listbox vs menu, decided by what the ITEMS are. The ladder:
       // the page SAYS it (role=option / aria-haspopup=listbox / role=menuitem),
       // or the panel fronts a hidden native <select>, or — with no words at
@@ -2470,7 +2558,10 @@
           if (!pe.el.isConnected) { planMissing++; continue; }
           if (!opts.repeat && everPressed.has(pe.el)) continue;
           if (!shown(pe.el) || !safeToClick(pe.el).ok) continue;
-          if (list.length >= budgetMax) { runCarry.push(pe); continue; }
+          // A rank-4 candidate (a dead-href anchor) is pressed when there is
+          // room and OWED nothing: no spillover, no starved entry — sixty
+          // footer placeholders are not a debt.
+          if (list.length >= budgetMax) { if (pe.rank < 4) runCarry.push(pe); continue; }
           if (list.indexOf(pe.el) !== -1) continue;
           list.push(pe.el);
         }

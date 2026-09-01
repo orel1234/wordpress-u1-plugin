@@ -1071,6 +1071,40 @@ Mega.widgets = {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
 
+    // 7.4: the popup month — weekday row, running days, a month name.
+    const dateBtn = el('auditDateBtn'), datePanel = el('auditDatePanel'),
+          dateInput = el('auditDateInput');
+    if (dateBtn && datePanel) {
+      const paint = () => {
+        const days = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+          .map((d) => `<span style="display:inline-block;width:28px;font-size:11px">${d}</span>`).join('');
+        let cells = '';
+        for (let n = 1; n <= 30; n++) {
+          cells += `<button type="button" data-day="${n}" style="width:28px;height:24px">${n}</button>`;
+        }
+        datePanel.innerHTML = `<div><strong>March 2027</strong></div><div>${days}</div><div style="width:224px">${cells}</div>`;
+      };
+      dateBtn.addEventListener('click', () => {
+        datePanel.hidden = !datePanel.hidden;
+        if (!datePanel.hidden && !datePanel.children.length) paint();
+      });
+      datePanel.addEventListener('click', (e) => {
+        const day = e.target.closest('[data-day]');
+        if (!day) return;
+        if (dateInput) dateInput.value = `2027-03-${String(day.getAttribute('data-day')).padStart(2, '0')}`;
+        datePanel.hidden = true;
+      });
+    }
+    // 7.4's negative: running numbers, nothing else calendar about it.
+    const lockers = el('auditNumGrid');
+    if (lockers) {
+      for (let n = 1; n <= 32; n++) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = String(n);
+        lockers.appendChild(b);
+      }
+    }
+
     // 7.3: vertical tabs — the same swap, stacked.
     const vt = el('auditVertTabs');
     if (vt) vt.addEventListener('click', (e) => {

@@ -695,6 +695,49 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 7.4: a month needs a second witness ─────────────────────────────────────
+console.log('\n7.4 — a popup month is a datepicker; running numbers alone are not');
+{
+  let days = '';
+  for (let n = 1; n <= 30; n++) days += `<button>${n}</button>`;
+  const w = page(`
+    <div id="w">
+      <button id="t">📅</button>
+      <div id="cal" hidden>
+        <div><strong>March 2027</strong></div>
+        <div><span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span></div>
+        <div>${days}</div>
+      </div>
+    </div>`);
+  const d = w.document;
+  d.getElementById('t').addEventListener('click', () => {
+    d.getElementById('cal').hidden = !d.getElementById('cal').hidden;
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 1 });
+  const c = out.components.find((x) => x.type === 'datepicker');
+  check('a popup with running days AND a month header is a datepicker',
+    !!c && c.root === d.getElementById('cal') && c.parts.trigger[0] === d.getElementById('t'),
+    out.components.map((x) => x.type).join() || '(nothing)');
+}
+{
+  // The same count with NO second witness — a locker picker behind a toggle.
+  let nums = '';
+  for (let n = 1; n <= 32; n++) nums += `<button>${n}</button>`;
+  const w = page(`
+    <div id="w">
+      <button id="t">Choose a locker</button>
+      <div id="grid" hidden>${nums}</div>
+    </div>`);
+  const d = w.document;
+  d.getElementById('t').addEventListener('click', () => {
+    d.getElementById('grid').hidden = !d.getElementById('grid').hidden;
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0, max: 1 });
+  check('running numbers with no weekday row and no year are NOT a datepicker',
+    !out.components.some((x) => x.type === 'datepicker'),
+    out.components.map((x) => x.type).join() || '(nothing)');
+}
+
 // ── 7.3: orientation must not matter to the strip ───────────────────────────
 console.log('\n7.3 — vertical tabs are still tabs');
 {

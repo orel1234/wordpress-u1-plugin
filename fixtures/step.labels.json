@@ -273,6 +273,21 @@
       "fields": {}
     },
     {
+      "type": "datepicker",
+      "root": "#auditDatePanel",
+      "why": "7.4: a popup month — weekday row, thirty running day buttons, a month-and-year header — opened from the calendar button beside a date field. The counting alone is NOT enough (see the locker grid); the weekday row or the month name is the necessary second witness.",
+      "fields": {
+        "trigger": "#auditDateBtn"
+      },
+      "hidden": true,
+      "builtByJs": true
+    },
+    {
+      "type": "none",
+      "root": "#auditNumGrid",
+      "why": "7.4's negative: thirty-two RUNNING NUMBERS in a grid — a locker picker. Counting alone must never say calendar; there is no weekday row and no month name here, on purpose."
+    },
+    {
       "type": "tabs",
       "root": "#auditVertTabs>.vtabs__list",
       "why": "7.3: vertical tabs — three stacked sibling buttons swapping panels beside them. Orientation must not matter to the strip rule; rooted on the list per the direct-parent contract.",

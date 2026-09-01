@@ -1021,6 +1021,7 @@
     </div>
   </section>
 
+
   <!-- ======================= SEO TEXT ======================= -->
   <section class="section container">
     <div class="seo-text">
@@ -1036,6 +1037,28 @@
       <p>Eight branches offer resoling, stitching, heel replacement, and eyelet repair, usually within five to seven business days. Custom insoles are fitted in a forty-five minute appointment, and club members at Sprint tier and above get a pair free once a year.</p>
       <h3>Sustainability, measured rather than claimed</h3>
       <p>Recycled content averages 62% across our own-label uppers, and every figure on a product page is the audited number from the supplier, not a marketing estimate. Our take-back scheme has collected 41,000 pairs since 2021, sorted for resale, donation, or granulation into playground surfacing.</p>
+    </div>
+  </section>
+
+  <!-- ======================= FITTING BOOKING (7.4) ======================= -->
+  <!-- Its own section, on purpose: a real page does not stack thirty locker
+       buttons into the same viewport band as five other widgets, and neither
+       may the corpus — density here starved the audit band's real components
+       out of the hostile walk (measured, Sep 2026). -->
+  <section class="section container">
+    <div class="section__head"><h2 class="section__title">Book a fitting</h2></div>
+    <!-- 7.4 datepicker: an input, a calendar button beside it, and a popup
+         month the JS paints (weekday row + running days + month name).
+         The negative below: a grid of RUNNING NUMBERS with no weekday row
+         and no month — counting alone must not say calendar. -->
+    <div class="fitting-date" style="position:relative;max-width:320px">
+      <label class="visually-hidden" for="auditDateInput">Fitting date</label>
+      <input id="auditDateInput" type="text" placeholder="Fitting date…" autocomplete="off" readonly>
+      <button type="button" id="auditDateBtn" aria-label="Choose a date">📅</button>
+      <div id="auditDatePanel" style="position:absolute;left:0;top:100%;background:#fff;border:1px solid #ccc;padding:10px;z-index:5" class="is-hidden"></div>
+    </div>
+    <div class="locker-grid" id="auditNumGrid" style="display:grid;grid-template-columns:repeat(8,36px);gap:4px;margin-top:24px">
+      <strong style="grid-column:1/-1">Pick a locker</strong>
     </div>
   </section>
 
