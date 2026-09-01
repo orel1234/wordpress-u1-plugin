@@ -1965,6 +1965,20 @@
    * It costs real time — a slide sits for seconds — so the window is a
    * parameter and the whole thing is skipped when it is zero.
    */
+  // 7.14: anything that could stop the motion — a pause/stop control by
+  // word, symbol or aria-label, anywhere under the carousel's root.
+  function hasPauseControl(rootEl) {
+    try {
+      var ctls = rootEl.querySelectorAll('button,[role="button"],[tabindex]');
+      for (var pi = 0; pi < ctls.length; pi++) {
+        var t = ((ctls[pi].textContent || '') + ' ' +
+                 (ctls[pi].getAttribute('aria-label') || '')).toLowerCase();
+        if (/pause|stop|השהה|עצור|⏸|⏯|❚❚/.test(t)) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   async function watchIdle(scope, ms, limit) {
     if (!ms) return null;
     var els = watched(scope, limit);
@@ -2979,19 +2993,38 @@
               if (c.type !== 'carousel') return;
               c.autoAdvances = true;
               c.why += ', and it advances on its own';
+              try {
+                if (c.root && !hasPauseControl(c.root)) {
+                  c.why += ' — with NO PAUSE control (WCAG 2.2.2)';
+                }
+              } catch (e) {}
             });
           } else if (!badCarouselRoot(run.parent.parentElement || run.parent)) {
+            // 7.14: one slide is not a carousel — a hero that only ever
+            // shows its single pane has nothing cycling. A bare `return`
+            // here would abandon probeAll's typing pass and restore.
+            if (run.items.length >= 2) {
+            var idleRoot714 = run.parent.parentElement || run.parent;
+            var idleWhy714 = 'it changed which of ' + run.items.length +
+                 ' items is showing with nobody touching it';
+            // 7.14: autoplay with no way to stop it is WCAG 2.2.2's own
+            // example. Say so on the spot.
+            try {
+              if (!hasPauseControl(idleRoot714)) {
+                idleWhy714 += ' — and it has NO PAUSE control (WCAG 2.2.2)';
+              }
+            } catch (e) {}
             var idleComp = {
               type: 'carousel',
-              root: run.parent.parentElement || run.parent,
+              root: idleRoot714,
               parts: { slide: run.items },
               autoAdvances: true,
-              why: 'it changed which of ' + run.items.length +
-                   ' items is showing with nobody touching it',
+              why: idleWhy714,
             };
             comps.push(idleComp);
             // Not a press, so not in the ledger — carried to the run pass apart.
             runExtras.push(idleComp);
+            }
           }
         }
         // 7.9: a skeleton the page swapped for content on its own — an

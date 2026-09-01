@@ -1579,6 +1579,13 @@
     }
 
     const tag = el.tagName.toLowerCase();
+    // 7.14: aria-roledescription="carousel" is the page saying the word in
+    // the one attribute that exists to say it.
+    try {
+      if ((el.getAttribute('aria-roledescription') || '').toLowerCase() === 'carousel') {
+        return { name: 'carousel', sure: true };
+      }
+    } catch (e) {}
     // 7.12: schema.org microdata says it outright, whatever the tag.
     try {
       if (/BreadcrumbList/i.test(el.getAttribute('itemtype') || '')) {
