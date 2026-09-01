@@ -17072,6 +17072,13 @@ async function renderExistingFixes() {
   // because the count in the heading has to be the count of what is actually
   // being offered — "83 fixes" above a list of nine is worse than no heading.
   const declined = await declinedFixKeys();
+  // '*' is "no, to the site's whole deployment". The recording is read off
+  // the LIVE page, and it is timing-dependent — one load catches one fix,
+  // the next catches four — so declining by key alone meant every load that
+  // recorded a call nobody had seen before re-opened the offer. Skip means
+  // "my mappings replace this deployment"; that answer covers the fixes the
+  // recorder has not caught yet too.
+  const declineAll = declined.has('*');
   const selfApplied = await selfAppliedKeys();
   const fresh = [];
   const seen = new Set();
@@ -17086,7 +17093,7 @@ async function renderExistingFixes() {
     // mapping may since have been deleted. Not the site's deployment, not an
     // offer, not a refusal to count: a page reload makes it vanish.
     if (selfApplied.has(k)) continue;
-    if (declined.has(k)) { refused++; continue; }
+    if (declineAll || declined.has(k)) { refused++; continue; }
     fresh.push(tpl);
   }
   if (!fresh.length) {
@@ -17096,9 +17103,12 @@ async function renderExistingFixes() {
     box.className = 'advisor-note';
     box.innerHTML = refused
       ? `<strong>${refused} fix${refused === 1 ? '' : 'es'} the site runs ${refused === 1 ? 'is' : 'are'} set aside</strong> — ` +
-        `you turned ${refused === 1 ? 'it' : 'them'} down, here or on another machine, and ` +
-        `${refused === 1 ? 'it is' : 'they are'} not being offered again. The site still runs ` +
-        `${refused === 1 ? 'it' : 'them'}; only the offer is gone.` +
+        (declineAll
+          ? `the site's own deployment was turned down wholesale, here or on another machine, ` +
+            `so nothing it runs is offered — today's recording or a future load's.`
+          : `you turned ${refused === 1 ? 'it' : 'them'} down, here or on another machine, and ` +
+            `${refused === 1 ? 'it is' : 'they are'} not being offered again.`) +
+        ` The site still runs ${refused === 1 ? 'it' : 'them'}; only the offer is gone.` +
         `<div class="btn-row"><button class="btn-outline btn-xs" id="restoreDeclinedBtn">` +
         `Offer ${refused === 1 ? 'it' : 'them'} again</button></div>`
       : '';
@@ -17140,13 +17150,16 @@ document.addEventListener('click', async (e) => {
   if (skip) {
     const status = document.getElementById('mappingsStatus');
     skip.disabled = true;
-    const n = await rememberDeclinedFixes(existingFixTemplates.map(mappingKey));
+    // The named keys AND the wholesale '*': the recorder catches a different
+    // subset of the deployment on every load, and a skip that only named
+    // today's subset was re-asked tomorrow with whatever it caught next.
+    await rememberDeclinedFixes([...existingFixTemplates.map(mappingKey), '*']);
     existingFixTemplates = [];
     await renderExistingFixes();
     showNotice(status,
-      `${n} set aside. The site still runs them — nothing on the page changed — but they will not ` +
-      `be offered here again, on this machine or a colleague's. Take it back from the note that ` +
-      `replaces the offer.`, 'success', 9000);
+      `Set aside — and so is anything else this site's own deployment runs, now or on a future ` +
+      `load. The site still runs them; only the offers are gone, here and on your colleagues' ` +
+      `machines. Take it back from the note that replaces the offer.`, 'success', 9000);
     return;
   }
 
