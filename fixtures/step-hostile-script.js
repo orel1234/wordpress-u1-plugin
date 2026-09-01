@@ -411,7 +411,7 @@ Store.header = (() => {
     renderBadge();
     document.addEventListener('cart:change', renderBadge);
 
-    const cartBtn = document.getElementById('e2k');
+    const cartBtn = document.getElementById('e2o');
     const closeBtn = document.getElementById('es');
     const overlay = document.getElementById('e3');
     const itemsEl = document.getElementById('et');
@@ -442,7 +442,7 @@ Store.header = (() => {
    ========================================================================== */
 Store.homePage = (() => {
   function renderCategories() {
-    const el = document.getElementById('e1y');
+    const el = document.getElementById('e21');
     if (!el) return;
     const palette = ['#b5432b', '#233150', '#5b3a22', '#3c5a44', '#8a8577'];
     el.innerHTML = Store.CATEGORIES.map((cat, i) => {
@@ -485,7 +485,7 @@ Store.homePage = (() => {
   }
 
   function renderFeatured() {
-    const el = document.getElementById('e1z');
+    const el = document.getElementById('e22');
     if (!el) return;
     el.innerHTML = Array.from({ length: 4 }, () => `
       <div class="c8v ct">
@@ -518,7 +518,7 @@ Store.homePage = (() => {
   }
 
   function init() {
-    if (!document.getElementById('e1z')) return;
+    if (!document.getElementById('e22')) return;
     renderCategories();
     renderFeatured();
     document.body.addEventListener('click', handleGridClick);

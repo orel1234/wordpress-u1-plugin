@@ -1566,6 +1566,20 @@
       }
     } catch (e) {}
 
+    // 7.8: the wrapper SAYS pagination — an aria-label with the word (any of
+    // three languages' spellings of it), or rel=next/prev controls inside.
+    try {
+      const pagLabel = el.getAttribute('aria-label') || '';
+      if (/pagination|pager|paging|\bpages?\b|עמודים|עמוד \d/i.test(pagLabel) &&
+          el.querySelectorAll('a,button').length >= 2) {
+        return { name: 'pagination', sure: true };
+      }
+      if (el.querySelector(':scope > [rel="next"], :scope > [rel="prev"]') &&
+          el.querySelectorAll('a,button').length >= 3) {
+        return { name: 'pagination', sure: true };
+      }
+    } catch (e) {}
+
     // 7.5: the field SAYS it completes. aria-autocomplete (or role=searchbox
     // beside a list) is the page's own word for a combobox — surer than any
     // class name.

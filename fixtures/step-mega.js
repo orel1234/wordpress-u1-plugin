@@ -1071,6 +1071,29 @@ Mega.widgets = {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
 
+    // 7.8: the pager selects; load-more grows the list.
+    const pager = el('auditPager');
+    if (pager) pager.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b || b.getAttribute('rel')) return;
+      Store.utils.qsa('button', pager).forEach((x) => x.removeAttribute('aria-current'));
+      b.setAttribute('aria-current', 'page');
+    });
+    const moreBtn = el('auditLoadMore'), moreList = el('auditMoreList');
+    if (moreBtn && moreList) {
+      let page2 = false;
+      moreBtn.addEventListener('click', () => {
+        if (page2) return;
+        page2 = true;
+        ['Fitting — Netanya, Nov 2026', 'Repair — Holon, Oct 2026', 'Fitting — Ashdod, Sep 2026']
+          .forEach((t) => {
+            const li = document.createElement('li');
+            li.textContent = t;
+            moreList.appendChild(li);
+          });
+      });
+    }
+
     // 7.6: the wizard walks.
     const wizNext = el('wizNext'), wizBack = el('wizBack'), wiz = el('auditWizard');
     if (wiz && wizNext && wizBack) {

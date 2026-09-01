@@ -271,6 +271,20 @@
       "fields": {}
     },
     {
+      "type": "pagination",
+      "root": "#auditPager",
+      "why": "7.8: a pager with an ELLIPSIS — 1 … 4 5 6 … 12 plus prev/next. The nav says pagination in its aria-label (markup arm); the run of numbers with gaps must satisfy the counting arm too.",
+      "fields": {
+        "pageButtons": "#auditPager>button:not([rel])"
+      }
+    },
+    {
+      "type": "pagination",
+      "root": "#auditMoreWrap",
+      "why": "7.8: load-more — a button whose press ADDS three siblings to the list above it. Pagination, subtype load-more; the growth is the tell, no page numbers anywhere.",
+      "fields": {}
+    },
+    {
       "type": "grid",
       "root": "#auditOrdersGrid",
       "why": "7.7: a table people OPERATE — a Rebook button in a third of its cells. u1.fix.grid manages arrow-key cell navigation a data table never needs; control density is the tell, no role anywhere.",

@@ -1061,6 +1061,28 @@
       <strong style="grid-column:1/-1">Pick a locker</strong>
     </div>
 
+    <!-- 7.8 pagination with an ELLIPSIS (1 … 4 5 6 … 12), and the load-more
+         below it — a button whose press ADDS siblings to a list. -->
+    <nav id="auditPager" aria-label="Fitting history pages" style="margin-top:24px">
+      <button type="button" rel="prev">‹</button>
+      <button type="button">1</button>
+      <span>…</span>
+      <button type="button">4</button>
+      <button type="button" aria-current="page">5</button>
+      <button type="button">6</button>
+      <span>…</span>
+      <button type="button">12</button>
+      <button type="button" rel="next">›</button>
+    </nav>
+    <div id="auditMoreWrap" style="margin-top:16px;max-width:420px">
+      <ul id="auditMoreList" style="list-style:none;padding:0;margin:0">
+        <li>Gait analysis — Tel Aviv, Feb 2027</li>
+        <li>Fitting — Haifa, Jan 2027</li>
+        <li>Insole check — Eilat, Dec 2026</li>
+      </ul>
+      <button type="button" id="auditLoadMore">Show more visits</button>
+    </div>
+
     <!-- 7.7 the GRID: a table people OPERATE — a third of its cells hold
          controls. And the responsive div-table beside it: display:table
          markup with agreeing rows, table by shape with no <table> in sight. -->

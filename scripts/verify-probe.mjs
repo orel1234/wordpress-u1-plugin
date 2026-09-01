@@ -695,6 +695,48 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 7.8: the ellipsis pager, and the list that grows ────────────────────────
+console.log('\n7.8 — 1 … 4 5 6 … 12 is a pager; a list that grows is load-more');
+{
+  const w = page(`
+    <div id="w"><nav id="pg">
+      <button id="n1">1</button><span>…</span>
+      <button id="n4">4</button><button id="n5">5</button><button id="n6">6</button>
+      <span>…</span><button id="n12">12</button>
+    </nav></div>`);
+  const d = w.document;
+  for (const b of d.querySelectorAll('button')) b.addEventListener('click', function () {
+    for (const x of d.querySelectorAll('button')) x.removeAttribute('aria-current');
+    this.setAttribute('aria-current', 'page');
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  const pg = out.components.find((c) => c.type === 'pagination');
+  check('numbers that only climb, with gaps, are still page numbers',
+    !!pg && pg.root === d.getElementById('pg'),
+    out.components.map((c) => c.type).join() || '(nothing)');
+}
+{
+  const w = page(`
+    <div id="w">
+      <ul id="list"><li>one</li><li>two</li><li>three</li></ul>
+      <button id="more">Show more visits</button>
+    </div>`);
+  const d = w.document;
+  d.getElementById('more').addEventListener('click', () => {
+    for (const t of ['four', 'five', 'six']) {
+      const li = d.createElement('li');
+      li.textContent = t;
+      d.getElementById('list').appendChild(li);
+    }
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  const lm = out.components.find((c) => c.type === 'pagination');
+  check('a press that grows a visible list is load-more pagination',
+    !!lm && lm.subtype === 'load-more' &&
+    lm.parts.loadMore[0] === d.getElementById('more'),
+    out.components.map((c) => c.type + ':' + (c.subtype || '')).join() || '(nothing)');
+}
+
 // ── 7.5: the portal combobox — the list lives at body end ───────────────────
 console.log('\n7.5 — a suggestion list parked in a portal is still found');
 {

@@ -579,6 +579,24 @@
     var d = diff(before, after);
     var slid = outermost(shifted(whereBefore, geometry(els)));
     var swapped = replaced(textBefore, contentOf(els));
+    // 7.8: did a visible list GROW — three-plus new children joining the
+    // ones already showing? Read off the fingerprint's own child counts;
+    // brand-new nodes never enter the watched set, so `appeared` cannot say
+    // this, but the container's count can.
+    var grewList = null;
+    try {
+      var afterFp78 = fingerprint(els);
+      for (var gw = 0; gw < els.length && !grewList; gw++) {
+        var was78 = before.get(els[gw]), now78 = afterFp78.get(els[gw]);
+        if (!was78 || !now78) continue;
+        var wb78 = was78.split('|'), nb78 = now78.split('|');
+        if (wb78[0] !== '1' || nb78[0] !== '1') continue;   // visible both times
+        var delta78 = Number(nb78[1]) - Number(wb78[1]);
+        if (delta78 >= 3 && Number(wb78[1]) >= 1) {
+          grewList = { list: els[gw], added: delta78 };
+        }
+      }
+    } catch (e) {}
 
     // Is what opened a LAYER OVER THE PAGE? Measured HERE, while it is open.
     //
@@ -859,6 +877,7 @@
       touched: d.changed.length,
       focusEntered: focusEntered,
       overlay: isLayer,
+      grewList: grewList,
       floating: isFloating,
       headerDropdown: headerDropdown,
       drawer: isDrawer,
@@ -1601,9 +1620,16 @@
       if (Math.max(famNums, g.nums.length) > 15) return;
       if (g.nums.some(function (el) { return used.has(el); })) return;
       var values = g.nums.map(function (el) { return Number(faceOf(el)); });
-      var rising = 0;
-      for (var i = 1; i < values.length; i++) if (values[i] === values[i - 1] + 1) rising++;
-      if (rising < values.length - 2) return;
+      // 7.8: an ellipsis pager reads 1 … 4 5 6 … 12 — the numbers still
+      // only ever CLIMB, and at least one adjacent pair remains. The old
+      // rule demanded near-perfect adjacency and the commonest pager shape
+      // on the web failed it.
+      var rising = 0, climbing = true;
+      for (var i = 1; i < values.length; i++) {
+        if (values[i] === values[i - 1] + 1) rising++;
+        if (values[i] <= values[i - 1]) climbing = false;
+      }
+      if (!(rising >= values.length - 2 || (climbing && rising >= 1))) return;
 
       g.all.forEach(function (el) { used.add(el); });
       var parts = { pageButtons: g.nums };
@@ -2742,6 +2768,21 @@
         // label grew (tens of pixels); a rail slides by an item's width
         // (hundreds). shifted() carries the largest dx on the array.
         var reflow71 = !r.moved.length || ((r.moved.maxDx || 0) <= 80);
+        // 7.8: LOAD-MORE first — the press GREW a list that was already
+        // showing (three-plus new children joining visible brothers), with
+        // the trigger outside it. Pagination by behaviour.
+        if (!r.navigated && r.grewList && !r.grewList.list.contains(el71) &&
+            !r.opened.length) {
+          var lmComp = {
+            type: 'pagination',
+            subtype: 'load-more',
+            root: commonAncestor([el71, r.grewList.list]),
+            parts: { loadMore: [el71], list: [r.grewList.list] },
+            why: 'pressing it added ' + r.grewList.added + ' items to a list already showing — load-more pagination',
+          };
+          comps.push(lmComp);
+          runExtras.push(lmComp);
+        }
         var quiet71 = !r.navigated &&
             !r.opened.length && reflow71 &&
             (!r.rerendered.length || selfRr71);
