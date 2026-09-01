@@ -1,0 +1,69 @@
+{
+  "url": "https://www.gov.il/he",
+  "note": [
+    "The first REAL-SITE pin (mission brief 0.5): gov.il's Hebrew home page,",
+    "captured 2026-09-01 as the DOM a user meets — after client JS settled,",
+    "scripts stripped so the pin is inert. RTL, React (CSS-module class hashes",
+    "are frozen with the capture and are stable HERE, however volatile live).",
+    "",
+    "Labels written by hand from reading the capture AND from the live walk's",
+    "own presses on 2026-09-01 (lang menu opened, chat drawer opened, galleries",
+    "slid). Same semantics as step.labels.json: hidden components score under",
+    "openable; type none pins a confirmed negative."
+  ],
+  "components": [
+    {
+      "type": "menu",
+      "root": "#topmenu",
+      "why": "The government portal's main menu bar — top-level triggers over panels of links.",
+      "fields": {}
+    },
+    {
+      "type": "menu",
+      "root": ".lang-container ul",
+      "why": "The language switcher: a button revealing a panel of language links, marked open with .open. Observed live: pressed, revealed links and nothing else.",
+      "fields": {},
+      "hidden": true
+    },
+    {
+      "type": "carousel",
+      "root": "#life-events-gallery",
+      "why": "The life-events gallery: pressing its arrows slid a rail of 9 items sideways (observed live). RTL rail — the slide direction is the mirror of the fixture corpus's.",
+      "fields": {}
+    },
+    {
+      "type": "carousel",
+      "root": "#office-gallery",
+      "why": "The offices gallery: a rail of 64 items sliding on its arrows (observed live).",
+      "fields": {}
+    },
+    {
+      "type": "dialog",
+      "root": "#chat-window",
+      "why": "The chat drawer: full height, hugging the edge, and the page itself calls it a dialog. Observed live with subtype drawer.",
+      "fields": {},
+      "hidden": true
+    },
+    {
+      "type": "dialog",
+      "root": ".advanced-search_wrap_search_popup__ucNgK",
+      "why": "The advanced-search popup — the page calls it a dialog and marks it open with a CSS-module class. The hash is frozen with this capture.",
+      "fields": {},
+      "hidden": true
+    },
+    {
+      "type": "tooltip",
+      "root": "#phone>div.gov-tooltip",
+      "why": "A header tooltip, named by its own class.",
+      "fields": {},
+      "hidden": true
+    },
+    {
+      "type": "listbox",
+      "root": "#search_results",
+      "why": "The site search's suggestion list — role/listbox markup on the results container.",
+      "fields": {},
+      "hidden": true
+    }
+  ]
+}

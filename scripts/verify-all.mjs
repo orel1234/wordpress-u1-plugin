@@ -41,6 +41,7 @@ const SUITES = [
   ['verify-detect', ['scripts/verify-detect.mjs']],
   ['verify-detect --real', ['scripts/verify-detect.mjs', '--real']],
   ['verify-detect --hostile', ['scripts/verify-detect.mjs', '--hostile']],
+  ['verify-pins', ['scripts/verify-pins.mjs']],
 ];
 
 // Count what the output SAYS where it says it in a known shape, but never
