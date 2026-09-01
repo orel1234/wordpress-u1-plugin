@@ -244,6 +244,23 @@
       "hidden": true
     },
     {
+      "type": "button",
+      "root": "#auditFakeBtn",
+      "why": "7.1: an <a href=\"#\"> whose click flips its own state (class + text) and never navigates — a button in link's clothing. The behavioural voice carries it: pressed, changed, navigated:false, nothing revealed. The dead-href markup arm was deliberately narrowed — this very page has 31 innocent href=\"#\" links.",
+      "fields": {}
+    },
+    {
+      "type": "button",
+      "root": "#auditBareDiv",
+      "why": "7.1: a bare div with tabindex=0 and a pointer cursor whose click flips its own state — a button with no role at all. tabindex on a non-control is also the markup arm's hint.",
+      "fields": {}
+    },
+    {
+      "type": "none",
+      "root": "#auditBtnLink",
+      "why": "7.1's negative: a REAL link (href=/sale) styled with the same btn classes as its neighbours. Styling must not make a working link a button — and a healthy link is not a component to publish."
+    },
+    {
       "type": "none",
       "root": "#auditSwitch",
       "why": "role=switch is a checkbox subtype — a PART. Its class says switch-nav, and 'nav' must not make the button a menu. Two rules pinned at once."

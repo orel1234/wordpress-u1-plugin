@@ -695,6 +695,43 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 7.1: a button is what a press SAYS it is, whatever the tag ──────────────
+//
+// An <a href="#"> that flips its own state and goes nowhere; a bare div with
+// a tabindex doing the same. Neither reveals a panel — there is nothing for
+// the reveal rules to type — so the press itself must say "button". A real
+// <button> doing it is native and needs nobody; a styled REAL link is left
+// alone.
+console.log('\n7.1 — the fake button convicts itself by pressing');
+{
+  const w = page(`
+    <div id="w">
+      <a href="#" id="fake" class="btn">Save for later</a>
+      <a href="/sale" id="real" class="btn">Go to the sale</a>
+      <div id="bare" tabindex="0">Promo code</div>
+      <button id="native">Mute</button>
+    </div>`);
+  const d = w.document;
+  const flip = (el, a, b) => el.addEventListener('click', (e) => {
+    if (el.tagName === 'A') e.preventDefault();
+    el.classList.toggle('is-on');
+    el.textContent = el.classList.contains('is-on') ? b : a;
+  });
+  flip(d.getElementById('fake'), 'Save for later', 'Saved');
+  flip(d.getElementById('bare'), 'Promo code', 'Promo on');
+  flip(d.getElementById('native'), 'Mute', 'Muted');
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  const btns = out.components.filter((c) => c.type === 'button');
+  const roots = btns.map((c) => c.root.id).sort().join(',');
+  check('the dead-href link and the bare div are buttons — by behaviour alone',
+    roots === 'bare,fake',
+    out.components.map((c) => c.type + ':' + (c.root.id || c.root.tagName)).join() || '(nothing)');
+  check('a real <button> is native — no component',
+    !btns.some((c) => c.root.id === 'native'));
+  check('a styled REAL link is left alone',
+    !btns.some((c) => c.root.id === 'real'));
+}
+
 // ── 5.4: hidden is what the rects SAY, not what an attribute declares ───────
 //
 // The chat window on the realistic build: hidden by `class="is-hidden"` that

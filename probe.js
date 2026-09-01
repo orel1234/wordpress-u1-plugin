@@ -325,7 +325,13 @@
       // and "dx > dy" let that register as a slide, which grew a phantom
       // body-rooted carousel that swallowed every hidden component's match.
       // A real slide translates on one axis: dy stays ~0.
-      if (dx > 8 && dy <= 8) out.push(el);
+      if (dx > 8 && dy <= 8) {
+        out.push(el);
+        // How FAR it slid — a reflow from a label growing a few characters
+        // moves following content by tens of pixels; a rail slides by an
+        // item's width, hundreds. Carried on the array for 7.1's judgement.
+        if (dx > (out.maxDx || 0)) out.maxDx = dx;
+      }
     });
     return out;
   }
@@ -887,7 +893,10 @@
     return comps;
   }
 
-  var PRESS_POOL = 'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],[aria-controls],summary,[tabindex]';
+  // 7.1: an <a> whose href is DEAD is a press candidate too — it exists to
+  // be clicked, not followed. Real links stay out: pressing them is
+  // navigation, and the net would only have to catch it.
+  var PRESS_POOL = 'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],[aria-controls],summary,[tabindex],a[href="#"],a[href^="javascript:"],a:not([href])';
 
   // A skip-link TARGET is not a control. tabindex="-1" exists to receive
   // programmatic focus — #main-content, a heading a router focuses — and it
@@ -2433,6 +2442,59 @@
         runPressed.push(list[i]);
         if (r.restored === false) runResidue.push({ el: list[i], residue: r.residue || null });
         finishFamily(list[i]);
+        // 7.1: a press that changed something, went nowhere and revealed
+        // NOTHING has no panel for the reveal rules to type — but the press
+        // itself is the verdict: this is a button someone built out of the
+        // wrong tag. Only for tags that are not already controls, and only
+        // for an <a> whose href is dead — a real link that also runs a
+        // handler stays a link.
+        var el71 = list[i];
+        // A rerender INSIDE the trigger is its own label changing — "Save"
+        // becoming "Saved" — which is button behaviour, not a region swap.
+        // The detector flags CONTAINERS, so the flip usually lands on the
+        // trigger's parent: an ancestor holding the trigger counts too, as
+        // long as nothing opened, closed or moved anywhere else.
+        var selfRr71 = r.rerendered.length > 0 && r.rerendered.every(function (x) {
+          if (x === el71 || el71.contains(x)) return true;
+          // An ancestor counts only while it is SMALL — a reactive app that
+          // re-renders its whole root on every press must not turn every
+          // control into a "button".
+          var small = true;
+          try { small = x.querySelectorAll('*').length <= 20; } catch (e) {}
+          return small && x.contains(el71);
+        });
+        // The label flip makes the trigger wider and everything after it in
+        // the flow reflows sideways — that is typography, not a slide. The
+        // magnitude tells them apart: a reflow is the few characters the
+        // label grew (tens of pixels); a rail slides by an item's width
+        // (hundreds). shifted() carries the largest dx on the array.
+        var reflow71 = !r.moved.length || ((r.moved.maxDx || 0) <= 80);
+        if (!r.navigated &&
+            !r.opened.length && reflow71 &&
+            (!r.rerendered.length || selfRr71) &&
+            (r.stateClass || r.touched > 0 || selfRr71)) {
+          var tag71 = el71.tagName;
+          var role71 = null;
+          try { role71 = el71.getAttribute('role'); } catch (e) {}
+          var href71 = null;
+          try { if (tag71 === 'A') href71 = el71.getAttribute('href') || ''; } catch (e) {}
+          var deadHref = href71 !== null &&
+            (!href71 || href71 === '#' || /^javascript:/i.test(href71));
+          var bare71 = (tag71 === 'DIV' || tag71 === 'SPAN' || tag71 === 'LI') && !role71;
+          if ((deadHref && !role71) || bare71) {
+            var btnComp = {
+              type: 'button',
+              root: el71,
+              parts: { button: [el71] },
+              why: (deadHref
+                ? 'a link that goes nowhere (href="' + href71 + '")'
+                : 'a bare <' + tag71.toLowerCase() + '>') +
+                ' acting as a button: pressed, its state changed, nothing navigated or opened',
+            };
+            comps.push(btnComp);
+            runExtras.push(btnComp);
+          }
+        }
         if (r.opened.length || r.moved.length || r.rerendered.length) {
           var entry = { trigger: list[i], panel: r.panel,
                         opened: r.opened, closed: r.closed,

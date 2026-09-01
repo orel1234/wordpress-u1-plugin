@@ -975,6 +975,25 @@ Mega.widgets = {
       });
     }
 
+    // 7.1: the fake button (a href="#") and the bare div flip their OWN
+    // state — no panel, no disclosure, just a control doing control things.
+    // The styled REAL link beside them navigates and must be left alone.
+    const fakeBtn = el('auditFakeBtn');
+    if (fakeBtn) {
+      fakeBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const on = fakeBtn.classList.toggle('is-saved');
+        fakeBtn.textContent = on ? '♥ Saved' : '♡ Save for later';
+      });
+    }
+    const bareDiv = el('auditBareDiv');
+    if (bareDiv) {
+      bareDiv.addEventListener('click', () => {
+        const on = bareDiv.classList.toggle('is-applied');
+        bareDiv.textContent = on ? 'Promo code on ✓' : 'Promo code';
+      });
+    }
+
     // The autocomplete: an EMPTY list that typing fills — did not appear,
     // it was visible all along, and the first probe version missed exactly
     // this shape. Model names chosen so any single letter matches some.

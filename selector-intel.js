@@ -1400,6 +1400,28 @@
       }
     } catch (e) {}
 
+    // 7.1's markup arm, deliberately NARROW. An <a> with a javascript: href
+    // or no href at all but a click affordance, and a div/span with an
+    // onclick or a non-negative tabindex, are buttons someone built out of
+    // the wrong tag. href="#" alone is NOT here — this fixture page alone
+    // has 31 innocent placeholder links, and a real site has more; the
+    // behavioural arm (pressed, changed, went nowhere) carries those.
+    try {
+      const t71 = el.tagName;
+      const ti71 = el.getAttribute('tabindex');
+      const clicky71 = el.hasAttribute('onclick') || (ti71 != null && Number(ti71) >= 0);
+      if (t71 === 'A') {
+        const h71 = el.getAttribute('href');
+        if (/^javascript:/i.test(h71 || '') || (!h71 && clicky71)) {
+          return { name: 'button', sure: false };
+        }
+      } else if ((t71 === 'DIV' || t71 === 'SPAN') && clicky71 &&
+                 !el.getAttribute('role') && (el.textContent || '').trim().length <= 40 &&
+                 el.children.length === 0) {
+        return { name: 'button', sure: false };
+      }
+    } catch (e) {}
+
     const cls = (el.className && typeof el.className === 'string') ? el.className : '';
     if (cls) {
       const flat = classWords(cls);
@@ -4118,6 +4140,9 @@
     // Taken out of the tab order by hand — the browser's free tab stop is gone.
     const ti = el.getAttribute('tabindex');
     if (ti != null && parseInt(ti, 10) < 0) return null;
+    // 7.1: pointer-events:none on a "native" control means the mouse cannot
+    // reach it either — whatever the tag says, this one is not working.
+    try { if (getComputedStyle(el).pointerEvents === 'none') return null; } catch (e) {}
     return { tag: tag.toLowerCase(), name };
   }
 

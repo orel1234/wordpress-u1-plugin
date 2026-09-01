@@ -935,6 +935,16 @@
         </ul>
       </div>
 
+      <!-- 7.1 button/link: an <a href="#"> that only ever toggles is a BUTTON
+           in link's clothing; beside it the negative — a real link styled as
+           a button, which must stay a link. And a bare div that acts like a
+           button with no role at all. -->
+      <div class="audit-actions">
+        <a href="#" id="auditFakeBtn" class="btn btn--outline">♡ Save for later</a>
+        <a href="/sale" id="auditBtnLink" class="btn btn--accent">Go to the sale</a>
+        <div id="auditBareDiv" tabindex="0" style="cursor:pointer;display:inline-block;padding:8px 14px;border:1px solid #888">Promo code</div>
+      </div>
+
       <!-- combobox: an autocomplete — the list is EMPTY until typing fills
            it, the commonest autocomplete on the web. role=combobox on the
            input for the friendly build; the behavioural layer must name it
