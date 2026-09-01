@@ -10894,7 +10894,8 @@ function renderSweepPicks() {
 
   list.innerHTML = stops.map((stop, i) => {
     const img = safeImg(stop.thumb);
-    const k = stop.found.length;
+    const heldN = stop.found.filter(f => f.held).length;
+    const k = stop.found.length - heldN;
     return `
       <details class="sweep-group" data-stop="${stop.n}"${i === 0 ? ' open' : ''}>
         <summary>
@@ -10905,16 +10906,17 @@ function renderSweepPicks() {
                      <img class="mh-preview" src="${img}" alt="">
                    </span>` : ''}
           <span class="sweep-group-name">Section ${stop.n}</span>
-          <span class="sweep-group-meta">${k} component${k === 1 ? '' : 's'} · $${(stop.cost || 0).toFixed(3)}</span>
+          <span class="sweep-group-meta">${k} component${k === 1 ? '' : 's'}${heldN ? ` · ${heldN} need${heldN === 1 ? 's' : ''} review` : ''} · $${(stop.cost || 0).toFixed(3)}</span>
         </summary>
         <div class="sweep-group-body">${stop.found.map(f => `
           <div class="ai-approved-row ai-bulk-row" data-pick="${f.id}">
-            <input type="checkbox" class="ai-bulk-tick" checked aria-label="Make ${escapeHtml(f.label)} accessible">
+            <input type="checkbox" class="ai-bulk-tick" ${f.held ? '' : 'checked'} aria-label="Make ${escapeHtml(f.label)} accessible">
             <div class="ai-bulk-body">
               <span class="ai-approved-label">${escapeHtml(f.label)}</span>
               <code>u1.fix.${escapeHtml(f.type)}</code>
-              ${f.needsWork ? '<span class="ai-sev" data-need="1">needs work</span>'
-                            : '<span class="ai-sev" data-need="0">already looks correct</span>'}
+              ${f.held ? `<span class="ai-sev" data-need="1">low confidence${f.detConf != null ? ' ' + f.detConf : ''} — not ticked for you</span>` : ''}
+              ${!f.held && f.needsWork ? '<span class="ai-sev" data-need="1">needs work</span>' : ''}
+              ${!f.held && !f.needsWork ? '<span class="ai-sev" data-need="0">already looks correct</span>' : ''}
               ${f.failed ? '<span class="ai-sev" data-need="1">could not be mapped</span>' : ''}
               <div class="ai-approved-why">${escapeHtml(f.why || f.sel)}</div>
               ${f.failed ? `<div class="ai-approved-why sweep-failed">${escapeHtml(f.failed)}</div>` : ''}
@@ -11610,6 +11612,9 @@ async function scanPickedScreens(numbers) {
 
   const stops = aiSweep.stops.filter(s => numbers.includes(s.n));
   const handled = await alreadyHandled();
+  // Low-confidence rows published unticked, keyed by selector so a later,
+  // confident reading of the same element can replace its hesitant twin.
+  const heldAt = new Map();
   const startedAt = (await sweepMeasure(tab))?.y || 0;
   clearApproved();   // a new run, a new answer to "what did I just do"
   aiSweep.running = true;
@@ -11872,22 +11877,35 @@ async function scanPickedScreens(numbers) {
       stop.found = (stop.found || []).filter((f) => f.done);
       for (const c of found) {
         // Stage 6: the publication threshold. A row below 0.6 — the model's
-        // word alone, with no markup voice and no behaviour behind it — is
-        // said in the log, not published as a discovery.
-        if (c.detConf != null && c.detConf < 0.6) {
+        // word alone, with no markup voice and no behaviour behind it — is not
+        // ticked for you. But it is SHOWN: hiding it in the log read as "the
+        // AI missed this" when it had actually seen it and hesitated. The row
+        // is published unchecked, labelled with its confidence, for a person
+        // to approve or ignore.
+        const held = c.detConf != null && c.detConf < 0.6;
+        if (held) {
+          if (handled.has(c.containerSelector) || heldAt.has(c.containerSelector)) { seenAgain++; continue; }
           sweepLog(stop.n, `held back ${c.label || c.containerSelector} (${c.u1Type}) — ` +
-            `confidence ${c.detConf}: one voice is not enough to publish`, 'skip');
-          continue;
+            `confidence ${c.detConf}: shown unticked, not applied for you`, 'skip');
+        } else {
+          // Never twice, whatever brought it back: a sticky bar, a repeated
+          // footer, or a component straddling the overlap between two sections.
+          if (handled.has(c.containerSelector)) { seenAgain++; continue; }
+          handled.add(c.containerSelector);
+          // A confident reading replaces an earlier hesitant one of the same
+          // element, wherever that hesitation was published.
+          const prior = heldAt.get(c.containerSelector);
+          if (prior) {
+            prior.stop.found = prior.stop.found.filter((x) => x !== prior.f);
+            heldAt.delete(c.containerSelector);
+          }
         }
-        // Never twice, whatever brought it back: a sticky bar, a repeated
-        // footer, or a component straddling the overlap between two sections.
-        if (handled.has(c.containerSelector)) { seenAgain++; continue; }
-        handled.add(c.containerSelector);
         if (c.detConf != null && c.detConf < 0.9) {
           c.why = `Confidence ${c.detConf} — read before applying. ` + (c.why || '');
         }
-        stop.found.push({
+        const row = {
           id: `s${stop.n}i${stop.found.length}`,
+          held,
           label: c.label || c.containerSelector,
           type: c.u1Type,
           sel: c.containerSelector,
@@ -11899,7 +11917,9 @@ async function scanPickedScreens(numbers) {
           why: c.why || '',
           needsWork: c.needsWork !== false,
           detConf: c.detConf,
-        });
+        };
+        stop.found.push(row);
+        if (held) heldAt.set(c.containerSelector, { stop, f: row });
       }
       stop.scanned = true;
       stop.cost = aiCost - before;
@@ -12305,6 +12325,15 @@ async function buildPickedComponents() {
   // waiting. Hiding it left the review on screen and nothing else, which reads
   // as the end of the job on a page with twenty-five sections left in it.
   renderSweepPicks();
+  // The page-wide finishing pass: heading outline and vague links, written
+  // automatically once the components of this batch are built.
+  try {
+    const fin = await sweepFinishingPass(tab);
+    if (fin.headings || fin.links) {
+      sweepLog(0, `finishing pass: ${fin.headings} heading level${fin.headings === 1 ? '' : 's'} ` +
+        `and ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped automatically`, 'info');
+    }
+  } catch {}
   return { built: (aiBulk.failed || []).length === 0, failed: (aiBulk.failed || []).length };
 }
 
@@ -14341,6 +14370,65 @@ let filterShape = null;
  * always said not to renumber a page's headings to make them tidy. A level is
  * rewritten only where somebody asks for one.
  */
+/**
+ * The finishing pass (owner decision, 2026-09-01): after a sweep builds its
+ * components, the page-wide judgement calls are made automatically instead of
+ * waiting in their manual tools. Two things run:
+ *   1. Heading outline — every heading whose outline IMPLIES a concrete other
+ *      level (h.should) gets a heading mapping at that level. A heading that
+ *      merely looks odd, with no implied level, is still left alone.
+ *   2. Vague links — the repeated "Learn more" pattern beside card headings
+ *      gets the aria-label mapping ("<says> about <heading>") that the manual
+ *      "Name them after their headings" button writes.
+ * Both dedupe against alreadyHandled(), so re-running a sweep on the same page
+ * writes nothing twice. The manual review screens stay, for overrides.
+ */
+async function sweepFinishingPass(tab) {
+  const made = { headings: 0, links: 0 };
+  if (isReadonly()) return made;
+  const handled = await alreadyHandled();
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+  } catch { return made; }
+  try {
+    const got = await inPage(tab.id, () => {
+      const S = window.__u1SelectorIntel;
+      return S && S.headingOutline ? S.headingOutline().slice() : [];
+    });
+    for (const h of got || []) {
+      if (!h.should || h.should === h.level) continue;
+      if (!h.selector || handled.has(h.selector)) continue;
+      try {
+        await saveMappingEntry(buildTemplate('heading', h.selector, {}, { level: h.should }),
+          { refreshUi: false });
+        handled.add(h.selector);
+        made.headings++;
+      } catch {}
+    }
+  } catch {}
+  try {
+    const shapes = await inPage(tab.id, () => {
+      const S = window.__u1SelectorIntel;
+      return S && S.cardDescriptions ? S.cardDescriptions() : [];
+    });
+    for (const c of shapes || []) {
+      if (!c.target || handled.has(c.target)) continue;
+      try {
+        await saveMappingEntry(buildTemplate('aria-label', c.target, {},
+          { middleText: 'about', headingSelector: c.heading }), { refreshUi: false });
+        handled.add(c.target);
+        made.links++;
+      } catch {}
+    }
+  } catch {}
+  if (made.headings || made.links) {
+    try { await applyAllMappings({ silent: true }); } catch {}
+    await loadMappingsList();
+    refreshExportInfo();
+  }
+  return made;
+}
+
 async function readHeadingOutline() {
   const tab = await getTab();
   if (!isInjectable(tab)) return null;
