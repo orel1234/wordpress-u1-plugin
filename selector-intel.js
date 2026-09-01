@@ -1386,6 +1386,39 @@
       if (el.querySelectorAll(':scope > [role="tab"]').length >= 2) {
         return { name: 'tabs', sure: true };
       }
+      // 7.3 hash-tabs: ≥2 direct anchors whose href is the #id of a PANEL —
+      // targets that exist, sit under ONE parent, and show at most one at a
+      // time. A table of contents fails on both counts: its targets are far
+      // sections, all visible. CSS-:target tabs and hand-rolled hash tabs
+      // both match; nothing else does.
+      {
+        const hashAs = el.querySelectorAll(':scope > a[href^="#"], :scope > li > a[href^="#"]');
+        if (hashAs.length >= 2) {
+          const targets = [];
+          for (const a of hashAs) {
+            const id = (a.getAttribute('href') || '').slice(1);
+            if (!id) { targets.length = 0; break; }
+            const t = document.getElementById(id);
+            if (!t) { targets.length = 0; break; }
+            targets.push(t);
+          }
+          if (targets.length >= 2 &&
+              targets.every((t) => t.parentElement === targets[0].parentElement) &&
+              targets[0].parentElement !== document.body) {
+            let showing = 0;
+            for (const t of targets) {
+              let hid = false;
+              try {
+                hid = t.hasAttribute('hidden') ||
+                  t.getBoundingClientRect().width === 0 ||
+                  getComputedStyle(t).display === 'none';
+              } catch (e) {}
+              if (!hid) showing++;
+            }
+            if (showing <= 1) return { name: 'tabs', sure: true };
+          }
+        }
+      }
     } catch (e) { /* :scope is old enough to rely on, but never worth throwing for */ }
 
     // Some libraries put their fingerprint in a data- attribute and leave the
@@ -1431,8 +1464,11 @@
       for (const [re, name] of COMPONENT_BY_CLASS) {
         if (!(re.test(cls) || re.test(flat))) continue;
         // The CONTENT of tabs is not the tabs: tabs-content / tabs-panel /
-        // tabs-pane name what the strip switches, not the strip.
-        if (name === 'menu' && /tabs?[-_](content|panel|pane)\b/i.test(cls)) continue;
+        // tabs__panels name what the strip switches, not the strip. The veto
+        // follows the type — it guarded 'menu' through the collapse years
+        // and guards 'tabs' now that 4.3 restored the word.
+        if ((name === 'tabs' || name === 'menu') &&
+            /tabs?(__|[-_])(contents?|panels?|panes?)\b/i.test(cls)) continue;
         // Two carousel words carry a known lie and only those two are gated —
         // "carousel"/"slideshow"/library fingerprints stay trusted words:
         //   · slider + input[type=range] inside = a VALUE slider, never a

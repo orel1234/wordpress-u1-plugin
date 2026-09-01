@@ -695,6 +695,35 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 7.3: orientation must not matter to the strip ───────────────────────────
+console.log('\n7.3 — vertical tabs are still tabs');
+{
+  const w = page(`
+    <div id="w"><div id="vt">
+      <div id="list">
+        <button id="v1">Materials</button>
+        <button id="v2">Care</button>
+        <button id="v3">Recycling</button>
+      </div>
+      <div id="panels">
+        <div id="q1">leather</div>
+        <div id="q2" hidden>wipe clean</div>
+        <div id="q3" hidden>drop off</div>
+      </div>
+    </div></div>`);
+  const d = w.document;
+  for (const [b, p] of [['v1', 'q1'], ['v2', 'q2'], ['v3', 'q3']]) {
+    d.getElementById(b).addEventListener('click', () => {
+      for (const q of ['q1', 'q2', 'q3']) d.getElementById(q).hidden = q !== p;
+    });
+  }
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  const t = out.components.find((c) => c.type === 'tabs');
+  check('a stacked strip swapping panels beside it is TABS',
+    !!t && t.root === d.getElementById('list'),
+    out.components.map((c) => c.type + ':' + (c.root.id || '')).join() || '(nothing)');
+}
+
 // ── 7.2: a switch flips aria-checked; a radio unmarks its sibling ───────────
 console.log('\n7.2 — checked-state vocabulary makes it a checkbox or a radio');
 {

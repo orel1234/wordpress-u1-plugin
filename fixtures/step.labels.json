@@ -273,6 +273,23 @@
       "fields": {}
     },
     {
+      "type": "tabs",
+      "root": "#auditVertTabs>.vtabs__list",
+      "why": "7.3: vertical tabs — three stacked sibling buttons swapping panels beside them. Orientation must not matter to the strip rule; rooted on the list per the direct-parent contract.",
+      "fields": {}
+    },
+    {
+      "type": "tabs",
+      "root": "#auditHashTabs",
+      "why": "7.3: hash-tabs — anchors whose href is the #id of a sibling panel, exactly one showing. Tabs by MARKUP alone (the hint arm), and by behaviour when pressed.",
+      "fields": {}
+    },
+    {
+      "type": "none",
+      "root": "#auditToc",
+      "why": "7.3's negative: in-page links to VISIBLE page sections — a table of contents. The hash-tabs rule must not fire when the targets are far, visible, and not each other's siblings."
+    },
+    {
       "type": "none",
       "root": "#auditNativeCheck",
       "why": "7.2's negative: label > input[type=checkbox][hidden] + span — the native checkbox under styling. The browser already runs it; mapping it would announce it twice."

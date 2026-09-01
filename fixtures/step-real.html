@@ -985,6 +985,39 @@
       </div>
       <label class="fancy-check" id="auditNativeCheck"><input type="checkbox" class="is-hidden"><span>Gift wrap</span></label>
 
+      <!-- 7.3 vertical tabs: same strip mechanics, stacked instead of in a
+           row — orientation must not matter to the behavioural rule. -->
+      <div class="vtabs" id="auditVertTabs" style="display:flex;gap:12px">
+        <div class="vtabs__list" style="display:flex;flex-direction:column">
+          <button type="button" data-vtab="vp1">Materials</button>
+          <button type="button" data-vtab="vp2">Care</button>
+          <button type="button" data-vtab="vp3">Recycling</button>
+        </div>
+        <div class="vtabs__panels">
+          <div data-vpanel="vp1">Full-grain leather and knit mesh.</div>
+          <div data-vpanel="vp2" class="is-hidden">Wipe clean; air dry away from heat.</div>
+          <div data-vpanel="vp3" class="is-hidden">Drop worn pairs at any branch.</div>
+        </div>
+      </div>
+
+      <!-- 7.3 hash-tabs: anchors whose href is the #id of a sibling PANEL,
+           only one showing — tabs by markup alone, no press needed. And the
+           negative right beside it: in-page links to VISIBLE sections are a
+           table of contents, not tabs. -->
+      <div class="hash-tabs" id="auditHashTabs">
+        <a href="#hashPanelSpecs">Specs</a>
+        <a href="#hashPanelShipping">Shipping</a>
+        <a href="#hashPanelWarranty">Warranty</a>
+      </div>
+      <div class="hash-tabs__panels">
+        <div id="hashPanelSpecs">Weight 240g, drop 8mm.</div>
+        <div id="hashPanelShipping" class="is-hidden">Ships within 2 business days.</div>
+        <div id="hashPanelWarranty" class="is-hidden">Two years on manufacturing faults.</div>
+      </div>
+      <div class="page-toc" id="auditToc">
+        On this page: <a href="#sizes">Size guide</a> · <a href="#reviews">Reviews</a> · <a href="#faq">FAQ</a>
+      </div>
+
     </div>
   </section>
 

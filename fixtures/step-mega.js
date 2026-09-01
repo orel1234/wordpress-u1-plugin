@@ -1071,6 +1071,27 @@ Mega.widgets = {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
 
+    // 7.3: vertical tabs — the same swap, stacked.
+    const vt = el('auditVertTabs');
+    if (vt) vt.addEventListener('click', (e) => {
+      const tab = e.target.closest('[data-vtab]');
+      if (!tab) return;
+      Store.utils.qsa('[data-vpanel]', vt).forEach((p) => {
+        p.hidden = p.getAttribute('data-vpanel') !== tab.getAttribute('data-vtab');
+      });
+    });
+    // 7.3: hash-tabs — the panel the href names is shown, its brothers hidden.
+    const ht = el('auditHashTabs');
+    if (ht) ht.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href^="#hashPanel"]');
+      if (!a) return;
+      e.preventDefault();
+      const id = a.getAttribute('href').slice(1);
+      ['hashPanelSpecs', 'hashPanelShipping', 'hashPanelWarranty'].forEach((p) => {
+        const elp = el(p); if (elp) elp.hidden = p !== id;
+      });
+    });
+
     // 7.2: the roleless radio — choosing one unmarks the sibling.
     const ship = el('auditShipChoice');
     if (ship) ship.addEventListener('click', (e) => {
