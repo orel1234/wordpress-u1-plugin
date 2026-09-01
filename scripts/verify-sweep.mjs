@@ -2417,9 +2417,10 @@ console.log('\na running scan owns the panel');
   check('…the leftover is remembered as OURS instead, and any decline lifted',
     /rememberSelfApplied\(\[mappingKey\(gone\)\]\)/.test(panelSrc) &&
     /forgetDeclinedFixes\(goneKeys\)/.test(panelSrc));
+  // The adopt-the-site's-fixes offer itself is gone (owner, 2026-09-02) —
+  // the self-applied ledger remains, still marking this machine's own runs.
   check('an applied batch is never mistaken for the site\'s own deployment',
-    /rememberSelfApplied\(structured\.map\(mappingKey\)\)/.test(panelSrc) &&
-    /if \(selfApplied\.has\(k\)\) continue;/.test(panelSrc));
+    /rememberSelfApplied\(structured\.map\(mappingKey\)\)/.test(panelSrc));
   check('…and the self-applied note stays off the server and out of backups',
     /'__selfApplied_' \+ currentHostname/.test(panelSrc) &&
     /setLocalOnly\(\{ \[key\]: \[\.\.\.have\]\.slice\(-800\) \}\)/.test(panelSrc));

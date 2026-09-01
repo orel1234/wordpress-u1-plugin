@@ -7799,15 +7799,8 @@ document.getElementById('deleteAllBtn')?.addEventListener('click', async () => {
     // a clean slate stayed haunted — a scan on an emptied site still refused
     // to look at things nobody remembered refusing. Through set(), so the
     // server hears it too.
-    //
-    // Except the wholesale '*': that one is a judgement about the SITE'S OWN
-    // deployment, not about the work being deleted here, and clearing it made
-    // every clean-slate test cycle resurrect the "already running N U1 fixes"
-    // offer that had been turned down for good. Deleting your mappings says
-    // nothing about whether you want theirs.
-    const keepAll = (await declinedFixKeys()).has('*');
     await U1Store.set({
-      [storageKey('declined', currentHostname)]: keepAll ? ['*'] : [],
+      [storageKey('declined', currentHostname)]: [],
       [storageKey('dismissed', currentHostname)]: [],
     });
     // And the page itself: U1 keeps whatever it already wrote until a
@@ -12174,10 +12167,11 @@ async function scanPickedScreens(numbers) {
       } catch {}
       try {
         const fin = await sweepFinishingPass(tab);
-        if (fin.headings || fin.links) {
-          sweepLog(0, `finishing pass: ${fin.headings} heading level${fin.headings === 1 ? '' : 's'} ` +
-            `and ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped automatically`, 'info');
-        }
+        sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
+          (fin.off === 0 ? 'the outline is consistent, nothing to correct'
+            : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
+              (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
+          ` · ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`, 'info');
       } catch {}
       const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
       const failedC = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done && f.failed).length), 0);
@@ -12458,10 +12452,11 @@ async function buildPickedComponents() {
   // automatically once the components of this batch are built.
   try {
     const fin = await sweepFinishingPass(tab);
-    if (fin.headings || fin.links) {
-      sweepLog(0, `finishing pass: ${fin.headings} heading level${fin.headings === 1 ? '' : 's'} ` +
-        `and ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped automatically`, 'info');
-    }
+    sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
+      (fin.off === 0 ? 'the outline is consistent, nothing to correct'
+        : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
+          (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
+      ` · ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`, 'info');
   } catch {}
   return { built: (aiBulk.failed || []).length === 0, failed: (aiBulk.failed || []).length };
 }
@@ -14592,7 +14587,10 @@ async function dialogInteriorScan(tab) {
 }
 
 async function sweepFinishingPass(tab) {
-  const made = { headings: 0, links: 0 };
+  // read/off/already are carried out so the log can say "looked and found it
+  // consistent" — a silent pass was indistinguishable from one that never ran
+  // ("did it scan the headings and see they are fine, or never look?").
+  const made = { headings: 0, links: 0, read: 0, off: 0, already: 0 };
   if (isReadonly()) return made;
   const handled = await alreadyHandled();
   try {
@@ -14603,9 +14601,11 @@ async function sweepFinishingPass(tab) {
       const S = window.__u1SelectorIntel;
       return S && S.headingOutline ? S.headingOutline().slice() : [];
     });
+    made.read = (got || []).length;
     for (const h of got || []) {
       if (!h.should || h.should === h.level) continue;
-      if (!h.selector || handled.has(h.selector)) continue;
+      made.off++;
+      if (!h.selector || handled.has(h.selector)) { made.already++; continue; }
       try {
         await saveMappingEntry(buildTemplate('heading', h.selector, {}, { level: h.should }),
           { refreshUi: false });
@@ -17186,154 +17186,18 @@ async function forgetDeclinedFixes(keys) {
 }
 
 async function renderExistingFixes() {
+  // Owner decision (2026-09-02): this offer does not exist. The panel used to
+  // read the site's own deployed u1.fix.* calls off the live page and offer
+  // to adopt or set them aside — and however the answer was remembered (by
+  // key, wholesale, surviving wipes or not), the box kept finding a reason to
+  // come back: the recording is timing-dependent, deletes wipe the slate, and
+  // every variant re-opened a question that had been answered. "I don't want
+  // this set-aside at all — every delete starts fresh." So: nothing is ever
+  // offered, nothing is remembered about it, and the box stays empty. The
+  // recorder itself stays — u1-patch's call log still powers other reads.
   const box = document.getElementById('importExisting');
-  if (!box) return;
-  const calls = await findExistingFixes();
-  if (!calls.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
-
-  const key = storageKey('mappings', currentHostname);
-  const have = new Set(((await U1Store.get([key]))[key] || []).map(mappingKey));
-  // Offers already turned down. Read here rather than filtered at the source
-  // because the count in the heading has to be the count of what is actually
-  // being offered — "83 fixes" above a list of nine is worse than no heading.
-  const declined = await declinedFixKeys();
-  // '*' is "no, to the site's whole deployment". The recording is read off
-  // the LIVE page, and it is timing-dependent — one load catches one fix,
-  // the next catches four — so declining by key alone meant every load that
-  // recorded a call nobody had seen before re-opened the offer. Skip means
-  // "my mappings replace this deployment"; that answer covers the fixes the
-  // recorder has not caught yet too.
-  const declineAll = declined.has('*');
-  const selfApplied = await selfAppliedKeys();
-  const fresh = [];
-  const seen = new Set();
-  let refused = 0;
-  for (const c of calls) {
-    const tpl = mappingFromRecordedCall(c);
-    if (!tpl) continue;
-    const k = mappingKey(tpl);
-    if (have.has(k) || seen.has(k)) continue;   // already ours, or the page ran it twice
-    seen.add(k);
-    // This machine's own leftover — a fix WE ran against the page, whose
-    // mapping may since have been deleted. Not the site's deployment, not an
-    // offer, not a refusal to count: a page reload makes it vanish.
-    if (selfApplied.has(k)) continue;
-    if (declineAll || declined.has(k)) { refused++; continue; }
-    fresh.push(tpl);
-  }
-  if (!fresh.length) {
-    // Not silence. The site is still running them, and a person who cannot
-    // remember saying no has no way to find out otherwise.
-    box.style.display = refused ? '' : 'none';
-    // The standing decline earns ONE quiet line, not a standing paragraph —
-    // it was answered noise the moment it was answered, and a box that
-    // re-explains a settled decision above the mappings list every day reads
-    // as the question coming back ("it still gives me this", 2026-09-01).
-    box.className = 'input-hint';
-    box.style.margin = '4px 0 10px';
-    box.innerHTML = refused
-      ? `${refused} fix${refused === 1 ? '' : 'es'} the site runs ${refused === 1 ? 'is' : 'are'} set aside` +
-        (declineAll ? ' (the whole deployment)' : '') +
-        ` · <button class="btn-ghost btn-xs" id="restoreDeclinedBtn" ` +
-        `title="The site's own U1 fixes are not offered for adoption. Press to offer them again.">Offer ${refused === 1 ? 'it' : 'them'} again</button>`
-      : '';
-    return;
-  }
-
-  existingFixTemplates = fresh;
-  const byType = {};
-  for (const t of fresh) byType[t.type] = (byType[t.type] || 0) + 1;
-  box.style.display = '';
-  box.className = 'advisor-note warn';
-  box.innerHTML =
-    `<strong>This site is already running ${fresh.length} U1 fix${fresh.length === 1 ? '' : 'es'} ` +
-    `that ${fresh.length === 1 ? 'is' : 'are'} not in your list</strong> — ` +
-    escapeHtml(Object.entries(byType).map(([t, n]) => `${n} ${t}`).join(', ')) + `. ` +
-    `Recorded as the page ran them, so these are the selectors the site itself passed.` +
-    `<div class="input-hint" style="display:block;">Adopting them makes them yours: editable, exported, ` +
-    `and covered by monitoring. Your exported file will then call the same fixes the site's current ` +
-    `deployment calls, so it is meant to REPLACE that deployment — two calls on the same elements fight.</div>` +
-    `<div class="btn-row"><button class="btn-outline btn-sm" id="adoptExistingBtn">` +
-    `Adopt ${fresh.length === 1 ? 'it' : 'all ' + fresh.length} into my mappings</button>` +
-    // The offer is read from the live page, so saying nothing is not an answer
-    // that sticks — the page runs the same fixes tomorrow and asks again. Skip
-    // is the answer that sticks, and it travels to the server with everything
-    // else, so a colleague is not asked what you already decided.
-    `<button class="btn-outline btn-sm" id="skipExistingBtn" ` +
-    `title="Stop offering these. The site keeps running them; only the offer goes away.">` +
-    `Skip ${fresh.length === 1 ? 'it' : 'all ' + fresh.length}</button></div>` +
-    (refused ? `<div class="input-hint" style="display:block;">${refused} more ${refused === 1 ? 'was' : 'were'} ` +
-               `skipped earlier and ${refused === 1 ? 'is' : 'are'} not counted above.</div>` : '');
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
 }
-
-// The templates renderExistingFixes last offered, so Adopt saves exactly what
-// was described rather than re-reading a page that may have moved on.
-let existingFixTemplates = [];
-
-document.addEventListener('click', async (e) => {
-  const skip = e.target.closest('#skipExistingBtn');
-  if (skip) {
-    const status = document.getElementById('mappingsStatus');
-    skip.disabled = true;
-    // The named keys AND the wholesale '*': the recorder catches a different
-    // subset of the deployment on every load, and a skip that only named
-    // today's subset was re-asked tomorrow with whatever it caught next.
-    await rememberDeclinedFixes([...existingFixTemplates.map(mappingKey), '*']);
-    existingFixTemplates = [];
-    await renderExistingFixes();
-    showNotice(status,
-      `Set aside — and so is anything else this site's own deployment runs, now or on a future ` +
-      `load. The site still runs them; only the offers are gone, here and on your colleagues' ` +
-      `machines. Take it back from the note that replaces the offer.`, 'success', 9000);
-    return;
-  }
-
-  const restore = e.target.closest('#restoreDeclinedBtn');
-  if (restore) {
-    restore.disabled = true;
-    // Emptied rather than pruned: there is one offer and this puts it back.
-    await U1Store.set({ [storageKey('declined', currentHostname)]: [] });
-    await renderExistingFixes();
-    showNotice(document.getElementById('mappingsStatus'),
-      'Back on the list — for everyone on this site, not only here.', 'success', 6000);
-  }
-});
-
-document.addEventListener('click', async (e) => {
-  if (!e.target.closest('#adoptExistingBtn')) return;
-  const btn = e.target.closest('#adoptExistingBtn');
-  const status = document.getElementById('mappingsStatus');
-  if (isReadonly()) {
-    showNotice(status, 'Licence expired — existing mappings still work and export, but new ones are paused.', 'error', 6000);
-    return;
-  }
-  btn.disabled = true;
-  btn.textContent = 'Adopting…';
-  let saved = 0;
-  const failed = [];
-  for (const tpl of existingFixTemplates) {
-    // Through saveMappingEntry, the one save path — so an adopted mapping goes
-    // through the same required-field refusal, selector narrowing and role
-    // question as one built by hand. A recorded call is evidence of what the
-    // site asked for, not proof that it was correct.
-    try {
-      const r = await saveMappingEntry(tpl, { refreshUi: false });
-      if (r && r.cancelled) failed.push(`${tpl.type} ${tpl.primary}: role question declined`);
-      else saved++;
-    } catch (err) {
-      failed.push(`${tpl.type} ${tpl.primary}: ${err.message}`);
-    }
-  }
-  existingFixTemplates = [];
-  await loadMappingsList();
-  refreshExportInfo();
-  await renderExistingFixes();
-  showNotice(status,
-    `${saved} adopted.` +
-    (failed.length ? ` ${failed.length} could not be: ${failed.join(' · ')}` : '') +
-    (saved ? ' They are ordinary mappings now — edit or delete them like any other.' : ''),
-    failed.length ? 'error' : 'success', failed.length ? 0 : 9000);
-});
 
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);

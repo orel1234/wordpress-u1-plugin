@@ -457,17 +457,14 @@ console.log('\n  Delete all mappings:');
   check('…and carried by an imported backup and by a first push',
         /'u1Links', 'dismissed', 'declined'/.test(panelSrc));
 
-  check('the offer skips what was turned down — by key, or wholesale',
-        /const declined = await declinedFixKeys\(\);/.test(panelSrc) &&
-        /if \(declineAll \|\| declined\.has\(k\)\) \{ refused\+\+; continue; \}/.test(panelSrc) &&
-        // Skip writes the '*' sentinel too: the recording is timing-dependent,
-        // and a skip that only named today's keys was re-asked on every load
-        // that caught a call nobody had seen before.
-        /rememberDeclinedFixes\(\[\.\.\.existingFixTemplates\.map\(mappingKey\), '\*'\]\)/.test(panelSrc));
-  check('…and there is a Skip beside Adopt, not only Adopt',
-        /id="skipExistingBtn"/.test(panelSrc) && /#skipExistingBtn/.test(panelSrc));
-  check('…and a way to take that back',
-        /id="restoreDeclinedBtn"/.test(panelSrc) && /#restoreDeclinedBtn/.test(panelSrc));
+  // Owner decision (2026-09-02): the adopt-the-site's-own-fixes offer does
+  // not exist. Every remembered answer to it — by key, wholesale, surviving
+  // wipes or not — found a reason to re-open a settled question, so nothing
+  // is offered and nothing is asked. The pins now hold its ABSENCE.
+  check('the offer does not exist any more — nothing offered, nothing asked',
+        /this offer does not exist/.test(panelSrc) &&
+        !/skipExistingBtn/.test(panelSrc) && !/adoptExistingBtn/.test(panelSrc) &&
+        !/restoreDeclinedBtn/.test(panelSrc));
 
   // The loop the owner hit had TWO wrong answers in a row. First: adopt 83,
   // delete 83, be offered 83 again — answered by recording the delete as a
@@ -488,12 +485,9 @@ console.log('\n  Delete all mappings:');
   check('…and deleting all of them lifts the declines and wipes the slate',
         !!delAll && !/rememberDeclinedFixes\(/.test(delAll[0]) &&
         /forgetDeclinedFixes\(goneKeys\)/.test(delAll[0]) &&
-        // …except the wholesale '*', which is a judgement about the SITE'S
-        // deployment, not about the work being deleted — clearing it made
-        // every clean-slate cycle resurrect an offer turned down for good.
-        /keepAll \? \['\*'\] : \[\]/.test(delAll[0]));
-  check('…while the offer still recognises this machine\'s own leftovers',
-        /if \(selfApplied\.has\(k\)\) continue;/.test(panelSrc));
+        /storageKey\('declined', currentHostname\)\]: \[\]/.test(delAll[0]));
+  check('…while this machine\'s own leftovers are still remembered locally',
+        /rememberSelfApplied\(\[mappingKey\(gone\)\]\)/.test(panelSrc));
 
   // The two lists must not become one. A dismissal hides an element from the
   // SCAN, and the panel promises elsewhere that deleting a mapping brings it
