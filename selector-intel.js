@@ -969,6 +969,8 @@
     // 7.2: role=switch IS a component — checkbox, subtype switch (owner
     // decision, superseding the earlier "a part" reading).
     switch: 'checkbox',
+    // 7.6: a search landmark is a form with a subtype.
+    search: 'form',
     tablist: 'tabs', menu: 'menu', menubar: 'menu', navigation: 'menu',
     dialog: 'dialog', alertdialog: 'dialog', listbox: 'listbox',
     combobox: 'combobox', grid: 'grid', table: 'table', tree: 'menu',
@@ -4164,6 +4166,50 @@
     const out = { invalidField: invalid };
     if (inputField) out.inputField = inputField;
     if (submitButton) out.submitButton = submitButton;
+
+    // 7.6: the SUBTYPE, read off the shape. role=search, or exactly one
+    // typed-in field with exactly one submit, is a search form. Two-plus
+    // sibling panels of fields with exactly one showing, plus a next/back
+    // control, is a wizard — one form a person walks through in steps.
+    try {
+      if ((c.getAttribute('role') || '').toLowerCase() === 'search' ||
+          c.closest('[role="search"]') ||
+          (inputs.length === 1 && submits.length === 1 &&
+           /^(search|text|)$/.test((inputs[0].getAttribute('type') || '').toLowerCase()))) {
+        out.kind = 'search';
+      } else {
+        const panes = Array.from(c.children).filter((k) => k.querySelector &&
+          k.querySelector('input,select,textarea'));
+        if (panes.length >= 2) {
+          let showing = 0;
+          for (const p of panes) {
+            let hid = p.hasAttribute('hidden');
+            try { if (!hid) hid = getComputedStyle(p).display === 'none'; } catch (e) {}
+            if (!hid) showing++;
+          }
+          const stepCtl = qsa(c, 'button,[role="button"]').some((b) =>
+            /next|back|continue|previous|prev step|הבא|הקודם|המשך/i.test(b.textContent || ''));
+          if (showing === 1 && stepCtl) out.kind = 'wizard';
+        }
+      }
+    } catch (e) {}
+
+    // 7.6: fields nobody NAMED — no label, no aria-label/labelledby, no
+    // placeholder. Reported as a finding beside the mapping, one selector
+    // per nameless field, because the mapping cannot invent their names.
+    try {
+      const nameless = inputs.filter((f) => {
+        if (f.getAttribute('aria-label') || f.getAttribute('aria-labelledby')) return false;
+        if (f.getAttribute('placeholder')) return false;
+        if (f.id && document.querySelector('label[for="' + f.id + '"]')) return false;
+        if (f.closest('label')) return false;
+        return true;
+      });
+      if (nameless.length) {
+        const r = pick(nameless, `${nameless.length} field${nameless.length === 1 ? '' : 's'} with no label, no aria name, and no placeholder — a person hears nothing.`);
+        if (r) out.unlabeledFields = r;
+      }
+    } catch (e) {}
 
     // Optional, and free once the rest is being read.
     const err = qsa(c, '[role="alert"],[class*="error-message"],[class*="errorMessage"],[class*="help-block"]');

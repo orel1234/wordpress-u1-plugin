@@ -273,6 +273,20 @@
       "fields": {}
     },
     {
+      "type": "form",
+      "root": "#auditWizard",
+      "why": "7.6: a WIZARD — one form walked through in steps: two sibling panels of fields, exactly one showing, next/back between them. formShape reads kind:wizard; #wizNoName inside is the deliberately nameless field the unlabeled-fields finding must list.",
+      "fields": {
+        "inputField": "#auditWizard input,#auditWizard select"
+      }
+    },
+    {
+      "type": "none",
+      "root": "#auditPromoRow",
+      "why": "7.6's negative: an input+button pair whose button only COPIES — the search-form shape without a submit. A row that submits nothing is not a FORM to map. `allow: button` because on the hostile build the copy control is a bare div, and calling THAT a button is the 7.1 rule doing its job.",
+      "allow": ["button"]
+    },
+    {
       "type": "combobox",
       "root": "#auditCityBox",
       "why": "7.5: the PORTAL combobox — the suggestion list lives at the end of <body>, the way floating-ui/portal libraries render it, and only aria-owns names the connection. The typing pass must find the far list; comboboxShape must accept it.",

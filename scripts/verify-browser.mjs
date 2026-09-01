@@ -247,11 +247,20 @@ async function runVariant(browser, variant) {
         set.add(d.type);
         deduped.push(d);
       }
+      // A pinned negative may carry `allow`: types that are NOT its point.
+      // The promo row is pinned against form-reading; the bare-div copy
+      // control on the hostile build being called a button is a different
+      // rule doing its job. Allowed detections are judgement-neutral — like
+      // the secondary carousels, they are neither hit nor false positive.
+      const allowed = (g) => negatives.some((n) =>
+        n.el && touches(g.el, n.el) && (n.label.allow || []).includes(g.type));
       const groups = deduped.filter((d) =>
         !deduped.some((o) => o.el !== d.el && o.type === d.type && o.el.contains(d.el)))
-        .filter((d) => !secEls.some((S) => S === d.el || S.contains(d.el) || d.el.contains(S)));
+        .filter((d) => !secEls.some((S) => S === d.el || S.contains(d.el) || d.el.contains(S)))
+        .filter((d) => !allowed(d));
       const tp = groups.filter((g) => positives.some((p) => p.el && touches(g.el, p.el)));
-      const fp = groups.filter((g) => !positives.some((p) => p.el && touches(g.el, p.el)));
+      const fp = groups.filter((g) =>
+        !positives.some((p) => p.el && touches(g.el, p.el)));
       const fpList = fp.map((g) => ({
         type: g.type,
         selector: g.selector || (S.robustSelector ? S.robustSelector(g.el) : ''),

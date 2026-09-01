@@ -751,6 +751,21 @@ console.log('\na form\'s required fields are read off the page, not asked for');
 
   check('a container with no fields and no control returns null rather than guessing',
     shape('<div class="empty"><p>text</p></div>', '.empty') === null);
+
+  // 7.6: the subtype, read off the shape.
+  check('one field + one submit is a SEARCH form',
+    (() => { const s = shape(search, '.site-search'); return s && s.kind === 'search'; })(),
+    JSON.stringify((shape(search, '.site-search') || {}).kind));
+  const wizard = '<form class="wiz">' +
+    '<div><label for="a">Name</label><input id="a" type="text"><button type="button">Next</button></div>' +
+    '<div hidden><label for="b">Phone</label><input id="b" type="tel"><input class="noname" type="text">' +
+    '<button type="button">Back</button><button type="submit">Send</button></div></form>';
+  const w1 = shape(wizard, '.wiz');
+  check('two panels of fields, one showing, next/back — a WIZARD',
+    !!w1 && w1.kind === 'wizard', w1 && JSON.stringify(w1.kind));
+  check('…and the nameless field inside is reported as a finding',
+    !!w1 && !!w1.unlabeledFields && /noname/.test(w1.unlabeledFields.selector),
+    w1 && w1.unlabeledFields && w1.unlabeledFields.selector);
 }
 
 console.log('\na listbox is read off the structure, not asked about');

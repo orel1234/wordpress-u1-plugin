@@ -1061,6 +1061,30 @@
       <strong style="grid-column:1/-1">Pick a locker</strong>
     </div>
 
+    <!-- 7.6 the WIZARD: one form walked through in steps — two sibling
+         panels of fields, one showing, next/back between them. Beside it
+         the pinned negative: an input+button pair whose button only COPIES
+         — the search-form shape without a submit. -->
+    <form class="fit-wizard" id="auditWizard" style="max-width:420px;margin-top:24px">
+      <div data-step="1">
+        <label for="wizName">Full name</label> <input id="wizName" type="text">
+        <label for="wizPhone">Phone</label> <input id="wizPhone" type="tel">
+        <button type="button" id="wizNext">Next</button>
+      </div>
+      <div data-step="2" hidden>
+        <label for="wizBranch">Branch</label>
+        <select id="wizBranch"><option>Tel Aviv</option><option>Haifa</option></select>
+        <input id="wizNoName" type="text">
+        <button type="button" id="wizBack">Back</button>
+        <button type="submit">Book it</button>
+      </div>
+    </form>
+    <div class="promo-row" id="auditPromoRow" style="margin-top:16px">
+      <label class="visually-hidden" for="promoCode">Promo code</label>
+      <input id="promoCode" type="text" value="STEP10" readonly>
+      <button type="button" id="promoCopy">Copy code</button>
+    </div>
+
     <!-- 7.5 the PORTAL combobox: the suggestion list is not inside the
          wrapper at all — it lives at the end of <body>, the way every
          floating-ui/portal library renders it — and only aria-owns names

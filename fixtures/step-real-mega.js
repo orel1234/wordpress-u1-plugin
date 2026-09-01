@@ -1071,6 +1071,22 @@ Mega.widgets = {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
 
+    // 7.6: the wizard walks.
+    const wizNext = el('wizNext'), wizBack = el('wizBack'), wiz = el('auditWizard');
+    if (wiz && wizNext && wizBack) {
+      const show = (n) => Store.utils.qsa('[data-step]', wiz).forEach((p) => {
+        p.classList.toggle('is-hidden', !!(p.getAttribute('data-step'))) !== String(n);
+      });
+      wizNext.addEventListener('click', () => show(2));
+      wizBack.addEventListener('click', () => show(1));
+      wiz.addEventListener('submit', (e) => e.preventDefault());
+    }
+    const promoCopy = el('promoCopy');
+    if (promoCopy) promoCopy.addEventListener('click', () => {
+      promoCopy.textContent = 'Copied ✓';
+      setTimeout(() => { promoCopy.textContent = 'Copy code'; }, 1200);
+    });
+
     // 7.5: the portal combobox — the list lives at body end; typing fills
     // and places it under the field.
     const cityIn = el('auditCityInput'), cityList = el('auditCityList');
