@@ -675,6 +675,26 @@
       expandedFlipped = el.getAttribute('aria-expanded') !== expandedBefore &&
                         el.getAttribute('aria-expanded') != null;
     } catch (e) {}
+    // 7.9: is what appeared a SPINNER — one lone element, almost no text,
+    // no controls inside — and does it go away again with nobody
+    // un-pressing? Only such a candidate buys the extra wait; a menu's list
+    // or a dialog's box never looks like this, so the walk pays the ~900ms
+    // on loading indicators alone.
+    var transient = null;
+    try {
+      var appeared79 = outermost(d.appeared);
+      if (appeared79.length === 1) {
+        var t79 = appeared79[0];
+        var tx79 = (t79.textContent || '').trim();
+        if (tx79.length < 20 && !t79.querySelector('button,a[href],input,select,[tabindex]')) {
+          for (var tw79 = 0; tw79 < 3 && !transient; tw79++) {
+            await wait(300);
+            if (!shown(t79)) transient = t79;
+          }
+        }
+      }
+    } catch (e) {}
+
     // 7.2: did the CHECKED state move — on the trigger, and on which
     // siblings it went OUT on. Same deadline: measured while the press's
     // work is still on the page.
@@ -877,6 +897,7 @@
       touched: d.changed.length,
       focusEntered: focusEntered,
       overlay: isLayer,
+      transient: transient,
       grewList: grewList,
       floating: isFloating,
       headerDropdown: headerDropdown,
@@ -1677,6 +1698,9 @@
 
     results.forEach(function (r) {
       if (used.has(r.trigger) || !r.opened.length) return;
+      // 7.9: what appeared was a spinner that already hid itself — the
+      // press-loop emitted the loading comp; there is no panel here to type.
+      if (r.transient) return;
       var panel = r.panel || r.opened[0];
       // `r.overlay` was measured while the panel was open. See probeOne.
       //
@@ -1956,7 +1980,13 @@
       await wait(Math.min(step, ms - waited));
       var d = diff(before, fingerprint(els));
       var moved = outermost(d.appeared);
-      if (moved.length) return { moved: moved, gone: outermost(d.vanished), ms: waited + step };
+      var goneNow = outermost(d.vanished);
+      // 7.9: something LEAVING on its own is an event too — a skeleton the
+      // page swaps for content shows nothing new inside the watch, it only
+      // takes itself away.
+      if (moved.length || goneNow.length) {
+        return { moved: moved, gone: goneNow, ms: waited + step };
+      }
       // A ticker that scrolls itself hides nothing at all, so the visibility
       // comparison above will never see it however long it watches.
       var slid = outermost(shifted(whereBefore, geometry(els)));
@@ -2768,6 +2798,19 @@
         // label grew (tens of pixels); a rail slides by an item's width
         // (hundreds). shifted() carries the largest dx on the array.
         var reflow71 = !r.moved.length || ((r.moved.maxDx || 0) <= 80);
+        // 7.9: the spinner convicts itself — it appeared on the press and
+        // hid again with nobody un-pressing. u1.fix.loading wants exactly
+        // the transient element (loadingBar, announced when it appears).
+        if (r.transient) {
+          var ldComp = {
+            type: 'loading',
+            root: r.transient,
+            parts: { loadingBar: [r.transient], trigger: [el71] },
+            why: 'it appeared on the press and hid ITSELF under a second later — a loading indicator, not content',
+          };
+          comps.push(ldComp);
+          runExtras.push(ldComp);
+        }
         // 7.8: LOAD-MORE first — the press GREW a list that was already
         // showing (three-plus new children joining visible brothers), with
         // the trigger outside it. Pagination by behaviour.
@@ -2860,7 +2903,7 @@
           }
         }
         if (r.opened.length || r.moved.length || r.rerendered.length) {
-          var entry = { trigger: list[i], panel: r.panel,
+          var entry = { trigger: list[i], panel: r.panel, transient: r.transient,
                         opened: r.opened, closed: r.closed,
                         moved: r.moved, rerendered: r.rerendered,
                         stateClass: r.stateClass,
@@ -2951,6 +2994,24 @@
             runExtras.push(idleComp);
           }
         }
+        // 7.9: a skeleton the page swapped for content on its own — an
+        // element wearing a loading word that went away with nobody
+        // touching anything. Page-level loading; still connected pages
+        // (hidden, not removed) keep a root the mapping can hold.
+        (idle.gone || []).forEach(function (gEl) {
+          if (!/skeleton|shimmer|\bspinner\b|\bloader\b|loading/i.test(String(gEl.className || ''))) return;
+          if (!gEl.isConnected) return;
+          var skComp = {
+            type: 'loading',
+            root: gEl,
+            parts: { loadingBar: [gEl] },
+            pageLevel: true,
+            why: 'a ' + (String(gEl.className).split(' ')[0] || 'loading') +
+                 ' block the page swapped for content with nobody touching anything',
+          };
+          comps.push(skComp);
+          runExtras.push(skComp);
+        });
       }
 
       // 4.5: the typing pass. A combobox never answers to a press — its whole

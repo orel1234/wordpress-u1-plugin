@@ -152,7 +152,7 @@ Store.SHOE_SOLE_PATH = 'M14,88 L202,88 C210,88 216,93 215,100 C214,104 209,106 2
 Store.SHOE_LACES_PATH = 'M68,36 L76,50 M78,32 L86,46 M88,29 L96,43';
 
 Store.shoeIconSVG = (color, extraClass = '') => `
-  <svg class="cbo ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
+  <svg class="cbp ${extraClass}" viewBox="0 0 220 110" style="color:${color}">
     <path d="${Store.SHOE_ICON_PATH}" fill="currentColor"/>
     <path d="${Store.SHOE_SOLE_PATH}" fill="currentColor" opacity="0.5"/>
     <path d="${Store.SHOE_LACES_PATH}" fill="none" stroke="rgba(0,0,0,0.3)" stroke-width="3" stroke-linecap="round"/>
@@ -184,7 +184,7 @@ Store.toast = (() => {
     if (!region) {
       region = document.createElement('div');
       region.id = 'toastRegion';
-      region.className = 'c96';
+      region.className = 'c97';
       document.body.appendChild(region);
     }
     return region;
@@ -323,7 +323,7 @@ Store.header = (() => {
     const { product, size, colorName, qty, index } = item;
     const color = product.colors.find(c => c.name === colorName) || product.colors[0];
     return `
-      <div class="cb8" data-xw="${index}">
+      <div class="cb9" data-xw="${index}">
         <div class="c4w" style="background:${color.hex}">
           ${Store.shoeIconSVG('rgba(255,255,255,0.92)')}
         </div>
@@ -331,7 +331,7 @@ Store.header = (() => {
           <div class="c5y">${Store.utils.escapeHtml(product.name)}</div>
           <div class="c5x">Size ${size} · ${Store.utils.escapeHtml(colorName)}</div>
           <div class="c6r">
-            <div class="c9t" data-xa>
+            <div class="c9u" data-xa>
               <div class="c5j" data-x12="-1">−</div>
               <span class="c3h">${qty}</span>
               <div class="c5j" data-x12="1">+</div>
@@ -346,8 +346,8 @@ Store.header = (() => {
   }
 
   function renderDrawer() {
-    const itemsEl = document.getElementById('et');
-    const footerEl = document.getElementById('eg');
+    const itemsEl = document.getElementById('ev');
+    const footerEl = document.getElementById('ei');
     if (!itemsEl) return;
     const items = Store.cart.withProducts();
 
@@ -360,22 +360,22 @@ Store.header = (() => {
     itemsEl.innerHTML = items.map(lineTemplate).join('');
     const { subtotal, shipping, discount, total } = Store.cart.totals();
     footerEl.innerHTML = `
-      <div class="ca8"><span>Subtotal</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
-      ${discount ? `<div class="ca8"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
-      <div class="ca8"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
-      <div class="ca8 c3n"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
-      <a class="cd0 c8e cac" href="cart.html">View Cart</a>
-      <a class="cd0 c8d cac" href="checkout.html">Checkout</a>`;
+      <div class="ca9"><span>Subtotal</span><span>${Store.utils.formatPrice(subtotal)}</span></div>
+      ${discount ? `<div class="ca9"><span>Discount</span><span>-${Store.utils.formatPrice(discount)}</span></div>` : ''}
+      <div class="ca9"><span>Shipping</span><span>${shipping === 0 ? 'Free' : Store.utils.formatPrice(shipping)}</span></div>
+      <div class="ca9 c3n"><span>Total</span><span>${Store.utils.formatPrice(total)}</span></div>
+      <a class="cd1 c8f cad" href="cart.html">View Cart</a>
+      <a class="cd1 c8e cad" href="checkout.html">Checkout</a>`;
   }
 
   function openDrawer() {
-    const overlay = document.getElementById('e3');
+    const overlay = document.getElementById('e4');
     if (!overlay) return;
     renderDrawer();
     overlay.hidden = false;
   }
   function closeDrawer() {
-    const overlay = document.getElementById('e3');
+    const overlay = document.getElementById('e4');
     if (overlay) overlay.hidden = true;
   }
 
@@ -383,14 +383,14 @@ Store.header = (() => {
     const stepBtn = e.target.closest('[data-x12]');
     const removeBtn = e.target.closest('[data-xr]');
     if (stepBtn) {
-      const line = stepBtn.closest('.cb8');
+      const line = stepBtn.closest('.cb9');
       const index = Number(line.dataset.xw);
       const items = Store.cart.read();
       const delta = Number(stepBtn.dataset.x12);
       Store.cart.updateQty(index, items[index].qty + delta);
       renderDrawer();
     } else if (removeBtn) {
-      const line = removeBtn.closest('.cb8');
+      const line = removeBtn.closest('.cb9');
       Store.cart.remove(Number(line.dataset.xw));
       renderDrawer();
     }
@@ -411,10 +411,10 @@ Store.header = (() => {
     renderBadge();
     document.addEventListener('cart:change', renderBadge);
 
-    const cartBtn = document.getElementById('e2o');
-    const closeBtn = document.getElementById('es');
-    const overlay = document.getElementById('e3');
-    const itemsEl = document.getElementById('et');
+    const cartBtn = document.getElementById('e2u');
+    const closeBtn = document.getElementById('eu');
+    const overlay = document.getElementById('e4');
+    const itemsEl = document.getElementById('ev');
 
     if (cartBtn) cartBtn.addEventListener('click', openDrawer);
     if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
@@ -442,7 +442,7 @@ Store.header = (() => {
    ========================================================================== */
 Store.homePage = (() => {
   function renderCategories() {
-    const el = document.getElementById('e21');
+    const el = document.getElementById('e27');
     if (!el) return;
     const palette = ['#b5432b', '#233150', '#5b3a22', '#3c5a44', '#8a8577'];
     el.innerHTML = Store.CATEGORIES.map((cat, i) => {
@@ -462,7 +462,7 @@ Store.homePage = (() => {
     const oldPriceHtml = p.oldPrice ? `<span class="cd">${Store.utils.formatPrice(p.oldPrice)}</span>` : '';
     const badgeHtml = p.badge ? `<span class="c49 ${p.badge === 'sale' ? 'cj' : ''}">${p.badge === 'sale' ? 'Sale' : 'New'}</span>` : '';
     return `
-      <div class="c8v">
+      <div class="c8w">
         ${badgeHtml}
         <div class="c3c" data-xp="false" data-x14="${p.id}">♥</div>
         <a class="c28" style="background:${p.colors[0].hex}" href="product.html?id=${p.id}">
@@ -485,15 +485,15 @@ Store.homePage = (() => {
   }
 
   function renderFeatured() {
-    const el = document.getElementById('e22');
+    const el = document.getElementById('e28');
     if (!el) return;
     el.innerHTML = Array.from({ length: 4 }, () => `
-      <div class="c8v ct">
-        <div class="c28"><span class="cc9 c6k"></span></div>
+      <div class="c8w ct">
+        <div class="c28"><span class="cca c6k"></span></div>
         <div class="c3a">
-          <span class="cc9 c7a" style="width:40%"></span>
-          <span class="cc9 c7a" style="width:80%"></span>
-          <span class="cc9 c7a" style="width:50%"></span>
+          <span class="cca c7a" style="width:40%"></span>
+          <span class="cca c7a" style="width:80%"></span>
+          <span class="cca c7a" style="width:50%"></span>
         </div>
       </div>`).join('');
 
@@ -518,7 +518,7 @@ Store.homePage = (() => {
   }
 
   function init() {
-    if (!document.getElementById('e22')) return;
+    if (!document.getElementById('e28')) return;
     renderCategories();
     renderFeatured();
     document.body.addEventListener('click', handleGridClick);
@@ -565,7 +565,7 @@ Store.shopPage = (() => {
     if (state.badge) chips.push({ type: 'badge', value: state.badge, label: state.badge === 'sale' ? 'Sale' : 'New Arrivals' });
 
     el.innerHTML = chips.map(c => `
-      <span class="c9h" data-xg="${c.type}" data-x9="${c.value}">
+      <span class="c9i" data-xg="${c.type}" data-x9="${c.value}">
         ${c.label} <div>✕</div>
       </span>`).join('');
   }
@@ -575,7 +575,7 @@ Store.shopPage = (() => {
     catGroup.innerHTML = Store.CATEGORIES.map(c => {
       const count = Store.PRODUCTS.filter(p => p.category === c.slug).length;
       return `
-        <span class="c8i">
+        <span class="c8j">
           <input class="c20" type="checkbox" value="${c.slug}" ${state.categories.has(c.slug) ? 'checked' : ''}>
           ${c.label} <span class="c1z">${count}</span>
         </span>`;
@@ -584,7 +584,7 @@ Store.shopPage = (() => {
     const sizeGroup = document.getElementById('sizeFilterGroup');
     const allSizes = Array.from(new Set(Store.PRODUCTS.flatMap(p => p.sizes))).sort((a, b) => a - b);
     sizeGroup.innerHTML = allSizes.map(s => `
-      <div class="cbp ${state.sizes.has(s) ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
+      <div class="cbq ${state.sizes.has(s) ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
 
     document.getElementById('priceRange').value = state.maxPrice;
     document.getElementById('priceRangeValue').textContent = Store.utils.formatPrice(state.maxPrice);
@@ -601,7 +601,7 @@ Store.shopPage = (() => {
 
     grid.innerHTML = pageItems.length
       ? pageItems.map(Store.homePage.productCardTemplate).join('')
-      : `<p class="c9e">No products match your filters.<br>Try removing a few filters.</p>`;
+      : `<p class="c9f">No products match your filters.<br>Try removing a few filters.</p>`;
 
     renderPagination(totalPages);
     renderFilterChips();
@@ -629,7 +629,7 @@ Store.shopPage = (() => {
   }
 
   function handleSidebarClick(e) {
-    const sizeChip = e.target.closest('.cbp');
+    const sizeChip = e.target.closest('.cbq');
     if (sizeChip) {
       const size = Number(sizeChip.dataset.x11);
       state.sizes.has(size) ? state.sizes.delete(size) : state.sizes.add(size);
@@ -646,7 +646,7 @@ Store.shopPage = (() => {
   function handleChipsClick(e) {
     const btn = e.target.closest('.filter-chip button');
     if (!btn) return;
-    const chip = btn.closest('.c9h');
+    const chip = btn.closest('.c9i');
     const { chipType, chipValue } = chip.dataset;
     if (chipType === 'cat') state.categories.delete(chipValue);
     if (chipType === 'size') state.sizes.delete(Number(chipValue));
@@ -725,7 +725,7 @@ Store.productPage = (() => {
 
   function renderColors() {
     document.getElementById('colorOptions').innerHTML = product.colors.map(c => `
-      <div class="c8h ${c.name === selectedColor.name ? 'c1a' : ''}" data-xv="${Store.utils.escapeHtml(c.name)}">
+      <div class="c8i ${c.name === selectedColor.name ? 'c1a' : ''}" data-xv="${Store.utils.escapeHtml(c.name)}">
         <span class="c31" style="background:${c.hex}"></span>
       </div>`).join('');
     document.getElementById('selectedColorLabel').textContent = selectedColor.name;
@@ -733,7 +733,7 @@ Store.productPage = (() => {
 
   function renderSizes() {
     document.getElementById('sizeOptions').innerHTML = product.sizes.map(s => `
-      <div class="cbp ${s === c90 ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
+      <div class="cbq ${s === c91 ? 'c4m' : ''}" data-x11="${s}">${s}</div>`).join('');
   }
 
   function renderInfo() {
@@ -754,7 +754,7 @@ Store.productPage = (() => {
 
     document.getElementById('descPanel').textContent = product.desc;
     document.getElementById('detailsPanel').innerHTML = `
-      <div class="cbr">
+      <div class="cbs">
         <div><span>Upper material</span><strong>${product.details.material}</strong></div>
         <div><span>Sole</span><strong>${product.details.sole}</strong></div>
         <div><span>Country of origin</span><strong>${product.details.origin}</strong></div>
@@ -769,7 +769,7 @@ Store.productPage = (() => {
 
   function handleOptionClick(e) {
     const colorBtn = e.target.closest('[data-xv]');
-    const sizeBtn = e.target.closest('.cbp');
+    const sizeBtn = e.target.closest('.cbq');
     if (colorBtn) {
       selectedColor = product.colors.find(c => c.name === colorBtn.dataset.xv);
       renderGallery();
@@ -856,7 +856,7 @@ Store.cartPage = (() => {
         </div>
         <div data-t="t6">${Store.utils.formatPrice(product.price)}</div>
         <div data-t="t6">
-          <div class="c9t" data-xj>
+          <div class="c9u" data-xj>
             <div class="c5j" data-x12="-1">−</div>
             <span class="c3h">${qty}</span>
             <div class="c5j" data-x12="1">+</div>
@@ -996,7 +996,7 @@ Store.checkoutPage = (() => {
     el.innerHTML = items.map(item => {
       const color = item.product.colors.find(c => c.name === item.colorName) || item.product.colors[0];
       return `
-        <div class="cb8">
+        <div class="cb9">
           <div class="c4w" style="background:${color.hex}">${Store.shoeIconSVG('rgba(255,255,255,0.92)')}</div>
           <div>
             <div class="c5y">${Store.utils.escapeHtml(item.product.name)}</div>
@@ -1030,7 +1030,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('ccg', !ok);
+      input.classList.toggle('cch', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });
@@ -1090,7 +1090,7 @@ Store.checkoutPage = (() => {
       const input = document.getElementById(f.id);
       const errorEl = document.getElementById(f.id + 'Error');
       const ok = f.test(input.value);
-      input.classList.toggle('ccg', !ok);
+      input.classList.toggle('cch', !ok);
       if (errorEl) errorEl.textContent = ok ? '' : f.msg;
       if (!ok) valid = false;
     });

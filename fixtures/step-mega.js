@@ -1071,6 +1071,19 @@ Mega.widgets = {
       sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
     });
 
+    // 7.9: the spinner lives 600ms; the skeleton swaps itself for content.
+    const checkBtn = el('auditCheckBtn'), spin = el('auditSpinner'), checkOut = el('auditCheckResult');
+    if (checkBtn && spin) {
+      checkBtn.addEventListener('click', () => {
+        spin.hidden = false;
+        if (checkOut) checkOut.textContent = '';
+        setTimeout(() => {
+          spin.hidden = true;
+          if (checkOut) checkOut.textContent = 'Available at 4 branches';
+        }, 600);
+      });
+    }
+
     // 7.8: the pager selects; load-more grows the list.
     const pager = el('auditPager');
     if (pager) pager.addEventListener('click', (e) => {

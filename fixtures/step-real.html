@@ -1061,6 +1061,19 @@
       <strong style="grid-column:1/-1">Pick a locker</strong>
     </div>
 
+    <!-- 7.9 loading: a spinner that lives 600ms after the press; a skeleton
+         the page swaps for content on its own; and the pinned negative — a
+         progressbar with aria-valuenow, which is PROGRESS, not a loading
+         announcement. -->
+    <div style="margin-top:24px">
+      <button type="button" id="auditCheckBtn">Check availability</button>
+      <span id="auditSpinner" class="spinner is-hidden" style="display:inline-block;width:14px;height:14px;border:2px solid #999;border-top-color:transparent;border-radius:50%">​</span>
+      <span id="auditCheckResult"></span>
+    </div>
+    <div id="auditSkeleton" class="skeleton-card" style="margin-top:12px;max-width:420px;background:#eee;height:48px"></div>
+    <div id="auditSkeletonHome" style="max-width:420px"></div>
+    <div id="auditProgress" style="margin-top:12px;max-width:420px;background:#ddd"><div style="width:70%;height:8px;background:#4a7"></div></div>
+
     <!-- 7.8 pagination with an ELLIPSIS (1 … 4 5 6 … 12), and the load-more
          below it — a button whose press ADDS siblings to a list. -->
     <nav id="auditPager" aria-label="Fitting history pages" style="margin-top:24px">

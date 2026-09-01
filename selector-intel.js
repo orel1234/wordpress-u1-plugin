@@ -1016,6 +1016,7 @@
     [/accordion|collapsible|\bfaq\b/i, 'accordion'],
     [/datepicker|calendar|pikaday|air-datepicker|MuiPickers|MuiDateCalendar/i, 'datepicker'],
     [/typeahead|tagify|tom-select|MuiAutocomplete|ng-select|vs__dropdown|ant-select/i, 'combobox'],
+    [/\bspinner\b|\bloader\b|skeleton|shimmer/i, 'loading'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
     [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
@@ -1566,6 +1567,26 @@
       }
     } catch (e) {}
 
+    // 7.9 loading. aria-busy is the page saying it outright. A progressbar
+    // WITH aria-valuenow is a PROGRESS METER — it reports a value, it does
+    // not announce a loading state — and is nobody's component here. A bare
+    // progressbar/status wearing a loading word, or a <progress> with no
+    // value yet, is the announcement u1.fix.loading exists for.
+    try {
+      if (el.getAttribute('aria-busy') === 'true') return { name: 'loading', sure: true };
+      const r79 = (el.getAttribute('role') || '').toLowerCase();
+      const c79 = typeof el.className === 'string' ? el.className : '';
+      const loadWord = /spinner|loader|loading|skeleton|shimmer|placeholder|preload/i.test(c79);
+      if (r79 === 'progressbar') {
+        if (el.hasAttribute('aria-valuenow')) return null;
+        if (loadWord) return { name: 'loading', sure: true };
+      }
+      if (r79 === 'status' && loadWord) return { name: 'loading', sure: true };
+      if (el.tagName === 'PROGRESS') {
+        return el.hasAttribute('value') ? null : { name: 'loading', sure: true };
+      }
+    } catch (e) {}
+
     // 7.8: the wrapper SAYS pagination — an aria-label with the word (any of
     // three languages' spellings of it), or rel=next/prev controls inside.
     try {
@@ -1734,6 +1755,7 @@
     'tab', 'carousel', 'slider', 'slideshow', 'gallery', 'ticker', 'marquee',
     'accordion', 'collapsible', 'faq',
     'datepicker', 'calendar', 'pagination', 'pager', 'table',
+    'spinner', 'loader', 'skeleton', 'shimmer',
     'tooltip', 'popover', 'breadcrumb',
   ];
 

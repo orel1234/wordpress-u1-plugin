@@ -271,6 +271,26 @@
       "fields": {}
     },
     {
+      "type": "loading",
+      "root": "#auditSpinner",
+      "why": "7.9: a spinner that appears on the press and hides itself 600ms later, under 20 characters of text the whole time. u1.fix.loading needs exactly one part — loadingBar, announced when it appears — so the transient element itself is the root. Behavioural: appeared, then vanished with nobody un-pressing.",
+      "fields": {
+        "trigger": "#auditCheckBtn"
+      },
+      "hidden": true
+    },
+    {
+      "type": "loading",
+      "root": "#auditSkeleton",
+      "why": "7.9: the page-level skeleton — a shimmer block whose content never arrives, sitting visibly on the page. The MARKUP arm's pin (class carries the word); the self-swapping variant is exercised in the unit tests, where the idle window is controlled — a walk that reaches a section after its skeleton swapped has nothing left to see, and that is the honest limit.",
+      "fields": {}
+    },
+    {
+      "type": "none",
+      "root": "#auditProgress",
+      "why": "7.9's negative: role=progressbar WITH aria-valuenow — a progress meter reporting a value, not a loading announcement. u1.fix.loading must not be proposed for it."
+    },
+    {
       "type": "pagination",
       "root": "#auditPager",
       "why": "7.8: a pager with an ELLIPSIS — 1 … 4 5 6 … 12 plus prev/next. The nav says pagination in its aria-label (markup arm); the run of numbers with gaps must satisfy the counting arm too.",

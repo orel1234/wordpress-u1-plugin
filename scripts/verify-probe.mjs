@@ -695,6 +695,51 @@ console.log('\n4.3 — pressed-subset counting must not fake a carousel');
     comps.map((c) => c.type + ':' + c.why).join(' | ') || '(nothing)');
 }
 
+// ── 7.9: loading — the element that exists to disappear ─────────────────────
+console.log('\n7.9 — a spinner convicts itself by leaving');
+{
+  const w = page(`
+    <div id="w">
+      <button id="go">Check availability</button>
+      <span id="spin" class="spinner" hidden></span>
+      <span id="out"></span>
+    </div>`);
+  const d = w.document;
+  d.getElementById('go').addEventListener('click', () => {
+    d.getElementById('spin').hidden = false;
+    setTimeout(() => {
+      d.getElementById('spin').hidden = true;
+      d.getElementById('out').textContent = 'Available at 4 branches';
+    }, 150);
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 0 });
+  const ld = out.components.find((c) => c.type === 'loading');
+  check('appeared on the press, hid itself — loading, rooted on the bar',
+    !!ld && ld.root === d.getElementById('spin') &&
+    ld.parts.loadingBar[0] === d.getElementById('spin'),
+    out.components.map((c) => c.type).join() || '(nothing)');
+  check('…and never ALSO reported as an accordion',
+    !out.components.some((c) => c.type === 'accordion'));
+}
+{
+  // The page-level skeleton: swapped for content with nobody touching it.
+  const w = page(`
+    <div id="w">
+      <div id="sk" class="skeleton-card">…</div>
+      <div id="home"></div>
+    </div>`);
+  const d = w.document;
+  setTimeout(() => {
+    d.getElementById('sk').hidden = true;
+    d.getElementById('home').textContent = 'Your nearest branch: Tel Aviv.';
+  }, 120);
+  const out = await w.__u1Probe.probeAll(d.getElementById('w'), { settle: 0, idle: 500 });
+  const ld = out.components.find((c) => c.type === 'loading');
+  check('a skeleton the page swaps on its own is page-level loading',
+    !!ld && ld.root === d.getElementById('sk') && ld.pageLevel === true,
+    out.components.map((c) => c.type).join() || '(nothing)');
+}
+
 // ── 7.8: the ellipsis pager, and the list that grows ────────────────────────
 console.log('\n7.8 — 1 … 4 5 6 … 12 is a pager; a list that grows is load-more');
 {
