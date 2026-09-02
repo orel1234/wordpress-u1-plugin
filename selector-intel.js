@@ -3082,7 +3082,8 @@
       padding: '2px 7px', borderRadius: '4px', whiteSpace: 'nowrap',
       boxShadow: '0 1px 6px rgba(0,0,0,.45)',
     });
-    tag.textContent = els.length === 1 ? 'the only match' : '1 of ' + els.length + ' matches';
+    const tagText = els.length === 1 ? 'the only match' : '1 of ' + els.length + ' matches';
+    tag.textContent = tagText;
     layer.appendChild(tag);
 
     const place = () => {
@@ -3096,11 +3097,23 @@
         b.box.style.height = r.height + 'px';
       }
       const f = boxes[0] && boxes[0].el.getBoundingClientRect();
-      if (f) {
-        // Above the element, or below it when it is against the top edge.
+      if (f && (f.width || f.height)) {
+        // Above the element, or below it when it is against the top edge —
+        // and never off the viewport: a match scrolled far away or half
+        // clipped used to park the label in the page corner, pointing at
+        // nothing.
         const above = f.top > 22;
-        tag.style.left = Math.max(4, f.left) + 'px';
-        tag.style.top = (above ? f.top - 21 : f.bottom + 5) + 'px';
+        tag.style.left = Math.min(Math.max(4, f.left), Math.max(4, window.innerWidth - tag.offsetWidth - 4)) + 'px';
+        tag.style.top = Math.min(Math.max(4, above ? f.top - 21 : f.bottom + 5),
+          window.innerHeight - 26) + 'px';
+        tag.textContent = tagText;
+      } else if (f) {
+        // The match exists but has no box — display:none, a closed dialog or
+        // dropdown. A ring at 0,0 is a lie; say what is true instead, top
+        // centre where a status belongs.
+        tag.textContent = tagText + ' — hidden right now (closed until opened)';
+        tag.style.left = Math.max(4, (window.innerWidth - tag.offsetWidth) / 2) + 'px';
+        tag.style.top = '8px';
       }
       followRaf = requestAnimationFrame(place);
     };
@@ -4915,7 +4928,11 @@
    * The fix already exists in the builder — a name built from the link's own
    * text plus the heading in its card. What was missing was finding them.
    */
-  function cardDescriptions() {
+  function cardDescriptions(diag) {
+    // `diag`, when given, is filled with why the answer is what it is — a run
+    // that reports "0 vague-link groups" with no reason is indistinguishable
+    // from one that never looked (the molina complaint, verbatim).
+    diag = diag || {};
     var out = [];
     var links;
     try { links = qsaDeep(document, 'a[href],button'); } catch (e) { return out; }
@@ -4924,6 +4941,11 @@
       var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
       return t && VAGUE.test(t);
     });
+    diag.vague = vague.length;
+    diag.sample = vague.slice(0, 3).map(function (el) {
+      return (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+    });
+    diag.noCard = 0; diag.lonely = 0; diag.noSelector = 0;
     // One "read more" on a page is a link somebody should rename by hand. A
     // repeated one is a pattern, and a pattern is what a mapping is for.
     if (vague.length < 2) return out;
@@ -4952,7 +4974,7 @@
         }
         if (h && (h.textContent || '').trim()) { card = p; heading = h; break; }
       }
-      if (!card || !heading) return;
+      if (!card || !heading) { diag.noCard++; return; }
       var key = (card.className || card.tagName) + '|' + heading.tagName;
       if (!groups.has(key)) groups.set(key, { cards: [], links: [], headings: [] });
       var g = groups.get(key);
@@ -4960,7 +4982,7 @@
     });
 
     groups.forEach(function (g) {
-      if (g.links.length < 2) return;
+      if (g.links.length < 2) { diag.lonely += g.links.length; return; }
       var linkSel = commonSelectorFor(document.body, g.links, null);
       // Across ALL the headings, not the first card's.
       //
@@ -4972,13 +4994,13 @@
       // "Read more Winter boots" is worse than twelve reading "Read more",
       // because it is confidently wrong instead of merely useless.
       var headSel = commonSelectorFor(document.body, g.headings, null);
-      if (!linkSel || !linkSel.selector || !headSel || !headSel.selector) return;
-      if (!isU1Valid(linkSel.selector) || !isU1Valid(headSel.selector)) return;
+      if (!linkSel || !linkSel.selector || !headSel || !headSel.selector) { diag.noSelector += g.links.length; return; }
+      if (!isU1Valid(linkSel.selector) || !isU1Valid(headSel.selector)) { diag.noSelector += g.links.length; return; }
       // It has to reach every card's heading, or it is the same bug in a
       // different shape.
       var reaches = 0;
-      try { reaches = document.querySelectorAll(headSel.selector).length; } catch (e) { return; }
-      if (reaches < g.headings.length) return;
+      try { reaches = document.querySelectorAll(headSel.selector).length; } catch (e) { diag.noSelector += g.links.length; return; }
+      if (reaches < g.headings.length) { diag.noSelector += g.links.length; return; }
       out.push({
         target: linkSel.selector,
         heading: headSel.selector,

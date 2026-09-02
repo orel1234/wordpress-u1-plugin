@@ -2098,9 +2098,10 @@ document.addEventListener('click', async (e) => {
 // ── Element screenshots (for the close-out report) ─────────────────────────
 // Scrolls the element into view, grabs the visible tab, crops to the element.
 // Works only on the currently open page, so we capture at mapping-add time.
-async function captureElementScreenshot(primary, fallback) {
+async function captureElementScreenshot(primary, fallback, opts) {
   const tab = await getTab();
   if (!isInjectable(tab)) return null;
+  let revealed = false;
   try {
     const rectRes = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -2110,7 +2111,11 @@ async function captureElementScreenshot(primary, fallback) {
       // screen. When the primary has no box, photograph the fallback (the
       // firstArg — the trigger) instead: a picture of the button IS the
       // honest picture of a closed dropdown.
-      func: (sel, alt) => {
+      //
+      // `reveal` (dialogs): a modal has no trigger worth a picture — show it
+      // for the shot. Its inline style is saved on the window and put back by
+      // the restore script below the capture, so the flash lasts one capture.
+      func: (sel, alt, reveal) => {
         const box = (x) => {
           let el = null;
           try { el = document.querySelector(x); } catch { return null; }
@@ -2119,18 +2124,32 @@ async function captureElementScreenshot(primary, fallback) {
           if (r.width < 1 || r.height < 1) return null;
           return el;
         };
-        const el = box(sel) || (alt ? box(alt) : null);
+        let el = box(sel) || (alt ? box(alt) : null);
+        if (!el && reveal) {
+          let raw = null;
+          try { raw = document.querySelector(sel); } catch {}
+          if (raw) {
+            window.__u1ShotRestore = { sel, style: raw.getAttribute('style') };
+            raw.style.display = 'block';
+            raw.style.visibility = 'visible';
+            raw.style.opacity = '1';
+            const r = raw.getBoundingClientRect();
+            if (r.width >= 1 && r.height >= 1) el = raw;
+          }
+        }
         if (!el) return null;
         el.scrollIntoView({ block: 'center', inline: 'center' });
         const r = el.getBoundingClientRect();
         return {
           x: r.left, y: r.top, width: r.width, height: r.height,
           dpr: window.devicePixelRatio || 1,
+          revealed: !!window.__u1ShotRestore,
         };
       },
-      args: [primary, fallback || ''],
+      args: [primary, fallback || '', !!(opts && opts.reveal)],
     });
     const rect = rectRes?.[0]?.result;
+    revealed = !!(rect && rect.revealed);
     if (!rect || rect.width < 1 || rect.height < 1) return null;
 
     // Let the scroll settle before capturing
@@ -2142,6 +2161,24 @@ async function captureElementScreenshot(primary, fallback) {
     return await cropDataUrl(dataUrl, rect);
   } catch {
     return null;
+  } finally {
+    if (revealed) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const p = window.__u1ShotRestore;
+            delete window.__u1ShotRestore;
+            if (!p) return;
+            let el = null;
+            try { el = document.querySelector(p.sel); } catch {}
+            if (!el) return;
+            if (p.style == null) el.removeAttribute('style');
+            else el.setAttribute('style', p.style);
+          },
+        });
+      } catch {}
+    }
   }
 }
 
@@ -7567,8 +7604,21 @@ async function auditSurveyComponents(comps, tab) {
   try {
     verdicts = await inPage(tab.id, (rows) => rows.map(([sel, type]) => {
       const S = window.__u1SelectorIntel;
-      const out = { native: null, listbox: null };
+      const out = { native: null, listbox: null, junk: null };
       try { if (type === 'link' || type === 'button') out.native = S.alreadyNative(sel); } catch (e) {}
+      // fix.link on a CONTAINER makes the whole region one link. The survey
+      // filed molina's entire <footer> — forty links of site navigation — as
+      // a single LINK row (2026-09-02), and nothing downstream questions a
+      // link's element the way listbox/dialog shapes are questioned.
+      try {
+        if ((type === 'link' || type === 'button') && !out.native) {
+          const el = document.querySelector(sel);
+          if (el && !el.matches('a,button,input,[role="link"],[role="button"]')) {
+            const inner = el.querySelectorAll('a[href],button').length;
+            if (inner >= 2) out.junk = { tag: el.tagName.toLowerCase(), inner };
+          }
+        }
+      } catch (e) {}
       try { if (type === 'menu') out.listbox = S.menuIsReallyListbox(sel); } catch (e) {}
       return out;
     }), [list.map((c) => [c.containerSelector, c.u1Type])]);
@@ -7580,6 +7630,11 @@ async function auditSurveyComponents(comps, tab) {
     const v = verdicts[i] || {};
     if (v.native) {
       dropped.push({ label: c.label || c.containerSelector, tag: v.native.tag, name: v.native.name });
+      return;
+    }
+    if (v.junk) {
+      dropped.push({ label: c.label || c.containerSelector, tag: v.junk.tag,
+        name: `holds ${v.junk.inner} links/buttons of its own — ${c.u1Type} on a container would fuse them into one` });
       return;
     }
     if (v.listbox) {
@@ -12167,11 +12222,20 @@ async function scanPickedScreens(numbers) {
       } catch {}
       try {
         const fin = await sweepFinishingPass(tab);
-        sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
-          (fin.off === 0 ? 'the outline is consistent, nothing to correct'
-            : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
-              (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
-          ` · ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`, 'info');
+        const vd = fin.vagueDiag || {};
+      const vaguePart = fin.links
+        ? `${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`
+        : !vd.vague ? 'no vague links (learn-more-style) on the page'
+        : `${vd.vague} vague link${vd.vague === 1 ? '' : 's'} seen (${(vd.sample || []).join(', ')}) but none mapped — ` +
+          [vd.noCard ? `${vd.noCard} had no heading beside them` : '',
+           vd.lonely ? `${vd.lonely} were one of a kind` : '',
+           vd.noSelector ? `${vd.noSelector} lost their common selector` : '']
+            .filter(Boolean).join(', ');
+      sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
+        (fin.off === 0 ? 'the outline is consistent, nothing to correct'
+          : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
+            (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
+        ` · ` + vaguePart, 'info');
       } catch {}
       const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
       const failedC = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done && f.failed).length), 0);
@@ -12452,11 +12516,20 @@ async function buildPickedComponents() {
   // automatically once the components of this batch are built.
   try {
     const fin = await sweepFinishingPass(tab);
-    sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
-      (fin.off === 0 ? 'the outline is consistent, nothing to correct'
-        : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
-          (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
-      ` · ${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`, 'info');
+    const vd = fin.vagueDiag || {};
+      const vaguePart = fin.links
+        ? `${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`
+        : !vd.vague ? 'no vague links (learn-more-style) on the page'
+        : `${vd.vague} vague link${vd.vague === 1 ? '' : 's'} seen (${(vd.sample || []).join(', ')}) but none mapped — ` +
+          [vd.noCard ? `${vd.noCard} had no heading beside them` : '',
+           vd.lonely ? `${vd.lonely} were one of a kind` : '',
+           vd.noSelector ? `${vd.noSelector} lost their common selector` : '']
+            .filter(Boolean).join(', ');
+      sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
+        (fin.off === 0 ? 'the outline is consistent, nothing to correct'
+          : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
+            (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
+        ` · ` + vaguePart, 'info');
   } catch {}
   return { built: (aiBulk.failed || []).length === 0, failed: (aiBulk.failed || []).length };
 }
@@ -14607,18 +14680,30 @@ async function sweepFinishingPass(tab) {
       made.off++;
       if (!h.selector || handled.has(h.selector)) { made.already++; continue; }
       try {
-        await saveMappingEntry(buildTemplate('heading', h.selector, {}, { level: h.should }),
-          { refreshUi: false });
+        const tpl = buildTemplate('heading', h.selector, {}, { level: h.should });
+        // The row in the drawer is an nth-child chain nobody can place. Carry
+        // WHICH heading this is and WHY its level changed — "I don't know
+        // what it did, why, or where" is the reading without it.
+        tpl.note = `“${h.text || '(no text)'}” — ` +
+          (h.problem === 'no level' ? `has no level of its own` :
+           h.problem && h.problem.indexOf('skips') === 0 ? `is an h${h.level} arriving after an h${h.should - 1} outline (${h.problem} level${/skips 1/.test(h.problem) ? '' : 's'})` :
+           h.problem || 'outline break') +
+          ` → announced as level ${h.should}`;
+        await saveMappingEntry(tpl, { refreshUi: false });
         handled.add(h.selector);
         made.headings++;
       } catch {}
     }
   } catch {}
   try {
-    const shapes = await inPage(tab.id, () => {
+    const got2 = await inPage(tab.id, () => {
       const S = window.__u1SelectorIntel;
-      return S && S.cardDescriptions ? S.cardDescriptions() : [];
+      const diag = {};
+      const rows = S && S.cardDescriptions ? S.cardDescriptions(diag) : [];
+      return { rows, diag };
     });
+    const shapes = (got2 && got2.rows) || [];
+    made.vagueDiag = (got2 && got2.diag) || null;
     for (const c of shapes || []) {
       if (!c.target || handled.has(c.target)) continue;
       try {
@@ -15833,7 +15918,7 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   if (existingIdx < 0) existingIdx = list.findIndex(m => mappingKey(m) === newKey);
 
   const tab = await getTab();
-  const screenshot = await captureElementScreenshot(template.primary, template.firstArg);
+  const screenshot = await captureElementScreenshot(template.primary, template.firstArg, { reveal: template.type === 'dialog' });
   const prev = existingIdx >= 0 ? list[existingIdx] : null;
   const entry = {
     type: template.type,
@@ -17304,6 +17389,7 @@ async function loadMappingsList() {
           ${m && m.id ? `<span class="mh-id" title="Stable id — how the daily monitor reports this mapping if its selector breaks">${escapeHtml(m.id)}</span>` : ''}
           <span class="mh-type">${escapeHtml(type)}</span>
           <span class="mh-sel">${escapeHtml(primary)}</span>
+          ${m && m.note ? `<span class="mh-note" title="${escapeHtml(m.note)}">${escapeHtml(m.note)}</span>` : ''}
           ${hasShot ? `<span class="mh-thumb" data-idx="${idx}" title="Click to view full image">
             <img class="mh-img" src="${shot}" alt="Element preview">
             <img class="mh-preview" src="${shot}" alt="">
@@ -17580,7 +17666,7 @@ async function loadMappingsList() {
       const status = document.getElementById('applyAllStatus');
       const original = btn.textContent;
       btn.textContent = '…';
-      const shot = await captureElementScreenshot(m.primary, m.firstArg);
+      const shot = await captureElementScreenshot(m.primary, m.firstArg, { reveal: m.type === 'dialog' });
       btn.textContent = original;
       if (!shot) {
         showNotice(status, 'Could not capture — open the page with this element first.', 'error', 4000);

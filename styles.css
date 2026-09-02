@@ -1851,7 +1851,8 @@ button {
 .mapping-item .mapping-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap; /* .mh-note takes a full second line when present */
+  gap: 4px 8px;
   width: 100%;
   padding: 8px 10px;
   background: none;
@@ -1900,6 +1901,18 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* What this mapping is about, in words — a heading's own text and the reason
+   its level changed. Full width under the selector line; the title attribute
+   carries the untruncated sentence. */
+.mapping-item .mapping-head .mh-note {
+  flex: 1 0 100%;
+  font-size: 11px;
+  color: var(--u1-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
 /* Grid guarantees two side-by-side tracks: code (shrinkable) | actions (right). */
 .mapping-item .mapping-body {
