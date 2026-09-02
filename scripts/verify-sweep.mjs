@@ -1033,6 +1033,19 @@ console.log('\nholding after each section');
     /async function confirmedToMapping\(pick, stop, tab, extra\)/.test(src) &&
     /const built = rowFromParts\(\{/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]) &&
     /await prepareOne\(built\.row, tab\)/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]));
+  // Tabs, engine-verified on the live STEP site (2026-09-02): fix.tabs is
+  // scoped — the engine waits for the tabList to appear INSIDE the first
+  // argument (jQuery's $(sel, ctx) searches descendants only), so a mapping
+  // rooted ON the list can never activate; and a tabPanel that resolves to
+  // nothing (#dealPanel, invented) dies silently. The build re-roots on the
+  // list-and-panels' common ancestor and replaces a non-resolving panel with
+  // the measured one. The corrected shape was proven live: role=tablist,
+  // aria-selected, conditional aria-controls, ArrowRight moving focus.
+  check('a tabs mapping is rooted ABOVE its tabList, with the list named',
+    /the engine waits for this to appear inside the first argument/.test(src) &&
+    /out\.primary = tabsRoot;/.test(src));
+  check('…and an invented tabPanel is replaced by the measured one',
+    /matches nothing on this page — replaced with the measured answer/.test(src));
   // triggerRequired ONLY — dialog is firstArgFrom:'trigger' with an OPTIONAL
   // trigger, and ORing triggerFirstType in sent every dialog through the
   // panel hunt with itself as the "trigger": on molina each dialog shipped

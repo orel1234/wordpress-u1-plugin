@@ -9028,17 +9028,51 @@ async function prepareOne(row, tab) {
   // anyway, so it is worked out from the page instead of asked for again —
   // mechanical, free, and it does not depend on the markup saying "tabpanel".
   if (row.type === 'tabs') {
-    const has = (out.fields || []).find(f => f.key === 'tabPanel' && String(f.value || '').trim());
-    if (!has) {
-      const tabField = (out.fields || []).find(f => f.key === 'tab');
+    // The model's tabPanel is kept only if it RESOLVES: '#dealPanel' was an
+    // invented id, the engine failed silently, and the strip shipped dead.
+    const tabField = (out.fields || []).find(f => f.key === 'tab');
+    const panelField = (out.fields || []).find(f => f.key === 'tabPanel' && String(f.value || '').trim());
+    let panelValue = panelField ? String(panelField.value).trim() : '';
+    const panelResolves = panelValue ? await inPage(tab.id, (x) => {
+      try { return !!document.querySelector(x); } catch { return false; }
+    }, [panelValue]) : false;
+    if (!panelResolves) {
       const panels = await inPage(tab.id,
         (listSel, tabSel) => window.__u1SelectorIntel.tabPanelsFor(listSel, tabSel),
         [row.sel, (tabField && tabField.value) || '[role="tab"]']);
       if (panels) {
         out.fields = (out.fields || []).filter(f => f.key !== 'tabPanel');
         out.fields.push({ key: 'tabPanel', value: panels,
-          why: 'Worked out from the page — the panels these tabs switch between. Required: without it the tabs control nothing.' });
+          why: (panelValue ? `'${panelValue}' matches nothing on this page — replaced with the measured answer. ` : '') +
+            'Worked out from the page — the panels these tabs switch between. Required: without it the tabs control nothing.' });
+        panelValue = panels;
       }
+    }
+    // The engine scopes fix.tabs: it waits for the tabList to appear INSIDE
+    // the first argument (jQuery's $(selector, context) searches descendants
+    // only) — so a mapping rooted ON the tab list can never activate, and
+    // STEP's dealTabs sat dead with zero roles. Root on the common ancestor
+    // of the list and its panels; the list stays named in tabList.
+    const tabsRoot = await inPage(tab.id, (listSel, panelSel) => {
+      const S = window.__u1SelectorIntel;
+      let list = null, panel = null;
+      try { list = document.querySelector(listSel); } catch { return null; }
+      try { panel = panelSel ? document.querySelector(panelSel) : null; } catch {}
+      if (!list) return null;
+      let anc = panel ? S.commonAncestor([list, panel]) : list.parentElement;
+      if (!anc || anc === list) anc = list.parentElement;
+      if (!anc || anc === document.documentElement) return null;
+      const sel = S.robustSelector(anc);
+      return sel && S.isU1Valid(sel) && sel !== listSel ? sel : null;
+    }, [row.sel, panelValue]);
+    if (tabsRoot) {
+      const hasList = (out.fields || []).find(f => f.key === 'tabList' && String(f.value || '').trim());
+      if (!hasList) {
+        out.fields = (out.fields || []).filter(f => f.key !== 'tabList');
+        out.fields.push({ key: 'tabList', value: row.sel,
+          why: 'The strip itself. The mapping is rooted one level up because the engine waits for this to appear inside the first argument.' });
+      }
+      out.primary = tabsRoot;
     }
   }
 
