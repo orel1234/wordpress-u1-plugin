@@ -50,7 +50,10 @@
   // A ceiling, because a stream that dribbles a token a minute for an hour is
   // its own kind of broken. Well outside anything real.
   const CALL_TIMEOUT_MS = 600000;
-  const MAX_TOKENS = 16000;
+  // 32k, doubled after elal: a 50-element batch with thinking on overran 16k
+  // and the answer arrived cut off. Streamed output only bills what it emits,
+  // so the ceiling is insurance, not cost.
+  const MAX_TOKENS = 32000;
 
   // The component types the builder can actually create. Used as a schema enum
   // so the model cannot name a component that has no U1 implementation.

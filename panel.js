@@ -12103,6 +12103,19 @@ async function scanPickedScreens(numbers) {
               part + `Claude is answering — ${chars.toLocaleString()} characters so far`);
           },
         });
+        if (got && got.err && /cut off before it finished/.test(got.err) && batches[b].length > 10) {
+          // 'Narrow the scope and try again' is addressed to nobody in an
+          // unattended run (elal's 105-element section died exactly here).
+          // Narrow it OURSELVES: split the batch, redo the first half now,
+          // queue the second — down to a floor of ten, where a cut-off means
+          // something else is wrong.
+          sweepLog(stop.n, `the answer for ${batches[b].length} elements was cut off — splitting the batch and retrying`, 'skip');
+          const half = Math.ceil(batches[b].length / 2);
+          batches.splice(b + 1, 0, batches[b].slice(half));
+          batches[b] = batches[b].slice(0, half);
+          b--;
+          continue;
+        }
         if (got && got.err) { died = got.err; break; }
         aiCost += U1AI.estimateCost(got.usage) || 0;
         parts.push(got);
