@@ -8754,6 +8754,16 @@ async function prepareOne(row, tab) {
     if (accShape) row.sel = accShape.headerSelector;
   }
 
+  // A radio group, measured the same way. The survey only ever names the
+  // group; radioButton and checkedState are readable off the markup — the
+  // pressable children and the state class exactly one of them carries
+  // (elal's trip-type strip, refused at build until this existed).
+  let rgShape = null;
+  if (row.type === 'radio') {
+    rgShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.radioShape(s), [row.sel]);
+    if (rgShape) row.sel = rgShape.radioGroup;
+  }
+
   // An autocomplete, measured the same way. Nothing detects one — no class
   // pattern matches it, no role path finds it on a site that never wrote the
   // roles, and the probe can only ever answer tabs/menu/accordion/dialog — so
@@ -9009,6 +9019,20 @@ async function prepareOne(row, tab) {
   // header, which region it opens, and what level the heading is, are all
   // readable off the page. The model's answer here was a container in the
   // header's place and no content at all.
+  if (rgShape) {
+    out.fields = (out.fields || []).filter(
+      (f) => !['radioButton', 'checkedState', 'uncheckedState'].includes(f.key));
+    out.fields.unshift(
+      { key: 'radioButton', value: rgShape.radioButton,
+        why: 'The group\u2019s own pressable children — read from the markup.' },
+      { key: 'checkedState', value: rgShape.checkedState,
+        why: 'The class exactly one option carries — the checked one.' });
+    if (rgShape.uncheckedState) out.fields.push(
+      { key: 'uncheckedState', value: rgShape.uncheckedState,
+        why: 'Every option that does not carry the checked class.' });
+    out.primary = rgShape.radioGroup;
+  }
+
   if (accShape) {
     out.fields = (out.fields || []).filter(
       (f) => f.key !== 'contentSelector' && f.key !== 'headingLevel' && f.key !== 'collapsesOthers');
@@ -9041,7 +9065,7 @@ async function prepareOne(row, tab) {
   // shapes above it does not overrule a real answer, because a close control
   // the model found in the markup is the same kind of evidence this is.
   if (dlgShape) {
-    for (const key of ['closeBtn', 'heading']) {
+    for (const key of ['closeBtn', 'heading', 'trigger']) {
       if (!dlgShape[key]) continue;
       const had = (out.fields || []).find((f) => f.key === key && String(f.value || '').trim());
       if (had) continue;
@@ -9049,6 +9073,8 @@ async function prepareOne(row, tab) {
       out.fields.push({ key, value: dlgShape[key],
         why: key === 'closeBtn'
           ? 'The dialog\'s own close control, read off the markup. Without it there is nothing for U1 to bind closing to.'
+          : key === 'trigger'
+          ? 'The control whose exact-id reference (aria-controls / data-target / href) names this dialog. Without it focus never moves in on open.'
           : 'The dialog\'s heading — this is what a screen reader announces it as.' });
     }
   }

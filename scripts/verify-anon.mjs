@@ -547,6 +547,40 @@ console.log('\nnames U1 itself writes never enter a mapping');
         !!got8 && got8.exact && got8.selector === '.right-content>p>a' && got8.count === 2,
         JSON.stringify(got8));
     }
+
+    // ── elal round three (2026-09-02, the owner's rejects) ──────────────
+    // radioShape: the survey names the GROUP; the button and the checked
+    // state are readable — pinned on the exact rejected markup.
+    {
+      const c9 = collectIn(`<search-ui-flights-travel-type><ui-input-toggle-group>
+        <div class="ui-input-toggle-group ui-input-toggle-group--tabs">
+          <a tabindex="0" class="ui-input-toggle-group__item ui-input-toggle-group__item--active" id="t.roundTrip">הלוך-חזור</a>
+          <a tabindex="0" class="ui-input-toggle-group__item" id="t.oneWay">כיוון אחד</a>
+          <a tabindex="0" class="ui-input-toggle-group__item" id="t.multiCity">שילוב יעדים</a>
+          <a tabindex="0" class="ui-input-toggle-group__item" id="t.inspiration">כל היעדים</a>
+        </div></ui-input-toggle-group></search-ui-flights-travel-type>`);
+      const rg = c9.w.__u1SelectorIntel.radioShape('search-ui-flights-travel-type');
+      check('radioShape reads group, buttons and checked state off the rejected strip',
+        !!rg && rg.radioGroup === '.ui-input-toggle-group' &&
+        rg.radioButton === '.ui-input-toggle-group__item' &&
+        rg.checkedState === '.ui-input-toggle-group__item--active' &&
+        /:not\(/.test(rg.uncheckedState), JSON.stringify(rg));
+    }
+    // dialogShape names the trigger from an EXACT id reference only — the
+    // fuzzy hunt stays banned (the molina poison).
+    {
+      const c10 = collectIn(`<button data-target="#helpDlg" data-toggle="modal">Help</button>
+        <div id="helpDlg" class="modal" style="display:none"><h2>Help</h2><button class="close">×</button></div>`);
+      const dg = c10.w.__u1SelectorIntel.dialogShape('#helpDlg');
+      check('a dialog\'s trigger comes from an exact-id reference',
+        !!dg && !!dg.trigger && c10.w.document.querySelector(dg.trigger) === c10.w.document.querySelector('button[data-target]'),
+        JSON.stringify(dg));
+      const c11 = collectIn(`<div id="loneDlg" class="modal" style="display:none"><h2>Alone</h2></div>
+        <button class="clicker">Sign In</button><ul class="signin-dropdown" role="menu" style="display:none"><li><a href="https://x/">M</a></li></ul>`);
+      const dg2 = c11.w.__u1SelectorIntel.dialogShape('#loneDlg');
+      check('…and a dialog nothing names gets NO trigger — never a hunted one',
+        !dg2 || !dg2.trigger, JSON.stringify(dg2));
+    }
   }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }

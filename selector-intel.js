@@ -3862,6 +3862,24 @@
     // The dialog itself is not its own close button.
     if (close && close !== root) out.closeBtn = robustSelector(close);
 
+    // The TRIGGER, from exact statements only. Without one the engine cannot
+    // move focus INTO the dialog on open — 'plenty of dialogs the focus never
+    // reaches' (elal, 2026-09-02). Exact-id references exclusively: the
+    // fuzzy hunt is what once filed molina's sign-in dropdown as the trigger
+    // of every dialog on the page, and it stays banned.
+    if (root.id) {
+      var trig = null;
+      try {
+        trig = document.querySelector(
+          '[aria-controls="' + root.id + '"],[data-target="#' + root.id + '"],' +
+          '[data-bs-target="#' + root.id + '"],a[href="#' + root.id + '"]');
+      } catch (e) {}
+      if (trig && trig !== root && !root.contains(trig)) {
+        var tSel = robustSelector(trig);
+        if (tSel && isU1Valid(tSel)) out.trigger = tSel;
+      }
+    }
+
     // While we are reading the markup: the heading is the accessible name, and
     // it is just as readable and just as often left empty.
     var head = null;
@@ -3871,7 +3889,7 @@
     } catch (e) {}
     if (head && head !== root) out.heading = robustSelector(head);
 
-    return (out.closeBtn || out.heading) ? out : null;
+    return (out.closeBtn || out.heading || out.trigger) ? out : null;
   }
 
   /**
@@ -4797,6 +4815,70 @@
    *     right now, or aria-haspopup / aria-expanded on the trigger. A list
    *     standing open with no control over it is not a listbox.
    */
+  /**
+   * A radio group, measured from whatever element was pointed at.
+   *
+   * u1.fix.radio needs radioGroup + radioButton + checkedState, and the
+   * survey only ever names the group — elal's trip-type strip was typed
+   * radio and then refused at build for the missing halves, though every
+   * one of them is readable: the items are the group's pressable children,
+   * and the checked state is the class exactly one of them carries
+   * (ui-input-toggle-group__item--active).
+   */
+  function radioShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+    var PRESS = 'a,button,[role="radio"],[role="button"],[tabindex]';
+    // Pointed at a wrapper (a custom element around the strip)? Descend to
+    // the element whose own CHILDREN are the options.
+    var box = root;
+    for (var d = 0; d < 3; d++) {
+      var pressables = Array.prototype.filter.call(box.children, function (k) {
+        try { return k.matches(PRESS); } catch (e) { return false; }
+      });
+      if (pressables.length >= 2) break;
+      var inner = Array.prototype.find.call(box.children, function (k) {
+        return Array.prototype.filter.call(k.children, function (g) {
+          try { return g.matches(PRESS); } catch (e) { return false; }
+        }).length >= 2;
+      });
+      if (inner) { box = inner; continue; }
+      if (box.children.length === 1) { box = box.children[0]; continue; }
+      break;
+    }
+    var items = Array.prototype.filter.call(box.children, function (k) {
+      try { return k.matches(PRESS); } catch (e) { return false; }
+    });
+    if (items.length < 2) return null;
+    var groupSel = robustSelector(box);
+    if (!groupSel || !isU1Valid(groupSel)) return null;
+    var btn = commonSelectorFor(box, items, groupSel);
+    if (!btn || !btn.selector || !isU1Valid(btn.selector)) return null;
+
+    // The checked marker: a state-smelling class exactly one item carries.
+    var counts = {};
+    for (var ii = 0; ii < items.length; ii++) {
+      var cls = classesOf(items[ii]);
+      for (var ci = 0; ci < cls.length; ci++) counts[cls[ci]] = (counts[cls[ci]] || 0) + 1;
+    }
+    var marker = null;
+    for (var name in counts) {
+      if (counts[name] !== 1) continue;
+      if (/(^|[-_])(active|selected|checked|current|on)([-_]|$)/i.test(name)) { marker = name; break; }
+    }
+    if (!marker) return null;
+    var checked = '.' + marker;
+    if (!isU1Valid(checked)) return null;
+    var unchecked = normalize(btn.selector + ':not(.' + marker + ')');
+    return {
+      radioGroup: groupSel,
+      radioButton: btn.selector,
+      checkedState: checked,
+      uncheckedState: isU1Valid(unchecked) ? unchecked : '',
+    };
+  }
+
   function menuIsReallyListbox(containerSel) {
     let el;
     try { el = document.querySelector(containerSel); } catch (e) { return null; }
@@ -5215,7 +5297,7 @@
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
     menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
-    formShape, repairForU1, alreadyNative, menuIsReallyListbox, componentWording,
+    formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, componentWording,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
