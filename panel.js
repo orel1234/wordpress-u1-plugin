@@ -5784,7 +5784,7 @@ function labelScreen(stop, collected, tab) {
  * parts inside it. That is the one that works, and it is the one the estimate's
  * "Build" row has always been quoting for — a call per component.
  */
-async function confirmedToMapping(pick, stop, tab) {
+async function confirmedToMapping(pick, stop, tab, extra) {
   const cand = (sweepCands.get(stop && stop.n) || []).find((c) => c.mark === pick.mark);
   let sel = pick.sel || (cand && cand.selector) || '';
   if (!sel) return { err: 'That row has no selector to build on.' };
@@ -5871,6 +5871,10 @@ async function confirmedToMapping(pick, stop, tab) {
   // makes a six-minute build watchable.
   const tpl = aiCardTemplate(prepared.idx);
   if (!tpl) return { err: 'The prepared mapping could not be read back.' };
+  // Fields the CALLER knows and the pipeline cannot — e.g. the interior scan
+  // stamping which dialog this mapping was found inside, so the drawer can
+  // nest it under that dialog's row.
+  if (extra && typeof extra === 'object') Object.assign(tpl, extra);
   let saved;
   let warn = '';
   try { saved = await saveMappingEntry(tpl, { refreshUi: false }); }
@@ -14613,7 +14617,7 @@ async function dialogInteriorScan(tab) {
         const res = await confirmedToMapping(
           { mark: null, type: c.u1Type, sel: c.containerSelector,
             why: c.why || `found inside the dialog ${dSel}` },
-          { n: 0, probed: [] }, tab);
+          { n: 0, probed: [] }, tab, { parent: dSel });
         if (res && res.err) {
           sweepLog(0, `inside ${dSel}: ${c.u1Type} ${c.containerSelector} could not be built — ${res.err}`, 'err');
         } else {
@@ -15901,6 +15905,12 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     // not on the moment: apply, re-apply and export all have to make the same
     // choice, and a decision that lives only in a dialog cannot be repeated.
     overwriteRole: template.overwriteRole || (prev && prev.overwriteRole) || null,
+    // What this mapping is about, in words — a heading's text and why its
+    // level changed, an auto-answered role clash. Shown on the drawer row.
+    note: template.note || (prev && prev.note) || null,
+    // The dialog this was found INSIDE (the interior scan stamps it), so the
+    // drawer nests the row under that dialog's own.
+    parent: template.parent || (prev && prev.parent) || null,
     // Keep the previous screenshot if a fresh capture wasn't possible.
     screenshot: screenshot || (prev && prev.screenshot) || null,
     pageUrl: tab?.url || (prev && prev.pageUrl) || '',
@@ -17344,7 +17354,7 @@ async function loadMappingsList() {
   if (onPageBtn) onPageBtn.textContent = `On this page (${onPageCount})`;
   if (allBtn)    allBtn.textContent    = `All (${list.length})`;
 
-  const itemHtml = (m, idx) => {
+  const itemHtml = (m, idx, childrenHtml, childCount) => {
     const code = mappingToCode(m);
     const legacy = typeof m === 'string';
     const shot = m && typeof m === 'object' ? safeImg(m.screenshot) : '';
@@ -17359,6 +17369,7 @@ async function loadMappingsList() {
           ${m && m.id ? `<span class="mh-id" title="Stable id — how the daily monitor reports this mapping if its selector breaks">${escapeHtml(m.id)}</span>` : ''}
           <span class="mh-type">${escapeHtml(type)}</span>
           <span class="mh-sel">${escapeHtml(primary)}</span>
+          ${childCount ? `<span class="mh-kids" title="Mappings for elements inside this dialog — open the row to see them">▸ ${childCount} inside</span>` : ''}
           ${m && m.note ? `<span class="mh-note" title="${escapeHtml(m.note)}">${escapeHtml(m.note)}</span>` : ''}
           ${hasShot ? `<span class="mh-thumb" data-idx="${idx}" title="Click to view full image">
             <img class="mh-img" src="${shot}" alt="Element preview">
@@ -17366,6 +17377,7 @@ async function loadMappingsList() {
           </span>` : ''}
         </button>
         <div class="mapping-body" style="display:none">
+          ${childrenHtml ? `<div class="mapping-children">${childrenHtml}</div>` : ''}
           <pre>${escapeHtml(code)}</pre>
           <div class="mapping-actions">
             <button class="apply-btn" data-idx="${idx}" data-tip="${legacy ? 'Legacy — re-add' : 'Apply on page'}" title="${legacy ? 'Legacy string — cannot auto-apply, please re-add' : 'Apply on page'}"${legacy ? ' disabled' : ''}>▶</button>
@@ -17389,13 +17401,42 @@ async function loadMappingsList() {
   list.forEach((m, idx) => { if (mappingsFilter === 'all' || onPage(m)) entries.push({ m, idx }); });
   entries.sort((a, b) => (((a.m && a.m.fixNo) || 1e9) - ((b.m && b.m.fixNo) || 1e9)));
 
+  // A mapping born INSIDE a dialog files under that dialog's row — the row
+  // opens like an accordion and its interior mappings sit in it. Two ways in:
+  // the interior scan stamps `parent` at creation, and a selector that
+  // extends the dialog's own (the finishing pass's headings inside a modal)
+  // counts as inside even without the stamp.
+  const dialogs = entries.filter((e) => e.m && typeof e.m === 'object' && e.m.type === 'dialog' && e.m.primary);
+  const childOf = (e) => {
+    if (!e.m || typeof e.m !== 'object') return null;
+    for (const d of dialogs) {
+      if (e === d) continue;
+      if (e.m.parent && e.m.parent === d.m.primary) return d;
+      if (e.m.primary && e.m.primary.indexOf(d.m.primary + '>') === 0) return d;
+    }
+    return null;
+  };
+  const kids = new Map();
+  const top = [];
+  for (const e of entries) {
+    const d = childOf(e);
+    if (d) {
+      if (!kids.has(d)) kids.set(d, []);
+      kids.get(d).push(e);
+    } else top.push(e);
+  }
+
   if (entries.length === 0) {
     container.innerHTML = '<div class="empty-state">No mappings match an element on this page. Switch to “All” to see the rest.</div>';
     if (applyAllRow) applyAllRow.style.display = 'flex';
     return;
   }
 
-  container.innerHTML = entries.map(e => itemHtml(e.m, e.idx)).join('');
+  container.innerHTML = top.map((e) => {
+    const ch = kids.get(e) || [];
+    return itemHtml(e.m, e.idx,
+      ch.length ? ch.map((c) => itemHtml(c.m, c.idx)).join('') : '', ch.length);
+  }).join('');
 
   if (applyAllRow) applyAllRow.style.display = 'flex';
   // Whatever the site is running that this list does not have. Not awaited —

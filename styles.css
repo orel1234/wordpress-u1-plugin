@@ -1902,6 +1902,24 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Mappings that live INSIDE a dialog nest under its row — indented, with a
+   left rail, each still a full row with its own actions. */
+.mapping-item .mapping-children {
+  grid-column: 1 / -1;
+  margin: 2px 0 8px 12px;
+  padding-left: 10px;
+  border-left: 2px solid var(--u1-primary, #6c4cf1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mapping-item .mapping-head .mh-kids {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--u1-primary, #6c4cf1);
+  white-space: nowrap;
+}
 /* What this mapping is about, in words — a heading's own text and the reason
    its level changed. Full width under the selector line; the title attribute
    carries the untruncated sentence. */

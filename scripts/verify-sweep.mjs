@@ -1022,7 +1022,7 @@ console.log('\nholding after each section');
   // from outside. describeComponent collapsed every sub-selector onto the root:
   //   fix.tabs('.finder__tabs', { selectors: { tabList: '.finder__tabs' } })
   check('…through rowFromParts and prepareOne, so the parts are real selectors',
-    /async function confirmedToMapping\(pick, stop, tab\)/.test(src) &&
+    /async function confirmedToMapping\(pick, stop, tab, extra\)/.test(src) &&
     /const built = rowFromParts\(\{/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]) &&
     /await prepareOne\(built\.row, tab\)/.test(/async function confirmedToMapping[\s\S]*?\n}/.exec(src)[0]));
   // triggerRequired ONLY — dialog is firstArgFrom:'trigger' with an OPTIONAL
