@@ -598,6 +598,26 @@ console.log('\nnames U1 itself writes never enter a mapping');
         !!mn && mn.items === '.mega-nav__trigger' && mn.triggers === '.mega-nav__trigger' &&
         mn.submenus === '.mega-panel', JSON.stringify(mn));
     }
+    // Every template builds by measurement (owner, 2026-09-02): the required
+    // halves of table, carousel and pagination now have readers too.
+    {
+      const c13 = collectIn(`<div id="wrap"><table class="data-table" id="t1">
+        <tr><th>Name</th><th>Size</th></tr><tr><td>A</td><td>42</td></tr><tr><td>B</td><td>43</td></tr></table></div>`);
+      const ts = c13.w.__u1SelectorIntel.tableShape('#wrap');
+      check('tableShape finds the table, its rows and its cells',
+        !!ts && ts.table === '#t1' && ts.row === 'tr' && /td,th/.test(ts.cell), JSON.stringify(ts));
+      const c14 = collectIn(`<div id="car" class="hero-carousel"><div class="track">
+        <div class="hero-slide">a</div><div class="hero-slide">b</div><div class="hero-slide">c</div></div>
+        <button aria-label="previous slide">‹</button><button aria-label="next slide">›</button></div>`);
+      const cs = c14.w.__u1SelectorIntel.carouselShape('#car');
+      check('carouselShape finds the slides as the densest same-shaped run',
+        !!cs && cs.slide === '.hero-slide' && !!cs.prevButton && !!cs.nextButton, JSON.stringify(cs));
+      const c15 = collectIn(`<nav id="pg"><a href="#" class="page">1</a><a href="#" class="page">2</a>
+        <a href="#" class="page">3</a><a href="#" aria-label="next page">→</a></nav>`);
+      const pg = c15.w.__u1SelectorIntel.paginationShape('#pg');
+      check('paginationShape finds the numbered pressables',
+        !!pg && pg.pageButtons === '.page' && !!pg.nextButton, JSON.stringify(pg));
+    }
   }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }

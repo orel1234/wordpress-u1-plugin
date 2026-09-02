@@ -8864,6 +8864,21 @@ async function prepareOne(row, tab) {
     mnShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.menuShape(s), [row.sel]);
   }
 
+  // Table/grid, carousel and pagination: their REQUIRED halves (row/cell,
+  // slide, pageButtons) had no reader at all — the model either guessed or
+  // the build refused. Measured now, filled only where the field is empty
+  // or resolves to nothing.
+  let tblShape = null, carShape = null, pgShape = null;
+  if (row.type === 'table' || row.type === 'grid') {
+    tblShape = await inPage(tab.id, (x) => window.__u1SelectorIntel.tableShape(x), [row.sel]);
+  }
+  if (row.type === 'carousel') {
+    carShape = await inPage(tab.id, (x) => window.__u1SelectorIntel.carouselShape(x), [row.sel]);
+  }
+  if (row.type === 'pagination') {
+    pgShape = await inPage(tab.id, (x) => window.__u1SelectorIntel.paginationShape(x), [row.sel]);
+  }
+
   let rgShape = null;
   if (row.type === 'radio') {
     rgShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.radioShape(s), [row.sel]);
@@ -9087,6 +9102,15 @@ async function prepareOne(row, tab) {
       let scopeEl = null;
       try { scopeEl = document.querySelector(rowSel); } catch {}
       if (scopeEl && tabs.some((t) => scopeEl.contains(t))) tabs = tabs.filter((t) => scopeEl.contains(t));
+      // No tab field and no role=tab on the page (the common case): the tabs
+      // are the named element's own pressable children — the approval card
+      // was showing tab/tabPanel as empty REQUIRED fields.
+      if (tabs.length < 2 && scopeEl) {
+        tabs = [...scopeEl.children].filter((k) => {
+          try { return k.matches('button,a,[role="tab"],[tabindex]'); } catch { return false; }
+        });
+        if (tabs.length >= 2) out2.tabFromChildren = true;
+      }
       if (tabs.length < 2) return null;
       const list = tabs[0].parentElement;
       if (!list || !tabs.every((t) => t.parentElement === list)) {
@@ -9095,6 +9119,11 @@ async function prepareOne(row, tab) {
         out2.list = S.robustSelector(list);
       }
       if (!out2.list || !S.isU1Valid(out2.list)) return null;
+      if (out2.tabFromChildren) {
+        const listEl0 = document.querySelector(out2.list);
+        const tsel = listEl0 && S.commonSelectorFor(listEl0, tabs, out2.list);
+        if (tsel && tsel.selector && S.isU1Valid(tsel.selector)) out2.tab = tsel.selector;
+      }
       let panelEl = null;
       try { panelEl = pSel ? document.querySelector(pSel) : null; } catch {}
       out2.panelResolves = !!panelEl;
@@ -9112,6 +9141,11 @@ async function prepareOne(row, tab) {
       out.fields = (out.fields || []).filter(f => f.key !== 'tabList');
       out.fields.push({ key: 'tabList', value: shape.list,
         why: 'The first parent of the first tab — the strip itself. The mapping is rooted one level up because the engine waits for this to appear inside the first argument.' });
+      if (shape.tab && !(tabField && String(tabField.value || '').trim())) {
+        out.fields = (out.fields || []).filter(f => f.key !== 'tab');
+        out.fields.push({ key: 'tab', value: shape.tab,
+          why: 'The strip\u2019s own pressable children — measured, because the page never says role=tab.' });
+      }
       if (!shape.panelResolves) {
         const panels = await inPage(tab.id,
           (listSel, tSel) => window.__u1SelectorIntel.tabPanelsFor(listSel, tSel),
@@ -9206,6 +9240,31 @@ async function prepareOne(row, tab) {
           why: 'The drop-down lists themselves — arrow keys navigate inside once both halves are named.' });
     }
     if (mnShape.menu) out.primary = mnShape.menu;
+  }
+
+  {
+    const fillMeasured = (pairs, note) => {
+      for (const [key, value] of pairs) {
+        if (!value) continue;
+        const had = (out.fields || []).find((f) => f.key === key && String(f.value || '').trim());
+        if (had) continue;
+        out.fields = (out.fields || []).filter((f) => f.key !== key);
+        out.fields.push({ key, value, why: note });
+      }
+    };
+    if (tblShape) {
+      fillMeasured([['row', tblShape.row], ['cell', tblShape.cell]],
+        'Measured off the table itself.');
+      out.primary = tblShape.table;
+    }
+    if (carShape) {
+      fillMeasured([['slide', carShape.slide], ['prevButton', carShape.prevButton], ['nextButton', carShape.nextButton]],
+        'Measured — the densest run of same-shaped siblings is the slides.');
+    }
+    if (pgShape) {
+      fillMeasured([['pageButtons', pgShape.pageButtons], ['prevButton', pgShape.prevButton], ['nextButton', pgShape.nextButton]],
+        'Measured — the pressables whose faces are running numbers.');
+    }
   }
 
   if (rgShape) {

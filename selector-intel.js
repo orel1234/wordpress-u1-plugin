@@ -4897,6 +4897,101 @@
     return out;
   }
 
+  /**
+   * A table (or grid), measured: the table element itself (or the nearest one
+   * under what was pointed at), its rows and its cells — the three required
+   * halves of u1.fix.table/grid, which no earlier reader ever filled.
+   */
+  function tableShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+    var tbl = null;
+    try {
+      tbl = root.matches('table,[role="table"],[role="grid"]') ? root
+        : root.querySelector('table,[role="table"],[role="grid"]');
+    } catch (e) {}
+    if (!tbl) return null;
+    var tSel = robustSelector(tbl);
+    if (!tSel || !isU1Valid(tSel)) return null;
+    var rows = [];
+    try { rows = Array.prototype.slice.call(tbl.querySelectorAll('tr,[role="row"]')); } catch (e) {}
+    if (rows.length < 2) return null;
+    var cells = [];
+    try { cells = Array.prototype.slice.call(tbl.querySelectorAll('td,th,[role="cell"],[role="gridcell"],[role="columnheader"]')); } catch (e) {}
+    if (!cells.length) return null;
+    var rowSel = tbl.querySelector('tr') ? 'tr' : '[role="row"]';
+    var cellSel = tbl.querySelector('td,th') ? 'td,th' : '[role="cell"],[role="gridcell"],[role="columnheader"]';
+    return { table: tSel, row: rowSel, cell: cellSel };
+  }
+
+  /**
+   * A carousel: the container and its SLIDES — a run of same-shaped siblings
+   * inside a track. Arrows and dots are optional extras; the slide is the
+   * required half nothing measured before.
+   */
+  function carouselShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+    // The densest run of same-tag, same-class siblings anywhere under the
+    // root — that is the track's children, i.e. the slides.
+    var best = null;
+    var walk = root.querySelectorAll('*');
+    var seen = new Set();
+    for (var i = 0; i < walk.length && i < 400; i++) {
+      var p = walk[i].parentElement;
+      if (!p || seen.has(p)) continue;
+      seen.add(p);
+      var kids = Array.prototype.filter.call(p.children, function (k) { return k.nodeType === 1; });
+      if (kids.length < 2) continue;
+      var tag = kids[0].tagName;
+      var cls = classesOf(kids[0]).filter(function (x) { return !NOISE.test(x); })[0] || '';
+      var same = kids.filter(function (k) {
+        return k.tagName === tag && (!cls || (k.classList && k.classList.contains(cls)));
+      });
+      if (same.length >= 2 && (!best || same.length > best.els.length)) best = { els: same, parent: p, cls: cls };
+    }
+    if (!best) return null;
+    var slide = best.cls ? commonSelectorFor(best.parent, best.els, robustSelector(best.parent)) : null;
+    if (!slide || !slide.selector || !isU1Valid(slide.selector)) return null;
+    var out = { carouselContainer: rootSel, slide: slide.selector };
+    // Arrows, when they say what they are.
+    try {
+      var prev = root.querySelector('[aria-label*="prev" i],[class*="prev" i],[data-dir="prev"]');
+      var next = root.querySelector('[aria-label*="next" i],[class*="next" i],[data-dir="next"]');
+      if (prev) { var ps = robustSelector(prev); if (isU1Valid(ps)) out.prevButton = ps; }
+      if (next) { var ns = robustSelector(next); if (isU1Valid(ns)) out.nextButton = ns; }
+    } catch (e) {}
+    return out;
+  }
+
+  /**
+   * Pagination: the pressables whose faces are running numbers. The same
+   * counting trick the probe uses, read statically for the build.
+   */
+  function paginationShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+    var press = [];
+    try { press = Array.prototype.slice.call(root.querySelectorAll('a,button,[role="button"],[tabindex]')); } catch (e) {}
+    var nums = press.filter(function (el) {
+      return /^\d{1,3}$/.test((el.textContent || '').trim());
+    });
+    if (nums.length < 2) return null;
+    var sel = commonSelectorFor(root, nums, rootSel);
+    if (!sel || !sel.selector || !isU1Valid(sel.selector)) return null;
+    var out = { container: rootSel, pageButtons: sel.selector };
+    try {
+      var prev = root.querySelector('[aria-label*="prev" i],[class*="prev" i]');
+      var next = root.querySelector('[aria-label*="next" i],[class*="next" i]');
+      if (prev) { var ps = robustSelector(prev); if (isU1Valid(ps)) out.prevButton = ps; }
+      if (next) { var ns = robustSelector(next); if (isU1Valid(ns)) out.nextButton = ns; }
+    } catch (e) {}
+    return out;
+  }
+
   function radioShape(rootSel) {
     var root;
     try { root = document.querySelector(rootSel); } catch (e) { return null; }
@@ -5369,7 +5464,7 @@
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
     menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
-    formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, menuShape, componentWording,
+    formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, menuShape, tableShape, carouselShape, paginationShape, componentWording,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,
