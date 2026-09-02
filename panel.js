@@ -12260,6 +12260,13 @@ async function scanPickedScreens(numbers) {
       // page-wide finishing pass (headings, vague links) have to run HERE.
       // They only ran on the manual path, which is why an autonomous molina
       // run produced no heading or vague-link mappings at all.
+      // Nothing was BUILT this run — a read that failed, an all-skip section —
+      // so there is nothing for the statics to finish. Asking about them here
+      // read as "I got the static dialog and nothing else happened".
+      const builtNow = stops.reduce((a3, s3) => a3 + ((s3.found || []).filter((f3) => f3 && f3.done).length), 0);
+      if (!builtNow) {
+        sweepLog(0, 'static pass not offered — nothing was built on this run', 'skip');
+      } else {
       const dlgCount0 = (aiSweep.stops || []).reduce((a2, s2) =>
         a2 + ((s2.found || []).filter((f2) => f2 && f2.done && f2.type === 'dialog' && f2.sel).length), 0);
       if (!(await confirmStaticPass(dlgCount0))) {
@@ -12293,6 +12300,7 @@ async function scanPickedScreens(numbers) {
             (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
         ` · ` + vaguePart, 'info');
       } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
+      }
       }
       const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
       const failedC = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done && f.failed).length), 0);
