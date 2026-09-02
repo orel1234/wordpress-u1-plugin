@@ -482,6 +482,33 @@ console.log('\nnames U1 itself writes never enter a mapping');
         <a href="#">multi</a><a href="#">all</a></div>`);
     check('a segmented control is ONE radio, not a strip of buttons',
       e2.name('#tg') === 'radio', e2.name('#tg'));
+    // …and it wins even when the site spells the modifier "--tabs", as elal
+    // does (ui-input-toggle-group--tabs): first match, radio before tabs.
+    const e3 = collectIn(`<div class="ui-input-toggle-group ui-input-toggle-group--tabs" id="tg2">
+        <a href="#">round trip</a><a href="#">one way</a><a href="#">multi</a></div>`);
+    check('…even when its modifier class says --tabs', e3.name('#tg2') === 'radio', e3.name('#tg2'));
+    // An autocomplete input names itself — elal's location fields carry the
+    // combobox contract as attributes while an overlay widget stamps
+    // role="document" over them.
+    const e4 = collectIn(`<div><input id="orig" type="text" role="document"
+        aria-autocomplete="list" aria-owns="locations-listbox" aria-haspopup="true" aria-expanded="false">
+        <ul id="locations-listbox" hidden></ul></div>`);
+    check('aria-autocomplete="list" on an input is a combobox, whatever role was stamped on it',
+      e4.name('#orig') === 'combobox', e4.name('#orig'));
+    // A long aria-label repeated across the page is an overlay widget's
+    // instruction text, not anybody's name.
+    const spam = 'to make this site accessible to screen readers press alt plus one now';
+    const e5 = collectIn(`<div>
+        <button id="b1" aria-label="${spam}">Search</button>
+        <a href="/a" aria-label="${spam}">Flights</a>
+        <a href="/b" aria-label="${spam}">Hotels</a>
+        <a href="/c" aria-label="${spam}">Deals</a>
+        <button id="b2" aria-label="Close dialog">✕</button></div>`);
+    const b1 = e5.at('#b1'), b2 = e5.at('#b2');
+    check('a mass-duplicated aria-label is ignored and the element\'s text is the name',
+      !!b1 && b1.name === 'Search', b1 && b1.name);
+    check('…while a label carried by one element keeps being the name',
+      !!b2 && b2.name === 'Close dialog', b2 && b2.name);
   }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }

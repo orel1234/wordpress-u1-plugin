@@ -958,8 +958,14 @@
     return r;
   }
 
-  const accName = (el) => (
-    el.getAttribute('aria-label') ||
+  const accName = (el, labelNoise) => (
+    // A site running an overlay widget (elal runs User1st's) stamps the same
+    // screen-reader INSTRUCTION string as aria-label on half the page. That
+    // text is the widget talking, not the element's name — it was fed to the
+    // model as the accessible name of buttons, links and inputs alike. A real
+    // name is not mass-duplicated: a long label carried verbatim by four or
+    // more elements is noise, and the element's own text is the honest name.
+    ((labelNoise && labelNoise.has(el.getAttribute('aria-label'))) ? '' : el.getAttribute('aria-label')) ||
     el.getAttribute('title') ||
     el.getAttribute('alt') ||
     (el.tagName === 'INPUT' ? (el.getAttribute('placeholder') || el.value || '') : '') ||
@@ -1040,13 +1046,14 @@
     [/tippy|popper__|MuiTooltip|ant-tooltip/i, 'tooltip'],
     [/\bmodal\b|lightbox|drawer|offcanvas|off-canvas/i, 'dialog'],
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
-    [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
-    [/pagination|pager/i, 'pagination'],
     // A segmented control: one choice out of a strip of mutually exclusive
     // options (elal's one-way / multi-city / all-destinations strip, class
     // ui-input-toggle-group). Four separate "button" rows is the same widget
-    // cut into parts; the group is ONE radio.
+    // cut into parts; the group is ONE radio. BEFORE the tabs rule: elal
+    // spells the modifier ui-input-toggle-group--tabs, and first match wins.
     [/toggle[-_]?group|segmented[-_]?control/i, 'radio'],
+    [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
+    [/pagination|pager/i, 'pagination'],
     [/tooltip|popover/i, 'tooltip'],
     [/breadcrumb/i, 'breadcrumb'],
 
@@ -1490,6 +1497,19 @@
     // hamburger opens and a vertical side menu are all menus, and between them
     // that is everywhere else a menu is found.
     if (menuish(el) && inPageFooter(el) && !inPageHeader(el)) return null;
+
+    // The autocomplete input names ITSELF: aria-autocomplete="list"/"both"
+    // plus a popup it owns is the combobox contract verbatim. On elal both
+    // location inputs carry it — with role="document" stamped over them by
+    // the site's own overlay widget, so the role arm below never fires and
+    // the attribute is the one honest statement left.
+    try {
+      var ac0 = el.getAttribute && el.getAttribute('aria-autocomplete');
+      if ((ac0 === 'list' || ac0 === 'both') &&
+          el.matches('input,textarea,[contenteditable="true"]')) {
+        return { name: 'combobox', sure: true };
+      }
+    } catch (e) {}
 
     // Roles WE injected are not the site's testimony. A scan between apply
     // and delete used to read the panel's own handwriting back as the page's
@@ -2572,6 +2592,21 @@
     let relatedUsed = 0;
     // Names seen on the page, for telling a real selector from an invented one.
     const pageTokens = new Set();
+    // aria-label strings mass-duplicated across the page — an overlay
+    // widget's instruction text, not anybody's name. Computed once per
+    // collect; accName skips these and falls through to the element's text.
+    const labelNoise = (() => {
+      const f = new Map();
+      try {
+        for (const e of document.querySelectorAll('[aria-label]')) {
+          const v = e.getAttribute('aria-label');
+          if (v && v.length > 25) f.set(v, (f.get(v) || 0) + 1);
+        }
+      } catch (e) {}
+      const noisy = new Set();
+      f.forEach((n, v) => { if (n >= 4) noisy.add(v); });
+      return noisy;
+    })();
     for (const el of candidateElements(scope, [...related.keys()])) {
       if (out.length >= max) break;
       if (seen.has(el)) continue;
@@ -2680,7 +2715,7 @@
         mark,
         tag: el.tagName.toLowerCase(),
         role: el.getAttribute('role') || '',
-        name: accName(el),
+        name: accName(el, labelNoise),
         selector: usableSel,
         // Which u1 component this element says it is, where it says so at all.
         // `component` is from a role or a tag and is reliable; `maybe` is from a
