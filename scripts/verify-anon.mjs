@@ -532,6 +532,21 @@ console.log('\nnames U1 itself writes never enter a mapping');
       </div></form>`);
     check('a page-wide wrapper div is not renamed form when the WebForms form is voided',
       e7.name('#pw') !== 'form', e7.name('#pw'));
+
+    // Twin bare links in twin cards: no class of their own, tag alone too
+    // broad — the shared ANCESTOR class + the same relative path carries the
+    // group (molina's two "Learn more." links).
+    {
+      const c8 = collectIn(`<div class="middle">
+        <div><h2>About</h2><div class="right-content"><p>text</p><p><a href="/about/">Learn more.</a></p></div></div>
+        <div><h2>Careers</h2><div class="right-content"><p>text</p><p><a href="/careers/">Learn more.</a></p></div></div>
+        <p><a href="/other/">Other link</a></p></div>`);
+      const links8 = [...c8.w.document.querySelectorAll('a')].slice(0, 2);
+      const got8 = c8.w.__u1SelectorIntel.commonSelectorFor(c8.w.document.body, links8, null);
+      check('twin bare links group through their shared ancestor class',
+        !!got8 && got8.exact && got8.selector === '.right-content>p>a' && got8.count === 2,
+        JSON.stringify(got8));
+    }
   }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }

@@ -434,6 +434,35 @@
       }
     }
 
+    // A shared ANCESTOR class + the same relative tag path below it. Twin
+    // cards hold twin bare <a>s — no class of their own, tag alone far too
+    // broad — but each sits at .right-content > p > a, and the card's class
+    // carries the group (molina's two "Learn more." links, 2026-09-02).
+    {
+      const paths = els.map((e) => {
+        const segs = [];
+        let node = e;
+        for (let up = 0; up < 4 && node && node !== container && node !== document.body; up++) {
+          const cls = classesOf(node).filter((x) => !NOISE.test(x)).sort((a, b) => b.length - a.length)[0];
+          segs.push(cls ? '.' + cls : node.tagName.toLowerCase());
+          if (cls) return segs.reverse();
+          node = node.parentElement;
+        }
+        return null;
+      });
+      if (paths.every(Boolean)) {
+        const rel = paths[0];
+        const same = paths.every((p) => p.length === rel.length && p.every((t, i2) => t === rel[i2]));
+        if (same && rel.length > 1) {
+          const sel = normalize(rel.join('>'));
+          const r = covers(sel);
+          if (isU1Valid(sel) && r && !r.missing && r.extra === 0) {
+            return { selector: sel, count: r.total, exact: true, why: whyFor(sel, els) };
+          }
+        }
+      }
+    }
+
     // No single token works — try a comma group of per-element class tokens.
     // This is what covers a menu whose top-level links and drop-down links use
     // two different classes.
