@@ -439,22 +439,36 @@
     // broad — but each sits at .right-content > p > a, and the card's class
     // carries the group (molina's two "Learn more." links, 2026-09-02).
     {
-      const paths = els.map((e) => {
-        const segs = [];
-        let node = e;
-        for (let up = 0; up < 4 && node && node !== container && node !== document.body; up++) {
-          const cls = classesOf(node).filter((x) => !NOISE.test(x)).sort((a, b) => b.length - a.length)[0];
-          segs.push(cls ? '.' + cls : node.tagName.toLowerCase());
-          if (cls) return segs.reverse();
-          node = node.parentElement;
-        }
-        return null;
-      });
-      if (paths.every(Boolean)) {
-        const rel = paths[0];
-        const same = paths.every((p) => p.length === rel.length && p.every((t, i2) => t === rel[i2]));
-        if (same && rel.length > 1) {
-          const sel = normalize(rel.join('>'));
+      // Two path variants per element: from the element's own first classed
+      // node up (.right-content>p>a), and — when the element's own class is
+      // too widely shared to be exact — from its TAG under the parent's
+      // first classed ancestor (.dropdown>a, molina's two menu triggers
+      // whose .nav-link is on every item). Every class the anchor level
+      // SHARES is tried, not only the longest: molina's trigger rows say
+      // "nav-item dropdown", and nav-item covers all six.
+      for (const skipown of [false, true]) {
+        const raw = els.map((e) => {
+          const tags = [];
+          let node = e;
+          for (let up = 0; up < 4 && node && node !== container && node !== document.body; up++) {
+            const clss = (skipown && node === e) ? [] : classesOf(node).filter((x) => !NOISE.test(x));
+            if (clss.length) return { classes: clss, tags };
+            tags.unshift(node.tagName.toLowerCase());
+            node = node.parentElement;
+          }
+          return null;
+        });
+        if (!raw.every(Boolean)) continue;
+        const rel = raw[0].tags;
+        if (!raw.every((p) => p.tags.length === rel.length && p.tags.every((t, i2) => t === rel[i2]))) continue;
+        // classes every element's anchor level shares, most specific first
+        let sharedCls = raw[0].classes;
+        for (const p of raw.slice(1)) sharedCls = sharedCls.filter((c2) => p.classes.includes(c2));
+        sharedCls.sort((a, b) => b.length - a.length);
+        for (const c2 of sharedCls.slice(0, 4)) {
+          const path = ['.' + c2].concat(rel);
+          if (path.length < 2) continue;
+          const sel = normalize(path.join('>'));
           const r = covers(sel);
           if (isU1Valid(sel) && r && !r.missing && r.extra === 0) {
             return { selector: sel, count: r.total, exact: true, why: whyFor(sel, els) };
@@ -4825,6 +4839,51 @@
    * and the checked state is the class exactly one of them carries
    * (ui-input-toggle-group__item--active).
    */
+  /**
+   * A menu with drop-downs, measured. u1.fix.menu only REQUIRES menu+items,
+   * so auto-built menus shipped without triggers/submenus — and those are
+   * exactly the selectors that give a drop-down its focus handling and
+   * arrow-key navigation (menubar:false: triggers become role=button,
+   * submenu containers role=menu). Readable off the markup: a top-level row
+   * holding a nested list is a trigger over a submenu; the rest are items.
+   */
+  function menuShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+    var PRESS = 'a,button,[role="button"],[role="menuitem"],[tabindex]';
+    var rows = Array.prototype.slice.call(root.children);
+    var plain = [], trigEls = [], subEls = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var sub = null;
+      try { sub = row.querySelector('ul,ol,[role="menu"]'); } catch (e) {}
+      var press = null;
+      try { press = row.matches(PRESS) ? row : row.querySelector(PRESS); } catch (e) {}
+      if (press && sub && press.contains(sub)) sub = null;   // a link wrapping its list is not a trigger/panel pair
+      if (sub && sub.children.length >= 2) {
+        if (press) { trigEls.push(press); subEls.push(sub); }
+      } else if (press) plain.push(press);
+    }
+    var itemsAll = plain.concat(trigEls);
+    if (itemsAll.length < 2) return null;
+    var menuSel = robustSelector(root);
+    if (!menuSel || !isU1Valid(menuSel)) return null;
+    var items = commonSelectorFor(root, itemsAll, menuSel);
+    if (!items || !items.selector || !isU1Valid(items.selector)) return null;
+    var out = { menu: menuSel, items: items.selector, triggers: '', submenus: '' };
+    if (trigEls.length && subEls.length === trigEls.length) {
+      var trig = commonSelectorFor(root, trigEls, menuSel);
+      var subs = commonSelectorFor(root, subEls, menuSel);
+      if (trig && trig.selector && isU1Valid(trig.selector) && trig.count === trigEls.length &&
+          subs && subs.selector && isU1Valid(subs.selector) && subs.count === subEls.length) {
+        out.triggers = trig.selector;
+        out.submenus = subs.selector;
+      }
+    }
+    return out;
+  }
+
   function radioShape(rootSel) {
     var root;
     try { root = document.querySelector(rootSel); } catch (e) { return null; }
@@ -5297,7 +5356,7 @@
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
     menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
-    formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, componentWording,
+    formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, menuShape, componentWording,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,

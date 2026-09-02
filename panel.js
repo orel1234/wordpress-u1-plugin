@@ -8773,6 +8773,15 @@ async function prepareOne(row, tab) {
   // group; radioButton and checkedState are readable off the markup — the
   // pressable children and the state class exactly one of them carries
   // (elal's trip-type strip, refused at build until this existed).
+  // A menu's drop-down wiring, measured. menu+items are all u1 REQUIRES, so
+  // auto-built menus shipped without triggers/submenus — and those are what
+  // give a drop-down its focus handling and arrow-key navigation ("the
+  // top-level mapping is right, but focus never enters the submenu").
+  let mnShape = null;
+  if (row.type === 'menu') {
+    mnShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.menuShape(s), [row.sel]);
+  }
+
   let rgShape = null;
   if (row.type === 'radio') {
     rgShape = await inPage(tab.id, (s) => window.__u1SelectorIntel.radioShape(s), [row.sel]);
@@ -9034,6 +9043,23 @@ async function prepareOne(row, tab) {
   // header, which region it opens, and what level the heading is, are all
   // readable off the page. The model's answer here was a container in the
   // header's place and no content at all.
+  if (mnShape) {
+    const fill = (key, value, why) => {
+      if (!value) return;
+      const had = (out.fields || []).find((f) => f.key === key && String(f.value || '').trim());
+      if (had) return;
+      out.fields = (out.fields || []).filter((f) => f.key !== key);
+      out.fields.push({ key, value, why });
+    };
+    fill('items', mnShape.items, 'The menu\u2019s own top-level interactive children — read from the markup.');
+    // Only ever together: submenus without a trigger cover makes U1 throw
+    // ("Submenu must have a trigger element").
+    if (mnShape.triggers && mnShape.submenus) {
+      fill('triggers', mnShape.triggers, 'The items that hold a drop-down — this is what wires focus into the submenus.');
+      fill('submenus', mnShape.submenus, 'The drop-down lists themselves — arrow keys navigate inside once both halves are named.');
+    }
+  }
+
   if (rgShape) {
     out.fields = (out.fields || []).filter(
       (f) => !['radioButton', 'checkedState', 'uncheckedState'].includes(f.key));
@@ -11885,7 +11911,7 @@ async function scanPickedScreens(numbers) {
       // from outside. Each step now names itself as it starts.
       showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
         `Reading what is on this section — a few seconds, no charge.`,
-        ((i) / stops.length) * 100);
+        ((i + 0.05) / stops.length) * 100);
       markScreenReading(stop.n);
 
       // The paid read scrolls back to each section and photographs it. If the
@@ -12014,7 +12040,10 @@ async function scanPickedScreens(numbers) {
         // two-section run sat at 0% for the whole of section 1 — a minute or
         // two of a bar that has not moved and a clock that has, which reads
         // as stuck rather than slow.
-        const pctAt = (frac) => ((i + Math.min(1, (b + frac) / batches.length)) / stops.length) * 100;
+        // One timeline per run: reading is the first tenth of the section's
+        // slice, the model calls the next six tenths, the build the rest —
+        // so the bar climbs through every phase instead of parking at 0%.
+        const pctAt = (frac) => ((i + 0.1 + 0.6 * Math.min(1, (b + frac) / batches.length)) / stops.length) * 100;
         const head = `Section ${stop.n} — ${i + 1} of ${stops.length}`;
         const part = (batches.length > 1 ? `Part ${b + 1}/${batches.length} · ` : '');
         const long =
@@ -12222,7 +12251,7 @@ async function scanPickedScreens(numbers) {
             `${todo[b].label || todo[b].sel} · section ${stop.n}` +
             (todo[b].why ? ` — ${String(todo[b].why).slice(0, 90)}` : '') +
             `. Saved to Mappings as it finishes.`,
-            knownAll ? (builtAll / knownAll) * 100 : null);
+            ((i + 0.7 + 0.3 * (b / Math.max(1, todo.length))) / stops.length) * 100);
           try {
             const made = await confirmedToMapping(
               { mark: null, type: todo[b].type, sel: todo[b].sel, why: todo[b].why }, stop, tab);

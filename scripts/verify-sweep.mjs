@@ -1370,8 +1370,11 @@ console.log('\nchoosing screens');
 
     // The sweep passes a per-batch fraction, so two batches in a section are
     // two visible steps rather than one long stall.
+    // One timeline per run (owner, 2026-09-02): reading is the first tenth
+    // of a section's slice, the model calls the next six tenths, the build
+    // the rest — the bar climbs through every phase.
     check('the run advances the bar per batch, not only per section',
-      /const pctAt = \(frac\) => \(\(i \+ Math\.min\(1, \(b \+ frac\) \/ batches\.length\)\) \/ stops\.length\) \* 100/.test(panelSrc));
+      /const pctAt = \(frac\) => \(\(i \+ 0\.1 \+ 0\.6 \* Math\.min\(1, \(b \+ frac\) \/ batches\.length\)\) \/ stops\.length\) \* 100/.test(panelSrc));
     check('…and feeds the streamed answer into it',
       /onProgress: \(chars\) => \{/.test(panelSrc) && /updateSweepBusy\(pctAt\(/.test(panelSrc));
 
