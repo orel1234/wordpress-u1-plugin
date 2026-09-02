@@ -1927,10 +1927,15 @@ button {
   flex: 1 0 100%;
   font-size: 11px;
   color: var(--u1-text-muted);
+  /* The note IS the explanation — clipping it to one line hid the half that
+     says why. Wrap, capped at three lines; the title attr has the rest. */
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   text-align: left;
+  line-height: 1.35;
 }
 /* Grid guarantees two side-by-side tracks: code (shrinkable) | actions (right). */
 .mapping-item .mapping-body {

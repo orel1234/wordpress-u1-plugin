@@ -2129,12 +2129,30 @@ async function captureElementScreenshot(primary, fallback, opts) {
           let raw = null;
           try { raw = document.querySelector(sel); } catch {}
           if (raw) {
-            window.__u1ShotRestore = { sel, style: raw.getAttribute('style') };
-            raw.style.display = 'block';
-            raw.style.visibility = 'visible';
-            raw.style.opacity = '1';
+            // The element itself may be fine — a heading inside a CLOSED
+            // modal has no box because an ANCESTOR is display:none. Unhide
+            // the whole hidden chain for the one capture; every touched
+            // node's inline style is recorded for the restore below.
+            const touched = [];
+            for (let node = raw; node && node !== document.body; node = node.parentElement) {
+              let cs = null;
+              try { cs = getComputedStyle(node); } catch {}
+              if (!cs) continue;
+              if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) {
+                touched.push({ node, style: node.getAttribute('style') });
+                node.style.display = 'block';
+                node.style.visibility = 'visible';
+                node.style.opacity = '1';
+              }
+            }
+            if (!touched.length) touched.push({ node: raw, style: raw.getAttribute('style') });
+            window.__u1ShotRestore = { nodes: touched };
             const r = raw.getBoundingClientRect();
             if (r.width >= 1 && r.height >= 1) el = raw;
+            else touched.forEach((t) => {
+              if (t.style == null) t.node.removeAttribute('style');
+              else t.node.setAttribute('style', t.style);
+            });
           }
         }
         if (!el) return null;
@@ -2169,12 +2187,13 @@ async function captureElementScreenshot(primary, fallback, opts) {
           func: () => {
             const p = window.__u1ShotRestore;
             delete window.__u1ShotRestore;
-            if (!p) return;
-            let el = null;
-            try { el = document.querySelector(p.sel); } catch {}
-            if (!el) return;
-            if (p.style == null) el.removeAttribute('style');
-            else el.setAttribute('style', p.style);
+            if (!p || !p.nodes) return;
+            for (const t of p.nodes) {
+              try {
+                if (t.style == null) t.node.removeAttribute('style');
+                else t.node.setAttribute('style', t.style);
+              } catch (e) {}
+            }
           },
         });
       } catch {}
@@ -12221,6 +12240,11 @@ async function scanPickedScreens(numbers) {
       // page-wide finishing pass (headings, vague links) have to run HERE.
       // They only ran on the manual path, which is why an autonomous molina
       // run produced no heading or vague-link mappings at all.
+      const dlgCount0 = (aiSweep.stops || []).reduce((a2, s2) =>
+        a2 + ((s2.found || []).filter((f2) => f2 && f2.done && f2.type === 'dialog' && f2.sel).length), 0);
+      if (!(await confirmStaticPass(dlgCount0))) {
+        sweepLog(0, 'static pass skipped at your request — headings, vague links and dialog interiors left for a later run', 'skip');
+      } else {
       try {
         sweepLog(0, 'dialog interiors: starting — every dialog this run built gets its own inside scan', 'info');
         const din = await dialogInteriorScan(tab);
@@ -12249,6 +12273,7 @@ async function scanPickedScreens(numbers) {
             (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
         ` · ` + vaguePart, 'info');
       } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
+      }
       const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
       const failedC = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done && f.failed).length), 0);
       aiSweep.phase = 'screens';
@@ -12517,6 +12542,11 @@ async function buildPickedComponents() {
   // as the end of the job on a page with twenty-five sections left in it.
   renderSweepPicks();
   // Inside every dialog this batch built: a dialog is a page of its own.
+  const dlgCount0 = (aiSweep.stops || []).reduce((a2, s2) =>
+    a2 + ((s2.found || []).filter((f2) => f2 && f2.done && f2.type === 'dialog' && f2.sel).length), 0);
+  if (!(await confirmStaticPass(dlgCount0))) {
+    sweepLog(0, 'static pass skipped at your request — headings, vague links and dialog interiors left for a later run', 'skip');
+  } else {
   try {
     sweepLog(0, 'dialog interiors: starting — every dialog this run built gets its own inside scan', 'info');
     const din = await dialogInteriorScan(tab);
@@ -12547,6 +12577,7 @@ async function buildPickedComponents() {
             (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
         ` · ` + vaguePart, 'info');
   } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
+  }
   return { built: (aiBulk.failed || []).length === 0, failed: (aiBulk.failed || []).length };
 }
 
@@ -14565,6 +14596,34 @@ let filterShape = null;
  * confirmedToMapping — the exact path the autonomous sweep already trusts.
  * One model call per dialog, each one logged with what it cost to skip.
  */
+/**
+ * The static pass asks before it writes. It maps headings, vague links and
+ * dialog interiors automatically — and doing that unannounced read as
+ * "mappings suddenly appear and I have no idea when this happens". One
+ * question covers the whole phase; Skip leaves the components built and the
+ * statics for a later run.
+ */
+async function confirmStaticPass(dialogCount) {
+  const dlg = document.getElementById('staticPassDialog');
+  if (!dlg) return true;
+  document.getElementById('staticPassBody').textContent =
+    'The components are built. Next comes the automatic static work: heading levels, ' +
+    'vague "learn more" links' +
+    (dialogCount ? `, and a look inside ${dialogCount} dialog${dialogCount === 1 ? '' : 's'} (one model call each)` : '') +
+    ' — written straight to Mappings.';
+  return await new Promise((resolve) => {
+    const go = document.getElementById('staticPassGo');
+    const skip = document.getElementById('staticPassSkip');
+    const done = (a) => { dlg.close();
+      go.removeEventListener('click', onGo); skip.removeEventListener('click', onSkip); resolve(a); };
+    const onGo = () => done(true);
+    const onSkip = () => done(false);
+    go.addEventListener('click', onGo);
+    skip.addEventListener('click', onSkip);
+    dlg.showModal();
+  });
+}
+
 async function dialogInteriorScan(tab) {
   const out = { dialogs: 0, made: 0 };
   if (isReadonly()) return out;
@@ -14643,11 +14702,33 @@ async function sweepFinishingPass(tab) {
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
   } catch { return made; }
+  // Which mapped dialog each heading sits INSIDE — by containment, not by
+  // selector spelling: "Select Your State" lives in #state-select-modal but
+  // its selector is spelled from <header>, so the prefix fallback never
+  // matched and the row refused to nest under its dialog.
+  let dialogPrimaries = [];
   try {
-    const got = await inPage(tab.id, () => {
+    const mkey = storageKey('mappings', currentHostname);
+    dialogPrimaries = ((await U1Store.get([mkey]))[mkey] || [])
+      .filter((m) => m && m.type === 'dialog' && m.primary).map((m) => m.primary);
+  } catch {}
+  try {
+    const got = await inPage(tab.id, (dlgs) => {
       const S = window.__u1SelectorIntel;
-      return S && S.headingOutline ? S.headingOutline().slice() : [];
-    });
+      const rows = S && S.headingOutline ? S.headingOutline().slice() : [];
+      for (const h of rows) {
+        if (!h || !h.selector) continue;
+        try {
+          const el = document.querySelector(h.selector);
+          if (!el) continue;
+          for (const d of dlgs) {
+            const host = document.querySelector(d);
+            if (host && host !== el && host.contains(el)) { h.insideDialog = d; break; }
+          }
+        } catch (e) {}
+      }
+      return rows;
+    }, [dialogPrimaries]);
     made.read = (got || []).length;
     for (const h of got || []) {
       if (!h.should || h.should === h.level) continue;
@@ -14658,6 +14739,7 @@ async function sweepFinishingPass(tab) {
         // The row in the drawer is an nth-child chain nobody can place. Carry
         // WHICH heading this is and WHY its level changed — "I don't know
         // what it did, why, or where" is the reading without it.
+        if (h.insideDialog) tpl.parent = h.insideDialog;
         tpl.note = `“${h.text || '(no text)'}” — ` +
           (h.problem === 'no level' ? `has no level of its own` :
            h.problem && h.problem.indexOf('skips') === 0 ? `is an h${h.level} arriving after an h${h.should - 1} outline (${h.problem} level${/skips 1/.test(h.problem) ? '' : 's'})` :
@@ -15892,7 +15974,7 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   if (existingIdx < 0) existingIdx = list.findIndex(m => mappingKey(m) === newKey);
 
   const tab = await getTab();
-  const screenshot = await captureElementScreenshot(template.primary, template.firstArg, { reveal: template.type === 'dialog' });
+  const screenshot = await captureElementScreenshot(template.primary, template.firstArg, { reveal: true });
   const prev = existingIdx >= 0 ? list[existingIdx] : null;
   const entry = {
     type: template.type,
@@ -17677,7 +17759,7 @@ async function loadMappingsList() {
       const status = document.getElementById('applyAllStatus');
       const original = btn.textContent;
       btn.textContent = '…';
-      const shot = await captureElementScreenshot(m.primary, m.firstArg, { reveal: m.type === 'dialog' });
+      const shot = await captureElementScreenshot(m.primary, m.firstArg, { reveal: true });
       btn.textContent = original;
       if (!shot) {
         showNotice(status, 'Could not capture — open the page with this element first.', 'error', 4000);

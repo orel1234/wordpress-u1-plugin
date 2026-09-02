@@ -127,6 +127,18 @@
     </div>
   </dialog>
 
+  <!-- The static pass announces itself and ASKS: it writes heading fixes,
+       vague-link labels and dialog-interior mappings on its own, and doing
+       that unannounced read as "mappings suddenly appear out of nowhere". -->
+  <dialog id="staticPassDialog" class="u1-dialog">
+    <div class="dialog-title">Run the static pass?</div>
+    <p class="dialog-sub" id="staticPassBody"></p>
+    <div class="btn-row">
+      <button class="btn-outline" id="staticPassSkip">Skip it</button>
+      <button class="btn-primary" id="staticPassGo">Run it</button>
+    </div>
+  </dialog>
+
   <dialog id="sweepCostDialog" class="u1-dialog">
     <div class="dialog-title">Search the ticked sections?</div>
     <p class="dialog-sub" id="sweepCostBody"></p>
