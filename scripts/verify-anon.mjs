@@ -581,6 +581,23 @@ console.log('\nnames U1 itself writes never enter a mapping');
       check('…and a dialog nothing names gets NO trigger — never a hunted one',
         !dg2 || !dg2.trigger, JSON.stringify(dg2));
     }
+    // menuShape on a mega menu: panels are DIVs, not lists; items must cover
+    // every top-level item (a first-of-N items selector shipped a menu of
+    // one); and the root is the first parent of the first item, whatever
+    // its tag (owner rule, 2026-09-02).
+    {
+      const c12 = collectIn(`<ul class="mega-nav__list" id="mn">
+        <li class="mega-nav__item"><button class="mega-nav__trigger" type="button">Men</button>
+          <div class="mega-panel"><a href="/a">Run</a><a href="/b">Walk</a></div></li>
+        <li class="mega-nav__item"><button class="mega-nav__trigger" type="button">Women</button>
+          <div class="mega-panel"><a href="/c">Run</a><a href="/d">Walk</a></div></li>
+        <li class="mega-nav__item"><button class="mega-nav__trigger" type="button">Kids</button>
+          <div class="mega-panel"><a href="/e">Run</a><a href="/f">Walk</a></div></li></ul>`);
+      const mn = c12.w.__u1SelectorIntel.menuShape('#mn');
+      check('a mega menu measures items, triggers and its DIV panels',
+        !!mn && mn.items === '.mega-nav__trigger' && mn.triggers === '.mega-nav__trigger' &&
+        mn.submenus === '.mega-panel', JSON.stringify(mn));
+    }
   }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }

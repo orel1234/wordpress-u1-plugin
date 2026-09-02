@@ -4861,6 +4861,16 @@
       var press = null;
       try { press = row.matches(PRESS) ? row : row.querySelector(PRESS); } catch (e) {}
       if (press && sub && press.contains(sub)) sub = null;   // a link wrapping its list is not a trigger/panel pair
+      // A mega menu's panel is a DIV, not a list: any sibling-of-the-press
+      // child of the row holding two or more links is the drop-down.
+      if (!sub && press && press !== row) {
+        try {
+          sub = Array.prototype.find.call(row.children, function (k) {
+            return k !== press && !k.contains(press) && !press.contains(k) &&
+              k.querySelectorAll('a[href],button').length >= 2;
+          }) || null;
+        } catch (e) {}
+      }
       if (sub && sub.children.length >= 2) {
         if (press) { trigEls.push(press); subEls.push(sub); }
       } else if (press) plain.push(press);
@@ -4870,7 +4880,10 @@
     var menuSel = robustSelector(root);
     if (!menuSel || !isU1Valid(menuSel)) return null;
     var items = commonSelectorFor(root, itemsAll, menuSel);
-    if (!items || !items.selector || !isU1Valid(items.selector)) return null;
+    // Full cover or nothing: a first-of-N fallback here shipped
+    // items:"#megaNav>li:nth-child(1)>button" — a menu of one item.
+    if (!items || !items.selector || !isU1Valid(items.selector) ||
+        items.count !== itemsAll.length) return null;
     var out = { menu: menuSel, items: items.selector, triggers: '', submenus: '' };
     if (trigEls.length && subEls.length === trigEls.length) {
       var trig = commonSelectorFor(root, trigEls, menuSel);

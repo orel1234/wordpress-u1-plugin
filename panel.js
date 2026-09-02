@@ -9085,20 +9085,25 @@ async function prepareOne(row, tab) {
   // readable off the page. The model's answer here was a container in the
   // header's place and no content at all.
   if (mnShape) {
-    const fill = (key, value, why) => {
-      if (!value) return;
-      const had = (out.fields || []).find((f) => f.key === key && String(f.value || '').trim());
-      if (had) return;
-      out.fields = (out.fields || []).filter((f) => f.key !== key);
-      out.fields.push({ key, value, why });
-    };
-    fill('items', mnShape.items, 'The menu\u2019s own top-level interactive children — read from the markup.');
+    // The MEASURED shape wins, as it does for a listbox: the model handed
+    // STEP's mega nav items:"#megaNav>li:nth-child(1)>button" — one item of
+    // seven — and fill-only-empty politely kept it. Owner rule: the menu
+    // root is the first parent of the first item, whatever its tag, and the
+    // parts are what the markup shows.
+    out.fields = (out.fields || []).filter(
+      (f) => !['items', 'triggers', 'submenus'].includes(f.key));
+    out.fields.unshift({ key: 'items', value: mnShape.items,
+      why: 'The menu\u2019s own top-level interactive children — read from the markup, covering every one.' });
     // Only ever together: submenus without a trigger cover makes U1 throw
     // ("Submenu must have a trigger element").
     if (mnShape.triggers && mnShape.submenus) {
-      fill('triggers', mnShape.triggers, 'The items that hold a drop-down — this is what wires focus into the submenus.');
-      fill('submenus', mnShape.submenus, 'The drop-down lists themselves — arrow keys navigate inside once both halves are named.');
+      out.fields.push(
+        { key: 'triggers', value: mnShape.triggers,
+          why: 'The items that hold a drop-down — this is what wires focus into the submenus.' },
+        { key: 'submenus', value: mnShape.submenus,
+          why: 'The drop-down lists themselves — arrow keys navigate inside once both halves are named.' });
     }
+    if (mnShape.menu) out.primary = mnShape.menu;
   }
 
   if (rgShape) {
