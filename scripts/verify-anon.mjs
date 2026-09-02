@@ -514,6 +514,24 @@ console.log('\nnames U1 itself writes never enter a mapping');
       !!b1 && b1.name === 'Search', b1 && b1.name);
     check('…while a label carried by one element keeps being the name',
       !!b2 && b2.name === 'Close dialog', b2 && b2.name);
+
+    // ── clalit.co.il pins (2026-09-02) ──────────────────────────────────
+    // slick writes role="tablist" on its DOT STRIP — the site's own markup,
+    // and still the carousel talking: the veto beats the role.
+    const e6 = collectIn(`<div class="goodToKnow slick-initialized">
+        <div class="slick-track"><div class="slick-slide">a</div><div class="slick-slide">b</div></div>
+        <ul class="slick-dots" id="dots6" role="tablist"><li role="presentation"><button role="tab">1</button></li>
+        <li role="presentation"><button role="tab">2</button></li></ul></div>`);
+    check('slick dots wearing role=tablist are still the carousel talking',
+      e6.name('#dots6') !== 'tabs' && e6.name('#dots6') !== 'pagination', e6.name('#dots6'));
+    // A page-wide wrapper DIV inside a voided WebForms form is the page too.
+    const manyA = Array.from({ length: 35 }, (_, i) => `<a href="/p${i}">l${i}</a>`).join('');
+    const e7 = collectIn(`<form action="/x.aspx"><div class="PageWrap" id="pw">
+        <nav>${manyA}</nav>
+        <div><input type="text" id="q7"><input type="password"><button type="submit">כניסה</button></div>
+      </div></form>`);
+    check('a page-wide wrapper div is not renamed form when the WebForms form is voided',
+      e7.name('#pw') !== 'form', e7.name('#pw'));
   }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }

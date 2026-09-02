@@ -55,7 +55,7 @@
   // `.click-nav` in every test compound() applies.
   const U1_GENERATED = /^u1(st)?-/i;
 
-  const NOISE = /^(flex|grid|w-|h-|p-|m-|py-|px-|mt-|mb-|ml-|mr-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui|u1st-|u1-)/i;
+  const NOISE = /^(flex|grid|w-|h-|p-|m-|py-|px-|mt-|mb-|ml-|mr-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui|u1st-|u1-)|^e\d[a-z0-9]{4,}$|^ec-(rtl|ltr)-[0-9a-z]+$/i;
 
   // GENERATED ids (U1's own, Angular Material, framework uuids) — they change on
   // every reload, so a mapping built on one breaks silently.
@@ -969,7 +969,10 @@
     el.getAttribute('title') ||
     el.getAttribute('alt') ||
     (el.tagName === 'INPUT' ? (el.getAttribute('placeholder') || el.value || '') : '') ||
-    (el.textContent || '')
+    // innerText, where the browser provides it, skips <script>/<style> and
+    // hidden text — clalit's page wrapper introduced itself to the model as
+    // "//<![CDATA[ var theForm…". jsdom has no innerText; tests fall through.
+    el.innerText || (el.textContent || '')
   ).trim().replace(/\s+/g, ' ').slice(0, 60);
 
   /**
@@ -1117,7 +1120,11 @@
   const pageWideForm = (f) => {
     if (!f) return false;
     try {
-      return f.querySelectorAll(FIELD).length > 6 || f.querySelectorAll('a[href]').length > 30;
+      // Links are the tell, not fields: a legitimate filter form carries nine
+      // selects and checkboxes (the shoe finder), while a WebForms wrapper
+      // carries the site's whole navigation. Fields only vote at a count no
+      // real form reaches.
+      return f.querySelectorAll('a[href]').length > 30 || f.querySelectorAll(FIELD).length > 25;
     } catch (e) { return false; }
   };
 
@@ -1498,6 +1505,22 @@
     // that is everywhere else a menu is found.
     if (menuish(el) && inPageFooter(el) && !inPageHeader(el)) return null;
 
+    // A carousel's DOT STRIP is the carousel talking, whatever rule would
+    // have named it: .swiper-pagination arrived as a standalone pagination,
+    // and clalit's .slick-dots arrived as TABS through the structural strip
+    // rule. Class says dots/bullets/pagination + a slider-ish ancestor = the
+    // slider's controls, not a component.
+    try {
+      var cls00 = typeof el.className === 'string' ? el.className : '';
+      if (/\b(dots|bullets?|pagination)\b/i.test(cls00)) {
+        // From the PARENT: .slick-dots itself contains "slick" and found
+        // itself, which turned this veto off exactly where it was written.
+        var host00 = el.parentElement && el.parentElement.closest(
+          '.swiper,.swiper-container,[class*="carousel"],[class*="slideshow"],[class*="slick"],[class*="slider"]');
+        if (host00) return null;
+      }
+    } catch (e) {}
+
     // The autocomplete input names ITSELF: aria-autocomplete="list"/"both"
     // plus a popup it owns is the combobox contract verbatim. On elal both
     // location inputs carry it — with role="document" stamped over them by
@@ -1866,8 +1889,17 @@
           'input[type="tel"],input[type="url"],input[type="number"],input[type="password"]').length;
       } catch (e2) {}
       var frm0 = el.closest('form');
-      if (el.tagName === 'FORM') frm0 = el.parentElement ? el.parentElement.closest('form') : null;
-      if ((fields >= 2 || typeable >= 1) && (!frm0 || pageWideForm(frm0))) {
+      // Never ON a <form>: the tag branch above already judged it — a real
+      // one is sure, a page-wide WebForms wrapper is voided, and letting the
+      // voided wrapper fall through here re-named it form? (clalit's
+      // .NonSecuredMasterPageV6, 2026-09-02).
+      // …and never on an element that is ITSELF page-wide: clalit's
+      // .NonSecuredMasterPageV6 wraps the entire page inside the WebForms
+      // form, holds every field and ninety links, and was renamed form? the
+      // moment the wrapper form was voided. The same yardstick that voids
+      // the form voids the wrapper.
+      if (el.tagName !== 'FORM' && !pageWideForm(el) &&
+          (fields >= 2 || typeable >= 1) && (!frm0 || pageWideForm(frm0))) {
         var submits = countSubmits(el);
         // No submit, no form. A row of filter selects that applies on change is
         // a real thing and it is not this; it has no send — and a "Clear"
