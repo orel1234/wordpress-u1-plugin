@@ -765,6 +765,11 @@
       qsa(sel).forEach(function (root) {
         var items = root.querySelectorAll('[u1st-x][u1st-y="0"]');
         for (var k = 0; k < items.length; k++) {
+          // A menu wrapped in an explicit role=menu/menubar/navigation is
+          // SCOPED by the engine (getParentMenu) and never collides — leave
+          // its numbering alone entirely.
+          if (items[k].closest &&
+              items[k].closest('[role="menubar"],[role="menu"],[role="navigation"]')) continue;
           if (tops.indexOf(items[k]) === -1) tops.push(items[k]);
         }
       });
