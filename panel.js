@@ -14731,42 +14731,6 @@ async function dialogInteriorScan(tab) {
   return out;
 }
 
-// The owner's debug loop: run ONLY the static fixes, on demand, and say
-// everything. Same pass the sweep tails call — proving it here proves it
-// there.
-document.getElementById('staticDebugBtn')?.addEventListener('click', async () => {
-  const btn = document.getElementById('staticDebugBtn');
-  const tab = await getTab();
-  if (!isInjectable(tab)) { showNotice(document.getElementById('sweepStatus'), 'Cannot read this page.', 'error', 4000); return; }
-  btn.disabled = true;
-  try {
-    sweepLog(0, 'static pass (debug button): starting — headings and vague links only', 'info');
-    const fin = await sweepFinishingPass(tab);
-    const vd = fin.vagueDiag || {};
-    const vaguePart = fin.links
-      ? `${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`
-      : !vd.vague ? 'no vague links (learn-more-style) on the page'
-      : `${vd.vague} vague link${vd.vague === 1 ? '' : 's'} seen (${(vd.sample || []).join(', ')}) but none mapped — ` +
-        [vd.noCard ? `${vd.noCard} had no heading beside them` : '',
-         vd.lonely ? `${vd.lonely} were one of a kind` : '',
-         vd.noSelector ? `${vd.noSelector} lost their common selector` : '']
-          .filter(Boolean).join(', ');
-    const line = `static pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
-      (fin.off === 0 ? 'the outline is consistent, nothing to correct'
-        : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
-          (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
-      ` · ` + vaguePart;
-    sweepLog(0, line, 'info');
-    showNotice(document.getElementById('sweepStatus'), line, 'success', 15000);
-  } catch (e) {
-    sweepLog(0, 'static pass failed: ' + e.message, 'err');
-    showNotice(document.getElementById('sweepStatus'), 'Static pass failed: ' + e.message, 'error', 9000);
-  } finally {
-    clearSweepBusy();
-    btn.disabled = false;
-  }
-});
-
 async function sweepFinishingPass(tab) {
   // read/off/already are carried out so the log can say "looked and found it
   // consistent" — a silent pass was indistinguishable from one that never ran
