@@ -5353,7 +5353,11 @@ function labelScreen(stop, collected, tab) {
   const isNative = (c) => (c.signals || []).some((s) => NATIVE_SIGNAL.test(s));
   const components = cands.filter((c) => !c.nested && c.component);
   const rest = cands.filter((c) => components.indexOf(c) === -1);
-  const bare = rest.filter((c) => (c.signals || []).length && !isNative(c) && c.selector);
+  // !c.nested: an element folded into a typed component (a segmented
+  // control's options, a carousel's dots) is that component's PART — elal's
+  // four trip-type links were the radio's options and were offered again
+  // here as four loose buttons-to-be.
+  const bare = rest.filter((c) => (c.signals || []).length && !isNative(c) && c.selector && !c.nested);
   const plain = rest.filter((c) => bare.indexOf(c) === -1);
   const interesting = components;   // what the head count is about
 
@@ -5464,8 +5468,7 @@ function labelScreen(stop, collected, tab) {
         Ticked below, ${bare.length === 1 ? 'it gets' : 'they get'} the role ${bare.length === 1 ? 'it' : 'they'} should have had.</p>
         <div class="lbl-list">${bare.map(row).join('')}</div>
         <div class="lbl-act">
-          <button class="btn-outline btn-sm" id="lblRoleBtn" disabled>Make the ticked ones buttons</button>
-          <button class="btn-outline btn-sm" id="lblRoleLink" disabled>…or links</button>
+          <button class="btn-outline btn-sm" id="lblRoleBtn" disabled>Make the ticked ones accessible</button>
         </div>
       </div>` : ''}
 
@@ -5507,7 +5510,7 @@ function labelScreen(stop, collected, tab) {
 
   const status = document.getElementById('lblStatus');
   const addBtn = document.getElementById('lblAdd');
-  const roleBtns = ['lblRoleBtn', 'lblRoleLink'].map((id) => document.getElementById(id));
+  const roleBtns = ['lblRoleBtn'].map((id) => document.getElementById(id));
   const sync = () => {
     sweepLabel.marks = new Set([...host.querySelectorAll('.lbl-tick:checked')].map((t) => Number(t.value)));
     addBtn.disabled = sweepLabel.marks.size === 0 || sweepLabel.busy;
@@ -5732,17 +5735,34 @@ function labelScreen(stop, collected, tab) {
       // a click, it is not a button or a link, and u1.fix.button/link is
       // exactly the correction for that. One press per group rather than one
       // trip through the type dropdown per element.
-      const roleBtn = e.target.closest('#lblRoleBtn') || e.target.closest('#lblRoleLink');
+      const roleBtn = e.target.closest('#lblRoleBtn');
       if (roleBtn) {
         const marks = [...host.querySelectorAll('.lbl-bare .lbl-tick:checked')].map((t) => Number(t.value));
         if (!marks.length) return;
-        const asType = roleBtn.id === 'lblRoleLink' ? 'link' : 'button';
         sweepLabel.busy = true;
         sync();
         try {
           // One at a time: these are separate controls that happen to share a
-          // problem, not one component with several parts.
+          // problem, not one component with several parts. Button or link is
+          // not the person's question any more (owner: "just make it
+          // accessible") — an element that reads as navigation (an <a>, a
+          // role=link, an href of its own) becomes a link; everything else
+          // acts, so it becomes a button.
           for (const m of marks) {
+            let asType = 'button';
+            try {
+              const cand = cands.find((x) => x.mark === m);
+              const el = cand && cand.selector ? await inPage(tab.id, (x) => {
+                const n = document.querySelector(x);
+                if (!n) return null;
+                return { tag: n.tagName.toLowerCase(), href: n.getAttribute('href') || '',
+                         role: n.getAttribute('role') || '' };
+              }, [cand.selector]) : null;
+              if (el && (el.role === 'link' ||
+                  (el.tag === 'a' && el.href && el.href !== '#' && !/^javascript:/i.test(el.href)))) {
+                asType = 'link';
+              }
+            } catch {}
             const res = await labelToMapping(asType, [m], stop, tab);
             if (res.err) { showNotice(status, res.err, 'error', 9000); continue; }
             made.push(res.found);

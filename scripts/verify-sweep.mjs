@@ -719,10 +719,14 @@ console.log('\nreading the whole section');
     /const components = cands\.filter\(\(c\) => !c\.nested && c\.component\);/.test(src));
   check('…and a native link or button is not offered as work',
     /const isNative = \(c\) => \(c\.signals \|\| \[\]\)\.some\(\(s\) => NATIVE_SIGNAL\.test\(s\)\);/.test(src) &&
-    /const bare = rest\.filter\(\(c\) => \(c\.signals \|\| \[\]\)\.length && !isNative\(c\) && c\.selector\);/.test(src));
-  check('…while one that takes a click without being either can be given a role',
-    /id="lblRoleBtn"/.test(src) && /id="lblRoleLink"/.test(src) &&
-    /roleBtn\.id === 'lblRoleLink' \? 'link' : 'button'/.test(src));
+    // !c.nested too: a typed component's PARTS (a segmented control's
+    // options) were being offered a second time as loose buttons-to-be.
+    /const bare = rest\.filter\(\(c\) => \(c\.signals \|\| \[\]\)\.length && !isNative\(c\) && c\.selector && !c\.nested\);/.test(src));
+  check('…while one that takes a click without being either is made accessible in ONE press',
+    // Button-or-link is not the person's question any more (owner,
+    // 2026-09-02): navigation reads as a link, everything else acts.
+    /id="lblRoleBtn"/.test(src) && !/id="lblRoleLink"/.test(src) &&
+    /let asType = 'button';/.test(src) && /asType = 'link';/.test(src));
 }
 
 // The marks, for real rather than by regex: this is the one the user sees.
