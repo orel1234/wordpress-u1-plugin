@@ -2934,6 +2934,20 @@ let detectedSkipLinks = [];
 // What each applied mapping actually added to the page, so deleting it can take
 // that back rather than telling you to reload. Session-only: a reload clears the
 // page anyway, which is the other way to the same place.
+// ── The Errors page is for OUR bugs, not for the world moving ─────────────
+// A tab can close, navigate to a restricted page, or lose its frame between
+// an isInjectable() check and the call that follows — every such race lands
+// as an uncaught rejection on chrome://extensions and reads as a defect.
+// These specific, expected messages are swallowed quietly; anything else
+// stays loud, because this net must never hide a real bug.
+window.addEventListener('unhandledrejection', (e) => {
+  const msg = String((e.reason && e.reason.message) || e.reason || '');
+  if (/Cannot access contents of the page|No tab with id|Frame with ID \d+ (was removed|showed no page)|The tab was closed|message port closed|Cannot access a chrome/.test(msg)) {
+    e.preventDefault();
+    console.debug('[u1] expected race, swallowed:', msg);
+  }
+});
+
 const applyReceipts = new Map();   // mappingKey -> [{token, added:[attr]}]
 
 // Moves any per-site data stored under "www.<host>" to "<host>" (once), so the
@@ -17937,6 +17951,7 @@ async function loadMappingsList() {
       hoverSel = sel;
       clearTimeout(hoverTimer);
       hoverTimer = setTimeout(async () => {
+        try {
         const tab = await getTab();
         if (!tab || !isInjectable(tab)) return;
         const res = await inPage(tab.id, (s, a) => {
@@ -17960,6 +17975,7 @@ async function loadMappingsList() {
                    : n === 0 ? `${sel} matches nothing on this page right now`
                    : n === -1 ? `${sel} is not a valid selector`
                    : n > 1 ? `${sel} matches ${n} elements` : '';
+        } catch { /* the page went away or turned restricted mid-hover — nothing to show */ }
       }, 180);
     });
     head.addEventListener('mouseleave', stopHover);
