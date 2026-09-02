@@ -209,8 +209,13 @@ const COMPONENT_SCHEMAS = {
   },
 
   tabs: {
-    selectors:{tabList:'PRIMARY', tab:'', tabPanel:''},
-    fields:['tab','tabPanel'],
+    // tabList is NOT the primary. Engine-verified (2026-09-02): fix.tabs is
+    // scoped — it waits for the tabList to appear INSIDE the first argument
+    // (jQuery's $(sel, ctx) searches descendants only), so primary === tabList
+    // can never activate. The primary is an ancestor wrapper; the list is its
+    // own field, measured as the first parent of the first tab.
+    selectors:{tabList:'', tab:'', tabPanel:''},
+    fields:['tabList','tab','tabPanel'],
     rootFields:{isVertical:false},
     req:['tab','tabList','tabPanel'],
     desc:{

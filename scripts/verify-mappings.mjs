@@ -103,8 +103,10 @@ const CASES = {
                fields: { checkedState: '.on', uncheckedState: '.off' } },
   radio:     { html: `<div id="rg"><div class="rb off">A</div><div class="rb off">B</div></div>`,
                primary: '#rg', fields: { radioButton: '.rb', checkedState: '.on', uncheckedState: '.off' } },
+  // Engine-true shape (2026-09-02): the primary is the WRAPPER above the
+  // list — fix.tabs waits for tabList to appear inside its first argument.
   tabs:      { html: `<div id="tw"><div class="tl"><button class="tb">A</button></div><div class="tp">P</div></div>`,
-               primary: '.tb', fields: { tabList: '.tl', tabPanel: '.tp' } },
+               primary: '#tw', fields: { tabList: '.tl', tab: '.tb', tabPanel: '.tp' } },
   form:      { html: `<form id="fm"><input class="if"><button class="sb" type="submit">Go</button></form>`,
                primary: '#fm', fields: { submitButton: '.sb', inputField: '.if', invalidField: '.inv' } },
   table:     { html: `<table id="tbl"><tr class="rw"><td class="cl">1</td></tr></table>`,
