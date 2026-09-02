@@ -34,7 +34,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-01a' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-02a' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -735,6 +735,50 @@
       if (wrap() || ++tries > 40) clearInterval(poll);
     }, 250);
   }
+
+  // ── Two menus share one coordinate space ──────────────────────────────────
+  // The engine's arrow navigation looks top-row items up by [u1st-x][u1st-y]
+  // over the whole document, and counts the row the same way — so two
+  // fix.menu calls interleave: on STEP, ArrowRight from the main nav's "Men"
+  // landed on the util bar's "Track my order" (reproduced live against the
+  // real engine, 2026-09-02). Bands (+1000 per menu) were tried first and
+  // broke getItemAmount's bounds check, freezing the arrows instead.
+  //
+  // So: make the engine's own model TRUE. All top-row (y=0) items of every
+  // recorded menu become ONE consecutive sequence in DOM order. Inside a
+  // menu the arrows behave exactly as before; at a menu's edge they cross
+  // into the neighbouring menu instead of teleporting mid-row. Submenu rows
+  // (y >= 1) are left alone — the engine enters them through queries scoped
+  // to the submenu element, and renumbering them would break that.
+  // Idempotent: the expected sequence is recomputed every pass and written
+  // only where it differs, so the engine re-initialising (raw numbers back)
+  // just gets renumbered again.
+  P.correct(function () {
+    var menus = [];
+    for (var i = 0; i < P.calls.length; i++) {
+      var c = P.calls[i];
+      if (c.type === 'menu' && c.selector && menus.indexOf(c.selector) === -1) menus.push(c.selector);
+    }
+    if (menus.length < 2) return;
+    var tops = [];
+    menus.forEach(function (sel) {
+      qsa(sel).forEach(function (root) {
+        var items = root.querySelectorAll('[u1st-x][u1st-y="0"]');
+        for (var k = 0; k < items.length; k++) {
+          if (tops.indexOf(items[k]) === -1) tops.push(items[k]);
+        }
+      });
+    });
+    if (tops.length < 2) return;
+    tops.sort(function (a, b) {
+      return (a.compareDocumentPosition(b) & 4) ? -1 : 1;   // 4 = FOLLOWING
+    });
+    for (var t = 0; t < tops.length; t++) {
+      if (tops[t].getAttribute('u1st-x') !== String(t)) {
+        tops[t].setAttribute('u1st-x', String(t));
+      }
+    }
+  });
 
   // ── Skip links ────────────────────────────────────────────────────────────
   // U1 gives the target an id and nothing else. Following `href="#id"` moves the

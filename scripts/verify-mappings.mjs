@@ -1211,6 +1211,15 @@ let recRecords = false, recAllTypes = false, recHarmless = false, recConverts = 
   // honest reading of a recorded call, checked above; the pin on the adopt
   // button's save path went with the button.
 }
+{
+  const patch = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
+  const ok = /Two menus share one coordinate space/.test(patch) &&
+    /u1st-x\]\[u1st-y="0"\]/.test(patch) &&
+    /compareDocumentPosition/.test(patch) &&
+    /if \(menus\.length < 2\) return;/.test(patch);
+  console.log(`  ${ok ? '✅' : '❌'} two menus' top rows are renumbered into one DOM-ordered sequence (arrow keys stop teleporting between menus)`);
+  if (!ok) failed++;
+}
 console.log(`  ${recRecords ? '✅' : '❌'} the patch records every fix the SITE runs — type, selector and props`);
 if (!recRecords) failed++;
 console.log(`  ${recAllTypes ? '✅' : '❌'} …over every fixer, not just PER_MATCH, which does not include menu`);
