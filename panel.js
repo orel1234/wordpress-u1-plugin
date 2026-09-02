@@ -10631,12 +10631,10 @@ function renderSweepScreens() {
     `<div class="sweep-mode"><span class="sweep-mode-head">How it should run</span>` +
     `<label class="sweep-all"><input type="radio" name="sweepMode" id="sweepPauseTick"${
       sweepLabel.on || sweepPause.on ? ' checked' : ''}>` +
-    `Stop at each section` +
-    `<em> — show me what it found, let me build it, carry on when I press continue</em></label>` +
+    `<span id="sweepModeStopLbl"></span></label>` +
     `<label class="sweep-all"><input type="radio" name="sweepMode" id="sweepSilentTick"${
       !sweepLabel.on && !sweepPause.on ? ' checked' : ''}>` +
-    `Do not stop` +
-    `<em> — read the whole page and make everything accessible on its own</em></label></div>`;
+    `<span id="sweepModeGoLbl"></span></label></div>`;
 
   // While the run is still live, these choices are still choices — shown
   // plain, the way they always were. Once nothing is left to read, they
@@ -10652,6 +10650,8 @@ function renderSweepScreens() {
   // (what it cost / what was read) belong to the finished run, so they live
   // inside its Completed drawer below, not standing on the main screen.
   summary.innerHTML = sweepDone ? '' : summaryBody;
+  // typeof-guarded: verify-sweep lifts this function out and runs it alone.
+  if (typeof updateSweepModeWording === 'function') updateSweepModeWording();
 
   // Two areas, because a half-finished run is the ordinary state — you start
   // one, you stop it, you come back tomorrow. "Which of these have I paid for
@@ -10834,6 +10834,27 @@ function sweepScreenRowHtml(stop) {
  * The same box, for a run in progress: what it has done and spent, and what is
  * left of THIS run — not what a press that is not going to happen would cost.
  */
+/**
+ * The mode labels follow how many sections are ticked. "Stop at EACH
+ * section" over a single ticked section reads as a different feature —
+ * the owner picked it with one section and got a mid-scan approval screen
+ * he never wanted. One section is one stop: the same two behaviours,
+ * said in that shape's own words.
+ */
+function updateSweepModeWording() {
+  const stopL = document.getElementById('sweepModeStopLbl');
+  const goL = document.getElementById('sweepModeGoLbl');
+  if (!stopL || !goL) return;
+  const n = sweepPickedScreens().length;
+  if (n === 1) {
+    stopL.innerHTML = 'Approve at the end <em>— scan this section, then show me what it found for approval before it is built</em>';
+    goL.innerHTML = 'Start to finish <em>— scan this section and make everything on it accessible on its own</em>';
+  } else {
+    stopL.innerHTML = 'Stop at each section <em>— show me what it found, let me build it, carry on when I press continue</em>';
+    goL.innerHTML = 'Do not stop <em>— read the whole page and make everything accessible on its own</em>';
+  }
+}
+
 function sweepRunningHtml() {
   const p = aiSweep.progress || { at: 0, of: 0, screen: 0 };
   const stops = aiSweep.stops || [];
@@ -11663,10 +11684,14 @@ document.getElementById('sweepPicksSummary')?.addEventListener('change', (e) => 
     saveSweep();
     return;
   }
+  // Any tick can change how many sections are picked, and the mode labels
+  // follow that count.
+  if (e.target.classList && e.target.classList.contains('sweep-screen-tick')) updateSweepModeWording();
   if (e.target.id !== 'sweepAllTick') return;
   const on = e.target.checked;
   document.querySelectorAll('#sweepPicksList .sweep-screen-tick:not(:disabled)')
-    .forEach(t => { t.checked = on; });
+    .forEach(t => { t.checked = on;   updateSweepModeWording();
+});
   syncSweepMakeBtn();
 });
 
