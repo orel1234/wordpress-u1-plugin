@@ -16447,11 +16447,23 @@ async function applyAllMappings({ silent = false, only = null, tab = null } = {}
         msg = `Nothing changed: ${optOut.map(d => d.sel).join(', ')} already carried u1st-avoid-change-detection before the fix ran, which tells U1 to skip that element entirely. Reload the page and press Apply All once — if it says this again on a clean load, the attribute is in the site's own HTML and has to come out there.`;
       } else if (stale) {
         msg = `Nothing changed: U1 had already processed ${noEffect === 1 ? 'this element' : 'these elements'} on this page load. Reload the page, then apply again.`;
+      } else if (list.some((m) => m && typeof m === 'object' &&
+                   applyReceipts.has((m.type || '') + '::' + (m.primary || m.firstArg || '')))) {
+        // The engine keeps a page-load-wide Set of elements it has fixed
+        // (activate()'s fixedComponents) — a second fix.* call on the same
+        // element this load is a silent no-op BY DESIGN, whatever changed in
+        // the mapping. Verified in the engine source, 2026-09-02; it is the
+        // whole story behind 'fix.menu emits zero roles' during
+        // map-apply-delete iteration.
+        msg = 'Nothing changed — U1 fixes each element ONCE per page load, and this load already fixed ' +
+          (noEffect === 1 ? 'this element' : 'these elements') +
+          ' (an earlier apply, before the mapping was edited). Reload the page — your mappings re-apply automatically on load.';
       } else {
         msg = 'Nothing changed on the page. u1.fix ran without error but wrote no attributes — usually the domain is not authorised for U1, or the selector is one U1\'s validator rejects.';
       }
       if (engineErrs.length) msg += ' ' + engineErrs.join(' · ');
       showNotice(status, msg, 'error', 12000);
+      offerReload(status);
     } else {
       // ── One line per mapping, not one paragraph for all of them ───────────
       //
