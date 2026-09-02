@@ -7343,6 +7343,20 @@ function clearMapBusy() {
 // elapsed count of 4:37 is the whole answer, and it needs no interpretation.
 let sweepBusyTimer = null;
 
+// The stop lives ON the progress card ('loved it — just needs a cancel').
+// One delegated listener; the card is re-rendered on every step. It stops
+// whichever run is going — the walk, the bulk build, or both — after the
+// step in flight, and says so where the title was.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.ai-busy-stop');
+  if (!btn) return;
+  aiSweep.abort = true;
+  if (typeof aiBulk === 'object' && aiBulk) aiBulk.abort = true;
+  const title = btn.closest('.ai-busy')?.querySelector('.ai-busy-title');
+  if (title) title.textContent = 'Stopping after the current step…';
+  btn.disabled = true;
+});
+
 /**
  * The pinned progress banner.
  *
@@ -7368,6 +7382,7 @@ function showSweepBusy(title, sub, pct, long) {
           <div class="ai-busy-sub" title="${escapeHtml(long || sub || '')}">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
         </div>
         ${determinate ? `<div class="ai-busy-pct">${clamped}<span>%</span></div>` : ''}
+        <button type="button" class="ai-busy-stop" title="Stop after the current step — everything already saved stays saved">■</button>
       </div>
       <div class="ai-busy-bar${determinate ? ' determinate' : ''}">
         <span${determinate ? ` style="width:${clamped}%"` : ''}></span>

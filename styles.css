@@ -3367,6 +3367,18 @@ button.u1-readonly-off {
   font-variant-numeric: tabular-nums;
 }
 #sweepBusy.pinned .ai-busy-pct > span { font-size: 14px; font-weight: 700; opacity: .75; }
+#sweepBusy.pinned .ai-busy-stop {
+  flex: 0 0 auto;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--u1-border-strong);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--u1-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+#sweepBusy.pinned .ai-busy-stop:hover { color: #fff; border-color: var(--u1-primary, #6c4cf1); }
+#sweepBusy.pinned .ai-busy-stop:disabled { opacity: .5; cursor: default; }
 #sweepBusy.pinned .ai-busy-bar { height: 6px; border-radius: 3px; }
 
 /* How long THIS step has taken. Under "usually 10-30 seconds", a count that has
