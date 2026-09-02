@@ -9069,51 +9069,78 @@ async function prepareOne(row, tab) {
   // anyway, so it is worked out from the page instead of asked for again —
   // mechanical, free, and it does not depend on the markup saying "tabpanel".
   if (row.type === 'tabs') {
-    // The model's tabPanel is kept only if it RESOLVES: '#dealPanel' was an
-    // invented id, the engine failed silently, and the strip shipped dead.
+    // Owner rule, same as menus: the LIST is the first parent of the first
+    // tab, whatever its tag — the survey may name the whole section
+    // (fix.tabs('#deals', {tabList:'#deals'}) shipped self-scoped and dead).
+    // And the engine scopes fix.tabs: it waits for the tabList to appear
+    // INSIDE the first argument (jQuery's $(selector, context) searches
+    // descendants only), so the primary must be an ANCESTOR of the list.
     const tabField = (out.fields || []).find(f => f.key === 'tab');
+    const tabSel = (tabField && tabField.value) || '[role="tab"]';
     const panelField = (out.fields || []).find(f => f.key === 'tabPanel' && String(f.value || '').trim());
     let panelValue = panelField ? String(panelField.value).trim() : '';
-    const panelResolves = panelValue ? await inPage(tab.id, (x) => {
-      try { return !!document.querySelector(x); } catch { return false; }
-    }, [panelValue]) : false;
-    if (!panelResolves) {
-      const panels = await inPage(tab.id,
-        (listSel, tabSel) => window.__u1SelectorIntel.tabPanelsFor(listSel, tabSel),
-        [row.sel, (tabField && tabField.value) || '[role="tab"]']);
-      if (panels) {
-        out.fields = (out.fields || []).filter(f => f.key !== 'tabPanel');
-        out.fields.push({ key: 'tabPanel', value: panels,
-          why: (panelValue ? `'${panelValue}' matches nothing on this page — replaced with the measured answer. ` : '') +
-            'Worked out from the page — the panels these tabs switch between. Required: without it the tabs control nothing.' });
-        panelValue = panels;
-      }
-    }
-    // The engine scopes fix.tabs: it waits for the tabList to appear INSIDE
-    // the first argument (jQuery's $(selector, context) searches descendants
-    // only) — so a mapping rooted ON the tab list can never activate, and
-    // STEP's dealTabs sat dead with zero roles. Root on the common ancestor
-    // of the list and its panels; the list stays named in tabList.
-    const tabsRoot = await inPage(tab.id, (listSel, panelSel) => {
+    const shape = await inPage(tab.id, (rowSel, tSel, pSel) => {
       const S = window.__u1SelectorIntel;
-      let list = null, panel = null;
-      try { list = document.querySelector(listSel); } catch { return null; }
-      try { panel = panelSel ? document.querySelector(panelSel) : null; } catch {}
-      if (!list) return null;
-      let anc = panel ? S.commonAncestor([list, panel]) : list.parentElement;
-      if (!anc || anc === list) anc = list.parentElement;
-      if (!anc || anc === document.documentElement) return null;
-      const sel = S.robustSelector(anc);
-      return sel && S.isU1Valid(sel) && sel !== listSel ? sel : null;
-    }, [row.sel, panelValue]);
-    if (tabsRoot) {
-      const hasList = (out.fields || []).find(f => f.key === 'tabList' && String(f.value || '').trim());
-      if (!hasList) {
-        out.fields = (out.fields || []).filter(f => f.key !== 'tabList');
-        out.fields.push({ key: 'tabList', value: row.sel,
-          why: 'The strip itself. The mapping is rooted one level up because the engine waits for this to appear inside the first argument.' });
+      const out2 = {};
+      let tabs = [];
+      try { tabs = [...document.querySelectorAll(tSel)]; } catch {}
+      let scopeEl = null;
+      try { scopeEl = document.querySelector(rowSel); } catch {}
+      if (scopeEl && tabs.some((t) => scopeEl.contains(t))) tabs = tabs.filter((t) => scopeEl.contains(t));
+      if (tabs.length < 2) return null;
+      const list = tabs[0].parentElement;
+      if (!list || !tabs.every((t) => t.parentElement === list)) {
+        out2.list = S.robustSelector(S.commonAncestor(tabs));
+      } else {
+        out2.list = S.robustSelector(list);
       }
-      out.primary = tabsRoot;
+      if (!out2.list || !S.isU1Valid(out2.list)) return null;
+      let panelEl = null;
+      try { panelEl = pSel ? document.querySelector(pSel) : null; } catch {}
+      out2.panelResolves = !!panelEl;
+      const listEl = document.querySelector(out2.list);
+      let anc = panelEl && listEl ? S.commonAncestor([listEl, panelEl]) : (listEl && listEl.parentElement);
+      if (!anc || anc === listEl) anc = listEl && listEl.parentElement;
+      if (anc && anc !== document.documentElement && anc !== document.body) {
+        const rSel = S.robustSelector(anc);
+        if (rSel && S.isU1Valid(rSel) && rSel !== out2.list) out2.root = rSel;
+      }
+      return out2;
+    }, [row.sel, tabSel, panelValue]);
+
+    if (shape && shape.list) {
+      out.fields = (out.fields || []).filter(f => f.key !== 'tabList');
+      out.fields.push({ key: 'tabList', value: shape.list,
+        why: 'The first parent of the first tab — the strip itself. The mapping is rooted one level up because the engine waits for this to appear inside the first argument.' });
+      if (!shape.panelResolves) {
+        const panels = await inPage(tab.id,
+          (listSel, tSel) => window.__u1SelectorIntel.tabPanelsFor(listSel, tSel),
+          [shape.list, tabSel]);
+        if (panels) {
+          out.fields = (out.fields || []).filter(f => f.key !== 'tabPanel');
+          out.fields.push({ key: 'tabPanel', value: panels,
+            why: (panelValue ? `'${panelValue}' matches nothing on this page — replaced with the measured answer. ` : '') +
+              'Worked out from the page — the panels these tabs switch between. Required: without it the tabs control nothing.' });
+          panelValue = panels;
+        }
+      }
+      // The root may improve now that the panel is real.
+      if (shape.root) out.primary = shape.root;
+      else {
+        const root2 = await inPage(tab.id, (listSel, pSel) => {
+          const S = window.__u1SelectorIntel;
+          let list = null, panel = null;
+          try { list = document.querySelector(listSel); } catch { return null; }
+          try { panel = pSel ? document.querySelector(pSel) : null; } catch {}
+          if (!list) return null;
+          let anc = panel ? S.commonAncestor([list, panel]) : list.parentElement;
+          if (!anc || anc === list) anc = list.parentElement;
+          if (!anc || anc === document.documentElement) return null;
+          const sel2 = S.robustSelector(anc);
+          return sel2 && S.isU1Valid(sel2) && sel2 !== listSel ? sel2 : null;
+        }, [shape.list, panelValue]);
+        if (root2) out.primary = root2;
+      }
     }
   }
 
@@ -12551,11 +12578,7 @@ async function scanPickedScreens(numbers) {
            vd.lonely ? `${vd.lonely} were one of a kind` : '',
            vd.noSelector ? `${vd.noSelector} lost their common selector` : '']
             .filter(Boolean).join(', ');
-      sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
-        (fin.off === 0 ? 'the outline is consistent, nothing to correct'
-          : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
-            (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
-        ` · ` + vaguePart, 'info');
+      sweepLog(0, `finishing pass: ` + vaguePart + ` (headings are left to the manual review, by decision)`, 'info');
       } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
       clearSweepBusy();
       }
@@ -12861,11 +12884,7 @@ async function buildPickedComponents() {
            vd.lonely ? `${vd.lonely} were one of a kind` : '',
            vd.noSelector ? `${vd.noSelector} lost their common selector` : '']
             .filter(Boolean).join(', ');
-      sweepLog(0, `finishing pass: read ${fin.read} heading${fin.read === 1 ? '' : 's'} — ` +
-        (fin.off === 0 ? 'the outline is consistent, nothing to correct'
-          : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
-            (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
-        ` · ` + vaguePart, 'info');
+      sweepLog(0, `finishing pass: ` + vaguePart + ` (headings are left to the manual review, by decision)`, 'info');
   } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
   clearSweepBusy();
   }
@@ -14898,10 +14917,9 @@ async function confirmStaticPass(dialogCount) {
   const dlg = document.getElementById('staticPassDialog');
   if (!dlg) return true;
   document.getElementById('staticPassBody').textContent =
-    'The components are built. Next comes the automatic static work: heading levels, ' +
-    'vague "learn more" links' +
+    'The components are built. Next comes the automatic static work: vague "learn more" links' +
     (dialogCount ? `, and a look inside ${dialogCount} dialog${dialogCount === 1 ? '' : 's'} (one model call each)` : '') +
-    ' — written straight to Mappings.';
+    ' — written straight to Mappings. (Headings are left to the manual review, by decision.)';
   return await new Promise((resolve) => {
     const go = document.getElementById('staticPassGo');
     const skip = document.getElementById('staticPassSkip');
@@ -14993,77 +15011,16 @@ async function dialogInteriorScan(tab) {
 }
 
 async function sweepFinishingPass(tab, ranges) {
-  // read/off/already are carried out so the log can say "looked and found it
-  // consistent" — a silent pass was indistinguishable from one that never ran
-  // ("did it scan the headings and see they are fine, or never look?").
+  // Owner decision (2026-09-02): headings are OUT of the static pass — a
+  // heading fix landing inside another mapping's area fought it ("two on the
+  // same elements fight, and the second wins", the #deals tabs vs the
+  // section title). The manual headings review remains for deliberate use.
   const made = { headings: 0, links: 0, read: 0, off: 0, already: 0 };
   if (isReadonly()) return made;
   const handled = await alreadyHandled();
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
   } catch { return made; }
-  // Which mapped dialog each heading sits INSIDE — by containment, not by
-  // selector spelling: "Select Your State" lives in #state-select-modal but
-  // its selector is spelled from <header>, so the prefix fallback never
-  // matched and the row refused to nest under its dialog.
-  let dialogPrimaries = [];
-  try {
-    const mkey = storageKey('mappings', currentHostname);
-    dialogPrimaries = ((await U1Store.get([mkey]))[mkey] || [])
-      .filter((m) => m && m.type === 'dialog' && m.primary).map((m) => m.primary);
-  } catch {}
-  try { showSweepBusy('Static pass — headings', 'Reading the page\u2019s heading outline and writing level fixes\u2026', null); } catch {}
-  try {
-    const got = await inPage(tab.id, (dlgs, rgs) => {
-      const S = window.__u1SelectorIntel;
-      let rows = S && S.headingOutline ? S.headingOutline().slice() : [];
-      // Scoped to the sections this run actually covered (owner: 'I picked
-      // one section — the static scan should be about that section'). A
-      // range list of [] or null means the whole page.
-      const inRange = (sel) => {
-        if (!rgs || !rgs.length) return true;
-        let el = null;
-        try { el = document.querySelector(sel); } catch { return false; }
-        if (!el) return false;
-        const y = el.getBoundingClientRect().top + window.scrollY;
-        return rgs.some((r) => y >= r.top - 60 && y <= r.bottom + 60);
-      };
-      rows = rows.filter((h) => h && h.selector && inRange(h.selector));
-      for (const h of rows) {
-        if (!h || !h.selector) continue;
-        try {
-          const el = document.querySelector(h.selector);
-          if (!el) continue;
-          for (const d of dlgs) {
-            const host = document.querySelector(d);
-            if (host && host !== el && host.contains(el)) { h.insideDialog = d; break; }
-          }
-        } catch (e) {}
-      }
-      return rows;
-    }, [dialogPrimaries, ranges || null]);
-    made.read = (got || []).length;
-    for (const h of got || []) {
-      if (!h.should || h.should === h.level) continue;
-      made.off++;
-      if (!h.selector || handled.has(h.selector)) { made.already++; continue; }
-      try {
-        const tpl = buildTemplate('heading', h.selector, {}, { level: h.should });
-        // The row in the drawer is an nth-child chain nobody can place. Carry
-        // WHICH heading this is and WHY its level changed — "I don't know
-        // what it did, why, or where" is the reading without it.
-        if (h.insideDialog) tpl.parent = h.insideDialog;
-        tpl.note = `“${h.text || '(no text)'}” — ` +
-          (h.problem === 'no level' ? `has no level of its own` :
-           h.problem && h.problem.indexOf('skips') === 0 ? `is an h${h.level} arriving after an h${h.should - 1} outline (${h.problem} level${/skips 1/.test(h.problem) ? '' : 's'})` :
-           h.problem || 'outline break') +
-          ` → announced as level ${h.should}`;
-        await saveMappingEntry(tpl, { refreshUi: false });
-        handled.add(h.selector);
-        made.headings++;
-      } catch {}
-    }
-  } catch {}
   try { showSweepBusy('Static pass — vague links', 'Looking for repeated \u201cLearn more\u201d links beside headings\u2026', null); } catch {}
   try {
     const got2 = await inPage(tab.id, (rgs) => {

@@ -1043,7 +1043,11 @@ console.log('\nholding after each section');
   // aria-selected, conditional aria-controls, ArrowRight moving focus.
   check('a tabs mapping is rooted ABOVE its tabList, with the list named',
     /the engine waits for this to appear inside the first argument/.test(src) &&
-    /out\.primary = tabsRoot;/.test(src));
+    // The list itself is derived from the FIRST TAB'S PARENT (owner rule) —
+    // the survey may name the whole section, and tabList:'#deals' shipped
+    // self-scoped and dead.
+    /The first parent of the first tab/.test(src) &&
+    /out\.primary = shape\.root;/.test(src));
   check('…and an invented tabPanel is replaced by the measured one',
     /matches nothing on this page — replaced with the measured answer/.test(src));
   // triggerRequired ONLY — dialog is firstArgFrom:'trigger' with an OPTIONAL
