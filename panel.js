@@ -11291,6 +11291,10 @@ const sweepPickedScreens = () => [...document.querySelectorAll('#sweepPicksList 
 // always "do the next thing to what is ticked". The count is on it in both
 // cases: it is the number of calls that will be charged.
 function syncSweepMakeBtn() {
+  // The mode labels follow the picked count, and THIS function provably runs
+  // on every tick (the button's own count updates) — the separate change
+  // listener did not reword reliably, so the rewording rides here.
+  try { updateSweepModeWording(); } catch {}
   const btn = document.getElementById('sweepMakeBtn');
   const est = document.getElementById('sweepEstimate');
   if (!btn) return;
