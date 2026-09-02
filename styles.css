@@ -3381,6 +3381,12 @@ button.u1-readonly-off {
   overflow: hidden; text-overflow: ellipsis;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
 }
+#sweepBusy.pinned .ai-busy-patience {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--u1-warning, #e5b567);
+  line-height: 1.4;
+}
 #sweepBusy.pinned .ai-busy-stop {
   margin-top: 12px;
   padding: 6px 18px;

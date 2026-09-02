@@ -7403,6 +7403,18 @@ function showSweepBusy(title, sub, pct, long) {
     const secs = Math.round((Date.now() - startedAt) / 1000);
     el.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
     el.classList.toggle('is-long', secs > 60);
+    // A long step with a silent card reads as STUCK ('I switched tabs and it
+    // froze' — at 2:11 on a busy section the run was alive and streaming).
+    // Say what the silence means, once, in place.
+    if (secs > 90) {
+      const card = document.querySelector('#sweepBusy .ai-busy');
+      if (card && !card.querySelector('.ai-busy-patience')) {
+        card.querySelector('.ai-busy-sub')?.insertAdjacentHTML('afterend',
+          '<div class="ai-busy-patience">Still working — a very busy section can take several minutes. ' +
+          'The run watches its own line and gives up by itself if the answer goes quiet, ' +
+          'so a climbing clock means it is alive.</div>');
+      }
+    }
   };
   sweepBusyTimer = setInterval(paint, 1000);
   paint();
