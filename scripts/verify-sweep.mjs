@@ -1353,19 +1353,22 @@ console.log('\nchoosing screens');
     // start to finish. Answer arriving IS the progress.
     {
       const clockBefore = w2.document.getElementById('sweepBusyClock');
-      const fill = host.querySelector('.ai-busy-bar').firstElementChild;
+      // The bar became a RING (owner, 2026-09-02): progress is the ring's
+      // dashoffset and the percent in its middle.
+      const ring = host.querySelector('.ring-fill');
       box.updateSweepBusy(37, 'Claude is answering — 1,200 characters so far');
-      check('the bar moves while one section is still being read',
-        fill.style.width === '37%', fill.style.width);
+      check('the ring moves while one section is still being read',
+        !!ring && Math.abs(parseFloat(ring.style.strokeDashoffset) - 326.7 * 0.63) < 1,
+        ring && ring.style.strokeDashoffset);
+      check('…and the percent sits in the middle of it',
+        /37/.test(host.querySelector('.ai-busy-pct').textContent),
+        host.querySelector('.ai-busy-pct').textContent);
       check('…and says the answer is arriving, which is what "not stuck" looks like',
         /1,200 characters so far/.test(host.textContent), host.textContent.replace(/\s+/g, ' '));
       check('…without restarting the elapsed clock that step has been running',
         w2.document.getElementById('sweepBusyClock') === clockBefore);
-      // The percentage is written into the title; updating it must replace the
-      // old one rather than appending a second.
-      check('…and the title carries one percentage, not a growing trail of them',
-        (host.querySelector('.ai-busy-title').textContent.match(/%/g) || []).length === 1,
-        host.querySelector('.ai-busy-title').textContent);
+      check('…and the stop lives on the card itself',
+        !!host.querySelector('.ai-busy-stop'));
     }
 
     // The sweep passes a per-batch fraction, so two batches in a section are

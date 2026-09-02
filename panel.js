@@ -7374,19 +7374,23 @@ function showSweepBusy(title, sub, pct, long) {
   host.classList.add('pinned');
   const determinate = typeof pct === 'number' && isFinite(pct);
   const clamped = determinate ? Math.max(0, Math.min(100, Math.round(pct))) : 0;
+  // A RING, centred in the panel (owner: the panel cannot be touched while
+  // a run works anyway, so the middle of it is free real estate). r=52 →
+  // circumference ≈ 326.7; determinate progress is the dashoffset.
+  const C = 326.7;
   host.innerHTML = `
-    <div class="ai-busy">
-      <div class="ai-busy-row">
-        <div class="ai-busy-text">
-          <div class="ai-busy-title">${escapeHtml(title)}</div>
-          <div class="ai-busy-sub" title="${escapeHtml(long || sub || '')}">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
-        </div>
-        ${determinate ? `<div class="ai-busy-pct">${clamped}<span>%</span></div>` : ''}
-        <button type="button" class="ai-busy-stop" title="Stop after the current step — everything already saved stays saved">■</button>
+    <div class="ai-busy${determinate ? '' : ' is-indeterminate'}">
+      <div class="ai-busy-ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+          <circle class="ring-fill" cx="60" cy="60" r="52"
+            stroke-dasharray="${C}" stroke-dashoffset="${determinate ? (C * (1 - clamped / 100)).toFixed(1) : C * 0.75}"></circle>
+        </svg>
+        <div class="ai-busy-pct">${determinate ? `${clamped}<span>%</span>` : '…'}</div>
       </div>
-      <div class="ai-busy-bar${determinate ? ' determinate' : ''}">
-        <span${determinate ? ` style="width:${clamped}%"` : ''}></span>
-      </div>
+      <div class="ai-busy-title">${escapeHtml(title)}</div>
+      <div class="ai-busy-sub" title="${escapeHtml(long || sub || '')}">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
+      <button type="button" class="ai-busy-stop" title="Stop after the current step — everything already saved stays saved">■ Stop</button>
     </div>`;
 
   // Restarted per step, because the number that matters is how long THIS step
@@ -7415,16 +7419,15 @@ function showSweepBusy(title, sub, pct, long) {
 function updateSweepBusy(pct, sub) {
   const host = document.getElementById('sweepBusy');
   if (!host) return;
-  const bar = host.querySelector('.ai-busy-bar');
-  const fill = bar && bar.firstElementChild;
   const clamped = Math.max(0, Math.min(100, Math.round(pct)));
-  if (fill) {
-    bar.classList.add('determinate');
-    fill.style.width = clamped + '%';
+  const ring = host.querySelector('.ring-fill');
+  if (ring) {
+    host.querySelector('.ai-busy')?.classList.remove('is-indeterminate');
+    ring.style.strokeDashoffset = (326.7 * (1 - clamped / 100)).toFixed(1);
   }
-  const title = host.querySelector('.ai-busy-title');
-  // The title carries "— 42%" after an em dash; replace only that tail.
-  if (title) title.textContent = title.textContent.replace(/\s+—\s+\d+%$/, '') + ` — ${clamped}%`;
+  const pctEl = host.querySelector('.ai-busy-pct');
+  if (pctEl) pctEl.innerHTML = `${clamped}<span>%</span>`;
+  // The percent lives in the ring's middle now — the title stays words.
   // The clock is a child of the sub line and is repainted by its own interval,
   // so the text is replaced around it rather than through innerHTML.
   const subEl = host.querySelector('.ai-busy-sub');
@@ -12394,7 +12397,9 @@ async function scanPickedScreens(numbers) {
         // The requested heads-up: the run has moved from components to the
         // page-wide STATIC pass — headings and vague links.
         sweepLog(0, 'static pass: starting — reading the heading outline and the vague links', 'info');
-        const fin = await sweepFinishingPass(tab);
+        const viewH1 = await inPage(tab.id, () => window.innerHeight).catch(() => 900);
+        const staticRanges1 = stops.map((s4) => ({ top: s4.scrollY || 0, bottom: (s4.scrollY || 0) + (viewH1 || 900) }));
+        const fin = await sweepFinishingPass(tab, staticRanges1);
         const vd = fin.vagueDiag || {};
       const vaguePart = fin.links
         ? `${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`
@@ -12700,7 +12705,10 @@ async function buildPickedComponents() {
     // The requested heads-up: the run has moved from components to the
     // page-wide STATIC pass — headings and vague links.
     sweepLog(0, 'static pass: starting — reading the heading outline and the vague links', 'info');
-    const fin = await sweepFinishingPass(tab);
+    const builtStops = [...new Set(jobs.map((jj) => jj.stop))];
+    const viewH2 = await inPage(tab.id, () => window.innerHeight).catch(() => 900);
+    const staticRanges2 = builtStops.map((s4) => ({ top: s4.scrollY || 0, bottom: (s4.scrollY || 0) + (viewH2 || 900) }));
+    const fin = await sweepFinishingPass(tab, staticRanges2);
     const vd = fin.vagueDiag || {};
       const vaguePart = fin.links
         ? `${fin.links} vague-link group${fin.links === 1 ? '' : 's'} mapped`
@@ -14841,7 +14849,7 @@ async function dialogInteriorScan(tab) {
   return out;
 }
 
-async function sweepFinishingPass(tab) {
+async function sweepFinishingPass(tab, ranges) {
   // read/off/already are carried out so the log can say "looked and found it
   // consistent" — a silent pass was indistinguishable from one that never ran
   // ("did it scan the headings and see they are fine, or never look?").
@@ -14863,9 +14871,21 @@ async function sweepFinishingPass(tab) {
   } catch {}
   try { showSweepBusy('Static pass — headings', 'Reading the page\u2019s heading outline and writing level fixes\u2026', null); } catch {}
   try {
-    const got = await inPage(tab.id, (dlgs) => {
+    const got = await inPage(tab.id, (dlgs, rgs) => {
       const S = window.__u1SelectorIntel;
-      const rows = S && S.headingOutline ? S.headingOutline().slice() : [];
+      let rows = S && S.headingOutline ? S.headingOutline().slice() : [];
+      // Scoped to the sections this run actually covered (owner: 'I picked
+      // one section — the static scan should be about that section'). A
+      // range list of [] or null means the whole page.
+      const inRange = (sel) => {
+        if (!rgs || !rgs.length) return true;
+        let el = null;
+        try { el = document.querySelector(sel); } catch { return false; }
+        if (!el) return false;
+        const y = el.getBoundingClientRect().top + window.scrollY;
+        return rgs.some((r) => y >= r.top - 60 && y <= r.bottom + 60);
+      };
+      rows = rows.filter((h) => h && h.selector && inRange(h.selector));
       for (const h of rows) {
         if (!h || !h.selector) continue;
         try {
@@ -14878,7 +14898,7 @@ async function sweepFinishingPass(tab) {
         } catch (e) {}
       }
       return rows;
-    }, [dialogPrimaries]);
+    }, [dialogPrimaries, ranges || null]);
     made.read = (got || []).length;
     for (const h of got || []) {
       if (!h.should || h.should === h.level) continue;
@@ -14903,12 +14923,21 @@ async function sweepFinishingPass(tab) {
   } catch {}
   try { showSweepBusy('Static pass — vague links', 'Looking for repeated \u201cLearn more\u201d links beside headings\u2026', null); } catch {}
   try {
-    const got2 = await inPage(tab.id, () => {
+    const got2 = await inPage(tab.id, (rgs) => {
       const S = window.__u1SelectorIntel;
       const diag = {};
-      const rows = S && S.cardDescriptions ? S.cardDescriptions(diag) : [];
+      let rows = S && S.cardDescriptions ? S.cardDescriptions(diag) : [];
+      if (rgs && rgs.length) {
+        rows = rows.filter((c) => {
+          let el = null;
+          try { el = document.querySelector(c.target); } catch { return false; }
+          if (!el) return false;
+          const y = el.getBoundingClientRect().top + window.scrollY;
+          return rgs.some((r) => y >= r.top - 60 && y <= r.bottom + 60);
+        });
+      }
       return { rows, diag };
-    });
+    }, [ranges || null]);
     const shapes = (got2 && got2.rows) || [];
     made.vagueDiag = (got2 && got2.diag) || null;
     for (const c of shapes || []) {
