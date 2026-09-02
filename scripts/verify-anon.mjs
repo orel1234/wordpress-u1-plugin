@@ -465,6 +465,24 @@ console.log('\nnames U1 itself writes never enter a mapping');
   // Our own patch mints these at apply time — anchoring on one maps the same
   // element twice (molina: LISTBOX .signin-dropdown AND #u1p-listbox-wcvryke).
   check('u1p- ids — the patch\'s own runtime anchors — too', S.VOLATILE_ID.test('u1p-listbox-wcvryke') && S.VOLATILE_ID.test('u1p-acc-h-58x4rno'));
+
+  // ── elal.com pins (2026-09-02): a slider's dots and a segmented control ──
+  {
+    const e1 = collectIn(`<div class="swiper-container">
+        <div class="swiper-wrapper"><div class="swiper-slide">a</div><div class="swiper-slide">b</div></div>
+        <div class="swiper-pagination" id="dots"><span></span><span></span></div>
+      </div>
+      <div class="pager" id="pages"><a href="#1">1</a><a href="#2">2</a><a href="#3">3</a></div>`);
+    check('a carousel\'s dots are the carousel talking, not a pagination',
+      e1.name('#dots') !== 'pagination', e1.name('#dots'));
+    check('…while page numbers standing on their own keep the word',
+      e1.name('#pages') === 'pagination', e1.name('#pages'));
+    const e2 = collectIn(`<div class="ui-input-toggle-group" id="tg">
+        <a class="ui-input-toggle-group__item--active" href="#">one way</a>
+        <a href="#">multi</a><a href="#">all</a></div>`);
+    check('a segmented control is ONE radio, not a strip of buttons',
+      e2.name('#tg') === 'radio', e2.name('#tg'));
+  }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));
 }
 

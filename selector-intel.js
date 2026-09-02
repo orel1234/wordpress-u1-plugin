@@ -1042,6 +1042,11 @@
     [/dropdown|megamenu|mega-nav|navbar|navigation|\bnav\b|\bmenu\b/i, 'menu'],
     [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
     [/pagination|pager/i, 'pagination'],
+    // A segmented control: one choice out of a strip of mutually exclusive
+    // options (elal's one-way / multi-city / all-destinations strip, class
+    // ui-input-toggle-group). Four separate "button" rows is the same widget
+    // cut into parts; the group is ONE radio.
+    [/toggle[-_]?group|segmented[-_]?control/i, 'radio'],
     [/tooltip|popover/i, 'tooltip'],
     [/breadcrumb/i, 'breadcrumb'],
 
@@ -1768,6 +1773,17 @@
         // and guards 'tabs' now that 4.3 restored the word.
         if ((name === 'tabs' || name === 'menu') &&
             /tabs?(__|[-_])(contents?|panels?|panes?)\b/i.test(cls)) continue;
+        // A carousel's DOTS are the carousel talking, not a component of
+        // their own: .swiper-pagination inside .swiper-container is the dot
+        // strip of the slider around it, and elal's hero shipped as
+        // "carousel + a separate pagination" — one widget, two rows. Page
+        // numbers standing on their own keep the word.
+        if (name === 'pagination') {
+          try {
+            const host = el.closest('.swiper,.swiper-container,[class*="carousel"],[class*="slideshow"],[class*="slider"]');
+            if (host && host !== el) continue;
+          } catch (e) {}
+        }
         // Two carousel words carry a known lie and only those two are gated —
         // "carousel"/"slideshow"/library fingerprints stay trusted words:
         //   · slider + input[type=range] inside = a VALUE slider, never a
@@ -1897,6 +1913,7 @@
     'tab', 'carousel', 'slider', 'slideshow', 'gallery', 'ticker', 'marquee',
     'accordion', 'collapsible', 'faq',
     'datepicker', 'calendar', 'pagination', 'pager', 'table',
+    'toggle-group', 'segmented',
     'spinner', 'loader', 'skeleton', 'shimmer',
     'tooltip', 'popover', 'breadcrumb',
   ];
@@ -2629,6 +2646,10 @@
       if (hint) {
         for (let p = el.parentElement; p; p = p.parentElement) {
           if (hinted.get(p) === hint.name) { nested = true; break; }
+          // A button inside a segmented control is one of its OPTIONS — the
+          // group row carries the widget; four loose "button" rows beside a
+          // radio row is the same thing cut into parts.
+          if ((hint.name === 'button' || hint.name === 'link') && hinted.get(p) === 'radio') { nested = true; break; }
         }
         hinted.set(el, hint.name);
       }

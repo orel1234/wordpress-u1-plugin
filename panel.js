@@ -5366,7 +5366,7 @@ function labelScreen(stop, collected, tab) {
   // list read as a different tool.
   const compRow = (c) => `
     <label class="ai-approved-row ai-bulk-row lbl-row is-comp" data-mark="${c.mark}">
-      <input type="checkbox" class="lbl-tick" value="${c.mark}" checked
+      <input type="checkbox" class="lbl-tick" value="${c.mark}" ${c.inShadow ? '' : 'checked'}
              aria-label="Build ${escapeHtml(c.component)} on ${escapeHtml(c.selector || 'this')}">
       ${thumb(c)}
       <span class="lbl-body">
@@ -5387,12 +5387,16 @@ function labelScreen(stop, collected, tab) {
           <span class="lbl-cap">Selector</span>
           <input class="lbl-sel-edit" type="text" spellcheck="false"
                  value="${escapeHtml(c.selector || '')}"
-                 placeholder="CSS selector for this component"
+                 placeholder="${c.inShadow
+                   ? 'inside a shadow root — u1.fix cannot reach it, no selector exists'
+                   : c.selector ? 'CSS selector for this component'
+                   : 'this element has no stable name — ask the client to add a class'}"
                  aria-label="Selector to build the ${escapeHtml(c.component)} on">
         </span>
         <span class="lbl-meta lbl-meta-2">${escapeHtml(c.tag)}${
           c.maybe ? ' · guessed from its class name' : ' · stated by the markup'}${
-          c.matches > 1 ? ` · selector hits ${c.matches} elements` : ''}</span>
+          c.matches > 1 ? ` · selector hits ${c.matches} elements` : ''}${
+          c.inShadow ? ` · INSIDE A SHADOW ROOT${c.shadowHost ? ` (host: ${escapeHtml(c.shadowHost)})` : ''} — not mappable, unticked` : ''}</span>
       </span>
       <!-- Not this, and never ask again. Unticking says "not this time";
            .pageWrapper guessed as a form is wrong every time, and without a
