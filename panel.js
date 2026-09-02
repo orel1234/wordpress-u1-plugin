@@ -11745,6 +11745,13 @@ document.getElementById('sweepPicksList')?.addEventListener('mouseleave', () => 
   sweepPreviewEnd();
 });
 
+// Any tick anywhere changes how many sections are picked, and the mode
+// labels follow that count — the per-row ticks live in the LIST, not the
+// summary, which is why a summary-scoped listener never saw them flip.
+document.getElementById('sweepPicksList')?.addEventListener('change', (e) => {
+  if (e.target.classList && e.target.classList.contains('sweep-screen-tick')) updateSweepModeWording();
+});
+
 // Select all / none. It lives in the summary, which is rebuilt on every render,
 // so it is delegated rather than bound to the element.
 document.getElementById('sweepPicksSummary')?.addEventListener('change', (e) => {
@@ -11759,9 +11766,6 @@ document.getElementById('sweepPicksSummary')?.addEventListener('change', (e) => 
     saveSweep();
     return;
   }
-  // Any tick can change how many sections are picked, and the mode labels
-  // follow that count.
-  if (e.target.classList && e.target.classList.contains('sweep-screen-tick')) updateSweepModeWording();
   if (e.target.id !== 'sweepAllTick') return;
   const on = e.target.checked;
   document.querySelectorAll('#sweepPicksList .sweep-screen-tick:not(:disabled)')
