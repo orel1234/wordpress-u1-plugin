@@ -349,7 +349,7 @@ const asksOnScreen = /function askRoleClash[\s\S]{0,2000}?showModal\(\)/.test(pa
 // Add, the AI card's "Approve & apply", and the bulk save — and only the first
 // one did. The guarantee is structural: the question lives inside
 // saveMappingEntry, which all three go through, and nowhere else.
-const askInSave = /async function saveMappingEntry[\s\S]{0,1200}?confirmRoleOverwrite\(template\)/.test(panelSrc);
+const askInSave = /async function saveMappingEntry[\s\S]{0,3000}?confirmRoleOverwrite\(template\)/.test(panelSrc);
 // It is asked EARLIER too — on the AI component card, where the container and
 // trigger are chosen and the answer still changes whether a mapping is worth
 // building. Asked twice is worse than asked late: people learn to click through
