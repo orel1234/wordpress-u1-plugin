@@ -12214,13 +12214,17 @@ async function scanPickedScreens(numbers) {
       // They only ran on the manual path, which is why an autonomous molina
       // run produced no heading or vague-link mappings at all.
       try {
+        sweepLog(0, 'dialog interiors: starting — every dialog this run built gets its own inside scan', 'info');
         const din = await dialogInteriorScan(tab);
         if (din.dialogs) {
           sweepLog(0, `dialog interiors: looked inside ${din.dialogs} dialog${din.dialogs === 1 ? '' : 's'}, ` +
             `mapped ${din.made} component${din.made === 1 ? '' : 's'} in there`, 'info');
         }
-      } catch {}
+      } catch (e) { sweepLog(0, 'dialog-interior scan failed: ' + e.message, 'err'); }
       try {
+        // The requested heads-up: the run has moved from components to the
+        // page-wide STATIC pass — headings and vague links.
+        sweepLog(0, 'static pass: starting — reading the heading outline and the vague links', 'info');
         const fin = await sweepFinishingPass(tab);
         const vd = fin.vagueDiag || {};
       const vaguePart = fin.links
@@ -12236,7 +12240,7 @@ async function scanPickedScreens(numbers) {
           : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
             (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
         ` · ` + vaguePart, 'info');
-      } catch {}
+      } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
       const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
       const failedC = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => !f.done && f.failed).length), 0);
       aiSweep.phase = 'screens';
@@ -12506,15 +12510,19 @@ async function buildPickedComponents() {
   renderSweepPicks();
   // Inside every dialog this batch built: a dialog is a page of its own.
   try {
+    sweepLog(0, 'dialog interiors: starting — every dialog this run built gets its own inside scan', 'info');
     const din = await dialogInteriorScan(tab);
     if (din.dialogs) {
       sweepLog(0, `dialog interiors: looked inside ${din.dialogs} dialog${din.dialogs === 1 ? '' : 's'}, ` +
         `mapped ${din.made} component${din.made === 1 ? '' : 's'} in there`, 'info');
     }
-  } catch {}
+  } catch (e) { sweepLog(0, 'dialog-interior scan failed: ' + e.message, 'err'); }
   // The page-wide finishing pass: heading outline and vague links, written
   // automatically once the components of this batch are built.
   try {
+    // The requested heads-up: the run has moved from components to the
+    // page-wide STATIC pass — headings and vague links.
+    sweepLog(0, 'static pass: starting — reading the heading outline and the vague links', 'info');
     const fin = await sweepFinishingPass(tab);
     const vd = fin.vagueDiag || {};
       const vaguePart = fin.links
@@ -12530,7 +12538,7 @@ async function buildPickedComponents() {
           : `${fin.headings} level${fin.headings === 1 ? '' : 's'} corrected` +
             (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
         ` · ` + vaguePart, 'info');
-  } catch {}
+  } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
   return { built: (aiBulk.failed || []).length === 0, failed: (aiBulk.failed || []).length };
 }
 
@@ -13722,61 +13730,19 @@ async function confirmRoleOverwrite(tpl) {
   } catch { return true; }   // cannot read the page — not a reason to block a save
   if (!clash) return true;
 
-  // The role the site chose usually names a component we can map instead, and
-  // offering that is the whole point of asking rather than warning.
-  const ROLE_TO_TYPE = {
-    menu: 'menu', menubar: 'menu', navigation: 'menu', listbox: 'listbox',
-    tablist: 'tabs', dialog: 'dialog', grid: 'grid', table: 'table',
-    combobox: 'combobox', radiogroup: 'radio', tooltip: 'tooltip',
-  };
-  const other = ROLE_TO_TYPE[clash.role];
-  const canSwitch = !!other && other !== tpl.type && !!COMPONENT_SCHEMAS[other];
-
-  document.getElementById('roleClashBody').innerHTML =
-    `<code>${escapeHtml(tpl.primary)}</code> already carries ` +
-    `<code>role="${escapeHtml(clash.role)}"</code> in the site's own HTML — we did not put it there. ` +
-    `Saving this mapping asks U1 to write <code>role="${escapeHtml(clash.willWrite)}"</code> over it.`;
-
-  const switchBtn = document.getElementById('roleClashSwitch');
-  switchBtn.style.display = canSwitch ? '' : 'none';
-  if (canSwitch) document.getElementById('roleClashOther').textContent = other;
-
-  return await new Promise((resolve) => {
-    const done = (answer) => {
-      dlg.close();
-      cancel.removeEventListener('click', onCancel);
-      over.removeEventListener('click', onOver);
-      switchBtn.removeEventListener('click', onSwitch);
-      resolve(answer);
-    };
-    const cancel = document.getElementById('roleClashCancel');
-    const over = document.getElementById('roleClashOverwrite');
-    const onCancel = () => done(false);
-    const onOver = () => {
-      // Answering "overwrite" used to do nothing but let the save through, and
-      // U1 then met the author's role exactly as before — the question was
-      // asked and the answer was discarded. Record it on the mapping: apply and
-      // the exported file both lift the attribute before u1.fix runs, which is
-      // the only thing that makes the word true.
-      tpl.overwriteRole = clash.role;
-      done(true);
-    };
-    const onSwitch = () => {
-      // Change the type and let them regenerate: the fields a menu wants are
-      // not the fields a listbox wants, so saving straight through would
-      // produce a mapping of the new type filled from the old one's form.
-      $componentType.value = other;
-      $componentType.dispatchEvent(new Event('change'));
-      showNotice(document.getElementById('applyStatus'),
-        `Switched to ${other} — the site's own role. Fill the fields for it and press Generate Template.`,
-        'info', 9000);
-      done(false);
-    };
-    cancel.addEventListener('click', onCancel);
-    over.addEventListener('click', onOver);
-    switchBtn.addEventListener('click', onSwitch);
-    dlg.showModal();
-  });
+  // Owner decision (2026-09-02): "when a role needs overwriting, just do it."
+  // This used to open a dialog with one right answer, and in an unattended
+  // run the question was addressed to nobody — components died on it. The
+  // decision is still RECORDED, twice: overwriteRole on the mapping (apply
+  // and export lift the author's attribute before u1.fix runs — the only
+  // thing that makes the word true), and a note a person can read on the row.
+  tpl.overwriteRole = clash.role;
+  tpl.note = (tpl.note ? tpl.note + ' · ' : '') +
+    `the site's own HTML carried role="${clash.role}" here — overwritten automatically`;
+  try {
+    sweepLog(0, `${tpl.type} ${tpl.primary}: the site's markup carries role="${clash.role}" — overwriting it`, 'info');
+  } catch {}
+  return true;
 }
 
 // Loads an existing mapping back into the builder for editing. "Add to Mapping"

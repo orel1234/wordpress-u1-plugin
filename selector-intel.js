@@ -1097,6 +1097,17 @@
   ];
 
   const FIELD = 'input:not([type="hidden"]),select,textarea';
+  // ASP.NET/WebForms (molinahealthcare.com and every Sitecore site) wraps the
+  // ENTIRE page in one <form> — so "you are inside a form, the form itself is
+  // collected" skipped every real search box and signup on the page, and the
+  // wrapper that WAS collected spans the whole document and maps nothing. A
+  // form holding half the site's fields or links is the page, not a form.
+  const pageWideForm = (f) => {
+    if (!f) return false;
+    try {
+      return f.querySelectorAll(FIELD).length > 6 || f.querySelectorAll('a[href]').length > 30;
+    } catch (e) { return false; }
+  };
 
   // What a page draws between the steps of a trail. Kept to characters that
   // mean "and then" — a comma or a bullet separates a LIST, which a row of tags
@@ -1601,6 +1612,8 @@
     // is a breadcrumb, not a menu. The word rules above already took every
     // trail that says the word; this is for the ones that do not.
     if (tag === 'nav' && looksLikeBreadcrumb(el)) return { name: 'breadcrumb', sure: false };
+    // …except a WebForms wrapper: a <form> spanning the page is the page.
+    if (tag === 'form' && pageWideForm(el)) return null;
     if (COMPONENT_BY_TAG[tag]) return { name: COMPONENT_BY_TAG[tag], sure: true };
 
     // A strip of role="tab" with no role="tablist" around it. Extremely common —
@@ -1800,7 +1813,7 @@
       // itself, so a <form> matched its own guard — the one element on the page
       // that needs no heuristic at all was the only one the heuristic could not
       // name. Reported as, exactly: funny, it did not catch the form.
-      if (el.tagName === 'FORM') return { name: 'form', sure: true };
+      if (el.tagName === 'FORM') return pageWideForm(el) ? null : { name: 'form', sure: true };
 
       var fields = el.querySelectorAll(FIELD).length;
       // One TYPEABLE field with a send is a form too — a search box, a
@@ -1816,7 +1829,9 @@
           'textarea,input:not([type]),input[type="text"],input[type="search"],input[type="email"],' +
           'input[type="tel"],input[type="url"],input[type="number"],input[type="password"]').length;
       } catch (e2) {}
-      if ((fields >= 2 || typeable >= 1) && !el.closest('form')) {
+      var frm0 = el.closest('form');
+      if (el.tagName === 'FORM') frm0 = el.parentElement ? el.parentElement.closest('form') : null;
+      if ((fields >= 2 || typeable >= 1) && (!frm0 || pageWideForm(frm0))) {
         var submits = countSubmits(el);
         // No submit, no form. A row of filter selects that applies on change is
         // a real thing and it is not this; it has no send — and a "Clear"
@@ -2063,7 +2078,8 @@
     try {
       const seen = new Set(out);
       for (const f of qsaDeep(scope, TYPEABLE)) {
-        if (f.closest && f.closest('form')) continue;      // the <form> tag is collected already
+        var frmC = f.closest ? f.closest('form') : null;
+        if (frmC && !pageWideForm(frmC)) continue;  // a REAL form is collected by tag; a page-wide wrapper is the page
         let node = f.parentElement;
         for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
           if (node === document.body || node === document.documentElement) break;
