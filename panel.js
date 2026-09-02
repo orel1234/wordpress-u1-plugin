@@ -6939,6 +6939,11 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
   aiScanHold = { tabId: tab.id, host: currentHostname };
   try {
     const scopeSel = (document.getElementById('aiScopeInput')?.value || '').trim();
+    // The same truth machinery the walk has: the ring, the clock, the stop,
+    // and a log line per stage — 'I scanned one element and it got stuck'
+    // was unanswerable because this flow reported nothing on the way.
+    sweepLog(0, `scoped scan${scopeSel ? ' ' + scopeSel : ''}: reading the page`, 'info');
+    showSweepBusy('Scoped scan — reading', scopeSel ? `Looking inside ${scopeSel}.` : 'Looking at what is on screen.', null);
     showAiBusy('Reading…', scopeSel ? `Looking inside ${scopeSel}.` : 'Looking at what is on screen.');
     btn.textContent = 'Reading…';
 
@@ -6953,8 +6958,13 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // call per section — and one answer covering everything is harder to check
     // than five answers covering one region each. Point at a container instead.
     const collected = await collectRegion(tab, scopeSel, handled);
-    if (collected.err) { showNotice($aiStatus, collected.err, 'error', 5000); return; }
+    if (collected.err) {
+      sweepLog(0, `scoped scan: could not read the page — ${collected.err}`, 'err');
+      showNotice($aiStatus, collected.err, 'error', 5000);
+      return;
+    }
     if (!collected.candidates.length) {
+      sweepLog(0, `scoped scan: nothing reviewable${scopeSel ? ` inside ${scopeSel}` : ''}`, 'skip');
       showNotice($aiStatus, scopeSel
         ? `Nothing reviewable inside ${scopeSel} — check the selector, and open it if it is a dialog.`
         : 'Nothing reviewable on screen that has not already been mapped or skipped. Scroll to the part you want, or name a container above.',
@@ -6962,6 +6972,8 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
       return;
     }
 
+    sweepLog(0, `scoped scan: asking Claude about ${collected.candidates.length} element${collected.candidates.length === 1 ? '' : 's'}`, 'info');
+    showSweepBusy('Scoped scan — asking Claude', `${collected.candidates.length} elements — usually 10–30 seconds.`, null);
     showAiBusy('Claude is looking…', 'Usually 10–30 seconds.');
     btn.textContent = 'Looking…';
     $aiStatus.textContent = 'Usually 10–30 seconds.';
@@ -6981,7 +6993,11 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
       },
       scope: scopeSel || undefined,
     });
-    if (!part || part.err) { showNotice($aiStatus, part?.err || 'No answer from the model.', 'error', 8000); return; }
+    if (!part || part.err) {
+      sweepLog(0, `scoped scan: no answer — ${part?.err || 'the model returned nothing'}`, 'err');
+      showNotice($aiStatus, part?.err || 'No answer from the model.', 'error', 8000);
+      return;
+    }
 
     aiCost += U1AI.estimateCost(part.usage) || 0;
     const mergedContext = { candidates: collected.candidates, tokens: collected.tokens || [] };
@@ -7053,6 +7069,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
                   skipped: collected.skipped, scope: scopeSel || '',
                   alsoInside: alsoInside.map((c) => c.label || c.containerSelector) };
     if (!out.components.length) {
+      sweepLog(0, `scoped scan: the model found nothing worth mapping${scopeSel ? ` inside ${scopeSel}` : ''}`, 'skip');
       showNotice($aiStatus, scopeSel
         ? `Nothing worth mapping inside ${scopeSel}.`
         : 'Nothing worth mapping on screen right now.', 'success', 7000);
@@ -7072,11 +7089,14 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
     // workspace on a switch, but the panel can also be looking at a tab that
     // changed under it — so the act of saving checks this again.
     aiWorkspaceHost = currentHostname;
+    sweepLog(0, `scoped scan: ${out.components.length} component${out.components.length === 1 ? '' : 's'} found`, 'info');
     renderAiComponents(aiFound);
     $aiStatus.style.display = 'none';
   } catch (err) {
+    sweepLog(0, 'scoped scan failed: ' + err.message, 'err');
     showNotice($aiStatus, 'Failed: ' + err.message, 'error', 6000);
   } finally {
+    clearSweepBusy();
     // The tab that was SCANNED, read before the hold comes down — the front
     // tab is not it if the user wandered off mid-call, and clearing marks on
     // the front tab left them standing on the scanned one.
