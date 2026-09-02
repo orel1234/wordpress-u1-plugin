@@ -1745,6 +1745,12 @@ async function applyMappingsBatch(items, forTab) {
             }
             const vBefore = visualSnap();
             applyLog[sel] = true;   // read on the NEXT Apply, before any reload
+            // Whose function is this? The compat patch fills fixers the build
+            // lacks, and its menu stand-in deliberately records without
+            // fixing — 'ran without error, wrote no attributes' with the
+            // ENGINE ABSENT is a different diagnosis from the same words
+            // with it present.
+            const viaPatchStub = !!raw.fix[it.type].__u1PatchFilled;
             raw.fix[it.type](sel, it.config);
 
             // U1 decorates asynchronously (RxJS + MutationObserver), and how
@@ -1918,6 +1924,7 @@ async function applyMappingsBatch(items, forTab) {
               details.push({
                 type: it.type, sel, status: 'no-effect', changed: 0, rebuilt: rebuiltAfterU1 || undefined,
                 roleClash: roleClash || undefined,
+                stub: viaPatchStub || undefined,       // the ENGINE was never here
                 reason: !preStamped ? 'silent'
                   : u1Touched ? 'already-processed'   // reload and re-apply
                   : 'source-opt-out',                 // the site's HTML says skip
@@ -16447,6 +16454,14 @@ async function applyAllMappings({ silent = false, only = null, tab = null } = {}
         msg = `Nothing changed: ${optOut.map(d => d.sel).join(', ')} already carried u1st-avoid-change-detection before the fix ran, which tells U1 to skip that element entirely. Reload the page and press Apply All once — if it says this again on a clean load, the attribute is in the site's own HTML and has to come out there.`;
       } else if (stale) {
         msg = `Nothing changed: U1 had already processed ${noEffect === 1 ? 'this element' : 'these elements'} on this page load. Reload the page, then apply again.`;
+      } else if (details.some((d) => d && d.status === 'no-effect' && d.stub)) {
+        // The engine was never on this page: the call that "ran without
+        // error" was the compat patch's stand-in, which records and does not
+        // fix. Same words, opposite diagnosis from the once-per-load Set.
+        msg = 'Nothing changed — the U1 engine itself is not on this page: ' +
+          details.filter((d) => d.stub).map((d) => 'fix.' + d.type).join(', ') +
+          ' answered from the compat patch, which records but does not decorate. ' +
+          'Inject U1 in Setup (or turn on auto-inject for this site), reload, and apply again.';
       } else if (list.some((m) => m && typeof m === 'object' &&
                    applyReceipts.has((m.type || '') + '::' + (m.primary || m.firstArg || '')))) {
         // The engine keeps a page-load-wide Set of elements it has fixed
