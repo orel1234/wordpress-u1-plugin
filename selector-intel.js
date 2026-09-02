@@ -63,7 +63,7 @@
   // ids at apply time, and a later scan that anchors on one maps the same
   // element twice — molina shipped LISTBOX .signin-dropdown AND LISTBOX
   // #u1p-listbox-wcvryke, one mapping per name for one widget (2026-09-02).
-  const VOLATILE_ID = /^(u1st-|u1p?-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const VOLATILE_ID = /^(u1st-|u1p?-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc|tab|expansion|checkbox|radio|menu|chip)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
   // Which pseudo-classes may appear in a mapping.
   //

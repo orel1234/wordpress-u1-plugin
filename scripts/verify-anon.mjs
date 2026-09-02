@@ -465,6 +465,11 @@ console.log('\nnames U1 itself writes never enter a mapping');
   // Our own patch mints these at apply time — anchoring on one maps the same
   // element twice (molina: LISTBOX .signin-dropdown AND #u1p-listbox-wcvryke).
   check('u1p- ids — the patch\'s own runtime anchors — too', S.VOLATILE_ID.test('u1p-listbox-wcvryke') && S.VOLATILE_ID.test('u1p-acc-h-58x4rno'));
+  // Angular Material numbers its ids by mount order — #mat-tab-label-0-0 is
+  // a different element after any change in which groups render first.
+  check('Material\'s generated ids are volatile too',
+    S.VOLATILE_ID.test('mat-tab-label-0-0') && S.VOLATILE_ID.test('mat-expansion-panel-header-3') &&
+    !S.VOLATILE_ID.test('material-icons'));
 
   // ── elal.com pins (2026-09-02): a slider's dots and a segmented control ──
   {
