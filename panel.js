@@ -12300,6 +12300,7 @@ async function scanPickedScreens(numbers) {
             (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
         ` · ` + vaguePart, 'info');
       } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
+      clearSweepBusy();
       }
       }
       const done = aiSweep.stops.reduce((a, x) => a + ((x.found || []).filter(f => f.done).length), 0);
@@ -12605,6 +12606,7 @@ async function buildPickedComponents() {
             (fin.already ? `, ${fin.already} already mapped from an earlier run` : '')) +
         ` · ` + vaguePart, 'info');
   } catch (e) { sweepLog(0, 'static pass failed: ' + e.message, 'err'); }
+  clearSweepBusy();
   }
   return { built: (aiBulk.failed || []).length === 0, failed: (aiBulk.failed || []).length };
 }
@@ -14665,8 +14667,17 @@ async function dialogInteriorScan(tab) {
   if (!sels.length) return out;
   if (!(await U1AI.getKey())) return out;
   const handled = await alreadyHandled();
+  let di = 0;
   for (const dSel of sels) {
     if (aiSweep.abort) break;
+    di++;
+    // Watched, not discovered afterwards: mappings appearing with no visible
+    // work running read as "they suddenly show up out of nowhere".
+    try {
+      showSweepBusy('Static pass — inside the dialogs',
+        `Looking inside ${dSel} — ${di} of ${sels.length} (one model call each). New mappings land in the drawer as they are built.`,
+        ((di - 1) / sels.length) * 100);
+    } catch {}
     let collected = null;
     try { collected = await collectRegion(tab, dSel, handled); } catch (e) {}
     if (!collected || collected.err || !(collected.candidates || []).length) {
@@ -14740,6 +14751,7 @@ async function sweepFinishingPass(tab) {
     dialogPrimaries = ((await U1Store.get([mkey]))[mkey] || [])
       .filter((m) => m && m.type === 'dialog' && m.primary).map((m) => m.primary);
   } catch {}
+  try { showSweepBusy('Static pass — headings', 'Reading the page\u2019s heading outline and writing level fixes\u2026', null); } catch {}
   try {
     const got = await inPage(tab.id, (dlgs) => {
       const S = window.__u1SelectorIntel;
@@ -14779,6 +14791,7 @@ async function sweepFinishingPass(tab) {
       } catch {}
     }
   } catch {}
+  try { showSweepBusy('Static pass — vague links', 'Looking for repeated \u201cLearn more\u201d links beside headings\u2026', null); } catch {}
   try {
     const got2 = await inPage(tab.id, () => {
       const S = window.__u1SelectorIntel;
