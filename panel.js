@@ -7366,6 +7366,32 @@ document.addEventListener('click', (e) => {
  * worth saying, not worth three lines of a fixed header on every section of a
  * thirty-section run.
  */
+/**
+ * Light the element being mapped, on the page, while the ring works — the
+ * build stops being an abstract counter when the purple ring lands on the
+ * thing it is talking about. Falls back to the trigger when the primary has
+ * no box (a closed dropdown's list), exactly like the drawer's hover.
+ */
+async function spotlightBuild(tab, sel, alt) {
+  if (!sel || !tab || !isInjectable(tab)) return;
+  try {
+    await inPage(tab.id, (x, a) => {
+      const S = window.__u1SelectorIntel;
+      const shown = (q) => {
+        try { const el = document.querySelector(q); if (!el) return false;
+          const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; } catch { return false; }
+      };
+      if (!shown(x) && a && shown(a)) return S.highlightSelector(a);
+      return S.highlightSelector(x);
+    }, [sel, alt || '']);
+  } catch {}
+}
+
+async function spotlightOff(tab) {
+  if (!tab || !isInjectable(tab)) return;
+  try { await inPage(tab.id, () => window.__u1SelectorIntel.clearHilite()); } catch {}
+}
+
 function showSweepBusy(title, sub, pct, long) {
   const host = document.getElementById('sweepBusy');
   if (!host) return;
@@ -9377,6 +9403,7 @@ document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
       }
     }
   } finally {
+    await spotlightOff(tab);
     clearMapBusy();
     aiBulk.running = false;
     btn.disabled = false;
@@ -12288,6 +12315,7 @@ async function scanPickedScreens(numbers) {
             (todo[b].why ? ` — ${String(todo[b].why).slice(0, 90)}` : '') +
             `. Saved to Mappings as it finishes.`,
             ((i + 0.7 + 0.3 * (b / Math.max(1, todo.length))) / stops.length) * 100);
+          await spotlightBuild(tab, todo[b].sel, todo[b].trigger);
           try {
             const made = await confirmedToMapping(
               { mark: null, type: todo[b].type, sel: todo[b].sel, why: todo[b].why }, stop, tab);
@@ -12305,6 +12333,7 @@ async function scanPickedScreens(numbers) {
             sweepLog(stop.n, `${todo[b].type}: ${err.message}`, 'err');
           }
         }
+        await spotlightOff(tab);
         const built = (stop.found || []).filter((f) => f.done).length;
         if (todo.length) {
           stop.outcome = `${built} of ${todo.length} made accessible — saved to Mappings`;
@@ -12586,6 +12615,7 @@ async function buildPickedComponents() {
       const { stop, f } = jobs[i];
       btn.textContent = `Preparing ${i + 1} of ${jobs.length}…`;
       showMapBusy(f.label, i + 1, jobs.length);
+      await spotlightBuild(tab, f.sel, f.trigger);
       // A listbox, a datepicker and a tooltip are rooted on the thing that
       // APPEARS, and the sweep holds only the control that summons it. Passing
       // an empty container made rowFromParts refuse every one of them — that is
