@@ -15867,6 +15867,35 @@ async function overlappingMappings(primary, list) {
 // should repaint; saving twelve in a row should repaint once at the end, not
 // twelve times — each loadMappingsList() runs an executeScript against the page.
 async function saveMappingEntry(template, { editingKey = null, refreshUi = true } = {}) {
+  // Whose dialog is this INSIDE? Stamped here — the one save path — by real
+  // DOM containment, so a mapping born from any route (manual add with a
+  // scoped container, the AI card, the interior scan) nests under its dialog
+  // in the drawer without each route knowing about nesting.
+  if (!template.parent && template.primary && template.type !== 'dialog') {
+    try {
+      const mkey = storageKey('mappings', currentHostname);
+      const dlgs = ((await U1Store.get([mkey]))[mkey] || [])
+        .filter((m) => m && m.type === 'dialog' && m.primary).map((m) => m.primary);
+      if (dlgs.length) {
+        const tb = await getTab();
+        if (isInjectable(tb)) {
+          const parent = await inPage(tb.id, (sel, ds) => {
+            let el = null;
+            try { el = document.querySelector(sel); } catch { return ''; }
+            if (!el) return '';
+            for (const d of ds) {
+              try {
+                const host = document.querySelector(d);
+                if (host && host !== el && host.contains(el)) return d;
+              } catch (e) {}
+            }
+            return '';
+          }, [template.primary, dlgs]);
+          if (parent) template.parent = parent;
+        }
+      }
+    } catch {}
+  }
   // The site may already have said what this element is, and overruling an
   // author's role is a decision for a person.
   //
@@ -17374,6 +17403,24 @@ async function renderExistingFixes() {
   if (box) { box.style.display = 'none'; box.innerHTML = ''; }
 }
 
+// "+ Add a mapping inside this dialog" — the dialog row's own way into the
+// scoped scan. Fills the container box with the dialog's selector and hands
+// over to the Automatic route; the save path stamps parent by containment,
+// so whatever gets built there files under this row on its own.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.mapping-add-inside');
+  if (!btn) return;
+  const scope = btn.dataset.scope || '';
+  setMapMode('auto');
+  const input = document.getElementById('aiScopeInput');
+  if (input) { input.value = scope; input.dispatchEvent(new Event('input')); }
+  input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  input?.focus();
+  showNotice(document.getElementById('aiStatus'),
+    `Scoped to ${scope}. Open the dialog on the page, then Scan it (or ⏱ Scan in 5s for one that only exists while open) — ` +
+    `what gets built files under this dialog's row.`, 'info', 12000);
+});
+
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
@@ -17488,6 +17535,8 @@ async function loadMappingsList() {
         </button>
         <div class="mapping-body" style="display:none">
           ${childrenHtml ? `<div class="mapping-children">${childrenHtml}</div>` : ''}
+          ${type === 'dialog' && primary ? `<button type="button" class="btn-outline btn-xs mapping-add-inside" data-scope="${escapeHtml(primary)}"
+              title="Open it on the page, then scan just this dialog — whatever is built nests under this row">+ Add a mapping inside this dialog</button>` : ''}
           <pre>${escapeHtml(code)}</pre>
           <div class="mapping-actions">
             <button class="apply-btn" data-idx="${idx}" data-tip="${legacy ? 'Legacy — re-add' : 'Apply on page'}" title="${legacy ? 'Legacy string — cannot auto-apply, please re-add' : 'Apply on page'}"${legacy ? ' disabled' : ''}>▶</button>
