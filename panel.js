@@ -7362,11 +7362,16 @@ function showSweepBusy(title, sub, pct, long) {
   const clamped = determinate ? Math.max(0, Math.min(100, Math.round(pct))) : 0;
   host.innerHTML = `
     <div class="ai-busy">
+      <div class="ai-busy-row">
+        <div class="ai-busy-text">
+          <div class="ai-busy-title">${escapeHtml(title)}</div>
+          <div class="ai-busy-sub" title="${escapeHtml(long || sub || '')}">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
+        </div>
+        ${determinate ? `<div class="ai-busy-pct">${clamped}<span>%</span></div>` : ''}
+      </div>
       <div class="ai-busy-bar${determinate ? ' determinate' : ''}">
         <span${determinate ? ` style="width:${clamped}%"` : ''}></span>
       </div>
-      <div class="ai-busy-title">${escapeHtml(title)}${determinate ? ` — ${clamped}%` : ''}</div>
-      <div class="ai-busy-sub" title="${escapeHtml(long || sub || '')}">${escapeHtml(sub || '')} <span class="ai-busy-clock" id="sweepBusyClock">0:00</span></div>
     </div>`;
 
   // Restarted per step, because the number that matters is how long THIS step
@@ -12166,10 +12171,17 @@ async function scanPickedScreens(numbers) {
       if (!sweepPause.on && !sweepLabel.on) {
         const todo = (stop.found || []).filter((f) => !f.done && f.sel);
         for (let b = 0; b < todo.length && !aiSweep.abort; b++) {
-          showSweepBusy(`Section ${stop.n} — ${i + 1} of ${stops.length}`,
-            `Making ${todo[b].label || todo[b].sel} accessible — ${b + 1} of ${todo.length} on this section. ` +
-            `Each one is saved to Mappings as it finishes.`,
-            ((i) / stops.length) * 100);
+          // The counter is RUN-WIDE: "Mapping 7 of 20 · 35%", not a per-
+          // section fraction that resets and a percent that never moves.
+          // totalKnown grows as later sections are read — the percent
+          // recalculates, which is honest: the run learns its size as it goes.
+          const builtAll = aiSweep.stops.reduce((a2, s2) => a2 + ((s2.found || []).filter((f2) => f2.done).length), 0);
+          const knownAll = aiSweep.stops.reduce((a2, s2) => a2 + ((s2.found || []).filter((f2) => f2.sel).length), 0);
+          showSweepBusy(`Mapping ${builtAll + 1} of ${knownAll} — ${todo[b].type}`,
+            `${todo[b].label || todo[b].sel} · section ${stop.n}` +
+            (todo[b].why ? ` — ${String(todo[b].why).slice(0, 90)}` : '') +
+            `. Saved to Mappings as it finishes.`,
+            knownAll ? (builtAll / knownAll) * 100 : null);
           try {
             const made = await confirmedToMapping(
               { mark: null, type: todo[b].type, sel: todo[b].sel, why: todo[b].why }, stop, tab);
