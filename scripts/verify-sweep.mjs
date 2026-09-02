@@ -976,7 +976,11 @@ console.log('\nholding after each section');
   check('the hold is offered before the run starts, not only during it',
     /id="sweepPauseTick"/.test(src) &&
     /e\.target\.id === 'sweepPauseTick'/.test(src));
-  check('…and is on by default', /const sweepPause = \{ on: true/.test(src));
+  // Owner decision (2026-09-02): one section or nine, the run builds and
+  // hands over mappings — the stop is opt-in, not the default.
+  check('…and is OFF by default — the run does not stop unless asked',
+    /const sweepPause = \{ on: false/.test(src) &&
+    /const sweepLabel = \{ on: false/.test(src));
 
   // A throw inside the loop skips the hold's own finish().
   check('a run that dies while holding takes the banner down with it',

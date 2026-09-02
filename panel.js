@@ -5043,7 +5043,7 @@ showBuildStamp();
 // money, and a section named in full is never charged for — there was no
 // version of "off" worth offering, and the checkbox was one more thing to have
 // forgotten to tick before paying for a scan.
-const sweepLabel = { on: true, resolve: null, marks: new Set(), busy: false, skip: false };
+const sweepLabel = { on: false, resolve: null, marks: new Set(), busy: false, skip: false };
 
 /**
  * The candidates a section's naming pause is working with, by section number.
@@ -5083,7 +5083,10 @@ const NATIVE_SIGNAL =
  * decision nobody is going to make, and what lets the make-accessible button
  * through its `aiSweep.running` guard.
  */
-const sweepPause = { on: true, resolve: null };
+// Owner decision (2026-09-02): the run does NOT stop by default — one
+// section or nine, the flow is "make it accessible and hand me mappings".
+// Stop-at-each-section stays one tick away for a supervised run.
+const sweepPause = { on: false, resolve: null };
 
 /**
  * Stop after a section, show what it found, and wait to be told to carry on.
