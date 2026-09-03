@@ -2996,6 +2996,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
     if (btn.dataset.tab === 'config') refreshConfigSkipList();
     if (btn.dataset.tab === 'export') refreshExportInfo();
+    if (btn.dataset.tab === 'scan') renderScanHistory();
   });
 });
 
@@ -14144,6 +14145,28 @@ async function recommendSelector(type, primary) {
 
 // Returns a Set of the selectors (from `sels`) that currently match ≥1 element on
 // the open page — used by the "On this page" mappings filter.
+// Origin + path, ignoring hash/query — the granularity mapping capture and
+// "was this the same page" comparisons both use.
+function cleanPageUrl(u) {
+  try { const x = new URL(u); return (x.origin + x.pathname).replace(/\/+$/, ''); }
+  catch { return (u || '').split('#')[0].split('?')[0].replace(/\/+$/, ''); }
+}
+
+// A mapping belongs to "this page" if its selector matches something visible
+// RIGHT NOW, or if it was captured on this exact URL. The second half matters
+// — without it, a dialog/dropdown/datepicker that only renders while OPEN
+// reads as gone the instant it's closed, even standing on the very page it
+// belongs to, because selectorsPresentOnPage only sees what's visible this
+// instant. `present` is the Set from selectorsPresentOnPage (or null, meaning
+// "couldn't check" — treated as "don't rule it out" rather than "not here").
+function mappingOnPage(m, present, hereUrl) {
+  if (!m || typeof m !== 'object') return true;
+  const p = m.primary || m.firstArg || '';
+  if (present && p && present.has(p)) return true;               // visible right now
+  if (m.pageUrl && hereUrl && cleanPageUrl(m.pageUrl) === hereUrl) return true; // captured here
+  return present ? false : true;                                  // couldn't check → don't hide
+}
+
 async function selectorsPresentOnPage(sels) {
   const tab = await getTab();
   if (!isInjectable(tab)) return null; // null = can't tell (don't filter)
@@ -15092,7 +15115,28 @@ const STATIC_WHY_NOT = {
  * Hidden, not cleared: the other run's results are still there and come back
  * when it is run again.
  */
+// Which of the two Scan-tab cards (Page Content / Saved Mappings) is showing.
+// Same shape as the Picker's Scan/Mappings split (setPickerPane) — one card
+// visible at a time instead of both stacked, so pressing a scan's own button
+// is always pressing something you're already looking at.
+function setScanChoicePane(name) {
+  const pane = name === 'mappings' ? 'mappings' : 'content';
+  document.querySelectorAll('.scan-choice-tab').forEach((b) => {
+    const on = b.dataset.scanpane === pane;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  const content = document.getElementById('scanPaneContent');
+  const mappings = document.getElementById('scanPaneMappings');
+  if (content) content.hidden = pane !== 'content';
+  if (mappings) mappings.hidden = pane !== 'mappings';
+}
+document.querySelectorAll('.scan-choice-tab').forEach((b) => {
+  b.addEventListener('click', () => setScanChoicePane(b.dataset.scanpane));
+});
+
 function showOnlyScan(which) {
+  setScanChoicePane(which === 'mappings' ? 'mappings' : 'content');
   const s = document.getElementById('scanResultsSection');
   const m = document.getElementById('elemScanSection');
   if (s) s.style.display = which === 'static' && scanResults.length ? 'block' : 'none';
@@ -15698,18 +15742,127 @@ document.getElementById('excludeTest')?.addEventListener('click', async () => {
   await inPage(tab.id, (x) => window.__u1SelectorIntel.highlightSelector(x), [sel]).catch(() => {});
 });
 
+// Which page this scan is running on, and which of the three engines have
+// finished — asked for directly: a scan that just says "Scanning…" gives no
+// way to tell a slow page from a stuck one, or to know it moved on to the
+// engines that take real time (axe/IBM inject and run in the page).
+const SCAN_STEP_LABEL = { u1: 'U1 checks', axe: 'axe-core', ibm: 'IBM Equal Access' };
+function scanProgressHtml(tab, steps) {
+  const title = (tab && (tab.title || tab.url)) || '';
+  const rows = ['u1', 'axe', 'ibm'].map((k) => {
+    const s = steps[k] || 'pending'; // 'pending' | 'running' | 'done' | 'skipped'
+    const icon = s === 'done' ? '✅' : s === 'running' ? '⏳' : s === 'skipped' ? '⚠️' : '⬜';
+    return `<div class="scan-progress-step scan-progress-${s}">${icon} ${SCAN_STEP_LABEL[k]}</div>`;
+  }).join('');
+  return `<div class="scan-progress-page" title="${escapeHtml((tab && tab.url) || '')}">📄 ${escapeHtml(title || 'this page')}</div>` +
+         `<div class="scan-progress-steps">${rows}</div>`;
+}
+
+// ── Scan history: every page scanned before, kept and scored ────────────────
+//
+// A heuristic, not a certified conformance score: weighted deductions from
+// 100 by severity, floored at 0. Meant to say "roughly how rough is this
+// page" at a glance across a list of pages — for the actual findings, open
+// the scan; the weights are not a WCAG scoring standard and don't claim to be.
+const SCAN_SCORE_WEIGHT = { Critical: 15, High: 8, Medium: 4, Low: 1 };
+function computeScanScore(results) {
+  const penalty = (results || []).reduce((sum, r) => sum + (SCAN_SCORE_WEIGHT[r.severity] ?? 2), 0);
+  return Math.max(0, Math.round(100 - penalty));
+}
+
+// Local-only (setLocalOnly, not the site-synced set() — see store.js's
+// SITE_PREFIXES): this is a per-machine convenience record of what you saw
+// last time, not shared work a colleague needs, so it does not compete with
+// mapping storage for the server's per-request size limit.
+function scanHistoryKey() { return 'scanHistory_' + currentHostname; }
+
+async function saveScanToHistory(tab, results, enginesRan) {
+  if (!tab || !tab.url) return;
+  const key = scanHistoryKey();
+  const stored = (await U1Store.get([key]))[key] || [];
+  const url = tab.url.split('#')[0];
+  const entry = {
+    url, title: tab.title || url, at: Date.now(),
+    score: computeScanScore(results),
+    count: results.length,
+    crit: results.filter(r => r.severity === 'Critical').length,
+    high: results.filter(r => r.severity === 'High').length,
+    results, enginesRan: enginesRan || [],
+  };
+  // One entry per URL — re-scanning a page replaces its old record rather
+  // than piling up duplicates of the same page.
+  const next = [entry, ...stored.filter(e => e && e.url !== url)].slice(0, 30);
+  await U1Store.setLocalOnly({ [key]: next });
+  renderScanHistory();
+}
+
+function scanScoreClass(score) {
+  return score >= 90 ? 'good' : score >= 60 ? 'mid' : 'bad';
+}
+
+async function renderScanHistory() {
+  const box = document.getElementById('scanHistoryList');
+  if (!box) return;
+  const key = scanHistoryKey();
+  const list = (await U1Store.get([key]))[key] || [];
+  if (!list.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+  box.style.display = '';
+  box.innerHTML =
+    `<div class="scan-history-title">Scanned before<span class="dot">.</span></div>` +
+    list.map((e, i) => `
+      <button type="button" class="scan-history-row" data-reopen="${i}" title="${escapeHtml(e.url)}">
+        <span class="scan-history-score scan-history-score-${scanScoreClass(e.score)}">${e.score}%</span>
+        <span class="scan-history-text">
+          <span class="scan-history-page">${escapeHtml(e.title || e.url)}</span>
+          <span class="scan-history-sub">${e.count} issue${e.count === 1 ? '' : 's'}${e.crit ? ` · ${e.crit} critical` : ''}${e.high ? ` · ${e.high} high` : ''} · ${new Date(e.at).toLocaleDateString()}</span>
+        </span>
+      </button>`).join('');
+  box.querySelectorAll('[data-reopen]').forEach((b) => {
+    b.addEventListener('click', () => reopenScanHistory(list[parseInt(b.dataset.reopen, 10)]));
+  });
+}
+
+function reopenScanHistory(entry) {
+  if (!entry) return;
+  scanResults = entry.results || [];
+  scanEnginesRan = entry.enginesRan || [];
+  scanActiveCat = '*'; scanActiveSev = '*';
+  showOnlyScan('static');
+  const crit = scanResults.filter(r => r.severity === 'Critical').length;
+  const high = scanResults.filter(r => r.severity === 'High').length;
+  document.getElementById('scanCount').textContent =
+    scanResults.length ? `${scanResults.length} issues${crit ? ` · ${crit} critical` : ''}${high ? ` · ${high} high` : ''} (saved ${new Date(entry.at).toLocaleString()})` : '';
+  document.getElementById('scanClearBtn').style.display = scanResults.length ? '' : 'none';
+  document.getElementById('scanReportRow').style.display = scanResults.length ? 'flex' : 'none';
+  renderScanFilters();
+  renderScanResults();
+}
+
 document.getElementById('scanBtn')?.addEventListener('click', async () => {
   const status = document.getElementById('scanStatus');
   const btn = document.getElementById('scanBtn');
+  const progress = document.getElementById('scanProgress');
+  const tab = await getTab();
+  const steps = { u1: 'running', axe: 'pending', ibm: 'pending' };
+  if (progress) { progress.style.display = ''; progress.innerHTML = scanProgressHtml(tab, steps); }
   btn.textContent = 'Scanning…';
   showNotice(status, 'Analyzing the page for accessibility faults…', 'info', 0);
   const res = await scanPageStatic();
-  if (res.err) { btn.textContent = '🔎 Scan this page'; showNotice(status, res.err, 'error', 4000); return; }
+  if (res.err) {
+    btn.textContent = '🔎 Scan this page';
+    if (progress) progress.style.display = 'none';
+    showNotice(status, res.err, 'error', 4000);
+    return;
+  }
+  steps.u1 = 'done'; steps.axe = 'running'; steps.ibm = 'running';
+  if (progress) progress.innerHTML = scanProgressHtml(tab, steps);
 
   btn.textContent = 'Running axe + IBM…';
-  const tab = await getTab();
   const ext = tab ? await runScanEngines(tab.id) : { findings: [], ran: [] };
   btn.textContent = '🔎 Scan this page';
+  steps.axe = (ext.ran || []).includes('axe') ? 'done' : 'skipped';
+  steps.ibm = (ext.ran || []).includes('ibm') ? 'done' : 'skipped';
+  if (progress) progress.innerHTML = scanProgressHtml(tab, steps);
 
   // Enrich each raw finding with its catalog rule (title/why/fix/severity/wcag/category).
   const ours = (res.results || []).map(f => {
@@ -15732,6 +15885,7 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
     .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
   scanEnginesRan = ext.ran || [];
   scanActiveCat = '*'; scanActiveSev = '*';
+  saveScanToHistory(tab, scanResults, scanEnginesRan).catch(() => {});
   status.style.display = 'none';
   document.getElementById('scanClearBtn').style.display = scanResults.length ? '' : 'none';
   // One scan on screen at a time.
@@ -15795,6 +15949,8 @@ document.getElementById('scanClearBtn')?.addEventListener('click', () => {
   scanResults = [];
   document.getElementById('scanResultsSection').style.display = 'none';
   document.getElementById('scanClearBtn').style.display = 'none';
+  const progress = document.getElementById('scanProgress');
+  if (progress) progress.style.display = 'none';
 });
 
 document.getElementById('scanFilters')?.addEventListener('click', (e) => {
@@ -17868,10 +18024,12 @@ function openImageDialog(src) {
  * find out what a press would cover was to press it. Each row can also be run on
  * its own — one option, the same run, restricted to that mapping.
  */
-function renderElemScanSaved(list) {
+async function renderElemScanSaved(list) {
   const box = document.getElementById('elemScanSaved');
   if (!box) return;
   const real = list.filter(m => m && typeof m === 'object' && m.type);
+  const testAllBtn = document.getElementById('elemScanBtn');
+  if (testAllBtn) testAllBtn.textContent = real.length ? `🧪 Test all mappings (${real.length})` : '🧪 Test every mapping';
   if (!real.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
   box.style.display = '';
   // Named exactly as the Mappings drawer names them — the same id badge, the
@@ -17879,17 +18037,88 @@ function renderElemScanSaved(list) {
   // looking for here is one you already recognise from down there, and
   // inventing a second way to write it down ("u1.fix.heading" three times over)
   // made a list of distinct things look like one thing repeated.
-  box.innerHTML = real.map(m => `
-    <div class="elem-scan-saved-row">
-      ${m.id ? `<span class="mh-id">${escapeHtml(m.id)}</span>` : ''}
-      <span class="mh-type">${escapeHtml(m.type)}</span>
-      <span class="mh-sel">${escapeHtml(m.primary || m.firstArg || '')}</span>
-      <button class="btn-ghost btn-xs" data-testone="${escapeHtml(mappingKey(m))}"
-              title="Run the keyboard test on this one">🧪</button>
-    </div>`).join('');
+  const rowsHtml = real.map(m => {
+    const mk = mappingKey(m);
+    const sel = m.primary || m.firstArg || '';
+    return `
+    <tr class="saved-mappings-row" data-key="${escapeHtml(mk)}">
+      <td class="sm-id">${m.id ? `<span class="mh-id" title="${escapeHtml(sel)}">${escapeHtml(m.id)}</span>` : `<span class="mh-id" title="${escapeHtml(sel)}">—</span>`}</td>
+      <td><span class="mh-type">${escapeHtml(m.type)}</span></td>
+      <td class="sm-status" data-status-for="${escapeHtml(mk)}"><span class="sm-status-dot checking"></span><span class="mh-sel">${escapeHtml(sel)}</span></td>
+      <td class="sm-actions">
+        <button class="btn-ghost btn-xs" data-testone="${escapeHtml(mk)}" title="Run the keyboard test on this one">🧪</button>
+        <button class="btn-ghost btn-xs" data-editone="${escapeHtml(mk)}" title="Edit this mapping">✎</button>
+        <button class="btn-ghost btn-xs" data-delone="${escapeHtml(mk)}" title="Remove">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+  box.innerHTML =
+    `<table class="saved-mappings-table">
+      <thead><tr><th>ID</th><th>Type</th><th>Selector</th><th></th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+
   box.querySelectorAll('[data-testone]').forEach(b => {
     b.addEventListener('click', () => runElementScan(b.dataset.testone));
   });
+  box.querySelectorAll('[data-editone]').forEach(b => {
+    b.addEventListener('click', () => {
+      const m = real.find(m2 => mappingKey(m2) === b.dataset.editone);
+      if (!m) return;
+      document.querySelector('.tab-btn[data-tab="picker"]')?.click();
+      setPickerPane('scan');
+      loadMappingIntoForm(m);
+    });
+  });
+  box.querySelectorAll('[data-delone]').forEach(b => {
+    b.addEventListener('click', () => deleteSavedMapping(b.dataset.delone));
+  });
+
+  // Whether each one matches something actually on the current page — real,
+  // measured status (the same check the Mappings drawer's "On this page"
+  // filter uses), not a fabricated "tested" flag nothing here tracks between
+  // sessions. Shown as a coloured dot on the selector itself (which stays on
+  // screen throughout) rather than replacing it with a word — the selector
+  // is what you came to this column to read.
+  try {
+    const present = await selectorsPresentOnPage(real.map(m => m.primary || m.firstArg || ''));
+    const tab = await getTab();
+    const hereUrl = cleanPageUrl(tab && tab.url);
+    real.forEach(m => {
+      const cell = box.querySelector(`[data-status-for="${CSS.escape(mappingKey(m))}"]`);
+      const dot = cell && cell.querySelector('.sm-status-dot');
+      if (!dot) return;
+      // Same rule the Mappings drawer's "On this page" filter uses — visible
+      // right now, OR captured on this exact URL (a closed dialog/dropdown
+      // matches nothing while shut, but still belongs here). Checking
+      // selectorsPresentOnPage alone marked every such widget "elsewhere"
+      // while standing on the very page it's on.
+      // present === null means "couldn't check at all" (not injectable) — kept
+      // as its own "unknown" state here rather than defaulting to true the
+      // way mappingOnPage does for the drawer's filter (where the lenient
+      // default is "don't hide it"); a status DOT defaulting to green when it
+      // has no idea would be a worse lie than an honest "can't check".
+      const on = present === null ? null : mappingOnPage(m, present, hereUrl);
+      dot.className = 'sm-status-dot ' + (on == null ? 'unknown' : on ? 'on' : 'off');
+      dot.title = on == null ? "Can't check right now" : on ? 'On this page' : 'Not matching anything on this page right now';
+      // Not here, but captured on a page we know — offer to go there rather
+      // than leaving "elsewhere" unanswered. Same navigation the Setup tab's
+      // "adopt from another site" flow uses.
+      if (on === false && m.pageUrl && cell && !cell.querySelector('.sm-goto')) {
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'sm-goto';
+        go.title = 'Open ' + m.pageUrl;
+        go.textContent = '↗ go there';
+        go.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const t = await getTab();
+          if (t) await chrome.tabs.update(t.id, { url: m.pageUrl });
+        });
+        cell.appendChild(go);
+      }
+    });
+  } catch {}
 }
 
 /**
@@ -18124,6 +18353,60 @@ document.addEventListener('click', (e) => {
     `what gets built files under this dialog's row.`, 'info', 12000);
 });
 
+/**
+ * Delete one saved mapping by its stable key — the one place this happens, so
+ * the Mappings drawer's delete button and the Scan tab's saved-mappings table
+ * both go through the exact same bookkeeping (self-applied/declined records,
+ * reverting what U1 already wrote to the live page) rather than two
+ * implementations that can drift apart.
+ *
+ * Re-reads storage rather than trusting an in-memory list, so it is safe to
+ * call from a render pass that isn't the one holding the current array.
+ */
+async function deleteSavedMapping(mk) {
+  const key = storageKey('mappings', currentHostname);
+  const list = (await U1Store.get([key]))[key] || [];
+  const i = list.findIndex(m => m && typeof m === 'object' && mappingKey(m) === mk);
+  if (i === -1) return;
+  const gone = list[i];
+  list.splice(i, 1);
+  await U1Store.set({ [key]: list });
+
+  // Deleted means deleted EVERYWHERE — including from the standing declines.
+  // The page still runs what U1 already wrote, and that leftover used to be
+  // answered by DECLINING the fix (permanently, for the whole team), so every
+  // map-apply-delete experiment grew the set-aside pile by one. Now the
+  // leftover is remembered locally as OURS — recognised and simply not
+  // offered — and the loop the old decline was written against ("deleted 83,
+  // offered 83 back") stays closed without anybody's refusal being forged.
+  await rememberSelfApplied([mappingKey(gone)]);
+  await forgetDeclinedFixes([mappingKey(gone)]);
+
+  loadMappingsList();
+  refreshExportInfo();
+
+  // Deleting the mapping deletes the INSTRUCTION. It does not undo what U1
+  // already wrote into the live DOM — roles, aria-*, tabindex, plus key
+  // handlers that cannot be detached from outside. A reload is the only clean
+  // way back.
+  //
+  // Said unconditionally rather than detected: U1's roles are
+  // indistinguishable from the site's own, so any detector here is either
+  // silent when it matters or crying wolf. This is always true anyway.
+  const status = document.getElementById('applyAllStatus') || document.getElementById('applyStatus');
+  const receipt = applyReceipts.get(gone.type + '::' + (gone.firstArg || gone.primary));
+  const undone = await revertApplied(receipt);
+  applyReceipts.delete(gone.type + '::' + (gone.firstArg || gone.primary));
+  if (undone) {
+    showNotice(status, `Removed — and ${undone} attribute${undone === 1 ? '' : 's'} U1 had written were taken back off the page.`, 'success', 6000);
+  } else {
+    showNotice(status,
+      'Removed from the list. Anything U1 already wrote to the page in an earlier session is still there — reload to clear it.',
+      'error', 10000);
+    offerReload(status);
+  }
+}
+
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
@@ -18198,15 +18481,8 @@ async function loadMappingsList() {
   const primaries = list.map(m => (m && typeof m === 'object') ? (m.primary || m.firstArg || '') : '').filter(Boolean);
   const present = await selectorsPresentOnPage(primaries);
   const tab = await getTab();
-  const cleanUrl = (u) => { try { const x = new URL(u); return (x.origin + x.pathname).replace(/\/+$/, ''); } catch { return (u || '').split('#')[0].split('?')[0].replace(/\/+$/, ''); } };
-  const hereUrl = cleanUrl(tab && tab.url);
-  const onPage = (m) => {
-    if (!m || typeof m !== 'object') return true;
-    const p = m.primary || m.firstArg || '';
-    if (present && p && present.has(p)) return true;      // visible right now
-    if (m.pageUrl && hereUrl && cleanUrl(m.pageUrl) === hereUrl) return true; // captured here
-    return present ? false : true;                        // couldn't check → don't hide
-  };
+  const hereUrl = cleanPageUrl(tab && tab.url);
+  const onPage = (m) => mappingOnPage(m, present, hereUrl);
   const onPageCount = list.filter(onPage).length;
   // Show how many mappings each tab holds, so it's obvious when something is hidden.
   const onPageBtn = document.getElementById('filterOnPage');
@@ -18232,10 +18508,17 @@ async function loadMappingsList() {
     const focusOpen = type === 'menu' && m && m.config
       ? (m.config.focusOpensSubmenu === true || m.config.focusOpensSubmenu === 'true')
       : null;
+    // A <button>, not a <span> — but NOT a real <button> element: this sits
+    // inside .mapping-head, which IS a <button>, and a <button> nested inside
+    // another <button> is invalid HTML. The browser "fixes" that by closing
+    // the outer button early, which would silently break the accordion
+    // toggle for everything rendered after this chip. role="button" gives it
+    // the same semantics and keyboard behaviour without the nesting problem —
+    // the same shape .mh-thumb already uses for its own click-to-view.
     const focusChip = type === 'menu'
-      ? `<span class="mh-flag ${focusOpen ? 'on' : 'off'}" title="${focusOpen
-            ? 'Focus opens submenu: ON — Tab/focus on a trigger opens its submenu, Enter/Space does what click does'
-            : 'Focus opens submenu: off — edit the mapping and tick Focus Opens Submenu to turn it on'}">⌨ focus-open ${focusOpen ? 'ON' : 'off'}</span>`
+      ? `<span class="mh-flag mh-flag-toggle ${focusOpen ? 'on' : 'off'}" data-toggle-focusopen="${idx}" role="button" tabindex="0" aria-pressed="${focusOpen ? 'true' : 'false'}" title="${focusOpen
+            ? 'Focus opens submenu: ON — Tab/focus on a trigger opens its submenu, Enter/Space does what click does. Click to turn off.'
+            : 'Focus opens submenu: off. Click to turn on — Tab/focus on a trigger will open its submenu the way hover does.'}">⌨ focus-open ${focusOpen ? 'ON' : 'off'}</span>`
       : '';
     // Collapsed accordion: header shows type + selector; body holds code + actions.
     return `
@@ -18409,6 +18692,32 @@ async function loadMappingsList() {
     });
   });
 
+  // The "focus-open" chip in a menu's header: click (or Enter/Space) flips
+  // focusOpensSubmenu on that mapping directly, without opening the row to
+  // find the checkbox in the edit form. Saves, re-applies on the page so the
+  // behaviour actually changes rather than just the label, and redraws so the
+  // chip reflects what is now really saved.
+  container.querySelectorAll('.mh-flag-toggle').forEach(chip => {
+    const toggle = async (e) => {
+      e.stopPropagation();
+      const idx = parseInt(chip.dataset.toggleFocusopen, 10);
+      const m = list[idx];
+      if (!m || typeof m !== 'object') return;
+      chip.setAttribute('aria-disabled', 'true');
+      m.config = m.config || {};
+      m.config.focusOpensSubmenu = !(m.config.focusOpensSubmenu === true || m.config.focusOpensSubmenu === 'true');
+      await U1Store.set({ [key]: list });
+      try {
+        await applyMappingsBatch([{ type: m.type, primary: m.primary, firstArg: m.firstArg, config: m.config, overwriteRole: m.overwriteRole }]);
+      } catch {}
+      loadMappingsList();
+    };
+    chip.addEventListener('click', toggle);
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+    });
+  });
+
   // The agent, on a mapping that is already saved — which is where you find out
   // it is not doing what you wanted. It re-reads the component's markup from
   // the page, measures what the mapping actually does, and answers about THIS
@@ -18447,50 +18756,10 @@ async function loadMappingsList() {
   });
 
   container.querySelectorAll('.del-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       const i = parseInt(btn.dataset.idx, 10);
-      const gone = list[i];
-      list.splice(i, 1);
-      await U1Store.set({ [key]: list });
-
-      // Deleted means deleted EVERYWHERE — including from the standing
-      // declines. The page still runs what U1 already wrote, and that
-      // leftover used to be answered by DECLINING the fix (permanently, for
-      // the whole team), so every map-apply-delete experiment grew the
-      // set-aside pile by one. Now the leftover is remembered locally as
-      // OURS — recognised and simply not offered — and the loop the old
-      // decline was written against ("deleted 83, offered 83 back") stays
-      // closed without anybody's refusal being forged.
-      if (gone && typeof gone === 'object') {
-        await rememberSelfApplied([mappingKey(gone)]);
-        await forgetDeclinedFixes([mappingKey(gone)]);
-      }
-
-      loadMappingsList();
-      refreshExportInfo();
-
-      // Deleting the mapping deletes the INSTRUCTION. It does not undo what U1
-      // already wrote into the live DOM — roles, aria-*, tabindex, plus key
-      // handlers that cannot be detached from outside. A reload is the only
-      // clean way back.
-      //
-      // Said unconditionally rather than detected: U1's roles are
-      // indistinguishable from the site's own, so any detector here is either
-      // silent when it matters or crying wolf. This is always true anyway.
-      if (!gone) return;
-      const status = document.getElementById('applyAllStatus') || document.getElementById('applyStatus');
-      const rk = mappingKey(gone);
-      const receipt = applyReceipts.get(gone.type + '::' + (gone.firstArg || gone.primary));
-      const undone = await revertApplied(receipt);
-      applyReceipts.delete(gone.type + '::' + (gone.firstArg || gone.primary));
-      if (undone) {
-        showNotice(status, `Removed — and ${undone} attribute${undone === 1 ? '' : 's'} U1 had written were taken back off the page.`, 'success', 6000);
-      } else {
-        showNotice(status,
-          'Removed from the list. Anything U1 already wrote to the page in an earlier session is still there — reload to clear it.',
-          'error', 10000);
-        offerReload(status);
-      }
+      const m = list[i];
+      if (m && typeof m === 'object') deleteSavedMapping(mappingKey(m));
     });
   });
 
@@ -18593,6 +18862,26 @@ async function loadMappingsList() {
 // ─────────────────────────────────────────────────────────────────────────────
 //  TAB 4 — EXPORT
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Export's four destinations as a grid of tiles instead of four cards
+// stacked one after another — pick one, do that thing, ← Back to the grid.
+const EXPORT_VIEWS = { package: 'exportViewPackage', finish: 'exportViewFinish', closeout: 'exportViewCloseout', backup: 'exportViewBackup' };
+function setExportView(name) {
+  const grid = document.getElementById('exportGrid');
+  const target = EXPORT_VIEWS[name] || null;
+  if (grid) grid.hidden = !!target;
+  Object.values(EXPORT_VIEWS).forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = id !== target;
+  });
+}
+document.getElementById('exportGrid')?.addEventListener('click', (e) => {
+  const tile = e.target.closest('[data-exportview]');
+  if (tile) setExportView(tile.dataset.exportview);
+});
+document.querySelectorAll('.export-view [data-exportback]').forEach((b) => {
+  b.addEventListener('click', () => setExportView(null));
+});
 
 async function refreshExportInfo() {
   const mKey   = storageKey('mappings', currentHostname);

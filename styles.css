@@ -1689,7 +1689,11 @@ button {
 /* Picker: Scan | Mappings. The same shape as the mode strip under it —
    pills in a track — one size up, because it decides which of two screens
    you are on rather than how one screen behaves. */
-.picker-subtabs {
+/* The Scan tab's own Page Content / Saved Mappings switcher is the exact same
+   pill-tab shape as the Picker's Scan/Mappings split — same selectors, so the
+   two read as one pattern instead of two similar-but-different widgets. */
+.picker-subtabs,
+.scan-choice-tabs {
   display: flex;
   gap: 4px;
   margin: 0 0 12px;
@@ -1697,7 +1701,8 @@ button {
   background: var(--u1-surface-2);
   border-radius: 999px;
 }
-.picker-subtab {
+.picker-subtab,
+.scan-choice-tab {
   flex: 1 1 0;
   display: inline-flex;
   align-items: center;
@@ -1714,9 +1719,9 @@ button {
   color: var(--u1-text-muted);
   cursor: pointer;
 }
-.picker-subtab:hover { color: var(--u1-text); }
-.picker-subtab:focus-visible { outline: 2px solid var(--u1-primary); outline-offset: 2px; }
-.picker-subtab.active { background: var(--u1-primary-fill); color: #fff; box-shadow: 0 2px 10px var(--u1-primary-glow); }
+.picker-subtab:hover, .scan-choice-tab:hover { color: var(--u1-text); }
+.picker-subtab:focus-visible, .scan-choice-tab:focus-visible { outline: 2px solid var(--u1-primary); outline-offset: 2px; }
+.picker-subtab.active, .scan-choice-tab.active { background: var(--u1-primary-fill); color: #fff; box-shadow: 0 2px 10px var(--u1-primary-glow); }
 .picker-subtab-n {
   min-width: 18px;
   padding: 0 6px;
@@ -2178,6 +2183,19 @@ button {
   color: #fff;
   border-color: var(--u1-primary, #6c4cf1);
   background: var(--u1-primary, #6c4cf1);
+}
+/* Clickable variant: a real toggle, not just a status readout. */
+.mapping-item .mapping-head .mh-flag-toggle {
+  cursor: pointer;
+}
+.mapping-item .mapping-head .mh-flag-toggle:hover,
+.mapping-item .mapping-head .mh-flag-toggle:focus-visible {
+  border-color: var(--u1-primary, #6c4cf1);
+  outline: none;
+}
+.mapping-item .mapping-head .mh-flag-toggle[aria-disabled="true"] {
+  opacity: .6;
+  pointer-events: none;
 }
 
 .mapping-item .mapping-head .mh-kids {
@@ -2928,16 +2946,93 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
    about 150px, which wrapped "Scan this page" into five stacked words and still
    let the buttons run past the edge. The panel is a column; the cards are too. */
 .scan-choice { display: flex; flex-direction: column; gap: 10px; }
-.scan-choice-card {
+/* Which page is being scanned, and which of the three engines have finished. */
+.scan-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
   border: 1px solid var(--u1-border);
   border-radius: var(--u1-radius-sm);
-  padding: 10px;
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--u1-overlay);
+}
+.scan-progress-page {
+  font-size: 11px;
+  color: var(--u1-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scan-progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.scan-progress-step {
+  font-size: 11px;
+  color: var(--u1-text-dim, #9aa4b2);
+}
+.scan-progress-step.scan-progress-done { color: var(--u1-text); }
+.scan-progress-step.scan-progress-running { color: var(--u1-primary-text); }
+.scan-progress-step.scan-progress-skipped { color: var(--u1-warn); }
+
+/* Past scans of this site, each with its heuristic score. */
+.scan-history {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scan-history-title { font-size: 11px; font-weight: 700; color: var(--u1-text-muted); }
+.scan-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-sm);
+  background: var(--u1-overlay);
+  font: inherit;
+  cursor: pointer;
+}
+.scan-history-row:hover, .scan-history-row:focus-visible { border-color: var(--u1-border-strong); outline: none; }
+.scan-history-score {
+  flex: 0 0 auto;
+  min-width: 40px;
+  text-align: center;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.scan-history-score-good { background: rgba(34, 197, 94, .18); color: #22c55e; }
+.scan-history-score-mid  { background: rgba(245, 158, 11, .18); color: #f59e0b; }
+.scan-history-score-bad  { background: rgba(239, 68, 68, .18); color: #ef4444; }
+.scan-history-text { display: flex; flex-direction: column; min-width: 0; }
+.scan-history-page {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--u1-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scan-history-sub { font-size: 10px; color: var(--u1-text-muted); }
+.scan-choice-card {
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-md);
+  padding: 16px;
+  background: var(--u1-surface-3, rgba(0, 0, 0, 0.22));
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.scan-choice-title { font-size: 12.5px; font-weight: 700; color: var(--u1-text); }
+/* Same reason as .export-grid[hidden]: this element's own `display: flex`
+   otherwise beats the `hidden` attribute's built-in display:none. */
+.scan-choice-card[hidden] { display: none; }
+.scan-choice-title { font-size: 14px; font-weight: 700; color: var(--u1-text); }
 .scan-choice-sub { font-size: 11px; color: var(--u1-text-muted); margin: 0; flex: 1; line-height: 1.5; }
 .scan-choice-card .btn-row { margin: 0; }
 
@@ -3273,29 +3368,93 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
 
 /* ── Export contents list ───────────────────────────────────────────────── */
 
-.contents-list {
+.file-list {
   list-style: none;
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-
-.contents-list li {
-  padding: 5px 0;
-  font-size: 12px;
-  color: var(--u1-text-muted);
+.file-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 4px;
 }
-
-.contents-list li::before {
-  content: '•';
-  color: var(--u1-primary-text);
-  font-weight: 700;
-  margin-right: 8px;
+.file-row + .file-row { border-top: 1px solid var(--u1-border); }
+.file-icon {
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 1.4;
 }
-
-.contents-list strong {
+.file-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.file-row-text strong {
   color: var(--u1-text);
   font-weight: 600;
+  font-size: 12px;
+  font-family: var(--u1-font-mono);
 }
+.file-row-desc {
+  color: var(--u1-text-muted);
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+/* Export's landing grid — two tiles per row, each a door to one destination. */
+.export-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 4px 0 20px;
+}
+/* The `hidden` attribute's built-in display:none loses to this rule's own
+   `display: grid` on specificity — an explicit display on the same element
+   `hidden` targets is exactly the shape that silently defeats it, so it has
+   to be restated here. Without this, opening any tile left the grid AND the
+   tile's own view both on screen at once. */
+.export-grid[hidden] { display: none; }
+.export-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 16px;
+  border: 1px solid var(--u1-border);
+  border-radius: var(--u1-radius-md);
+  background: var(--u1-surface-3, rgba(0, 0, 0, 0.22));
+  font: inherit;
+  cursor: pointer;
+  transition: border-color .12s ease, transform .12s ease;
+}
+.export-tile:hover, .export-tile:focus-visible {
+  border-color: var(--u1-primary);
+  transform: translateY(-1px);
+  outline: none;
+}
+.export-tile-icon { font-size: 20px; }
+.export-tile-title { font-size: 13px; font-weight: 700; color: var(--u1-text); }
+.export-tile-sub { font-size: 11px; color: var(--u1-text-muted); line-height: 1.4; }
+.export-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--u1-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--u1-text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.export-back-btn:hover { color: var(--u1-text); border-color: var(--u1-border-strong); }
 
 /* ── Scan tab ───────────────────────────────────────────────────────────── */
 
@@ -4934,58 +5093,129 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
    test, so the drawer's 🧪 and this list run the same thing and report it in
    the same place. */
 .elem-scan-saved {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
   margin: 8px 0 10px;
-  max-height: 168px;
+  max-height: 220px;
   overflow-y: auto;
-}
-.elem-scan-saved-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 7px;
   border: 1px solid var(--u1-border);
-  border-radius: 5px;
-  font-size: 11px;
-  min-width: 0;
+  border-radius: var(--u1-radius-sm);
 }
-/* The drawer's own row parts, reused verbatim so the two lists read as one
-   vocabulary. Only the selectors are restated — the .mapping-item ancestor in
-   the originals scopes them out of reach here. */
-.elem-scan-saved-row .mh-id {
-  flex: 0 0 auto;
-  font: 600 9px/1.7 "Consolas", monospace;
+/* A real 4-column table (ID / Type / Status / Actions) — replaces the old
+   flex-row list. Dividers instead of per-row borders keep it from turning
+   into a stack of boxes; overflow-x is deliberately absent, everything here
+   is sized to fit without a horizontal scrollbar. */
+.saved-mappings-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.saved-mappings-table .sm-id, .saved-mappings-table th:first-child { width: 78px; }
+.saved-mappings-table th:nth-child(2) { width: 66px; }
+.saved-mappings-table .sm-actions, .saved-mappings-table th:last-child { width: 74px; }
+.saved-mappings-table thead th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--u1-text-dim, #9aa4b2);
+  background: var(--u1-surface);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--u1-border-strong);
+}
+.saved-mappings-row {
+  border-top: 1px solid #27272a;
+}
+.saved-mappings-row:first-child { border-top: none; }
+.saved-mappings-row td {
+  padding: 6px 8px;
+  vertical-align: middle;
+}
+.saved-mappings-row .mh-id {
+  font: 600 10px/1.7 "Consolas", monospace;
   color: var(--u1-text-dim, #9aa4b2);
   background: var(--u1-overlay);
   border: 1px dashed var(--u1-border-strong);
   border-radius: 4px;
   padding: 0 5px;
   letter-spacing: .2px;
+  cursor: help;
 }
-.elem-scan-saved-row .mh-type {
-  flex: 0 0 auto;
-  font-size: 10px;
+.saved-mappings-row .mh-type {
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .3px;
-  color: #fff;
-  background: var(--u1-primary, #6c4cf1);
+  color: var(--u1-primary-text);
+  background: var(--u1-primary-dim);
+  border: 1px solid var(--u1-primary-glow);
   border-radius: 4px;
   padding: 1px 6px;
+  white-space: nowrap;
 }
-.elem-scan-saved-row .mh-sel {
-  flex: 1 1 0;
-  min-width: 0;
+.sm-status {
+  color: var(--u1-text-muted);
+  max-width: 0; /* with table-layout:fixed below, lets this column shrink and ellipsis instead of forcing a horizontal scrollbar */
+}
+.sm-status .mh-sel {
+  display: inline-flex;
+  align-items: center;
   font-family: var(--u1-font-mono);
   font-size: 11px;
   color: var(--u1-info);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: middle;
 }
-.elem-scan-saved-row button { flex: none; }
+.sm-status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: var(--u1-text-dim, #9aa4b2);
+}
+.sm-status-dot.on { background: #22c55e; }
+/* Distinct from the base/unchecked grey on purpose — "confirmed elsewhere"
+   and "haven't checked yet" used to be the exact same colour, so the dot
+   updating from checking → off was, correctly, an almost invisible change.
+   Paired with the "go there" link that only ever appears for this state. */
+.sm-status-dot.off { background: #ef4444; }
+.sm-status-dot.unknown { background: transparent; border: 1px dashed var(--u1-text-dim, #9aa4b2); }
+.sm-status-dot.checking { background: transparent; border: 1px dashed var(--u1-text-dim, #9aa4b2); animation: u1-pulse 1.2s ease-in-out infinite; }
+.sm-goto {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--u1-primary-text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sm-goto:hover { text-decoration: underline; }
+@keyframes u1-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+.sm-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+/* Subtle on hover: visible only when the row (or a button in it) has focus/
+   hover, per the spec — not three icons demanding attention on every row of
+   a long table. Always-visible on touch/keyboard would be unreachable, so
+   focus-within keeps them reachable without a mouse. */
+.sm-actions button {
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.saved-mappings-row:hover .sm-actions button,
+.saved-mappings-row:focus-within .sm-actions button {
+  opacity: 1;
+}
 
 /* ── Screens already made accessible ────────────────────────────────────────
    Finished work, kept and shut. Left in the pending list it came back ticked

@@ -476,7 +476,10 @@ console.log('\n  Delete all mappings:');
   // forging anyone's no), and any standing decline of the same fix is
   // LIFTED — deleted means deletable-from-everywhere, re-discoverable,
   // re-offerable.
-  const delBtn = /container\.querySelectorAll\('\.del-btn'\)[\s\S]*?\n  \}\);/.exec(panelSrc);
+  // deleteSavedMapping is the ONE place a mapping is actually deleted — the
+  // Mappings drawer's .del-btn and the Scan tab's saved-mappings table both
+  // call it, rather than each carrying its own copy of this bookkeeping.
+  const delBtn = /async function deleteSavedMapping\(mk\)[\s\S]*?\n\}/.exec(panelSrc);
   check('deleting one never forges a decline',
         !!delBtn && !/rememberDeclinedFixes\(/.test(delBtn[0]) &&
         /rememberSelfApplied\(\[mappingKey\(gone\)\]\)/.test(delBtn[0]) &&
