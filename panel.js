@@ -16127,11 +16127,17 @@ async function runElementScan(onlyKey) {
 
   // One probe for the whole list. Without this, a site with thirty mappings
   // spends minutes driving elements that are not on the page being looked at.
-  const present = new Set(await selectorsPresentOnPage(candidates.map(m => m.primary || m.firstArg || '')));
+  //
+  // present alone marks anything not VISIBLE RIGHT NOW as absent — which
+  // wrongly skipped every dialog/dropdown mapping whose widget only exists in
+  // the DOM while open, even standing on the exact page it belongs to. Same
+  // rule as everywhere else this question is asked: mappingOnPage also
+  // accepts "captured on this exact URL" (see its own comment for why).
+  const present = await selectorsPresentOnPage(candidates.map(m => m.primary || m.firstArg || ''));
+  const hereUrl = cleanPageUrl(tab && tab.url);
   const toTest = [];
   for (const m of candidates) {
-    const sel = m.primary || m.firstArg || '';
-    if (!present.has(sel)) {
+    if (!mappingOnPage(m, present, hereUrl)) {
       results.push({ ...pickMappingFields(m), status: 'absent',
         reason: 'Not on this page right now — open the page or the dialog it belongs to, then run this again.',
         staticSteps: [], keyboardSteps: [] });
