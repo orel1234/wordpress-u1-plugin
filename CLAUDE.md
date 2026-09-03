@@ -64,6 +64,23 @@ WordPress plugin, not part of this product. `sites/step-a11y` and
 `sites/step-plain` are demo sites for testing the plugin against; see
 `DEPLOYMENT.md` for their (currently manual) Railway deploy.
 
+## The extension and the backend ship as a pair for auth changes
+
+`auth.js` here and `user1st_project`'s `src/modules/studio/*` (a sibling repo,
+see its own CLAUDE.md §2) are two halves of one login protocol — the
+`/api/studio/auth/refresh` contract in particular. As of the 2026-09 security
+pass, refresh tokens ROTATE on every call: the server hands back a new
+`refreshToken` in every `/auth/refresh` response, the old one stops working
+the instant that response is sent, and presenting it again revokes every
+session the client holds (theft is assumed, not raced). `auth.js`'s
+`refresh()` persists the new token from that response — if a build of this
+extension predates that change, its `refresh()` keeps reusing the same
+(now-dead) token and gets logged out on its first refresh after the backend
+deploys. Not data-destructive (mappings stay local and re-sync on next
+login), but it reads as "the extension broke" to whoever hits it. Deploy the
+backend and roll out a rebuilt extension together, not the backend alone
+days ahead of specialists updating.
+
 ## Conventions
 
 - Every correction in `u1-patch.js` is verified by reading the real, external

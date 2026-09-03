@@ -76,6 +76,9 @@
          along with it — leaving is one click from anywhere in the tool. -->
     <div class="account-row">
       <span id="accountEmail" class="account-email"></span>
+      <!-- Light or dark: the same palette on a light ground or a dark one.
+           Remembered per browser. -->
+      <button id="themeToggleBtn" class="theme-toggle" type="button" title="Switch to dark" aria-label="Switch to dark theme">☾</button>
       <button id="signOutBtn" class="account-signout" title="Sign out">Sign out</button>
     </div>
   </div>
@@ -448,6 +451,16 @@
        tab — Selectors and Preview appear or disappear with it — so presenting it
        as one field inside Element understated what pressing it does. Only the
        Element section's contents swap; Mappings below is common to all three. -->
+  <!-- Two panes under this tab: Scan (the whole building/scanning area, in
+       any of its three modes) and Mappings (the saved-mappings drawer). One
+       on screen at a time — the drawer under a live scan was a second screen
+       of content to scroll past to reach the button that reads a section. -->
+  <div class="picker-subtabs" role="tablist" aria-label="Picker view">
+    <button type="button" class="picker-subtab active" data-pane="scan" role="tab" aria-selected="true" aria-controls="pickerPaneScan">Scan</button>
+    <button type="button" class="picker-subtab" data-pane="mappings" role="tab" aria-selected="false" aria-controls="pickerPaneMappings">Mappings <span class="picker-subtab-n" id="pickerMappingsCount"></span></button>
+  </div>
+
+  <div class="picker-pane" id="pickerPaneScan" role="tabpanel">
   <!-- Each button carries its own explanation, marked by a small (i) inside
        it. data-tip is the fast custom tooltip (the same pattern the mapping
        row icons use); title is kept alongside it as the accessible fallback. -->
@@ -464,7 +477,9 @@
 
   <!-- Element selection -->
   <div class="section">
-    <div class="section-title">Element<span class="dot">.</span></div>
+    <!-- Manual's caption: in Whole page (AI) there is no element to pick, so
+         CSS hides it there (body[data-map-mode="sweep"]). -->
+    <div class="section-title" id="elementTitle">Element<span class="dot">.</span></div>
 
     <!-- ── AI accessibility teacher ──────────────────────────────────────── -->
     <!-- One job: change the API key. The scan instruction and the event-recorder
@@ -519,6 +534,9 @@
               data-tip="Press, open a dialog or menu on the page, and it captures while it is open."
               title="Press, open a dialog or menu on the page, and it captures while it is open.">⏱ Scan in 5s</button>
       <div class="map-mode-hint" id="aiStatus" style="margin:4px 0 0;"></div>
+      <!-- The run controls end here; the step trail, results and mappings
+           follow. The same rule closes every route's controls. -->
+      <div class="u1-rule" aria-hidden="true"></div>
     </div>
 
     <!-- ── Whole page ────────────────────────────────────────────────────── -->
@@ -531,7 +549,7 @@
            is no state in which it would find anything to unlock. Kept in
            the DOM because its click handler is shared wiring. -->
       <div class="ai-run-line">
-        <button class="btn-outline" id="sweepStartBtn">🪄 Scan the whole page</button>
+        <button class="btn-primary" id="sweepStartBtn">🪄 Scan the whole page</button>
         <button class="btn-outline" id="sweepSettingsBtn" title="Change the API key" style="display:none;">🔑</button>
       </div>
       <!-- Reading a page finds nothing on one that carries no roles, no
@@ -580,6 +598,7 @@
       <div id="sweepLabel" style="display:none;"></div>
       <div class="sweep-log" id="sweepLog" style="display:none;"></div>
             <div class="map-mode-hint" id="sweepStatus" style="margin:4px 0 0;"></div>
+      <div class="u1-rule" aria-hidden="true"></div>
     </div>
 
     <!-- What the sweep found, grouped by the screenful it was on. This is the
@@ -609,8 +628,16 @@
            tick, and scrolling back down to see what that did. The number now
            sits where it can be watched while the ticks move.
            Empty in the second phase, where the button itself carries the number. -->
-      <div id="sweepEstimate"></div>
-      <div class="ai-summary" id="sweepPicksSummary"></div>
+      <!-- Two controls side by side, in one shape: Cost (opens the breakdown)
+           and Settings (folds open underneath, full width). -->
+      <div class="sweep-controls">
+        <div id="sweepEstimate"></div>
+        <div class="ai-summary" id="sweepPicksSummary"></div>
+      </div>
+      <!-- The stage you are on, as a heading over the list — under the two
+           controls, not over them. Written by renderStageTrail in this route;
+           the shared #stageTrail above stays empty here. -->
+      <div class="stage-now-host" id="sweepStageNow" aria-live="polite"></div>
       <div id="sweepPicksList"></div>
       <!-- Clear used to live here too. It now sits on the Completed row
            itself (data-sweep-clear, wired in panel.js) — the one place on a
@@ -751,6 +778,9 @@
     </div>
 
     <div class="advisor-box" id="advisorBox" style="display:none;"></div>
+    <!-- The same purple rule the AI routes draw above their step trail: the
+         element controls end here, what follows is the work on it. -->
+    <div class="u1-rule" aria-hidden="true"></div>
     </div><!-- /#manualOnly -->
   </div>
 
@@ -782,7 +812,10 @@
     <div class="notice" id="applyStatus"></div>
   </div>
 
+  </div><!-- /#pickerPaneScan -->
+
   <!-- Saved mappings -->
+  <div class="picker-pane" id="pickerPaneMappings" role="tabpanel" hidden>
   <div class="section">
     <div class="section-title">
       Mappings<span class="dot">.</span>
@@ -815,6 +848,7 @@
     <div class="notice" id="applyAllStatus"></div>
     <div id="testResults" class="test-results" style="display:none;"></div>
   </div>
+  </div><!-- /#pickerPaneMappings -->
 </div>
 
 <!-- ═══ TAB: SCAN ═════════════════════════════════════════════════════ -->

@@ -244,6 +244,17 @@
   }
 
   // --- Selector & Dom ---
+  // getDomPathOptions below reads real `id` attributes off the live page the
+  // admin is inspecting — including elements from third-party embeds, UGC
+  // widgets or a compromised plugin, none of which the wizard controls. Its
+  // caller (showInspectorUI) puts that value straight into innerHTML with no
+  // escaping, so an id like `x"><img src=x onerror=alert(1)>` runs in the
+  // wp-admin page of whoever is using the picker.
+  function wizEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
   function getDomPathOptions(el) {
     const options = []; let cur = el; let depth = 0;
     while (cur && cur.nodeType === 1 && cur !== document.body && depth < 4) {
@@ -316,7 +327,7 @@
       options.forEach((opt, idx) => {
           const row = document.createElement('div');
           row.className = 'u1w-inspector-item' + (idx===0?' active':'');
-          row.innerHTML = `<div><span class="u1w-tag">${opt.tag}</span> <span class="u1w-id">${opt.id?'#'+opt.id:''}</span></div><div style="font-size:11px; font-weight:bold; color:#10b981;">SELECT</div>`;
+          row.innerHTML = `<div><span class="u1w-tag">${wizEsc(opt.tag)}</span> <span class="u1w-id">${opt.id ? '#' + wizEsc(opt.id) : ''}</span></div><div style="font-size:11px; font-weight:bold; color:#10b981;">SELECT</div>`;
           row.onmouseenter = () => {
              const r = opt.el.getBoundingClientRect(); const hl = document.getElementById('u1w-highlight');
              hl.style.left=(r.left+window.scrollX)+'px'; hl.style.top=(r.top+window.scrollY)+'px'; hl.style.width=r.width+'px'; hl.style.height=r.height+'px';

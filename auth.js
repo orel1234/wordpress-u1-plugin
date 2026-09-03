@@ -145,7 +145,19 @@ const U1Auth = (() => {
         }
         const body = await res.json();
         accessToken = body.accessToken;
-        await writeAuth({ ...auth, client: body.client || auth.client });
+        // The server now ROTATES the refresh token on every call — the old
+        // value stops working the instant this response is sent, and using it
+        // again is treated as theft (every session for the account gets
+        // revoked; see studio.controller.ts refresh()). The new value MUST be
+        // the one persisted, or the very next refresh — 5-30 minutes later,
+        // whenever the idle window says to touch() again — would present the
+        // now-dead old token and sign this machine, and every other one
+        // sharing the account, out.
+        await writeAuth({
+          ...auth,
+          refreshToken: body.refreshToken || auth.refreshToken,
+          client: body.client || auth.client,
+        });
         return true;
       } catch {
         return false; // offline — keep the stored refresh token for later
@@ -192,6 +204,20 @@ const U1Auth = (() => {
   }
 
   async function logout() {
+    // Best-effort: revoke the refresh token server-side so it can't be reused
+    // (e.g. from a machine that still has it in an old backup) after this
+    // "signs out". Never let a failure here block the local logout, which
+    // must always succeed — rule 3 at the top of this file.
+    try {
+      const auth = await readAuth();
+      if (auth?.refreshToken) {
+        await fetch(api('/auth/logout'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: auth.refreshToken }),
+        });
+      }
+    } catch {}
     await clearAuth();
   }
 

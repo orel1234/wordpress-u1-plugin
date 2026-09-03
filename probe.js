@@ -208,6 +208,41 @@
       if (beaconWas) root.navigator.sendBeacon = function () { return false; };
     } catch (e) {}
 
+    // ── The MAIN-world bridge ──────────────────────────────────────────────
+    //
+    // Everything above patches `root.fetch`, `root.open`, `loc.assign` and so
+    // on — and `root` here is THIS SCRIPT'S OWN global. In the extension,
+    // probe.js runs in the isolated world; the page's own click handlers run
+    // in the MAIN world, with their OWN fetch, their OWN window.open, their
+    // OWN copy of every global patched above. Cancelling a click's default
+    // action stops a plain <a href>, because that goes through the DOM, which
+    // both worlds share — but a handler that calls `fetch(...)` or
+    // `location.assign(...)` directly, in script, runs untouched by any of
+    // the patching above. That is most buttons on a modern site.
+    //
+    // panel.js's ensureProbeNet() injects probe-net.js into the MAIN world
+    // alongside this file, every place probe.js itself gets injected. It
+    // patches the real page's fetch, XHR, sendBeacon and window.open the same
+    // way, gated on a DOM attribute (the DOM — unlike any JS global —
+    // genuinely is shared between worlds) rather than a JS flag it could
+    // never see set from here. NOT location.assign/replace — measured
+    // directly against real Chromium, reassigning those never actually takes
+    // effect on Location, in either world; probe-net.js explains why and
+    // does not pretend otherwise. This bridges the two: setting the attribute
+    // arms the MAIN-world patch, and a CustomEvent on `document` (also
+    // cross-world) is how a block gets back into THIS `blocked` array. If
+    // probe-net.js was never injected (an older panel.js, or the injection
+    // failed), this is a silent no-op — no worse than before.
+    var NET_ATTR = 'data-u1-net-block';
+    var onMainBlock = function (e) {
+      var d = e && e.detail;
+      if (d) blocked.push(d.where + ' ' + String(d.url || ''));
+    };
+    try {
+      doc.documentElement.setAttribute(NET_ATTR, '1');
+      doc.addEventListener('u1-net-blocked', onMainBlock);
+    } catch (e) {}
+
     net = {
       // What was stopped, so a survey can say "this page tried to navigate
       // seven times" rather than leaving it invisible.
@@ -216,6 +251,10 @@
         doc.removeEventListener('click', onClick, true);
         doc.removeEventListener('submit', onSubmit, true);
         root.removeEventListener('beforeunload', onLeave, true);
+        try {
+          doc.documentElement.removeAttribute(NET_ATTR);
+          doc.removeEventListener('u1-net-blocked', onMainBlock);
+        } catch (e) {}
         try { root.open = openWas; } catch (e) {}
         try { if (assignWas) loc.assign = assignWas; } catch (e) {}
         try { if (replaceWas) loc.replace = replaceWas; } catch (e) {}

@@ -33,6 +33,9 @@
   --u1-bg-gradient:    oklch(0.14 0.01 260);
   --u1-surface:        oklch(0.17 0.01 260);
   --u1-surface-2:      oklch(0.20 0.01 260);
+  /* Third level — a card resting on a panel. A real step up from surface-2,
+     so page → panel → card reads as depth without a border on every card. */
+  --u1-surface-3:      oklch(0.235 0.012 260);
   --u1-surface-input:  oklch(0.18 0.01 260);
   --u1-surface-code:   oklch(0.10 0.01 260);
   --u1-border:         oklch(0.24 0.01 260);
@@ -50,13 +53,21 @@
   --u1-primary-text:   oklch(0.78 0.14 293);   /* on a dark ground, for links */
   --u1-primary-dim:    oklch(0.60 0.19 293 / 0.16);
   --u1-primary-glow:   oklch(0.60 0.19 293 / 0.30);
-  --u1-primary-fill:   linear-gradient(135deg, oklch(0.60 0.19 293), oklch(0.56 0.19 293));
+  /* A second purple, warmer and a step lighter, so the brand ramp has two
+     hues to move between instead of one hue at two lightnesses. */
+  --u1-primary-2:      oklch(0.66 0.20 322);
+  --u1-primary-fill:   linear-gradient(135deg, var(--u1-primary), var(--u1-primary-2));
 
   /* Warning amber. Kept as a SEMANTIC colour and used nowhere decorative — see
      the note at the top of this file. */
   --u1-warm-1:         oklch(0.78 0.13 70);
   --u1-warm-2:         oklch(0.72 0.12 70);
   --u1-warm-3:         oklch(0.66 0.16 25);
+
+  /* A faint wash over a surface — hover states, the id chip's ground. White at
+     low alpha on the dark theme; the light theme flips it to black. */
+  --u1-overlay:        var(--u1-overlay);
+  color-scheme: dark;
 
   /* Brand marks. Purple, where these used to be the warm ramp. */
   --u1-dot:            oklch(0.72 0.16 293);
@@ -93,6 +104,90 @@ html, body {
   width: 100%;
   min-height: 100vh;
 }
+
+/* ── Light theme ──────────────────────────────────────────────────────────────
+   The same purples on a light ground. Only tokens change here: surfaces step
+   the other way (a card is LIGHTER than the panel it rests on), text goes
+   dark, the link purple deepens so it holds 4.5:1 on white, the amber and
+   green chips darken for the same reason. Everything drawn from tokens
+   follows on its own. */
+body[data-theme="light"] {
+  color-scheme: light;
+  /* A step darker than white throughout — the first cut read as glare. The
+     page is a soft lavender-grey, the panel a shade up, the card the only
+     near-white, so the three levels still step the right way. */
+  --u1-bg-base:        oklch(0.915 0.014 285);
+  --u1-bg-gradient:    oklch(0.915 0.014 285);
+  --u1-surface:        oklch(0.950 0.010 285);
+  --u1-surface-2:      oklch(0.880 0.016 285);
+  --u1-surface-3:      oklch(0.982 0.005 285);
+  --u1-surface-input:  oklch(0.985 0.004 285);
+  --u1-surface-code:   oklch(0.895 0.014 285);
+  --u1-border:         oklch(0.82 0.014 285);
+  --u1-border-strong:  oklch(0.72 0.018 285);
+  --u1-border-dashed:  oklch(0.78 0.016 285);
+  --u1-text:           oklch(0.20 0.02 285);
+  /* Secondary text a step darker again: on a light ground the muted greys
+     that read fine on black sit right at the contrast floor. */
+  --u1-text-muted:     oklch(0.38 0.02 285);
+  --u1-text-dim:       oklch(0.46 0.02 285);
+  /* The semantic colours were tuned for a dark ground — the cyan of code and
+     URLs, the amber, the red. Same hues, deepened to hold on white. */
+  --u1-info:           oklch(0.42 0.13 230);
+  --u1-warn:           oklch(0.52 0.13 70);
+  --u1-danger:         oklch(0.50 0.19 25);
+  --u1-primary:        oklch(0.56 0.20 293);
+  --u1-primary-hover:  oklch(0.50 0.20 293);
+  --u1-primary-text:   oklch(0.44 0.19 293);
+  --u1-primary-dim:    oklch(0.56 0.20 293 / 0.12);
+  --u1-primary-glow:   oklch(0.56 0.20 293 / 0.22);
+  --u1-primary-2:      oklch(0.58 0.21 322);
+  --u1-warm-1:         oklch(0.60 0.14 70);
+  --u1-warm-2:         oklch(0.55 0.13 70);
+  --u1-warm-3:         oklch(0.55 0.17 25);
+  --u1-dot:            oklch(0.56 0.20 293);
+  --u1-overlay:        rgba(0, 0, 0, 0.045);
+}
+/* The few colours written as literals for a dark ground, restated for a
+   light one. */
+body[data-theme="light"] .sw-chip-uncertain,
+body[data-theme="light"] .sweep-fail-flag,
+body[data-theme="light"] .sw-warn { color: oklch(0.48 0.13 70); }
+body[data-theme="light"] .sw-chip-ok { color: oklch(0.48 0.13 155); }
+body[data-theme="light"] .ai-sev[data-need="1"] { color: oklch(0.50 0.14 70); }
+body[data-theme="light"] .sweep-screen.is-reading { background: var(--u1-primary-dim); }
+body[data-theme="light"] .crumb.is-at { background: var(--u1-primary-dim); }
+body[data-theme="light"] .btn-primary,
+body[data-theme="light"] .picker-subtab.active,
+body[data-theme="light"] .map-mode-btn.active,
+body[data-theme="light"] .stage-now-n { color: #fff; }
+/* Code sits on the code surface, not on a black wash — the wash over a light
+   ground made a mid-grey slab with pale text on it. */
+body[data-theme="light"] .code-preview { background: var(--u1-surface-code); border-color: var(--u1-border); }
+/* Text colours written as pale literals for the dark ground. */
+body[data-theme="light"] .test-code-tag .test-code-label { color: oklch(0.42 0.04 285); }
+body[data-theme="light"] .test-code-html { color: oklch(0.30 0.05 285); }
+body[data-theme="light"] .map-mode-btn:hover:not(.active):not(.is-locked) { color: var(--u1-primary-text); }
+body[data-theme="light"] .gate-error { color: oklch(0.48 0.18 25); }
+body[data-theme="light"] .gate-ok { color: oklch(0.45 0.14 155); }
+body[data-theme="light"] .readonly-banner { color: oklch(0.45 0.13 80); }
+body[data-theme="light"] .offline-banner { color: var(--u1-primary-text); }
+
+/* The theme toggle, beside Sign out. */
+.theme-toggle {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--u1-border-strong);
+  border-radius: 50%;
+  background: var(--u1-surface-2);
+  color: var(--u1-text-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--u1-primary-text); border-color: var(--u1-primary); }
 
 body {
   min-width: 380px;
@@ -183,7 +278,7 @@ body {
 
 .tabs {
   display: flex;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--u1-overlay);
   border-bottom: 1px solid var(--u1-border);
 }
 
@@ -205,7 +300,7 @@ body {
 
 .tab-btn:hover {
   color: var(--u1-text);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--u1-overlay);
 }
 
 .tab-btn.active {
@@ -265,6 +360,7 @@ body {
   margin-top: 0;
   padding-top: 24px;
   border-top: 1px solid var(--u1-border);
+  border-image: var(--u1-rule-image) 1;
 }
 
 .section-title {
@@ -640,6 +736,7 @@ button {
   margin-bottom: 12px;
   padding-bottom: 12px;
   border-bottom: 1px dashed var(--u1-border);
+  border-image: var(--u1-rule-image) 1;
 }
 
 .skiplink-row:last-of-type {
@@ -1054,7 +1151,7 @@ button {
 }
 
 .map-mode-btn.active {
-  background: var(--u1-primary-hover);   /* the darker end of the ramp */
+  background: var(--u1-primary-hover);   /* the darker end of the ramp — verify.mjs pins this */
   color: #fff;
   font-weight: 700;
 }
@@ -1444,6 +1541,7 @@ button {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--u1-border, rgba(127, 127, 127, 0.2));
+  border-image: var(--u1-rule-image) 1;
   font-size: 11px;
   cursor: pointer;
 }
@@ -1560,27 +1658,173 @@ button {
    #stageTrail says it instead, written per route by setStage. */
 
 /* ── Where you are, and the way back ─────────────────────────────────────── */
+/* A rule above it parts the trail from the run controls (the Scan button and
+   its options) that sit directly over it — asked for: the two read as one
+   block without it. The trail then takes the full width, each step an equal
+   cell, so three steps read as a bar you are moving along rather than a
+   short caption tucked to the left. */
+/* The rule itself: the interface's purple, fading out at both ends so it
+   reads as a break in the flow rather than a box edge. One definition,
+   placed once at the end of every route's run controls — Manual, Automatic
+   and Whole page alike — so it is there before a scan has run, not only
+   once the step trail appears. */
+:root {
+  /* THE rule. Every separator line in the panel draws this — as a standalone
+     .u1-rule, or as a border-image on a block's top/bottom edge — so the
+     hairlines all read as one system. */
+  --u1-rule-image: linear-gradient(to right,
+    transparent 0%,
+    var(--u1-primary) 18%,
+    var(--u1-primary-2) 82%,
+    transparent 100%);
+}
+.u1-rule {
+  display: block;
+  width: 100%;
+  height: 1px;
+  margin: 14px 0 12px;
+  background: var(--u1-rule-image);
+}
+
+/* Picker: Scan | Mappings. The same shape as the mode strip under it —
+   pills in a track — one size up, because it decides which of two screens
+   you are on rather than how one screen behaves. */
+.picker-subtabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 4px;
+  background: var(--u1-surface-2);
+  border-radius: 999px;
+}
+.picker-subtab {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--u1-text-muted);
+  cursor: pointer;
+}
+.picker-subtab:hover { color: var(--u1-text); }
+.picker-subtab:focus-visible { outline: 2px solid var(--u1-primary); outline-offset: 2px; }
+.picker-subtab.active { background: var(--u1-primary-fill); color: #fff; box-shadow: 0 2px 10px var(--u1-primary-glow); }
+.picker-subtab-n {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 18px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.picker-subtab-n:empty { display: none; }
+.picker-pane[hidden] { display: none; }
+
+/* The stage you are on, as a heading — one, not three. */
+.stage-now-host[style*="none"] { display: none; }
+.stage-now {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 4px 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--u1-text);
+}
+.stage-now-n {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--u1-primary-fill);
+  color: #fff;
+  font-size: 11px;
+}
+.stage-now-of {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  color: var(--u1-text-muted);
+}
+.stage-now-back {
+  margin-inline-start: auto;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--u1-surface-2);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: .04em;
+  color: var(--u1-primary-text);
+  cursor: pointer;
+}
+.stage-now-back:hover { background: var(--u1-surface-3); color: var(--u1-text); }
+
+/* Rescan: once a survey exists, the scan button is a small pill on the right
+   — outlined in the brand ramp, quiet, clearly a repeat rather than the
+   route's main action. */
+#sweepStartBtn.btn-ghost {
+  padding: 5px 12px 5px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--u1-surface-3), var(--u1-surface-3)) padding-box,
+    var(--u1-primary-fill) border-box;
+  color: var(--u1-primary-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-decoration: none;
+  text-transform: none;
+}
+#sweepStartBtn.btn-ghost:hover { color: #fff; background: var(--u1-primary-fill); }
+#sweepOnly:has(#sweepStartBtn.btn-ghost) .ai-run-line { justify-content: flex-end; }
+
+/* Larger than a caption, because it is the answer to "where am I" on a
+   screen that changes completely between steps. The step you are on sits in
+   a filled pill — a shape, not only a colour, so it reads without comparing
+   the three against each other. */
 .stage-trail {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 0 0 10px;
-  font-size: 10px;
+  justify-content: space-between;
+  gap: 4px;
+  width: 100%;
+  margin: 0 0 12px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 .crumb {
   display: inline-flex;
+  flex: 1 1 0;
+  justify-content: center;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   background: none;
   border: 0;
-  padding: 0;
+  padding: 6px 8px;
+  border-radius: 999px;
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
-  color: var(--u1-text-dim);
+  color: var(--u1-text-muted);
+}
+.crumb.is-at {
+  background: linear-gradient(135deg, oklch(0.60 0.19 293 / 0.22), oklch(0.66 0.20 322 / 0.22));
+  box-shadow: inset 0 0 0 1px var(--u1-primary-2);
 }
 /* The step number, in a ring. Which of three stages you are standing on was
    carried entirely by a colour change on one word — reported as not knowing
@@ -1589,9 +1833,9 @@ button {
 .crumb-n {
   display: inline-grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
-  font-size: 9px;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
   border: 1px solid currentColor;
@@ -1613,9 +1857,11 @@ button {
    back. An empty one is not a control, and must not look like one. */
 .crumb.is-open { color: var(--u1-text-muted); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .crumb.is-open:hover,
-.crumb.is-open:focus-visible { color: var(--u1-text); }
-.crumb.is-empty { color: var(--u1-text-dim); opacity: 0.55; }
-.crumb-sep { color: var(--u1-border-strong); }
+.crumb.is-open:focus-visible { color: var(--u1-text); background: var(--u1-surface-2); }
+/* Dim, but still readable: the old 0.55 opacity on an already-dim token fell
+   under 4.5:1. */
+.crumb.is-empty { color: var(--u1-text-muted); opacity: 0.8; }
+.crumb-sep { color: var(--u1-border-strong); font-size: 12px; }
 
 /* ── Carousel: one mapping at a time ─────────────────────────────────────── */
 .ai-carousel-head {
@@ -1860,7 +2106,7 @@ button {
   cursor: pointer;
   text-align: left;
 }
-.mapping-item .mapping-head:hover { background: rgba(255, 255, 255, 0.03); }
+.mapping-item .mapping-head:hover { background: var(--u1-overlay); }
 .mapping-item .mapping-head .mh-caret { flex: 0 0 auto; font-size: 10px; color: var(--u1-text-muted); }
 .mapping-item .mapping-head .mh-fixno {
   flex: 0 0 auto;
@@ -1875,7 +2121,7 @@ button {
   flex: 0 0 auto;
   font: 600 9px/1.7 "Consolas", monospace;
   color: var(--u1-text-dim, #9aa4b2);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--u1-overlay);
   border: 1px dashed var(--u1-border-strong);
   border-radius: 4px;
   padding: 0 5px;
@@ -1913,6 +2159,27 @@ button {
   flex-direction: column;
   gap: 4px;
 }
+/* A menu's focus-opens-submenu switch, stated in the header: lit when on,
+   dim when off — so the list says which menus Tab opens without unfolding
+   the code. */
+.mapping-item .mapping-head .mh-flag {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--u1-border-strong);
+  color: var(--u1-text-dim, #9aa4b2);
+  background: var(--u1-overlay);
+}
+.mapping-item .mapping-head .mh-flag.on {
+  color: #fff;
+  border-color: var(--u1-primary, #6c4cf1);
+  background: var(--u1-primary, #6c4cf1);
+}
+
 .mapping-item .mapping-head .mh-kids {
   flex: 0 0 auto;
   font-size: 10px;
@@ -1945,6 +2212,7 @@ button {
   gap: 8px;
   padding: 8px 10px 10px;
   border-top: 1px solid var(--u1-border);
+  border-image: var(--u1-rule-image) 1;
 }
 .mapping-item .mapping-body pre { min-width: 0; overflow-x: auto; } /* code column shrinks, scrolls if long */
 .mapping-item .mapping-body .mapping-actions {
@@ -2120,7 +2388,7 @@ button {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; margin-inline-start: 7px; padding: 0;
   border: 1px solid var(--u1-border); border-radius: 50%;
-  background: var(--u1-surface-2, rgba(255, 255, 255, 0.06));
+  background: var(--u1-surface-2, var(--u1-overlay));
   color: var(--u1-text-muted);
   font-family: Georgia, "Times New Roman", serif;
   font-size: 12px; font-weight: 700; font-style: normal; line-height: 1;
@@ -2386,16 +2654,183 @@ button {
 /* One screenful in the survey list. The picture is the point here — it is the
    only form in which fifteen screenfuls can be judged at a glance — so it gets
    more room than the thumbnail on a component row. */
-.sweep-screen { align-items: center; }
+/* ── Whole page (AI): surfaces ────────────────────────────────────────────────
+   Three levels with real lightness steps — page (--u1-bg-base) → panel
+   (--u1-surface) → card (--u1-surface-3) — so the cards sit ON the panel
+   instead of being fenced off from it with hairlines. Roughly half the
+   borders this route had are gone for that reason: thumbnails, tags, the
+   cost box and the settings box now separate by surface and spacing. */
+#sweepPicks.ai-results {
+  background: var(--u1-surface);
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+}
+.sweep-screen {
+  align-items: center;
+  background: var(--u1-surface-3);
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin-bottom: 8px;
+}
 .sweep-screen .mh-thumb { flex: 0 0 auto; position: relative; display: inline-flex; cursor: zoom-in; }
 .sweep-screen .mh-img {
   width: 60px;
   height: 40px;
   object-fit: cover;
   object-position: top;
-  border: 1px solid var(--u1-border-strong);
-  border-radius: 4px;
+  border: 0;
+  border-radius: 5px;
 }
+/* The "Element." caption belongs to Manual. Whole page has no element to
+   pick, and the caption over its scan button read as a field it was missing. */
+body[data-map-mode="sweep"] #elementTitle { display: none; }
+/* Grey-on-dark, kept above 4.5:1 inside this route: the dim token is lifted
+   to the muted one wherever the route uses it for words rather than rules. */
+#sweepPicks, #sweepOnly, .stage-trail { --u1-text-dim: var(--u1-text-muted); }
+
+/* Metadata as chips. Each fact scans on its own; a sentence made you read
+   past the ones you did not want to reach the one you did. */
+.sw-chips { display: flex; flex-wrap: wrap; gap: 4px 5px; margin-top: 2px; }
+.sw-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--u1-text-muted);
+  background: var(--u1-surface-2);
+  white-space: nowrap;
+}
+.sw-chip-link { color: var(--u1-primary-text); }
+.sw-chip-ok { color: oklch(0.78 0.13 155); }
+/* A guess is stated as one — not a trailing "?" the eye slides past. */
+.sw-chip-uncertain { color: oklch(0.82 0.12 75); background: oklch(0.82 0.12 75 / 0.14); }
+.sw-chip-cost { color: var(--u1-text); font-variant-numeric: tabular-nums; }
+/* The one thing on a card the client has to act on: its own row, amber, not
+   the fifth clause of a sentence about link counts. */
+.sw-warn {
+  flex-basis: 100%;
+  order: 4;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: oklch(0.85 0.13 75);
+  background: oklch(0.82 0.12 75 / 0.12);
+}
+.sw-warn-sub { display: block; margin-top: 1px; font-weight: 400; color: var(--u1-text-muted); }
+.sweep-screen .sweep-retry { flex: 0 0 auto; margin-left: 4px; }
+
+/* The card folds: number and findings closed, everything else under the caret. */
+.sweep-screen .sweep-more { flex-basis: 100%; order: 5; }
+.sweep-screen .sweep-more[hidden] { display: none; }
+.sweep-more-btn {
+  flex: 0 0 auto;
+  order: 0;
+  margin-inline-start: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--u1-primary);
+  border-radius: 50%;
+  background: var(--u1-primary-dim);
+  color: var(--u1-primary-text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform .15s, background .12s;
+}
+.sweep-more-btn:hover, .sweep-more-btn:focus-visible { background: var(--u1-primary-fill); color: #fff; border-color: transparent; }
+.sweep-screen.is-open .sweep-more-btn { transform: rotate(180deg); }
+/* The components line keeps the room the caret does not take. */
+.sweep-screen .sweep-components { flex-basis: auto; flex: 1 1 100%; }
+
+/* Two controls, one shape, side by side: Cost (a button — opens the
+   breakdown) and Settings (a fold — opens underneath, full width). The
+   wrapper is a grid; the settings <details> is display:contents so its row
+   takes the second cell and its body the whole width below. */
+.sweep-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 2px 0 10px;
+}
+#sweepEstimate:empty { display: none; }
+/* Both are <details> drawn as display:contents, so the grid sees four items:
+   two heads and two bodies. The heads are pinned to row 1, side by side and
+   the same size; the bodies take the rows below, full width. */
+#sweepEstimate, #sweepPicksSummary, .sweep-settings { display: contents; }
+#sweepEstimate .sweep-settings-row { grid-area: 1 / 1 / 2 / 2; }
+#sweepPicksSummary .sweep-settings-row { grid-area: 1 / 2 / 2 / 3; }
+/* A run in progress puts its live box here — that is a full-width thing. */
+#sweepEstimate > .sweep-est { grid-column: 1 / -1; }
+#sweepEstimate:empty + #sweepPicksSummary .sweep-settings-row,
+#sweepEstimate:has(> .sweep-est) + #sweepPicksSummary .sweep-settings-row { grid-area: auto / 1 / auto / -1; }
+#sweepEstimate:has(> .sweep-est) + #sweepPicksSummary .sweep-settings-body { grid-column: 1 / -1; }
+.sweep-settings-body { grid-column: 1 / -1; }
+/* Chrome wraps a <details>' content in a ::details-content box of its own;
+   THAT is the grid item, so it is the one that has to span — or the drawer
+   opens into the head's half-column. */
+details.sweep-settings::details-content { grid-column: 1 / -1; }
+.sweep-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  align-items: center;
+  align-self: stretch;
+  gap: 3px 6px;
+  min-height: 56px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--u1-surface-3);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: var(--u1-text);
+  cursor: pointer;
+  list-style: none;
+}
+.sweep-settings-row:hover { background: var(--u1-surface-2); }
+.sweep-settings-row:focus-visible { outline: 2px solid var(--u1-primary); outline-offset: 2px; }
+.sweep-settings-row strong { font-variant-numeric: tabular-nums; }
+.sweep-ctl-sub { color: var(--u1-text-muted); }
+.sweep-ctl-sub::before { content: "· "; }
+.sweep-settings-row::-webkit-details-marker { display: none; }
+/* Each head's label sits on its own line at the bottom right, the same in
+   both, so the two boxes read as a pair. */
+.sweep-settings-row .sweep-settings-edit { flex-basis: 100%; text-align: right; }
+.sweep-settings-edit { color: var(--u1-primary-2); }
+/* The route's ticks and radios in the interface's purple, not the browser's
+   default blue-on-white. */
+#sweepPicks input[type="checkbox"],
+#sweepPicks input[type="radio"] {
+  accent-color: var(--u1-primary);
+  width: 15px;
+  height: 15px;
+}
+.sweep-settings-k { color: var(--u1-text-muted); }
+.sweep-settings-edit {
+  margin-inline-start: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--u1-primary-text);
+}
+.sweep-settings[open] .sweep-settings-edit::after { content: " ▴"; }
+.sweep-settings:not([open]) .sweep-settings-edit::after { content: " ▾"; }
+.sweep-settings-body { padding: 8px 10px 2px; }
+.sweep-all-sub { color: var(--u1-text-muted); }
+/* Radios: a bold title, a quiet second line — no italics. */
+.sweep-radio { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; align-items: start; }
+.sweep-radio input { margin-top: 3px; }
+.sweep-radio-title { display: block; font-weight: 700; color: var(--u1-text); }
+.sweep-radio-sub { display: block; font-size: 10.5px; color: var(--u1-text-muted); }
+
 /* No hover preview here. Hovering a screenful scrolls the REAL page to it and
    outlines the components on the page itself — a 340px picture answers "roughly
    where am I", the live page answers "is THAT the nav I mean". The thumbnail
@@ -2462,8 +2897,9 @@ button {
    ceiling that only applies if everything found is then ticked too. */
 .sweep-est {
   margin: 8px 0 2px;
-  border: 1px solid var(--u1-border);
-  border-radius: 6px;
+  border: 0;
+  background: var(--u1-surface-2);
+  border-radius: 8px;
   padding: 8px 10px;
   font-size: 11.5px;
 }
@@ -2523,6 +2959,7 @@ button {
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--u1-border);
+  border-image: var(--u1-rule-image) 1;
   font-size: 12px;
 }
 .test-results .test-live-tag, .elem-scan .test-live-tag {
@@ -2551,6 +2988,7 @@ button {
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--u1-border);
+  border-image: var(--u1-rule-image) 1;
 }
 .test-results .test-summary .verdict, .elem-scan .test-summary .verdict { font-weight: 700; font-size: 13px; }
 .test-results .test-summary.pass .verdict, .elem-scan .test-summary.pass .verdict { color: var(--u1-success); }
@@ -2595,7 +3033,7 @@ button {
   align-items: start;
   border-radius: var(--u1-radius-sm);
   border-left: 3px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--u1-overlay);
 }
 .test-results .test-step.pass, .elem-scan .test-step.pass { border-left-color: var(--u1-success); }
 .test-results .test-step.fail, .elem-scan .test-step.fail { border-left-color: var(--u1-danger); background: rgba(239, 68, 68, 0.08); }
@@ -3145,7 +3583,7 @@ button {
   flex-shrink: 0;
   text-decoration: none;
   color: var(--u1-text);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--u1-overlay);
   border: 1px solid var(--u1-border-strong);
   border-radius: 999px;
   padding: 4px 12px;
@@ -3184,6 +3622,7 @@ button {
 .offline-banner {
   background: rgba(139, 92, 246, 0.12);
   border-bottom: 1px solid rgba(139, 92, 246, 0.3);
+  border-image: var(--u1-rule-image) 1;
   color: #C4B5FD;
 }
 
@@ -3392,7 +3831,7 @@ button.u1-readonly-off {
   padding: 6px 18px;
   border-radius: 8px;
   border: 1px solid var(--u1-border-strong);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--u1-overlay);
   color: var(--u1-text-muted);
   font-size: 12px;
   cursor: pointer;
@@ -3581,10 +4020,10 @@ button.u1-readonly-off {
   line-height: 1;
   cursor: pointer;
   color: var(--u1-text-muted);
-  background: transparent;
-  border: 1px solid var(--u1-border);
+  background: var(--u1-surface-2);
+  border: 0;
   border-radius: 50%;
-  opacity: 0.55;
+  opacity: 0.7;
   transition: opacity .12s, color .12s, border-color .12s;
 }
 .sweep-screen:hover .sweep-play,
@@ -3599,16 +4038,16 @@ button.u1-readonly-off {
 
 /* Already paid for. Not hidden — re-reading one is a real thing to want — but
    it must not look like part of what the next press will charge for. */
-.sweep-screen.is-done { opacity: 0.72; }
+.sweep-screen.is-done { opacity: 0.85; }
 .sweep-read-flag {
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--u1-text-dim);
-  border: 1px solid var(--u1-border);
-  border-radius: 4px;
-  padding: 1px 5px;
+  color: var(--u1-text-muted);
+  background: var(--u1-surface-2);
+  border-radius: 999px;
+  padding: 1px 7px;
   margin-left: 6px;
 }
 
@@ -3618,13 +4057,13 @@ button.u1-readonly-off {
 .sweep-screen.is-failed { outline: 1px solid var(--u1-warn, oklch(0.75 0.12 70)); outline-offset: -1px; }
 .sweep-fail-flag {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--u1-warn, oklch(0.75 0.12 70));
-  border: 1px solid var(--u1-warn, oklch(0.75 0.12 70));
-  border-radius: 4px;
-  padding: 1px 5px;
+  color: oklch(0.85 0.13 75);
+  background: oklch(0.82 0.12 75 / 0.16);
+  border-radius: 999px;
+  padding: 1px 7px;
   margin-left: 6px;
 }
 
@@ -3729,6 +4168,7 @@ button.u1-readonly-off {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--u1-border, rgba(127, 127, 127, 0.2));
+  border-image: var(--u1-rule-image) 1;
 }
 .ai-next-row .btn-primary {
   display: flex;
@@ -3753,6 +4193,7 @@ button.u1-readonly-off {
   margin-top: 10px;
   padding-top: 9px;
   border-top: 1px solid var(--u1-border, rgba(127, 127, 127, 0.2));
+  border-image: var(--u1-rule-image) 1;
 }
 .ai-comp-actions .btn-primary {
   width: 100%;
@@ -4019,6 +4460,7 @@ details.ai-approved[open] > summary::before { transform: rotate(90deg); }
   margin-top: 7px;
   padding-top: 7px;
   border-top: 1px solid rgba(127, 127, 127, 0.25);
+  border-image: var(--u1-rule-image) 1;
 }
 .ai-msg-fix code {
   padding: 2px 6px;
@@ -4169,7 +4611,7 @@ textarea:focus-visible {
   border-radius: var(--u1-radius-sm);
   transition: background-color 0.15s ease, color 0.15s ease;
 }
-.tab-btn:hover:not(.active) { background: rgba(255, 255, 255, 0.04); }
+.tab-btn:hover:not(.active) { background: var(--u1-overlay); }
 .tab-btn.active {
   background: var(--u1-primary);
   color: #fff;
@@ -4516,7 +4958,7 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
   flex: 0 0 auto;
   font: 600 9px/1.7 "Consolas", monospace;
   color: var(--u1-text-dim, #9aa4b2);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--u1-overlay);
   border: 1px dashed var(--u1-border-strong);
   border-radius: 4px;
   padding: 0 5px;
@@ -5039,6 +5481,7 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   margin-top: 9px;
   padding-top: 8px;
   border-top: 1px solid var(--u1-border);
+  border-image: var(--u1-rule-image) 1;
   font-size: 11px;
 }
 .sweep-settled > summary {
@@ -5061,7 +5504,6 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
 .sweep-mode {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid var(--u1-border);
 }
 .sweep-mode-head {
   display: block;
@@ -5104,7 +5546,7 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   background: var(--u1-primary-dim);
   border-radius: 10px;
 }
-.scan-group .scan-item { border-top: 1px solid var(--u1-border); border-radius: 0; }
+.scan-group .scan-item { border-top: 1px solid var(--u1-border); border-image: var(--u1-rule-image) 1; border-radius: 0; }
 .scan-group > .scan-why-body { padding: 0 11px 8px; }
 
 /* The action. Present only where a bulk fix is genuinely the right answer;
@@ -5117,6 +5559,7 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
   padding: 9px 11px;
   background: var(--u1-primary-dim);
   border-top: 1px solid var(--u1-border);
+  border-image: var(--u1-rule-image) 1;
 }
 .scan-group-fix.is-manual { background: transparent; }
 .scan-group-does {

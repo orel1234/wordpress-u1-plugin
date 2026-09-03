@@ -39,6 +39,14 @@ if (!url) {
   process.exit(1);
 }
 
+// jsdom's `runScripts: 'outside-only'` runs the TARGET SITE'S OWN JAVASCRIPT
+// in this Node process (needed: most components only exist after the page's
+// own script builds them — see the comment above). jsdom is explicitly not a
+// security sandbox, so this is only safe to point at a site you already trust
+// enough to have your browser run its JS. It is not something to script
+// against a list of arbitrary/unvetted URLs.
+console.error(`⚠️  Running ${url}'s own JavaScript locally to map it. Only point this at sites you trust.\n`);
+
 // ── The page, with its own scripts run ──────────────────────────────────────
 //
 // Most of these sites build themselves after load: the menu, the tabs, the

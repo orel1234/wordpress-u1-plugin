@@ -24,7 +24,10 @@ const FILES = [
   'sync.js',
   'background.js', 'test-engine.js', 'grid-nav.js',
   // Injected on demand to operate a component and watch what it does.
-  'probe.js',
+  // probe-net.js is probe.js's MAIN-world counterpart (see the comment atop
+  // each) — without it in the package, panel.js's ensureProbeNet() injection
+  // 404s and the net silently falls back to isolated-world-only blocking.
+  'probe.js', 'probe-net.js',
   // Read at export time and inlined into the client's script. Without it in the
   // package the export silently ships without the library corrections.
   'u1-patch.js',
@@ -126,10 +129,33 @@ if (!serverArg && !isDev) {
   process.exit(1);
 }
 
-if (serverArg) {
-  const serverUrl = serverArg.slice('--server='.length).replace(/\/+$/, '');
+// --dev used to leave the staged manifest exactly as checked in — which,
+// since the source manifest now names the real production host instead of a
+// wildcard (see below), meant a --dev build's CSP no longer matched
+// config.js's localhost default and every request died. So --dev takes the
+// same rewrite path as --server=, just pointed at localhost: one code path
+// for "which server does this build talk to", not two that can drift apart.
+const serverUrl = serverArg
+  ? serverArg.slice('--server='.length).replace(/\/+$/, '')
+  : (isDev ? 'http://localhost:3001' : null);
+
+if (serverUrl) {
   if (!/^https?:\/\/[^\s'"]+$/.test(serverUrl)) {
     console.error(`Invalid --server value: ${serverUrl}`);
+    process.exit(1);
+  }
+  // '.' is deliberately excluded from the disallowed-char set the regex above
+  // checks — it's needed for real hostnames — but that also means
+  // `--server=https://a.example;script-src https://evil.example` would pass
+  // it (';' IS excluded) only because ';' is blocked; belt-and-braces here:
+  // parse it as a URL and require the origin to equal what was typed, so
+  // nothing beyond scheme+host+port can ride along into the CSP directive
+  // built from this string below.
+  try {
+    const parsed = new URL(serverUrl);
+    if (parsed.origin !== serverUrl) throw new Error('not a bare origin');
+  } catch {
+    console.error(`Invalid --server value: ${serverUrl} (must be a bare origin, e.g. https://host.example)`);
     process.exit(1);
   }
   if (serverUrl.startsWith('http://') && !serverUrl.startsWith('http://localhost')) {
@@ -139,12 +165,18 @@ if (serverArg) {
 
   const cfgPath = join(stage, 'config.js');
   const cfg = readFileSync(cfgPath, 'utf8');
-  const rewritten = cfg.replace(/SERVER_URL:\s*'[^']*'/, `SERVER_URL: '${serverUrl}'`);
-  if (rewritten === cfg) {
+  const SERVER_URL_RE = /SERVER_URL:\s*'[^']*'/;
+  // Checked on whether the pattern MATCHED, not on whether the string came out
+  // different — a --dev build's target (http://localhost:3001) is also
+  // config.js's own checked-in default, so replacing "found" text with the
+  // same text is a real, successful rewrite that produces an identical
+  // string. Comparing before/after treated that as failure and refused to
+  // build.
+  if (!SERVER_URL_RE.test(cfg)) {
     console.error('Could not rewrite SERVER_URL in config.js — has the field been renamed?');
     process.exit(1);
   }
-  writeFileSync(cfgPath, rewritten);
+  writeFileSync(cfgPath, cfg.replace(SERVER_URL_RE, `SERVER_URL: '${serverUrl}'`));
 
   // Rewrite connect-src to the licence server — but KEEP the hosts the panel
   // needs regardless of which server a build targets. Blowing the whole

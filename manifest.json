@@ -17,7 +17,7 @@
     "<all_urls>"
   ],
   "content_security_policy": {
-    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:3001 https://*.up.railway.app https://api.anthropic.com; base-uri 'none'; form-action 'none'"
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://user1stproject-production.up.railway.app https://api.anthropic.com; base-uri 'none'; form-action 'none'"
   },
   "declarative_net_request": {
     "rule_resources": [

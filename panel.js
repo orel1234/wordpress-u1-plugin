@@ -49,7 +49,11 @@ const COMPONENT_SCHEMAS = {
     // menubar:true is for an application menubar with no nested submenus; it
     // is what gives every item role="menuitem". With it off, the triggers get
     // role="button" and the submenu containers role="menu" instead.
-    rootFields:{menubar:false, menuDescription:''},
+    // focusOpensSubmenu is read by u1-patch.js (the focus-hover region), not
+    // by U1 — the patch's u1.fix.menu intercept lifts it off the config before
+    // U1 validates the props. It rides in the config so Apply, auto-apply on
+    // load and the exported file all carry it the same way.
+    rootFields:{menubar:false, menuDescription:'', focusOpensSubmenu:false},
     req:['menu','items'],
     desc:{
       menu:'Selector of the main menu container.',
@@ -59,9 +63,10 @@ const COMPONENT_SCHEMAS = {
       horizontalMenu:'(Optional) Selector of horizontal menus. Usually the main menu.',
       openByMouseover:'(Optional) Selector of items triggered by the mouseover event.',
       openByMouseenter:'(Optional) Selector of items triggered by the mouseenter event.',
-      openByFocus:'(Optional) Selector of items triggered by the focus event.',
+      openByFocus:'(Optional) Selector of items U1 nudges via this event when U1 itself opens a submenu from its own keyboard handling. For "Tab opens the submenu like hover does", use the Focus Opens Submenu option below instead.',
       menubar:'Set true for an application menubar. Default false = navigation menu.',
       menuDescription:'Describe the menu (navigation menu, actions menu, etc.).',
+      focusOpensSubmenu:'For a menu whose triggers open a submenu on hover but do something else on click (navigate, open a dialog). Tab/focus on a trigger opens its submenu as hover would; Enter/Space does what click does; Left/Right move along the top-level items, Down enters the submenu, Escape closes. Also puts aria-expanded on the trigger itself. Needs "triggers" filled in.',
     },
   },
 
@@ -588,6 +593,40 @@ const VALID_MAPPING_TYPES = new Set([
   'breadcrumb','aria-label','link-list','keyboard-tabs','keyboard-grid','keyboard-clickable',
 ]);
 
+// One mapping's stored shape, validated and stripped down to what is safe to
+// keep. Used both for an imported backup file AND for what the team server
+// hands back on sync.pull() — a mapping saved by a compromised/misbehaving
+// server account is otherwise indistinguishable from one a colleague built by
+// hand, and it is executed on the client's site the same way (see
+// mappingToCode). `type` must be a real U1 fix name (mappingToCode also
+// re-checks this, but rejecting it here keeps a bad row out of storage and out
+// of the report/UI entirely, not just out of the generated code).
+function cleanMappingPayload(m) {
+  if (!m || typeof m !== 'object' || !VALID_MAPPING_TYPES.has(m.type) || !SAFE_IMG(m.screenshot)) return null;
+  const c = { ...m };
+  // Drop any stored `code` — it is regenerated from config at export/apply time.
+  delete c.code;
+  // Drop a malformed `id` too (must be "m-<alnum>"); a valid one is backfilled
+  // on next render, so a hostile id string never reaches the export/report.
+  if (c.id != null && !/^m-[A-Za-z0-9]+$/.test(String(c.id))) delete c.id;
+  return c;
+}
+
+// The settings object sync.pull() hands back is the same shape sanitizeImport
+// already trusts for a backup file's `config_*`/`skipLinks_*`/`u1Links_*` keys
+// — reuse those exact checks rather than writing server data straight to
+// storage unchecked. `u1Links` isn't in sanitizeImport's key set (it isn't a
+// storable top-level key by itself there), so it gets the same string-array
+// shape check inline.
+function cleanServerSettings(settings) {
+  const s = settings || {};
+  const out = {};
+  if (s.config && typeof s.config === 'object' && !Array.isArray(s.config)) out.config = s.config;
+  if (Array.isArray(s.skipLinks)) out.skipLinks = s.skipLinks;
+  if (Array.isArray(s.u1Links)) out.u1Links = s.u1Links.filter(u => typeof u === 'string');
+  return out;
+}
+
 function sanitizeImport(raw) {
   const data = {};
   let dropped = 0;
@@ -603,17 +642,8 @@ function sanitizeImport(raw) {
     }
     if (key.startsWith('mappings_')) {
       if (!Array.isArray(val)) { dropped++; continue; }
-      const clean = val.filter(m =>
-        m && typeof m === 'object' && VALID_MAPPING_TYPES.has(m.type) && SAFE_IMG(m.screenshot));
-      // Drop any stored `code` — it is regenerated from config at export/apply time.
-      // Drop a malformed `id` too (must be "m-<alnum>"); a valid one is backfilled
-      // on next render, so a hostile id string never reaches the export/report.
-      data[key] = clean.map(m => {
-        const c = { ...m };
-        delete c.code;
-        if (c.id != null && !/^m-[A-Za-z0-9]+$/.test(String(c.id))) delete c.id;
-        return c;
-      });
+      const clean = val.map(cleanMappingPayload).filter(Boolean);
+      data[key] = clean;
       if (clean.length !== val.length) dropped += (val.length - clean.length);
       continue;
     }
@@ -2261,9 +2291,24 @@ function cropDataUrl(dataUrl, rect) {
 // Always REGENERATE the code from the mapping's structured config — never trust
 // a stored `m.code` string (an imported backup could carry arbitrary code that
 // would then be shown/copied and pasted into a client's production site).
+// Anything placed inside a `/* ... */` block comment in generated code must
+// never be allowed to carry a literal "*/" — that closes the comment early and
+// whatever follows (attacker-chosen page text: an aria-label, a selector) runs
+// as real JavaScript in the client's production bundle. Selectors/labels are
+// scraped from the page being mapped, so this is not hypothetical.
+function commentSafe(str) {
+  return String(str == null ? '' : str).replace(/\*\//g, '* /');
+}
+
 function mappingToCode(m) {
   if (typeof m === 'string') return m;
   if (!m || typeof m !== 'object') return '';
+  // A mapping's `type` becomes a literal property-access identifier
+  // (`window.u1?.fix.${m.type}(...)`) below. It MUST be one of U1's own fix
+  // names — never trust it verbatim, whether it came from an imported backup
+  // or (via sync.pull) from the team server: `type: "button; alert(1); //"`
+  // would otherwise emit and run as arbitrary JS on the client's site.
+  if (m.type && !Object.prototype.hasOwnProperty.call(COMPONENT_SCHEMAS, m.type)) return '';
   const sel = (m.config && m.config.selectors) || {};
   if (m.custom === 'keyboardGrid') {
     return `/* Accessible grid/datepicker — uses the engine included above. */\n` +
@@ -2303,7 +2348,7 @@ function mappingToCode(m) {
     // first or the fix lands on a component that still says it is something
     // else. Only ever emitted for a mapping that carries the answer.
     const strip = m.overwriteRole
-      ? `/* The site's own role="${m.overwriteRole}" is replaced by this fix. */\n` +
+      ? `/* The site's own role="${commentSafe(m.overwriteRole)}" is replaced by this fix. */\n` +
         `document.querySelectorAll(${JSON.stringify(m.primary)}).forEach(function (el) {\n` +
         `  if (el.getAttribute('role') === ${JSON.stringify(m.overwriteRole)}) el.removeAttribute('role');\n` +
         `});\n`
@@ -2899,6 +2944,48 @@ function showNotice(el, text, kind = 'success', duration = 3500) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  Tab switching
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Theme: the same palette on a light ground or a dark one ─────────────────
+// Every colour in the panel is a token on :root; the light theme redefines
+// the tokens under body[data-theme="light"] and nothing else. Light is the
+// default — asked for — and the toggle in the header goes back to dark.
+function setTheme(theme) {
+  const t = theme === 'dark' ? 'dark' : 'light';
+  document.body.dataset.theme = t;
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) {
+    const toDark = t === 'light';
+    btn.textContent = toDark ? '☾' : '☀';
+    btn.title = toDark ? 'Switch to dark' : 'Switch to light';
+    btn.setAttribute('aria-label', toDark ? 'Switch to dark theme' : 'Switch to light theme');
+  }
+  try { localStorage.setItem('u1Theme', t); } catch {}
+}
+document.getElementById('themeToggleBtn')?.addEventListener('click', () => {
+  setTheme(document.body.dataset.theme === 'light' ? 'dark' : 'light');
+});
+try { setTheme(localStorage.getItem('u1Theme') || 'light'); } catch { setTheme('light'); }
+
+// ── Picker: Scan | Mappings ──────────────────────────────────────────────────
+// Two panes under one tab. Remembered per browser, because which one you
+// live in depends on the job: building a page, or auditing what is built.
+function setPickerPane(name) {
+  const pane = name === 'mappings' ? 'mappings' : 'scan';
+  document.querySelectorAll('.picker-subtab').forEach((b) => {
+    const on = b.dataset.pane === pane;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  const scan = document.getElementById('pickerPaneScan');
+  const maps = document.getElementById('pickerPaneMappings');
+  if (scan) scan.hidden = pane !== 'scan';
+  if (maps) maps.hidden = pane !== 'mappings';
+  try { localStorage.setItem('u1PickerPane', pane); } catch {}
+}
+document.querySelectorAll('.picker-subtab').forEach((b) => {
+  b.addEventListener('click', () => setPickerPane(b.dataset.pane));
+});
+try { setPickerPane(localStorage.getItem('u1PickerPane') || 'scan'); } catch { setPickerPane('scan'); }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -3592,13 +3679,13 @@ function renderBundleOwner(links) {
   const proj = u1ProjectOf((links && links.jsLink) || '') || u1ProjectOf((links && links.cssLink) || '');
   if (!proj) { el.style.display = 'none'; return; }
   const mine = currentHostname && currentHostname.toLowerCase().includes(proj.toLowerCase());
+  // The cross-project warning is gone — asked for. The specialist knows whose
+  // bundle is on a test site; a standing amber paragraph on every visit was
+  // the cost, not the information. The one-line ownership note stays.
+  if (!mine) { el.style.display = 'none'; return; }
   el.style.display = 'block';
-  el.className = mine ? 'advisor-note ok' : 'advisor-note warn';
-  el.innerHTML = mine
-    ? `Bundle belongs to the <strong>${escapeHtml(proj)}</strong> project.`
-    : `<strong>This is the ${escapeHtml(proj)} project's bundle, on ${escapeHtml(currentHostname)}.</strong> ` +
-      `It brings that project's configuration with it — its skip links and settings appear here and cannot be removed from this panel. ` +
-      `Use <em>Stop</em> above, then <em>Replace</em> with this site's own bundle.`;
+  el.className = 'advisor-note ok';
+  el.innerHTML = `Bundle belongs to the <strong>${escapeHtml(proj)}</strong> project.`;
 }
 
 document.getElementById('injectBtn').addEventListener('click', async () => {
@@ -6134,6 +6221,17 @@ function setStage(stage) {
 function renderStageTrail() {
   const host = document.getElementById('stageTrail');
   if (!host) return;
+  // The whole-page route says only the stage it is ON — "Pick sections", then
+  // "Choose fixes" — as a heading under its two controls, not a three-step
+  // strip above them. Asked for: the other two steps were noise on a screen
+  // that only ever shows one of them. The heading lives inside #sweepPicks
+  // (#sweepStageNow); the shared strip above is left empty in this route.
+  const now = document.getElementById('sweepStageNow');
+  const clear = () => {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    if (now) { now.style.display = 'none'; now.innerHTML = ''; }
+  };
   // Once every section has been read, "Pick sections" is not a stage you
   // are moving through any more — it is finished, and the Completed row
   // beside it already says so. A trail claiming a three-step journey next
@@ -6141,14 +6239,30 @@ function renderStageTrail() {
   // each other.
   if (mapMode === 'sweep' && currentStage === 'screens' && aiSweep.stops.length > 0 &&
       aiSweep.stops.every((s) => !s.count || s.scanned)) {
-    host.style.display = 'none';
-    host.innerHTML = '';
+    clear();
     return;
   }
   const trail = STAGE_TRAIL[mapMode === 'sweep' ? 'sweep' : 'auto'];
   const at = STAGE_STANDS_FOR[currentStage] || currentStage;
   const idx = trail.findIndex(([k]) => k === at);
-  if (mapMode === 'manual' || idx < 0) { host.style.display = 'none'; host.innerHTML = ''; return; }
+  if (mapMode === 'manual' || idx < 0) { clear(); return; }
+  if (mapMode === 'sweep' && now) {
+    host.style.display = 'none';
+    host.innerHTML = '';
+    // The one stage, with a way back to the one before it when that one
+    // still has something in it — the only use the three-step strip had.
+    const prev = idx > 0 && stageHasContent(trail[idx - 1][0]) ? trail[idx - 1] : null;
+    now.style.display = '';
+    now.innerHTML =
+      `<h3 class="stage-now">` +
+        `<span class="stage-now-n" aria-hidden="true">${idx + 1}</span>` +
+        `<span class="stage-now-label">${escapeHtml(trail[idx][1])}</span>` +
+        `<span class="stage-now-of">step ${idx + 1} of ${trail.length}</span>` +
+        (prev ? `<button type="button" class="stage-now-back" data-stage="${prev[0]}">‹ ${escapeHtml(prev[1])}</button>` : '') +
+      `</h3>`;
+    return;
+  }
+  if (now) { now.style.display = 'none'; now.innerHTML = ''; }
   host.style.display = '';
   host.innerHTML = trail.map(([key, label], i) => {
     // Reachable if it HAS something, not if it happens to be behind you.
@@ -6187,7 +6301,7 @@ function stageHasContent(key) {
 }
 
 document.addEventListener('click', (e) => {
-  const back = e.target.closest('#stageTrail [data-stage]');
+  const back = e.target.closest('#stageTrail [data-stage], #sweepStageNow [data-stage]');
   if (!back) return;
   const to = back.dataset.stage;
   if (to === 'screens') { aiSweep.phase = 'screens'; renderSweepScreens(); return; }
@@ -6392,6 +6506,11 @@ function setMapMode(mode) {
   const isAuto = mode === 'auto';
   const isSweep = mode === 'sweep';
   const isAi = isAuto || isSweep;
+  // The route, on the body, so CSS can hide what belongs to another route
+  // without a display write per element — the "Element." caption over the
+  // Whole-page controls is Manual's, and only CSS knows where it sits.
+  document.body.dataset.mapMode = mode;
+  if (isSweep && typeof syncSweepStartBtn === 'function') syncSweepStartBtn();
   for (const [btn, on] of [[$modeManualBtn, mode === 'manual'],
                            [$modeAutoBtn, isAuto],
                            [$modeSweepBtn, isSweep]]) {
@@ -7555,6 +7674,7 @@ function markScreenRead(stop) {
   if (row) {
     row.classList.remove('is-failed');
     row.querySelector('.sweep-fail-flag')?.remove();
+    row.querySelector('.sweep-retry')?.remove();
     row.querySelector('.sweep-outcome')?.remove();
     row.classList.add('is-done');
     const tick = row.querySelector('.sweep-screen-tick');
@@ -7636,12 +7756,20 @@ function markScreenFailed(stop, why) {
     row.classList.add('is-failed');
     const label = row.querySelector('.ai-approved-label');
     if (label && !label.querySelector('.sweep-fail-flag')) {
-      label.insertAdjacentHTML('beforeend', ' <span class="sweep-fail-flag">not read</span>');
+      label.insertAdjacentHTML('beforeend', ' <span class="sweep-fail-flag">⚠ Failed</span>');
+    }
+    // The way out sits on the card. It is the same press as ▶ — one section,
+    // one call, same cost dialog — so it carries the same data attribute and
+    // the same delegate handles it.
+    if (label && !row.querySelector('.sweep-retry')) {
+      label.insertAdjacentHTML('afterend',
+        `<button type="button" class="btn-outline btn-xs sweep-retry" data-play-screen="${stop.n}" ` +
+        `title="Read this section again — one call">Retry</button>`);
     }
     const body = row.querySelector('.ai-bulk-body');
     if (body && !body.querySelector('.sweep-outcome')) {
       body.insertAdjacentHTML('beforeend',
-        `<div class="sweep-outcome">${escapeHtml(stop.failed)} — still ticked, press again to retry</div>`);
+        `<div class="sweep-outcome">${escapeHtml(stop.failed)} — not read, nothing charged. Still ticked; press Retry.</div>`);
     }
   }
   return saveSweepNow();
@@ -8505,6 +8633,21 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
  * for an open/close widget, { toggle: { checkedClass, uncheckedClass, … } }
  * for a checkbox/radio/switch, or { err } when nothing could be pressed.
  */
+// probe.js's "net" (armNet in probe.js) cancels navigation/submission from the
+// isolated world it runs in — which stops a plain link or form, but not a
+// click handler that calls fetch/location.assign/window.open etc. directly in
+// script, because that script's globals are a different copy from probe.js's.
+// probe-net.js is the MAIN-world half that patches the real ones; the two
+// coordinate over a shared DOM attribute (see the comment in probe.js's
+// armNet). Injected once per tab per page load, alongside probe.js itself,
+// everywhere probe.js is — the file guards against a second injection, so
+// calling this more than once for the same load is free.
+async function ensureProbeNet(tabId) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', files: ['probe-net.js'] });
+  } catch (e) { /* probe.js's own click/submit/beforeunload net still holds */ }
+}
+
 async function autoOpenCapture(tab, triggerSel, type) {
   // The net cancels link defaults, submits, window.open and location.assign,
   // but `location.href = …` is a host setter nothing can stub — a handler
@@ -8512,6 +8655,7 @@ async function autoOpenCapture(tab, triggerSel, type) {
   // and put back below, the same recovery the sweep uses.
   const urlBefore = ((await chrome.tabs.get(tab.id).catch(() => null))?.url || '').split('#')[0];
   try {
+    await ensureProbeNet(tab.id);
     await chrome.scripting.executeScript({
       target: { tabId: tab.id }, files: ['selector-intel.js', 'probe.js'] });
   } catch (e) { return { err: e.message }; }
@@ -10237,6 +10381,7 @@ async function runSweep(tab) {
   // the hero advances on its own clock), and the hint layer's strips are
   // seeded so a strip the markup announces always gets its presses.
   try {
+    await ensureProbeNet(tab.id);
     await chrome.scripting.executeScript({
       target: { tabId: tab.id }, files: ['selector-intel.js', 'probe.js'] });
     await inPage(tab.id, () => {
@@ -10465,7 +10610,7 @@ async function runSweep(tab) {
     clearSweepBusy();
     aiSweep.running = false;
     btn.disabled = false;
-    btn.textContent = '🪄 Scan the whole page';
+    syncSweepStartBtn();
     stopBtn.style.display = 'none';
     // Our own numbers must never be left on the site's DOM, and the page goes
     // back where it was — the specialist did not scroll it here.
@@ -10695,6 +10840,7 @@ async function sweepBackIfNavigated(tab, n) {
 
 async function probeScreen(tab, band) {
   try {
+    await ensureProbeNet(tab.id);
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['probe.js'] });
   } catch { return null; }
   try {
@@ -10888,38 +11034,51 @@ function renderSweepScreens() {
   // read them as one thing and the price looked like part of the choosing. They
   // are separate questions — what to read, then what that costs — and each now
   // says which it is.
-  const summaryBody = `<div class="block-title">What to read</div>` +
-    `<div class="ai-meta">${stops.length} section${stops.length === 1 ? '' : 's'} · ` +
-    `${elements} element${elements === 1 ? '' : 's'} · nothing spent yet</div>` +
-    // Twenty-one sections is twenty-one clicks to clear, and "only the ones
-    // with a carousel" starts from none rather than from all. "All" means all
-    // the UNREAD ones — the read ones are paid for and are not part of what the
-    // next press will charge for.
-    `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
-    `Read all ${todo} section${todo === 1 ? '' : 's'} that have not been read yet` +
-    // The dash state. A half-ticked box is the commonest thing on this screen —
-    // you untick a couple of sections — and nothing said so, which made it read
-    // as broken rather than as "some".
-    (pickable > todo
-      ? ` <em>(${pickable - todo} already read — those are not ticked and cost nothing)</em>`
-      : '') + `</label>` +
-    // Twenty-three sections read straight through is half an hour before any of
-    // it can be used. On, because the components from section 1 are ready four
-    // minutes in and there is no reason to sit on them — and off is one tick
-    // away for a run you intend to start and walk away from.
-    // ── How the run should behave, as one either/or ──────────────────────
-    // These are two answers to one question, not two independent switches:
-    // either the run stops at each section and waits for you, or it does not
-    // stop at all. Both ticked is a state the run cannot honour, and both empty
-    // is no answer — so they are radios, and the mutual exclusion is in the
-    // markup rather than in a handler that has to remember to enforce it.
-    `<div class="sweep-mode"><span class="sweep-mode-head">How it should run</span>` +
-    `<label class="sweep-all"><input type="radio" name="sweepMode" id="sweepPauseTick"${
-      sweepLabel.on || sweepPause.on ? ' checked' : ''}>` +
-    `<span id="sweepModeStopLbl"></span></label>` +
-    `<label class="sweep-all"><input type="radio" name="sweepMode" id="sweepSilentTick"${
-      !sweepLabel.on && !sweepPause.on ? ' checked' : ''}>` +
-    `<span id="sweepModeGoLbl"></span></label></div>`;
+  // One row, collapsed: what will be read and how the run behaves, stated as
+  // answers ("Read: 2 unread sections · Mode: Don't stop"), with the controls
+  // behind an edit toggle. Two open boxes of settings sat between the list
+  // and the button that reads it, on a screen whose one job is to press that
+  // button; the answers are what you need to see, the controls only when you
+  // mean to change one.
+  const summaryBody =
+    `<details class="sweep-settings" id="sweepSettings">` +
+      `<summary class="sweep-settings-row">` +
+        `<span class="sweep-settings-item"><span class="sweep-settings-k">Read</span> ` +
+          `<span id="sweepReadNow">${todo} unread section${todo === 1 ? '' : 's'}</span></span>` +
+        `<span class="sweep-settings-item"><span class="sweep-settings-k">Mode</span> ` +
+          `<span id="sweepModeNow"></span></span>` +
+        `<span class="sweep-settings-edit" aria-hidden="true">settings</span>` +
+      `</summary>` +
+      `<div class="sweep-settings-body">` +
+        `<div class="ai-meta">${stops.length} section${stops.length === 1 ? '' : 's'} · ` +
+        `${elements} element${elements === 1 ? '' : 's'} · nothing spent yet</div>` +
+        // Twenty-one sections is twenty-one clicks to clear, and "only the ones
+        // with a carousel" starts from none rather than from all. "All" means
+        // all the UNREAD ones — the read ones are paid for and are not part of
+        // what the next press will charge for.
+        `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
+        `Include <span id="sweepUnreadCount">${todo}</span> unread section${todo === 1 ? '' : 's'}` +
+        // The dash state. A half-ticked box is the commonest thing on this
+        // screen — you untick a couple of sections — and nothing said so, which
+        // made it read as broken rather than as "some".
+        (pickable > todo
+          ? ` <span class="sweep-all-sub">(${pickable - todo} already read — not ticked, cost nothing)</span>`
+          : '') + `</label>` +
+        // ── How the run should behave, as one either/or ──────────────────
+        // Two answers to one question, not two independent switches: either the
+        // run stops at each section and waits for you, or it does not stop at
+        // all. Both ticked is a state the run cannot honour, and both empty is
+        // no answer — so they are radios, and the mutual exclusion is in the
+        // markup rather than in a handler that has to remember to enforce it.
+        `<div class="sweep-mode"><span class="sweep-mode-head">How it should run</span>` +
+        `<label class="sweep-all sweep-radio"><input type="radio" name="sweepMode" id="sweepPauseTick"${
+          sweepLabel.on || sweepPause.on ? ' checked' : ''}>` +
+        `<span id="sweepModeStopLbl"></span></label>` +
+        `<label class="sweep-all sweep-radio"><input type="radio" name="sweepMode" id="sweepSilentTick"${
+          !sweepLabel.on && !sweepPause.on ? ' checked' : ''}>` +
+        `<span id="sweepModeGoLbl"></span></label></div>` +
+      `</div>` +
+    `</details>`;
 
   // While the run is still live, these choices are still choices — shown
   // plain, the way they always were. Once nothing is left to read, they
@@ -10978,7 +11137,9 @@ function renderSweepScreens() {
       // scan button.
       (sweepDone
         ? `<div class="btn-row sweep-done-info">` +
-            `<button type="button" class="btn-outline btn-sm" id="sweepEstBtn">💰 What it costs</button>` +
+            // States the answer, not the question: what this run spent.
+            `<button type="button" class="btn-outline btn-sm" id="sweepEstBtn">💰 Spent $${
+              read.reduce((a, x) => a + (x.cost || 0), 0).toFixed(2)} · details</button>` +
             `<button type="button" class="btn-outline btn-sm" id="sweepReadBtn">⚙️ What was read · ${stops.length} section${stops.length === 1 ? '' : 's'} · ${elements} element${elements === 1 ? '' : 's'}</button>` +
           `</div>`
         : '') +
@@ -10999,7 +11160,28 @@ function renderSweepScreens() {
 
   setStage(mapMode === 'sweep' ? 'screens' : 'none');
   syncSweepMakeBtn();
+  if (typeof syncSweepStartBtn === 'function') syncSweepStartBtn();
   saveSweep();
+}
+
+/**
+ * One filled button per state. Before a survey the scan button is the only
+ * thing to do, so it is the primary. Once there are sections, the primary is
+ * the button that reads them, and this one steps back to a small ghost
+ * "Rescan" — it never leaves (the resting screen after a finished run is
+ * still its screen), it just stops competing.
+ */
+function syncSweepStartBtn() {
+  const btn = document.getElementById('sweepStartBtn');
+  if (!btn) return;
+  const surveyed = !!(aiSweep.stops && aiSweep.stops.length);
+  if (aiSweep.running) return;                 // the run owns the label while it goes
+  btn.classList.toggle('btn-primary', !surveyed);
+  btn.classList.toggle('btn-outline', false);
+  btn.classList.toggle('btn-ghost', surveyed);
+  btn.classList.toggle('btn-sm', surveyed);
+  btn.textContent = surveyed ? '↻ Rescan' : '🪄 Scan the whole page';
+  btn.title = surveyed ? 'Survey the page again from the top — free, no model call' : '';
 }
 
 /**
@@ -11011,6 +11193,25 @@ function renderSweepScreens() {
  * disappeared with no way back to them short of scanning the page again.
  */
 function sweepScreenRowHtml(stop) {
+    // The survey's component line, split into what it is sure of and what it
+    // guessed. screenComponents() writes a guess with a trailing "?" ("2
+    // buttons?"); that is data the scan log also carries, so the string is
+    // left alone and only PARTED here — the sure part is shown as text, the
+    // guesses are counted into one explicit chip. Inner, not a sibling
+    // function: verify-sweep lifts this function out by name and runs it on
+    // its own, so everything it needs has to travel with it.
+    const splitSweepGuess = (components) => {
+      const sure = [], maybe = [];
+      let uncertain = 0;
+      for (const part of String(components || '').split(' · ').filter(Boolean)) {
+        if (part.endsWith('?')) {
+          const m = /^(\d+)\s/.exec(part);
+          uncertain += m ? Number(m[1]) : 1;
+          maybe.push(part.slice(0, -1));
+        } else sure.push(part);
+      }
+      return { sure: sure.join(' · '), maybe: maybe.join(' · '), uncertain };
+    };
     const img = safeImg(stop.thumb);
     const empty = !stop.count;
     // A section that has already been read starts UNTICKED. It was ticked, so
@@ -11020,8 +11221,40 @@ function sweepScreenRowHtml(stop) {
     // and it should cost a deliberate click.
     const done = !!stop.scanned;
     const failed = !done && !!stop.failed;
+    const guess = splitSweepGuess(stop.components);
+    const chip = (text, cls, title) =>
+      `<span class="sw-chip${cls ? ' ' + cls : ''}"${title ? ` title="${escapeHtml(title)}"` : ''}>${text}</span>`;
+    // The metadata, as chips rather than one long sentence. Each fact is a
+    // thing you scan for — "how many links", "does it continue" — and a
+    // sentence makes you read past the ones you do not want.
+    const chips = [
+      chip(`${stop.count}${stop.truncated ? '+' : ''} element${stop.count === 1 ? '' : 's'}`),
+      ...String(stop.inventory || '').split(', ').filter(Boolean).map(x => chip(escapeHtml(x))),
+      // A sticky header is counted once, on the section that first sees it.
+      // Ticking only the middle of a page would otherwise leave out the site's
+      // main navigation with nothing to say it had.
+      stop.sticky ? chip(`includes the sticky header (${stop.sticky})`, '', 'Counted here once, so ticking only the middle of the page does not leave the site navigation out') : '',
+      // Something here runs past the edge of the picture and carries on in the
+      // next section. Tick one without the other and you map half of it.
+      stop.continuedFrom ? chip(`↤ continued from section ${stop.continuedFrom}`, 'sw-chip-link', 'A component here starts in the previous section — tick both to map all of it') : '',
+      stop.continuesOnto ? chip(`continues onto section ${stop.continuesOnto} ↦`, 'sw-chip-link', 'A component here carries on into the next section — tick both to map all of it') : '',
+      // An observation is worth marking as one: these were not read off the
+      // markup, they were opened and watched.
+      (stop.probed || []).length ? chip(`${stop.probed.length} confirmed by opening ${stop.probed.length === 1 ? 'it' : 'them'}`, 'sw-chip-ok') : '',
+      // Guesses from a class name rather than a role, said as what they are.
+      guess.uncertain ? chip(`${guess.uncertain} uncertain`, 'sw-chip-uncertain', `Guessed from a class name, not a role: ${guess.maybe}`) : '',
+      // What this section cost — a fact once it has been read, and worth
+      // stating on the card that was charged rather than in a total elsewhere.
+      done ? chip(stop.cost ? `charged $${Number(stop.cost).toFixed(2)}` : 'read · nothing charged', 'sw-chip-cost') : '',
+      failed ? chip('nothing charged', 'sw-chip-cost') : '',
+    ].filter(Boolean).join('');
+    // Everything guessed and nothing confirmed, after a paid read, is a result
+    // — and an empty card is what it used to look like.
+    const allUncertain = done && !(stop.found || []).length && !guess.sure && guess.uncertain > 0 && !stop.outcome;
+    // typeof-guarded: verify-sweep lifts this function out and runs it alone.
+    const open = typeof sweepOpenRows !== 'undefined' && sweepOpenRows.has(stop.n);
     return `
-      <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}${done ? ' is-done' : ''}${failed ? ' is-failed' : ''}" data-screen="${stop.n}">
+      <div class="ai-approved-row ai-bulk-row sweep-screen${empty ? ' is-empty' : ''}${done ? ' is-done' : ''}${failed ? ' is-failed' : ''}${open ? ' is-open' : ''}" data-screen="${stop.n}">
         <input type="checkbox" class="sweep-screen-tick" ${empty ? 'disabled' : (done ? '' : 'checked')}
                aria-label="Search section ${stop.n}${done ? ' again' : ''}">
         ${// One screen, on its own, now.
@@ -11038,13 +11271,18 @@ function sweepScreenRowHtml(stop) {
           // skipped, not the confirmation.
           empty ? '' :
           `<button class="btn-icon sweep-play" data-play-screen="${stop.n}"${aiSweep.running ? ' disabled' : ''}
-                   title="Search only this section — one call"
-                   aria-label="Search only section ${stop.n} — one call">▶</button>`}
+                   title="Run this section only — one call"
+                   aria-label="Run section ${stop.n} only — one call">▶</button>`}
         ${img ? `<span class="mh-thumb" data-shot="${stop.n}">
                    <img class="mh-img" src="${img}" alt="Section ${stop.n}">
                  </span>` : ''}
         <div class="ai-bulk-body">
-          <span class="ai-approved-label">Section ${stop.n}${done ? ' <span class="sweep-read-flag">completed</span>' : ''}${failed ? ' <span class="sweep-fail-flag">not read</span>' : ''}</span>
+          <span class="ai-approved-label">Section ${stop.n}${done ? ' <span class="sweep-read-flag">completed</span>' : ''}${
+            // Failed is a state with a way out, not a tag. The card stays in
+            // the list, says so, and carries the retry itself.
+            failed ? ` <span class="sweep-fail-flag">⚠ Failed</span>` : ''}</span>
+          ${failed ? `<button type="button" class="btn-outline btn-xs sweep-retry" data-play-screen="${stop.n}"${aiSweep.running ? ' disabled' : ''}
+                   title="Read this section again — one call">Retry</button>` : ''}
           ${// The components come first and in the panel's own text colour.
             // "22 links, 19 buttons" says how busy a section is; the components
             // say whether it is worth paying to read, which is the actual choice.
@@ -11078,34 +11316,63 @@ function sweepScreenRowHtml(stop) {
             // keeps the guess under it, named as the guess it was.
             done && stop.outcome
             ? `<span class="sweep-components">${escapeHtml(stop.outcome)}</span>` +
-              (stop.components
-                ? `<span class="sweep-guess">first pass had guessed: ${escapeHtml(stop.components)}</span>`
+              (guess.sure
+                ? `<span class="sweep-guess">first pass had guessed: ${escapeHtml(guess.sure)}</span>`
                 : '')
-            : stop.components
-            ? `<span class="sweep-components">${escapeHtml(stop.components)}</span>`
-            : stop.count
+            : allUncertain
+            ? `<span class="sweep-components sweep-none">Read — nothing confirmed. ${guess.uncertain} guess${guess.uncertain === 1 ? '' : 'es'} only, none held up.</span>`
+            : guess.sure
+            ? `<span class="sweep-components">${escapeHtml(guess.sure)}</span>`
+            : stop.count && !guess.uncertain
             ? `<span class="sweep-components sweep-none">no complex components — simple elements only</span>`
+            : stop.count
+            ? `<span class="sweep-components sweep-none">nothing certain — see the uncertain chip</span>`
             : ''}
-          ${stop.truncated ? '<span class="ai-sev" data-need="1">only the first 250 counted</span>' : ''}
-          ${stop.positional ? '<span class="ai-sev" data-need="1">positional</span>' : ''}
-          <div class="ai-approved-why">${stop.count}${stop.truncated ? '+' : ''} element${stop.count === 1 ? '' : 's'}${
-            stop.inventory ? ' · ' + escapeHtml(stop.inventory) : ''}${
-            // A sticky header is counted once, on the section that first sees
-            // it. Ticking only the middle of a page would otherwise leave out
-            // the site's main navigation with nothing to say it had.
-            stop.sticky ? ` · includes the sticky header (${stop.sticky})` : ''}${
-            // Something here runs past the edge of the picture and carries on in
-            // the next section. Tick one without the other and you map half of
-            // it — which is worth saying before the choice, not after.
-            stop.continuedFrom ? ` · continued from section ${stop.continuedFrom}` : ''}${
-            stop.continuesOnto ? ` · continues onto section ${stop.continuesOnto}` : ''}${
-            stop.positional ? ` · ${stop.positional} can only be reached by position — ask the client for a class` : ''}${
-            // An observation is worth marking as one: these were not read off
-            // the markup, they were opened and watched.
-            (stop.probed || []).length ? ` · ${stop.probed.length} confirmed by opening ${stop.probed.length === 1 ? 'it' : 'them'}` : ''}</div>
+          ${stop.truncated ? '<span class="ai-sev" data-need="1" title="This section holds more than 250 elements; only the first 250 were counted, so the numbers here are a floor">only the first 250 counted</span>' : ''}
+          ${stop.positional ? '<span class="ai-sev" data-need="1" title="Some elements here have no id, class or role to point at — they can only be reached by their position in the page, which breaks the moment the page changes">positional</span>' : ''}
+          ${// The card folds. Closed, it is the section number and what the
+            // survey found — the two things the choice is made from. The
+            // counts, the chips and the positional note sit under a caret:
+            // there when asked for, not twelve lines between one section and
+            // the next.
+            empty ? '' :
+            `<button type="button" class="sweep-more-btn" data-more="${stop.n}" aria-expanded="${open ? 'true' : 'false'}"
+                     title="${open ? 'Hide' : 'Show'} details" aria-label="${open ? 'Hide' : 'Show'} details for section ${stop.n}">▾</button>`}
+          <div class="sweep-more"${open ? '' : ' hidden'}>
+            <div class="ai-approved-why sw-chips">${chips}</div>
+            ${// Pulled out of the sentence and onto a row of its own: this is
+              // the one thing on the card the client has to act on, and it was
+              // buried as the fifth clause of a line about link counts.
+              stop.positional
+              ? `<div class="sw-warn" role="note">⚠ ${stop.positional} positional — needs a class` +
+                `<span class="sw-warn-sub">these can only be reached by position; ask the client for a class or id</span></div>`
+              : ''}
+          </div>
         </div>
       </div>`;
 }
+
+// Which section cards are unfolded — kept across redraws, since the list is
+// redrawn on every tick and a card you just opened must not snap shut.
+const sweepOpenRows = new Set();
+document.getElementById('sweepPicksList')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.sweep-more-btn');
+  if (!btn) return;
+  // The row underneath is a ticking surface; the caret is not a tick.
+  e.preventDefault();
+  e.stopPropagation();
+  const n = Number(btn.dataset.more);
+  const row = btn.closest('.sweep-screen');
+  const more = row && row.querySelector('.sweep-more');
+  if (!more) return;
+  const open = more.hidden;
+  more.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+  btn.title = open ? 'Hide details' : 'Show details';
+  btn.setAttribute('aria-label', `${open ? 'Hide' : 'Show'} details for section ${n}`);
+  row.classList.toggle('is-open', open);
+  if (open) sweepOpenRows.add(n); else sweepOpenRows.delete(n);
+});
 
 /**
  * The estimate under the sections list.
@@ -11131,12 +11398,33 @@ function updateSweepModeWording() {
   const goL = document.getElementById('sweepModeGoLbl');
   if (!stopL || !goL) return;
   const n = sweepPickedScreens().length;
-  if (n === 1) {
-    stopL.innerHTML = 'Approve at the end <em>— scan this section, then show me what it found for approval before it is built</em>';
-    goL.innerHTML = 'Start to finish <em>— scan this section and make everything on it accessible on its own</em>';
-  } else {
-    stopL.innerHTML = 'Stop at each section <em>— show me what it found, let me build it, carry on when I press continue</em>';
-    goL.innerHTML = 'Do not stop <em>— read the whole page and make everything accessible on its own</em>';
+  // A short bold title and a quiet second line — no italics. The old label
+  // was one italic sentence that wrapped to three lines and had to be read to
+  // the end before it could be told apart from the other one.
+  const opt = (title, sub) =>
+    `<strong class="sweep-radio-title">${title}</strong>` +
+    `<span class="sweep-radio-sub">${sub}</span>`;
+  const one = n === 1;
+  const stopTitle = one ? 'Approve at the end' : 'Stop at each section';
+  const goTitle = one ? 'Start to finish' : "Don't stop";
+  stopL.innerHTML = opt(stopTitle, one
+    ? 'scan this section, then show what it found for approval'
+    : 'review before continuing');
+  goL.innerHTML = opt(goTitle, one
+    ? 'scan this section and make everything on it accessible'
+    : 'run everything automatically');
+  // The collapsed row states the answer.
+  const now = document.getElementById('sweepModeNow');
+  if (now) now.textContent = (sweepLabel.on || sweepPause.on) ? stopTitle : goTitle;
+  const readNow = document.getElementById('sweepReadNow');
+  const unread = document.getElementById('sweepUnreadCount');
+  if (readNow || unread) {
+    const stops = (typeof aiSweep !== 'undefined' && aiSweep.stops) || [];
+    const picked = sweepPickedScreens();
+    const todo = stops.filter(s => s.count && !s.scanned).length;
+    const pickedUnread = stops.filter(s => s.count && !s.scanned && picked.includes(s.n)).length;
+    if (unread) unread.textContent = String(todo);
+    if (readNow) readNow.textContent = `${pickedUnread} of ${todo} unread section${todo === 1 ? '' : 's'}`;
   }
 }
 
@@ -11485,6 +11773,9 @@ const sweepPickedScreens = () => [...document.querySelectorAll('#sweepPicksList 
   .filter(r => r.querySelector('.sweep-screen-tick')?.checked)
   .map(r => Number(r.dataset.screen));
 
+// Whether the Cost drawer is open — kept across the redraw every tick causes.
+let sweepCostOpen = false;
+
 // One button, two jobs, because the list under it changes and the button is
 // always "do the next thing to what is ticked". The count is on it in both
 // cases: it is the number of calls that will be charged.
@@ -11526,23 +11817,60 @@ function syncSweepMakeBtn() {
       } else {
         btn.style.display = '';
         btn.disabled = !picked.length;
+        // The count AND the size, on the button: it is the number of calls
+        // that will be charged, and how much page they cover.
         btn.textContent = picked.length
-          ? `🔎 Find components in ${picked.length} section${picked.length === 1 ? '' : 's'}`
+          ? `🔎 Find components · ${picked.length} section${picked.length === 1 ? '' : 's'} · ~${elements} element${elements === 1 ? '' : 's'}`
           : '🔎 No sections ticked';
       }
     }
     // The box under the button described the NEXT press while the button
     // described the current run — two different moments, stacked. While a run
     // is going the box is about the run.
-    // The full breakdown used to sit open on screen at all times. Folded behind
-    // a button it is still one press away, but it stops being fifteen lines
-    // between the ticks and the button that reads them.
+    // The cost is folded into the line under the button, stated as the answer
+    // — "Est. cost: ~$0.26" — with the breakdown one press away in a dialog.
+    // It used to be a button asking a question ("What it costs") that you had
+    // to press to learn the number; a second filled control on a screen that
+    // should have one.
     if (est) {
+      const calls = sweepCallsFor(picked);
+      const cost = calls * sweepAvgCall();
+      // Same shape as the Settings control beside it, and it stays put when
+      // nothing is ticked — "$0.00 · nothing ticked" is an answer; a control
+      // that vanishes when the number reaches zero reads as a fault.
+      // A drop-down like Settings beside it — same shape, same size, opens
+      // underneath. The breakdown is written into the body only when the
+      // drawer is opened, so a closed Cost box carries the answer and not
+      // fifteen lines of forecast behind it.
+      // typeof-guarded: verify-sweep lifts this function out and runs it alone.
+      const costOpen = typeof sweepCostOpen !== 'undefined' && sweepCostOpen;
       est.innerHTML = aiSweep.running
         ? sweepRunningHtml()
-        : (picked.length
-            ? `<button type="button" class="btn-outline btn-sm" id="sweepEstBtn">💰 What it costs</button>`
-            : '');
+        : `<details class="sweep-settings sweep-cost"${costOpen ? ' open' : ''}>` +
+            `<summary class="sweep-settings-row" title="Time and cost, stage by stage">` +
+              `<span class="sweep-settings-item"><span class="sweep-settings-k">Est. cost</span> ` +
+              `<strong>${picked.length ? '~' : ''}$${cost.toFixed(2)}</strong>` +
+              `<span class="sweep-ctl-sub">${picked.length ? mins(sweepSecsFor(elements)) : 'nothing ticked'}</span></span>` +
+              `<span class="sweep-settings-edit" aria-hidden="true">cost</span>` +
+            `</summary>` +
+            `<div class="sweep-settings-body sweep-cost-body"></div>` +
+          `</details>`;
+      const costBox = est.querySelector('.sweep-cost');
+      if (costBox) {
+        const fill = () => {
+          const body = costBox.querySelector('.sweep-cost-body');
+          if (!body) return;
+          body.innerHTML = picked.length
+            ? sweepEstimateHtml(picked.length, elements, calls)
+            : sweepSpentHtml();
+        };
+        if (costOpen) fill();
+        costBox.addEventListener('toggle', () => {
+          try { sweepCostOpen = costBox.open; } catch {}
+          if (costBox.open) fill();
+          else { const b = costBox.querySelector('.sweep-cost-body'); if (b) b.innerHTML = ''; }
+        });
+      }
     }
     return;
   }
@@ -14206,6 +14534,8 @@ function loadMappingIntoForm(m) {
 
   // Bring the builder into view and switch to the Templates tab.
   document.querySelector('.tab-btn[data-tab="picker"]').click();
+  // Editing happens in the Scan pane; the row that was pressed is in Mappings.
+  if (typeof setPickerPane === 'function') setPickerPane('scan');
   $primarySelectorInput.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
@@ -16415,11 +16745,45 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   }
   const wasEditing = editingMappingKey != null || updated;
   editingMappingKey = null;
-  btn.textContent = wasEditing ? 'Updated ✓' : 'Added ✓';
-  setTimeout(() => { btn.textContent = 'Add to Mapping'; }, 1500);
+  const saved = currentTemplate;
+
+  // Saving IS the intent — the page should reflect it without a second
+  // click. Before this, Update wrote the entry and did nothing else: the page
+  // kept running the old config, and the form stayed open showing the same
+  // values, so "I ticked the box and pressed Update" looked like nothing
+  // happened. The fix is applied live here (best-effort, exactly as Apply
+  // would), and the builder closes, because the mapping list below is now
+  // the record of what was done.
+  let applyMsg = '';
+  try {
+    if (saved.custom) {
+      const r = await applyOne(saved.type, saved.firstArg || saved.primary, saved.config, saved.custom, saved);
+      applyMsg = r.ok ? ' and applied on page' : (r.u1Missing ? '' : ` — apply failed: ${r.err}`);
+    } else {
+      const res = await applyMappingsBatch([{
+        type: saved.type, primary: saved.primary, firstArg: saved.firstArg,
+        config: saved.config, overwriteRole: saved.overwriteRole,
+      }]);
+      const v = describeApply(res, saved);
+      applyMsg = res.u1Missing ? ' (U1 is not loaded here — it will apply when the page runs U1)'
+               : v.ok ? ' and applied on page' : ` — apply: ${v.msg}`;
+    }
+  } catch (e) {
+    applyMsg = ` — apply failed: ${e.message}`;
+  }
+
+  resetPicker();
+  // The record of what was just done is the mapping list — so that is what
+  // comes on screen, with the notice above it.
+  if (typeof setPickerPane === 'function') setPickerPane('mappings');
+  const listStatus = document.getElementById('mappingsStatus') || status;
+  showNotice(listStatus,
+    `${wasEditing ? 'Updated' : 'Added'} ${saved.type} ${saved.primary}${applyMsg}.` +
+    ' Reload the page if a fix U1 already ran does not pick up the change.',
+    /failed|apply:/.test(applyMsg) ? 'error' : 'success', 7000);
   // Say it. A selector rewritten behind your back is worse than one left wrong,
   // however good the rewrite.
-  if (narrowed && narrowed.length) showNarrowed(status, narrowed);
+  if (narrowed && narrowed.length) showNarrowed(listStatus, narrowed);
 });
 
 /** What was narrowed, and why it had to be. */
@@ -17125,7 +17489,10 @@ async function buildDeployableCode(list, hostname) {
     // can't break out of the /* */ comment and inject code into the client bundle.
     const safeId = m && m.id ? String(m.id).replace(/[^A-Za-z0-9_-]/g, '') : '';
     const label = safeId || 'Fix';
-    const what = [m && m.type, m && (m.primary || m.firstArg)].filter(Boolean).join('  ');
+    // type/primary/firstArg can carry attacker-chosen page text (an aria-label
+    // or data-testid picked up while mapping a hostile element) — must not be
+    // able to close this block comment early. See commentSafe().
+    const what = [m && m.type, m && (m.primary || m.firstArg)].filter(Boolean).map(commentSafe).join('  ');
     return `/* ---- ${label} — ${what} ---- */`;
   };
   const sorted = list.slice().sort((a, b) => {
@@ -17846,6 +18213,10 @@ async function loadMappingsList() {
   const allBtn    = document.getElementById('filterAll');
   if (onPageBtn) onPageBtn.textContent = `On this page (${onPageCount})`;
   if (allBtn)    allBtn.textContent    = `All (${list.length})`;
+  // The count on the Mappings pane's tab, so the drawer says how full it is
+  // from the other pane.
+  const paneN = document.getElementById('pickerMappingsCount');
+  if (paneN) paneN.textContent = list.length ? String(list.length) : '';
 
   const itemHtml = (m, idx, childrenHtml, childCount) => {
     const code = mappingToCode(m);
@@ -17854,6 +18225,18 @@ async function loadMappingsList() {
     const hasShot = !!shot;
     const type = (m && typeof m === 'object' && m.type) ? m.type : 'mapping';
     const primary = (m && typeof m === 'object') ? (m.primary || m.firstArg || '') : String(m).slice(0, 40);
+    // A menu's focus-opens-submenu switch is behaviour you cannot see in the
+    // selector line, and the code below is folded — so the header says it,
+    // on or off, for every menu. Read from the saved config, which is what
+    // the page actually runs.
+    const focusOpen = type === 'menu' && m && m.config
+      ? (m.config.focusOpensSubmenu === true || m.config.focusOpensSubmenu === 'true')
+      : null;
+    const focusChip = type === 'menu'
+      ? `<span class="mh-flag ${focusOpen ? 'on' : 'off'}" title="${focusOpen
+            ? 'Focus opens submenu: ON — Tab/focus on a trigger opens its submenu, Enter/Space does what click does'
+            : 'Focus opens submenu: off — edit the mapping and tick Focus Opens Submenu to turn it on'}">⌨ focus-open ${focusOpen ? 'ON' : 'off'}</span>`
+      : '';
     // Collapsed accordion: header shows type + selector; body holds code + actions.
     return `
       <div class="mapping-item${legacy ? ' legacy' : ''}" data-idx="${idx}">
@@ -17861,6 +18244,7 @@ async function loadMappingsList() {
           <span class="mh-caret">▸</span>
           ${m && m.id ? `<span class="mh-id" title="Stable id — how the daily monitor reports this mapping if its selector breaks">${escapeHtml(m.id)}</span>` : ''}
           <span class="mh-type">${escapeHtml(type)}</span>
+          ${focusChip}
           <span class="mh-sel">${escapeHtml(primary)}</span>
           ${childCount ? `<span class="mh-kids" title="Mappings for elements inside this dialog — open the row to see them">▸ ${childCount} inside</span>` : ''}
           ${m && m.note ? `<span class="mh-note" title="${escapeHtml(m.note)}">${escapeHtml(m.note)}</span>` : ''}
@@ -18729,12 +19113,21 @@ document.getElementById('importDataBtn').addEventListener('click', () => {
 //  cleared when leaving the site and when the panel closes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// DNR rule ids must be positive integers and unique among session rules. Derive
-// one per host so toggling the same site twice replaces rather than stacks.
+// DNR rule ids must be positive integers and unique among session rules. One
+// per host, so toggling the same site twice replaces rather than stacks.
+//
+// Was a hash of the hostname reduced mod 900000 — two different hostnames can
+// hash to the same id, and when they do, toggling the bypass OFF for one site
+// silently removes it (or the reverse: toggling it ON for one silently drops
+// the CSP of an unrelated site sharing the id, with no way to notice). An
+// in-memory table can't collide: each host gets the next free id, once, for
+// as long as this panel session lives — which is exactly as long as a session
+// DNR rule can live anyway.
+const cspRuleIds = new Map();
+let cspRuleIdNext = 10000;
 function cspRuleIdFor(host) {
-  let h = 0;
-  for (let i = 0; i < host.length; i++) h = (h * 31 + host.charCodeAt(i)) | 0;
-  return 10000 + Math.abs(h) % 900000;
+  if (!cspRuleIds.has(host)) cspRuleIds.set(host, cspRuleIdNext++);
+  return cspRuleIds.get(host);
 }
 
 async function cspBypassActive(host) {
@@ -18825,6 +19218,13 @@ async function releaseCspBypassFor(host) {
 }
 
 window.addEventListener('pagehide', () => { clearAllCspBypasses(); });
+
+// Backstop for the CSP-bypass safety net in background.js: a long-lived port
+// that stays connected exactly as long as this panel does. Its onDisconnect
+// firing is how the service worker notices the panel is gone even when
+// `pagehide` above did not run (a crash, a forced close) — see the comment on
+// chrome.runtime.onConnect in background.js for why that matters here.
+try { chrome.runtime.connect({ name: 'panelKeepAlive' }); } catch {}
 
 /**
  * Say why the panel is showing a site that is not the tab in front.

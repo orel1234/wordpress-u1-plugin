@@ -65,9 +65,18 @@ const U1Sync = (() => {
     // wants the live list — but only AFTER their versions were recorded above,
     // or re-saving a deleted mapping would look like a first write and quietly
     // resurrect it.
+    // The server is trusted for WHO changed what and WHEN — never for the
+    // content of the change. A mapping's payload becomes real JavaScript
+    // installed on the client's site (mappingToCode) and a config's fields get
+    // written into the specialist's own tab (background.js injectConfig); a
+    // compromised account or a bad row must not be able to ride either of
+    // those. cleanMappingPayload/cleanServerSettings are the same checks
+    // sanitizeImport applies to a backup file — defined in panel.js, which
+    // loads after this file but runs before pull() is ever called.
     const mappings = (data.mappings || [])
       .filter((m) => !m.deletedAt)
-      .map((m) => m.payload);
+      .map((m) => cleanMappingPayload(m.payload))
+      .filter(Boolean);
 
     // Has the server ever held anything for this site at all?
     //
@@ -83,7 +92,7 @@ const U1Sync = (() => {
 
     return {
       mappings,
-      settings: data.settings || null,
+      settings: data.settings ? cleanServerSettings(data.settings) : null,
       sweep: data.sweep || null,
       deleted: (data.mappings || []).filter((m) => m.deletedAt).map((m) => m.key),
       virgin,

@@ -1248,7 +1248,7 @@ console.log('\nchoosing screens');
   const rows = [...l2.querySelectorAll('.sweep-screen')];
   check('every section is listed, including the empty one', rows.length === 3, String(rows.length));
   check('each shows its own element count and breakdown',
-    /14 elements/.test(rows[0].textContent) && /6 links, 3 buttons/.test(rows[0].textContent),
+    /14 elements/.test(rows[0].textContent) && /6 links/.test(rows[0].textContent) && /3 buttons/.test(rows[0].textContent),
     rows[0].textContent.replace(/\s+/g, ' '));
   check('the empty section cannot be ticked',
     rows[1].querySelector('.sweep-screen-tick').disabled &&
@@ -1289,7 +1289,7 @@ console.log('\nchoosing screens');
       !rows[1].querySelector('.sweep-play'));
     // It spends money. A bare ▶ glyph is not a label.
     check('it says out loud that it is one section and one call',
-      /only this section/i.test(play[0].title) && /one call/i.test(play[0].title),
+      /this section only/i.test(play[0].title) && /one call/i.test(play[0].title),
       play[0].title);
     check('…and says the same to a screen reader, with the number in it',
       /section 1/i.test(play[0].getAttribute('aria-label')) &&
@@ -1327,12 +1327,12 @@ console.log('\nchoosing screens');
   const est = w2.document.getElementById('sweepEstimate');
   const estBody = w2.document.getElementById('sweepEstBody');
   check('the button says what it will DO, not just that it will read',
-    /Find components in 2 sections/.test(btn2.textContent), btn2.textContent);
+    /Find components · 2 sections/.test(btn2.textContent), btn2.textContent);
   // The breakdown folds behind a button now, rather than sitting open — so the
   // box under the button carries only the trigger, and the numbers only exist
   // once that trigger has been pressed.
-  check('the box under the button is just the trigger, not the breakdown',
-    /What it costs/.test(est.textContent) && !/74 elements/.test(est.textContent), est.textContent);
+  check('the line under the button states the cost, not the breakdown',
+    /Est\. cost/.test(est.textContent) && !/74 elements/.test(est.textContent), est.textContent);
   box.openSweepEstDialog();
   check('the estimate counts the ticked elements, not all of them',
     /74 elements/.test(estBody.textContent), estBody.textContent.replace(/\s+/g, ' '));
@@ -1420,13 +1420,16 @@ console.log('\nchoosing screens');
   check('unticking a screen takes its elements out of the estimate',
     /14 elements/.test(estBody.textContent) && estBody.textContent.includes('$0.13'),
     estBody.textContent.replace(/\s+/g, ' '));
-  check('and off the button', /Find components in 1 section\b/.test(btn2.textContent), btn2.textContent);
+  check('and off the button', /Find components · 1 section\b/.test(btn2.textContent), btn2.textContent);
 
   rows[0].querySelector('.sweep-screen-tick').checked = false;
   box.syncSweepMakeBtn();
-  check('with none ticked the button refuses and the estimate clears',
-    btn2.disabled && /No sections ticked/.test(btn2.textContent) && est.innerHTML === '',
-    btn2.textContent);
+  // The cost control stays put and says the answer — "$0.00 · nothing ticked".
+  // It used to vanish, which read as a fault rather than as zero.
+  check('with none ticked the button refuses and the cost says nothing is ticked',
+    btn2.disabled && /No sections ticked/.test(btn2.textContent) &&
+    /\$0\.00/.test(est.textContent) && /nothing ticked/.test(est.textContent),
+    btn2.textContent + ' | ' + est.textContent);
 
   // A finished run: nothing left ticked, so "What it costs" has nothing to
   // forecast — and "What was read" is no longer the only button, the two
@@ -1503,7 +1506,7 @@ console.log('\nchoosing screens');
     check('the unread rows are in the first area and the read ones are not',
       parts[0].contains(row(3)) && parts[1].contains(row(1)));
     check('"read all" counts the unread ones, not everything',
-      /Read all 1 section that have not been read yet/.test(w2.document.getElementById('sweepPicksSummary').textContent),
+      /Include 1 unread section\b/.test(w2.document.getElementById('sweepPicksSummary').textContent),
       w2.document.getElementById('sweepPicksSummary').textContent.replace(/\s+/g, ' '));
     // The half-ticked state is the commonest one on this screen and used to be
     // an unexplained dash.
@@ -1681,9 +1684,9 @@ console.log('\nchoosing screens');
     box.renderSweepScreens();
     await box.markScreenFailed(st[2], 'Could not capture the page.');
     const row = w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]');
-    check('a screen that failed says so', /not read/i.test(row.textContent));
+    check('a screen that failed says so', /Failed/.test(row.textContent) && /not read/i.test(row.textContent));
     check('…with the reason and what to do about it',
-      /Could not capture the page/.test(row.textContent) && /press again to retry/.test(row.textContent));
+      /Could not capture the page/.test(row.textContent) && /press Retry/.test(row.textContent) && !!row.querySelector('.sweep-retry[data-play-screen="3"]'));
     check('…and keeps its tick, because it really was not searched',
       row.querySelector('.sweep-screen-tick').checked === true);
     check('…and stays out of the completed drawer',
@@ -1692,7 +1695,7 @@ console.log('\nchoosing screens');
     // Redrawn from storage, the failure has to still be there.
     box.renderSweepScreens();
     check('…and the mark survives a redraw',
-      /not read/i.test(w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]').textContent));
+      /Failed/.test(w2.document.querySelector('#sweepPicksList .sweep-screen[data-screen="3"]').textContent));
 
     // And a retry that works clears it.
     st[2].scanned = true; st[2].outcome = '2 components';
@@ -2783,7 +2786,9 @@ console.log('\nwhat the survey guessed against what the search found');
   check('a searched section leads with what the search concluded',
     /done && stop\.outcome/.test(row) && /escapeHtml\(stop\.outcome\)/.test(row));
   check('…and keeps the first pass\'s guess underneath, labelled as one',
-    /first pass had guessed: \$\{escapeHtml\(stop\.components\)\}/.test(row));
+    // The guess is shown with its "?" items parted out into the explicit
+    // "N uncertain" chip, so what sits under the conclusion is the sure half.
+    /first pass had guessed: \$\{escapeHtml\(guess\.sure\)\}/.test(row));
 
   // On the real renderer, in both states. It needs only escapeHtml, safeImg and
   // aiSweep, so it runs without a DOM — and it is lifted rather than restated,

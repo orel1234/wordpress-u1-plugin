@@ -682,7 +682,7 @@ function setConfigCall(config) {
   const style = (cfg.visualFocus && cfg.visualFocus.style) || { color: 'white', secondaryColor: 'black', doubleBorder: true };
   const obj = { visualFocus: { style } };
   let src = `window.u1?.setConfiguration(${jsObjSource(obj)});`;
-  if (cfg.language && cfg.language !== 'en') src += `\nwindow.u1.lang = '${cfg.language}';`;
+  if (cfg.language && cfg.language !== 'en') src += `\nwindow.u1.lang = ${JSON.stringify(String(cfg.language))};`;
   if (cfg.direction === 'rtl') src += `\nwindow.u1.dir = 'rtl';`;
   return src;
 }
@@ -1066,8 +1066,13 @@ function buildConfigFileContent(config, skipLinks, siteType) {
   // wordpress (and the default): the older window.u1.config assignment form,
   // matching what this guide has always told WordPress implementers to paste.
   const safeConfig = safeConfigOf(config, skipLinks);
-  const src = `window.u1.config = ${JSON.stringify(safeConfig, null, 4)
-    .replace(/"([a-zA-Z_$][a-zA-Z0-9_$]*)":/g, '$1:')};`;
+  // jsObjSource (not a JSON.stringify + regex-unquote) — the regex used to key
+  // off `"identifier":` anywhere in the serialized text, including inside a
+  // STRING VALUE that happens to end in `\"someKey"`. That let a config value
+  // desynchronise the quoting of everything after it and break out into real
+  // JS. jsObjSource walks the object itself, so it can't be fooled by string
+  // contents.
+  const src = `window.u1.config = ${jsObjSource(safeConfig)};`;
   return `window.u1 = window.u1 || {};\n${src}`;
 }
 

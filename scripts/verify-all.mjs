@@ -23,6 +23,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // work (`npm run verify:browser`).
 const SUITES = [
   ['verify-probe', ['scripts/verify-probe.mjs']],
+  ['verify-probe-net', ['scripts/verify-probe-net.mjs']],
   ['verify', ['scripts/verify.mjs']],
   ['verify-boot', ['scripts/verify-boot.mjs']],
   ['verify-store', ['scripts/verify-store.mjs']],

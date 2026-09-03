@@ -21,7 +21,16 @@ const TYPES = {
 http.createServer((req, res) => {
   // The query string is part of the URL and not part of the path — `?u1qa=1`
   // is how the monitoring hook is switched on, and it must not 404.
-  let rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  let rel;
+  try {
+    rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  } catch {
+    // decodeURIComponent throws on a malformed escape (e.g. a bare "%") —
+    // uncaught, that was thrown inside the request handler with nothing
+    // catching it, which kills the whole Node process on one bad request.
+    res.writeHead(400).end('Bad request');
+    return;
+  }
   if (rel.endsWith('/')) rel += 'index.html';
   // Nothing above the public directory, whatever the path claims.
   const file = path.join(ROOT, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));

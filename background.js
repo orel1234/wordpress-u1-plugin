@@ -9,6 +9,53 @@ chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
+// ── Debugger safety net ──────────────────────────────────────────────────
+//
+// panel.js attaches chrome.debugger (CDP) to the client's own tab for the
+// duration of a background sweep, to photograph it without stealing focus —
+// see beginBackgroundCapture/endBackgroundCapture there. It always detaches in
+// a `finally`, but a `finally` only runs if the panel is still alive to run
+// it: closing the side panel, or the panel context crashing, mid-sweep leaves
+// that tab attached with no code left to detach it. An attached tab keeps
+// Chrome's "U1 Studio is debugging this browser" banner up indefinitely and,
+// more to the point, keeps a live CDP session — this backstop makes sure a
+// tab that navigates away or closes cannot carry that attachment with it.
+// Detaching an already-detached tab is a harmless no-op (caught below).
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.debugger.detach({ tabId }).catch(() => {});
+});
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.url) chrome.debugger.detach({ tabId }).catch(() => {});
+});
+
+// ── CSP-bypass safety net ────────────────────────────────────────────────
+//
+// panel.js's "the site's CSP is blocking U1" toggle removes the
+// Content-Security-Policy header from a client's site for the browser session
+// (declarativeNetRequest session rule — see setCspBypass in panel.js). It is
+// meant to last only as long as the panel is open on that site: panel.js
+// clears it on `pagehide` and when the specialist navigates away. `pagehide`
+// does not fire on every teardown (the panel context can be discarded without
+// it — a crash, the side panel being force-closed), and a rule that survives
+// that is a client's production site running with no CSP for the rest of the
+// browser session, silently.
+//
+// The panel opens a port to this worker the moment it loads (see
+// panelKeepAlive below); onDisconnect fires whenever that context goes away,
+// by whatever means, which `pagehide` cannot promise. Rule ids 10000..909999
+// is the exact range panel.js hands out (cspRuleIdFor) — this mirrors
+// clearAllCspBypasses so a lost connection cannot leave one standing.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'panelKeepAlive') return;
+  port.onDisconnect.addListener(async () => {
+    try {
+      const rules = await chrome.declarativeNetRequest.getSessionRules();
+      const ours = rules.filter(r => r.id >= 10000 && r.id < 910000).map(r => r.id);
+      if (ours.length) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ours });
+    } catch {}
+  });
+});
+
 // ── Config-on-reload injection ─────────────────────────────────────────────
 // When panel.js asks us to "apply config on next load", we store the request
 // and inject window.u1.config at document_start so U1 reads it on init.
@@ -94,6 +141,30 @@ function isSafeHttpUrl(u) {
 function isSystemUrl(url) {
   return !url || url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
          url.startsWith('edge://') || url.startsWith('about:');
+}
+
+// Saved work for a hostname (config, mappings, the u1-patch corrections) is
+// stored keyed by BARE HOSTNAME — no scheme, no port; see getHostnameFromTab's
+// own comment on why (it has to match what panel.js writes). That means a
+// plain-http load of the exact same hostname a client's real site runs on
+// HTTPS — a network attacker on the same wifi doing a classic HTTP downgrade,
+// no certificate needed since there is no TLS to fake — reads as the same
+// site and would silently receive everything auto-injected below: the
+// specialist's saved config, every mapping, the patch. Renaming every storage
+// key to a full origin would be the complete fix, but that key shape is
+// shared with the sync server (hostnames only, no scheme) and touches every
+// site's history — a live-data migration, not a local code change. This is
+// the local half that can be done safely: refuse to auto-inject saved data
+// into anything that isn't actually HTTPS (or localhost, for testing against
+// a demo site served locally) at all, regardless of what the storage lookup
+// finds. A real client site is HTTPS in production without exception; the
+// exposure this closes is specifically the spoofed-http case.
+function isTrustedInjectionUrl(url) {
+  try {
+    const p = new URL(url);
+    if (p.protocol === 'https:') return true;
+    return p.protocol === 'http:' && (p.hostname === 'localhost' || p.hostname === '127.0.0.1');
+  } catch { return false; }
 }
 
 async function injectConfig(tabId, config) {
@@ -268,6 +339,16 @@ async function injectKeyboardGrids(tabId, grids) {
 
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (isSystemUrl(tab?.url)) return;
+  if (!isTrustedInjectionUrl(tab.url)) {
+    // Silent otherwise, this is indistinguishable from "there's nothing saved
+    // for this site" — which is the exact confusion CLAUDE.md warns about for
+    // the dist/ build mismatch. One line, same convention as everywhere else
+    // in this file, so it's findable if a specialist ever hits it for real.
+    if (info.status === 'loading') {
+      console.log('[U1 Studio] not injecting on', tab.url, '— not https (or localhost); saved config/mappings for this hostname were not sent.');
+    }
+    return;
+  }
 
   // ── At page-start: inject config (explicit reload request OR persistent
   // per-hostname auto-inject). The one-shot `pendingInjections` path only

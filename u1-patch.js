@@ -34,7 +34,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-02a' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-03i' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -278,7 +278,12 @@
   // ── Keyboard, in the capture phase ─────────────────────────────────────────
   // U1's own handlers sit on the elements themselves. A capture listener on the
   // document runs first, which is what lets a key be added without racing it.
-  P.keys = function (containerSel, handler) {
+  // opts.unless: a selector; a key pressed inside anything matching it is
+  // left alone. A region that has taken a component over entirely (the
+  // focus-hover submenus) declares itself this way so the generic handlers
+  // do not move focus a second time.
+  P.keys = function (containerSel, handler, opts) {
+    var unless = opts && opts.unless;
     document.addEventListener('keydown', function (e) {
       // The caret's keys are the caret's. Every region below matches on a
       // CONTAINER, so a text field inside a tablist, a grid cell or a menu
@@ -286,6 +291,7 @@
       // keystroke. No handler registered here consumes Space or Enter, so this
       // costs nothing and closes the whole class.
       if (caretOwns(e)) return;
+      if (unless && closest(e.target, unless)) return;
       var container = closest(e.target, containerSel);
       if (container) handler(e, container);
     }, true);
@@ -337,7 +343,7 @@
       if (!target) return;
       target.focus();
       if (opts.activate) target.click();
-    });
+    }, { unless: opts.unless });
   };
 
   /** NumpadEnter: the library compares event.code, which excludes it. */
@@ -532,6 +538,42 @@
           });
         });
         return result;
+      };
+    }
+
+    // ── A per-mapping switch this patch reads and U1 never sees ───────────
+    //
+    // `focusOpensSubmenu: true` on a menu mapping turns the focus-hover
+    // region on for THAT menu's triggers, and nothing else. Not every client
+    // wants Tab to behave as hover, so it is opt-in per menu rather than on
+    // everywhere. It rides inside the fix's own config so every path that
+    // runs the fix carries it without further plumbing — Apply from the
+    // panel, auto-apply on page load, the exported u1-fixes.js — and it
+    // comes off here, before U1 validates the props it is handed.
+    P.focusOpen = P.focusOpen || [];
+    var origMenu = u1.fix.menu;
+    if (typeof origMenu === 'function') {
+      u1.fix.menu = function (selector, props) {
+        if (props && typeof props === 'object' && 'focusOpensSubmenu' in props) {
+          var on = props.focusOpensSubmenu === true || props.focusOpensSubmenu === 'true';
+          var sel = props.selectors || {};
+          var entry = { triggerSel: sel.triggers || '',
+                        menuSel: sel.menu || (typeof selector === 'string' ? selector : '') };
+          // The latest call for a menu is the truth about it. Re-applying with
+          // the switch OFF must undo an earlier ON — so the menu's previous
+          // entry comes out either way, and anything it is holding open right
+          // now is closed, not left until focus happens to move.
+          var stale = P.focusOpen.filter(function (s) {
+            return s.menuSel === entry.menuSel || (s.triggerSel && s.triggerSel === entry.triggerSel);
+          });
+          P.focusOpen = P.focusOpen.filter(function (s) { return stale.indexOf(s) === -1; });
+          stale.forEach(function (s) { if (P.focusOpenRelease) P.focusOpenRelease(s); });
+          if (on) P.focusOpen.push(entry);
+          var clean = {};
+          Object.keys(props).forEach(function (k) { if (k !== 'focusOpensSubmenu') clean[k] = props[k]; });
+          props = clean;
+        }
+        return origMenu.call(this, selector, props);
       };
     }
 
@@ -1433,8 +1475,11 @@
   var u = P.util;
   var SEL = '[role="menu"], [role="menubar"]';
 
+  // A submenu the focus-hover region opened is that region's, arrows and all.
+  var NOT_FOCUS_PANEL = { unless: '[data-u1p-focus-panel]' };
+
   P.rove(SEL, '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]',
-         { arrows: true });
+         { arrows: true, unless: NOT_FOCUS_PANEL.unless });
 
   // The missing half of the RTL flip. The library mirrors ArrowRight; mirroring
   // ArrowLeft as well would double up, so this only completes the direction it
@@ -1451,7 +1496,7 @@
     e.preventDefault();
     e.stopImmediatePropagation();
     items[(here + 1) % items.length].focus();
-  });
+  }, NOT_FOCUS_PANEL);
 
   // ── Opening a submenu, and getting back out of it ────────────────────────
   //
@@ -1515,11 +1560,432 @@
     if (!panel || u.get(panel, 'role') === 'menubar') return;
     var t = triggerFor(panel);
     if (!t) return;
+    // A submenu the focus-hover region below is holding open is that
+    // region's to close — clicking THIS trigger would not close anything, it
+    // would fire the trigger's click job (on molinahealthcare.com: a dialog).
+    if (t.hasAttribute('data-u1p-focus-open')) return;
     e.preventDefault();
     e.stopPropagation();
     if (u.get(t, 'aria-expanded') === 'true') t.click();   // let the page close it
     u.set(t, 'aria-expanded', 'false');
     t.focus();
+  }, true);
+})();
+//#endregion
+
+//#region u1-patch:menu-focus-hover
+// Tabbing to a trigger does not open its submenu the way hovering it does —
+// Tab and hover are unrelated input paths. U1's own `openByFocus` config
+// option (read off the real u1_vanilla-js-a11y.js) is not a focus LISTENER:
+// it only tells U1 what to nudge when U1 ITSELF decides, from its own
+// keyboard handling, to open a submenu — nothing in U1 reacts to a plain Tab
+// landing on a trigger.
+//
+// Dispatching synthetic mouseover/mouseenter on focus (mirroring the nudge
+// U1's own engine sends internally for its OPEN_BY.MOUSE_OVER path) covers a
+// site whose hover-open menu is wired in JS. It does NOT cover one whose
+// submenu is revealed by CSS `:hover` alone (e.g. `.dropdown:hover
+// .dropdown-menu{display:block}`) — `:hover` is a real pointer-position
+// match; no dispatched event can set it, on molinahealthcare.com or anywhere
+// else. Confirmed there: aria-expanded flips on real mouse hover with no
+// hover JS wired to the trigger at all, so the panel's own inline style has
+// to be forced open directly, independent of whichever CSS property the
+// site happens to be hiding it with.
+//
+// Scoped to aria-haspopup="true" — which U1 already sets on every menu
+// trigger it fixes, with or without openByFocus configured — so this needs
+// no per-mapping config of its own, and does nothing where nothing listens.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+
+  // What a submenu panel looks like when nothing names it outright. The
+  // role is what U1 gives it; the classes are what Bootstrap, WordPress and
+  // most nav builders give it; a bare list is the fallback for a hand-rolled
+  // menu. Only ever matched INSIDE the trigger's own item, so a bare <ul>
+  // cannot be another item's submenu.
+  var PANEL_SEL = '[role="menu"], [role="menubar"], .dropdown-menu, .sub-menu, .submenu, ' +
+                  '.mega-menu, .megamenu, ul, ol';
+  var notSelf = function (trigger) {
+    return function (p) { return p !== trigger && !p.contains(trigger); };
+  };
+  var cssEscape = function (s) {
+    try { return window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/["\\]/g, '\\$&'); }
+    catch (e) { return s; }
+  };
+  var panelFor = function (trigger) {
+    // Whoever the trigger says it controls.
+    var id = u.get(trigger, 'aria-controls') || u.get(trigger, 'data-controls') ||
+             u.get(trigger, 'data-target') || u.get(trigger, 'data-bs-target');
+    if (id) {
+      var byId = document.getElementById(id.replace(/^#/, ''));
+      if (byId && notSelf(trigger)(byId)) return byId;
+    }
+    // Whoever says the trigger is its label — Bootstrap writes
+    // aria-labelledby on the panel, and molinahealthcare.com writes it with a
+    // "-nav" suffix on the trigger's id, so prefix and suffix forms count too.
+    if (trigger.id) {
+      var tid = cssEscape(trigger.id);
+      var labelled = u.qsa('[aria-labelledby="' + tid + '"], [aria-labelledby^="' + tid + '-"], ' +
+                           '[aria-labelledby$="-' + tid + '"]').filter(notSelf(trigger));
+      if (labelled.length) return labelled[0];
+    }
+    // The next sibling that is a panel — skipping decorations such as the
+    // <span class="arrow"> that sits between a trigger and its list.
+    var sib = trigger.nextElementSibling;
+    while (sib) {
+      if (sib.matches && sib.matches(PANEL_SEL)) return sib;
+      sib = sib.nextElementSibling;
+    }
+    // Anything panel-shaped inside the trigger's own item.
+    var up = trigger.parentElement;
+    if (up && up !== document.body) {
+      var inItem = u.qsa(PANEL_SEL, up).filter(notSelf(trigger));
+      if (inItem.length) return inItem[0];
+    }
+    return null;
+  };
+
+  // mouseover bubbles; mouseenter does NOT. A real pointer entering the <a>
+  // fires a separate mouseenter on every ancestor it entered at the same
+  // time — and a hover-menu's listener is usually on the <li class="dropdown">
+  // around the trigger, not on the trigger itself. So mouseenter/mouseleave
+  // go to the trigger and each ancestor up to the menu container, as the
+  // browser would send them.
+  var hover = function (el, enter) {
+    if (!el) return;
+    try {
+      el.dispatchEvent(new MouseEvent(enter ? 'mouseover' : 'mouseout', { bubbles: true, cancelable: true }));
+    } catch (e) {}
+    var stop = u.closest(el, '[role="menubar"], [role="menu"], nav, ul') || el.parentElement;
+    var node = el;
+    while (node && node !== document.body) {
+      try {
+        node.dispatchEvent(new MouseEvent(enter ? 'mouseenter' : 'mouseleave', { bubbles: false, cancelable: false }));
+      } catch (e) {}
+      if (node === stop) break;
+      node = node.parentElement;
+    }
+  };
+
+  // ── Diagnostics ───────────────────────────────────────────────────────────
+  // Reported "still does not open" with the build confirmed loaded — so this
+  // records what each focusin actually found and did, and what the panel's
+  // computed state was one frame later. Read it from the console after
+  // tabbing onto a trigger: window.__u1Patch.focusHover
+  var desc = function (el) {
+    if (!el || !el.tagName) return null;
+    var s = el.tagName.toLowerCase();
+    if (el.id) s += '#' + el.id;
+    if (el.className && typeof el.className === 'string') s += '.' + el.className.trim().split(/\s+/).join('.');
+    return s;
+  };
+  var snap = function (panel) {
+    if (!panel) return null;
+    var cs = null;
+    try { cs = getComputedStyle(panel); } catch (e) {}
+    var r = null;
+    try { r = panel.getBoundingClientRect(); r = { x: r.x, y: r.y, w: r.width, h: r.height }; } catch (e) {}
+    return {
+      inline: panel.getAttribute('style'),
+      className: panel.className,
+      display: cs && cs.display, visibility: cs && cs.visibility, opacity: cs && cs.opacity,
+      maxHeight: cs && cs.maxHeight, height: cs && cs.height, transform: cs && cs.transform,
+      position: cs && cs.position, top: cs && cs.top, left: cs && cs.left,
+      ariaExpanded: panel.getAttribute('aria-expanded'), ariaHidden: panel.getAttribute('aria-hidden'),
+      parentOverflow: (function () { try { return getComputedStyle(panel.parentElement).overflow; } catch (e) { return null; } })(),
+      rect: r, visible: u.visible(panel),
+    };
+  };
+  var log = function (rec) {
+    P.focusHover = P.focusHover || [];
+    P.focusHover.push(rec);
+    if (P.focusHover.length > 20) P.focusHover.shift();
+  };
+
+  // Whichever of these properties the site's own CSS is using to hide the
+  // panel, an inline !important beats it — including its own `:hover` rule,
+  // so nothing fights this while focus holds it open. Cleared (not just
+  // zeroed) on close, so the site's stylesheet takes back over exactly as it
+  // would the instant a real hover ends.
+  var FORCE_OPEN = { display: 'block', visibility: 'visible', opacity: '1',
+                     'pointer-events': 'auto', 'max-height': 'none' };
+  var forceOpen = function (panel, open) {
+    if (!panel) return;
+    Object.keys(FORCE_OPEN).forEach(function (p) {
+      if (open) panel.style.setProperty(p, FORCE_OPEN[p], 'important');
+      else panel.style.removeProperty(p);
+    });
+  };
+
+  // A third mechanism, alongside the two above: some sites open on hover by
+  // toggling a STATE CLASS (their CSS reads `.dropdown.open .dropdown-menu`,
+  // `.show`, `.is-open`, `.active` …) rather than by an inline style or a raw
+  // `:hover` selector — jQuery's `.hover()` is commonly wired to add exactly
+  // one of these, but the class itself, once added, may be what the CSS
+  // keys off rather than the hover state that added it. Adding the common
+  // names to both the trigger's own toggle target and its container costs
+  // nothing where none of them mean anything, and covers the class-driven
+  // case the two mechanisms above do not.
+  var STATE_CLASSES = ['show', 'open', 'is-open', 'active', 'dropdown-menu-show'];
+  var toggleStateClasses = function (trigger, panel, on) {
+    var targets = [trigger, panel, trigger.parentElement, trigger.closest && trigger.closest('.dropdown')]
+      .filter(Boolean);
+    targets.forEach(function (el) {
+      STATE_CLASSES.forEach(function (c) {
+        if (on) el.classList.add(c); else el.classList.remove(c);
+      });
+    });
+  };
+
+  // The trigger this region is holding open is marked, so the key handlers
+  // below act only on a submenu THIS region opened — never on a trigger some
+  // other mechanism (the site's click handler, U1's own keyboard path, the
+  // menu region above) is in charge of. The menu region's Escape handler
+  // reads the same mark to stay out of the way.
+  var MARK = P.FOCUS_OPEN_MARK = 'data-u1p-focus-open';
+  // Set by Escape, read once by the next focusin: closing the panel puts
+  // focus back on the trigger, and focusin would open it straight back up.
+  var ESC = 'data-u1p-focus-esc';
+
+  // The open panel is marked too: the menu region's generic arrow handling
+  // (P.rove, the RTL mirror) reads it and stands aside, because the arrows
+  // inside a panel this region opened are handled below, as a menubar's.
+  var PANEL_MARK = 'data-u1p-focus-panel';
+
+  var openNow = function (t, panel) {
+    hover(t, true);
+    forceOpen(panel, true);
+    toggleStateClasses(t, panel, true);
+    if (panel) {
+      u.set(t, MARK, '1');
+      u.set(panel, PANEL_MARK, '1');
+      // A menu button announces "collapsed"/"expanded" from ITS OWN
+      // aria-expanded. Here the site put it on the <ul> and left the trigger
+      // without one — so a screen reader hears "has popup" and nothing about
+      // whether it is open. While this region is in charge, the trigger says.
+      u.set(t, 'aria-expanded', 'true');
+    }
+  };
+  var closeNow = function (t, panel) {
+    hover(t, false);
+    forceOpen(panel, false);
+    toggleStateClasses(t, panel, false);
+    if (t.hasAttribute(MARK)) {
+      t.removeAttribute(MARK);
+      u.set(t, 'aria-expanded', 'false');
+    }
+    if (panel) panel.removeAttribute(PANEL_MARK);
+  };
+
+  // ── The row of top-level items the trigger sits in ────────────────────────
+  // A menubar's Left/Right move between ITS items — the trigger's siblings —
+  // never into a submenu. U1 walks the mapping's flat `items` list in DOM
+  // order and skips what is hidden, so the moment a submenu is held open its
+  // entries become "the next item" and Right walks into it. The row is read
+  // off the DOM instead: the trigger's item is its parent, the row is that
+  // item's parent, and each sibling item's own control is the stop.
+  var itemOf = function (t) { return t.parentElement; };
+  var controlOf = function (item) {
+    if (!item) return null;
+    if (item.matches && item.matches(u.FOCUSABLE) && u.visible(item)) return item;
+    return u.qsa(':scope > ' + u.FOCUSABLE.split(',').join(', :scope > '), item)
+            .filter(u.visible)[0] || null;
+  };
+  var rowSiblings = function (t) {
+    var item = itemOf(t), row = item && item.parentElement;
+    if (!row) return { items: [], here: -1, rtl: false };
+    var controls = Array.prototype.map.call(row.children, controlOf).filter(Boolean);
+    var rtl = false;
+    try { rtl = getComputedStyle(row).direction === 'rtl'; } catch (e) {}
+    return { items: controls, here: controls.indexOf(t), rtl: rtl };
+  };
+  var stepRow = function (t, dir) {
+    var r = rowSiblings(t);
+    if (r.here === -1 || r.items.length < 2) return false;
+    if (r.rtl) dir = -dir;
+    var to = r.items[(r.here + dir + r.items.length) % r.items.length];
+    if (!to) return false;
+    to.focus();          // its own focusin opens its submenu, as a menubar does
+    return true;
+  };
+  var panelItems = function (panel) {
+    return panel ? u.qsa(u.FOCUSABLE, panel).filter(u.visible) : [];
+  };
+
+  // Opt-in, per menu: only a trigger belonging to a menu mapping that set
+  // `focusOpensSubmenu` (collected by the core's u1.fix.menu intercept) is
+  // taken over. Matched by the mapping's own `triggers` selector, or, when
+  // it has none, by sitting inside its `menu` container.
+  var matchesEntry = function (t, s) {
+    try {
+      if (s.triggerSel && t.matches(s.triggerSel)) return true;
+      if (!s.triggerSel && s.menuSel && u.closest(t, s.menuSel)) return true;
+    } catch (e) {}
+    return false;
+  };
+  var enabledFor = function (t) {
+    var list = P.focusOpen || [];
+    for (var i = 0; i < list.length; i++) if (matchesEntry(t, list[i])) return true;
+    return false;
+  };
+  // Called by the core when a menu's switch is turned off (or re-applied):
+  // whatever this region is holding open for that menu closes now.
+  P.focusOpenRelease = function (s) {
+    u.qsa('[' + MARK + ']').forEach(function (t) {
+      if (matchesEntry(t, s)) closeNow(t, panelFor(t));
+    });
+  };
+
+  document.addEventListener('focusin', function (e) {
+    var t = e.target;
+    if (u.get(t, 'aria-haspopup') !== 'true') return;
+    if (!enabledFor(t)) return;
+    // Escape just closed this on purpose. A time window rather than a
+    // one-shot flag: focus arriving back on the trigger fires focusin two
+    // or three times within a few ms (U1 re-focuses what it was handed), and
+    // a flag consumed by the first would let the second reopen the panel.
+    var esc = +u.get(t, ESC);
+    if (esc && Date.now() - esc < 500) return;
+    if (esc) t.removeAttribute(ESC);
+    if (u.get(t, 'aria-expanded') === 'true') return;   // already open, nothing to nudge
+    var panel = panelFor(t);
+    var rec = { type: 'in', at: Date.now(), trigger: desc(t), panel: desc(panel), before: snap(panel),
+                parent: desc(t.parentElement),
+                parentChildren: t.parentElement
+                  ? Array.prototype.map.call(t.parentElement.children, desc) : null };
+    log(rec);
+    openNow(t, panel);
+    rec.applied = snap(panel);
+    (window.requestAnimationFrame || setTimeout)(function () {
+      rec.afterFrame = snap(panel);
+      rec.activeAfterFrame = desc(document.activeElement);
+    }, 0);
+    // And a little later still — long enough for anything that closes it
+    // back on a timer to have done so.
+    setTimeout(function () {
+      rec.after300ms = snap(panel);
+      rec.activeAfter300ms = desc(document.activeElement);
+    }, 300);
+  }, true);
+
+  document.addEventListener('focusout', function (e) {
+    // Only a trigger THIS region opened — closing clears inline styles and
+    // state classes off the panel, which must never happen to a menu some
+    // other mechanism is running.
+    var t = u.closest(e.target, '[' + MARK + ']') ||
+            u.qsa('[' + MARK + ']').filter(function (m) {
+              var p = panelFor(m); return p && p.contains(e.target);
+            })[0];
+    if (!t) return;
+    var panel = panelFor(t);
+    var rec = { type: 'out', at: Date.now(), trigger: desc(t), from: desc(e.target),
+                relatedTarget: desc(e.relatedTarget) };
+    log(rec);
+    // One tick later: relatedTarget-style timing is reliable there, and it
+    // lets focus that is simply moving from the trigger into its own
+    // submenu skip the close instead of flickering it shut and open again.
+    (window.requestAnimationFrame || setTimeout)(function () {
+      var now = document.activeElement;
+      rec.activeNow = desc(now);
+      if (now === t || t.contains(now) || (panel && panel.contains(now))) { rec.kept = true; return; }
+      rec.closed = true;
+      closeNow(t, panel);
+    }, 0);
+  }, true);
+
+  // ── Keys on a trigger this region holds open ──────────────────────────────
+  //
+  // The trigger has TWO jobs on this site and on most hover-menus: hovering
+  // it shows the submenu, clicking it goes somewhere (here: opens a state
+  // picker dialog). Focus now does the hover half. Enter and Space must do
+  // the CLICK half — exactly what a mouse click does — and not be taken by
+  // U1's menu keyboard path as "toggle the submenu", which is what made
+  // Enter do nothing useful on a trigger whose submenu focus already opened.
+  // A capture listener on the document runs before U1's element handler and
+  // stopImmediatePropagation keeps that handler from running at all, the
+  // same way P.rove takes the arrows.
+  //
+  // Only the trigger itself — items inside the panel keep their own keys.
+  document.addEventListener('keydown', function (e) {
+    var t = e.target;
+    if (!t || !t.hasAttribute || !t.hasAttribute(MARK)) return;
+    if (e.defaultPrevented || u.isTyping(t)) return;
+    var panel;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      // The page's own click — Bootstrap's modal handler, an href, whatever
+      // the site wired. Nothing here decides what clicking means.
+      t.click();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      // Down enters at the top, Up enters at the bottom — APG menubar.
+      var list = panelItems(panelFor(t));
+      if (!list.length) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      list[e.key === 'ArrowDown' ? 0 : list.length - 1].focus();
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      // Along the row of top-level items — never into the submenu.
+      if (!stepRow(t, e.key === 'ArrowRight' ? 1 : -1)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeNow(t, panelFor(t));
+      u.set(t, ESC, String(Date.now()));   // focus stays here; a re-focus must not reopen
+    }
+  }, true);
+
+  // ── Keys INSIDE a submenu this region opened ──────────────────────────────
+  // Up/Down walk the panel; Left/Right leave it for the neighbouring
+  // top-level item (which opens, as a menubar's does); Home/End jump; Escape
+  // closes and returns to the trigger — without focusin reopening it, and
+  // without the menu region's Escape clicking the trigger to "let the page
+  // close it", which here would open the dialog.
+  document.addEventListener('keydown', function (e) {
+    if (e.defaultPrevented) return;
+    var k = e.key;
+    if (k !== 'Escape' && k !== 'ArrowUp' && k !== 'ArrowDown' &&
+        k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
+    var panel = u.closest(e.target, '[' + PANEL_MARK + ']');
+    if (!panel) return;
+    var t = u.qsa('[' + MARK + ']').filter(function (m) { return panelFor(m) === panel; })[0];
+    if (!t) return;
+    if (u.isTyping(e.target)) return;
+
+    if (k === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeNow(t, panel);
+      u.set(t, ESC, String(Date.now()));
+      t.focus();
+      return;
+    }
+    if (k === 'ArrowLeft' || k === 'ArrowRight') {
+      if (!stepRow(t, k === 'ArrowRight' ? 1 : -1)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+    var list = panelItems(panel);
+    var here = list.indexOf(u.closest(e.target, u.FOCUSABLE));
+    if (here === -1) here = list.indexOf(e.target);
+    if (here === -1 || !list.length) return;
+    var to = k === 'Home' ? 0
+           : k === 'End' ? list.length - 1
+           : k === 'ArrowDown' ? (here + 1) % list.length
+           : (here - 1 + list.length) % list.length;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    list[to].focus();
   }, true);
 })();
 //#endregion
