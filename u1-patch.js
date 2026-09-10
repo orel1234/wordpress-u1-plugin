@@ -34,7 +34,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-03i' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-08h' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -400,9 +400,17 @@
       if (!(n >= 1 && n <= 6)) n = 2;
       var els = qsa(selector);
       els.forEach(function (el) {
-        // Never over a real heading: <h2> already IS one, and the role can
-        // only add nothing or disagree with the tag.
-        if (/^H[1-6]$/.test(el.tagName)) return;
+        // A real heading at the wrong LEVEL — an <h4> that should be an <h3>
+        // under its <h2> — keeps its tag and gets aria-level, which every
+        // browser honours over the tag in the accessibility tree. No role:
+        // <h4> already is one. (This used to skip native headings entirely,
+        // so mapping "Get Active!" to H3 changed nothing and the scan kept
+        // reporting the skip.) A non-heading gets both.
+        if (/^H[1-6]$/.test(el.tagName)) {
+          if (+el.tagName.charAt(1) === n) { if (get(el, 'aria-level')) el.removeAttribute('aria-level'); return; }
+          set(el, 'aria-level', String(n));
+          return;
+        }
         set(el, 'role', 'heading');
         set(el, 'aria-level', String(n));
       });
@@ -425,7 +433,11 @@
     var u1 = W.u1 !== undefined ? W.u1 : W.U1 !== undefined ? W.U1 : W.user1st;
     if (!u1 || !u1.fix) return [];
     Object.keys(FALLBACK).forEach(function (name) {
-      if (typeof u1.fix[name] === 'function') return;    // the real one wins
+      // The real one wins. Our OWN stand-in from an earlier install of this
+      // patch does not: a re-injected patch must bring its current fallback,
+      // or a fix in the fallback never reaches a page until it is reloaded —
+      // which is how "mapped to H3, still reads H4" survived three rebuilds.
+      if (typeof u1.fix[name] === 'function' && !u1.fix[name].__u1PatchFilled) return;
       u1.fix[name] = FALLBACK[name];
       u1.fix[name].__u1PatchFilled = true;
       if (P.filled.indexOf(name) === -1) P.filled.push(name);
@@ -577,6 +589,61 @@
       };
     }
 
+    // ── `enterSelects: true` on a listbox mapping ──────────────────────────
+    //
+    // Same shape as focusOpensSubmenu: a switch this patch reads and U1 never
+    // sees. For THAT list, arrow keys only move the highlight (focus stays on
+    // the list, aria-activedescendant names the option) and only Enter or
+    // Space activates the option. Needed on sites where an option acts the
+    // moment it receives focus — a language picker whose <a> options navigate
+    // on focus — so arrowing through the list was changing the page. Read by
+    // the listbox region below.
+    P.enterSelects = P.enterSelects || [];
+    var origListbox = u1.fix.listbox;
+    if (typeof origListbox === 'function') {
+      u1.fix.listbox = function (selector, props) {
+        if (props && typeof props === 'object' && 'enterSelects' in props) {
+          var esOn = props.enterSelects === true || props.enterSelects === 'true';
+          var esSel = props.selectors || {};
+          var esEntry = { listSel: esSel.listbox || (typeof selector === 'string' ? selector : ''),
+                          optionsSel: esSel.options || '', triggerSel: esSel.trigger || '' };
+          P.enterSelects = P.enterSelects.filter(function (x) { return x.listSel !== esEntry.listSel; });
+          if (esOn && esEntry.listSel) P.enterSelects.push(esEntry);
+          var esClean = {};
+          Object.keys(props).forEach(function (k) { if (k !== 'enterSelects') esClean[k] = props[k]; });
+          props = esClean;
+        }
+        return origListbox.call(this, selector, props);
+      };
+    }
+
+    // ── heading: the level lands, whatever the engine's gate does ──────────
+    //
+    // HeadingFixer sits behind FixerAbstract's wait-for-visible gate; on some
+    // pages that gate never resolves and the mapping has no effect — "I
+    // mapped it to H3 and it still reads H4". The correction is two
+    // attributes and idempotent, so it is written here as well, at once.
+    var origHeading = u1.fix.heading;
+    if (typeof origHeading === 'function' && !origHeading.__u1PatchHeadingWrap) {
+      u1.fix.heading = function (selector, props) {
+        try {
+          var n = parseInt(props && props.level, 10);
+          var sel = (props && props.selectors && props.selectors.heading) || selector;
+          if (n >= 1 && n <= 6 && typeof sel === 'string') {
+            qsa(sel).forEach(function (el) {
+              if (/^H[1-6]$/.test(el.tagName)) {
+                if (+el.tagName.charAt(1) === n) { if (get(el, 'aria-level')) el.removeAttribute('aria-level'); }
+                else set(el, 'aria-level', String(n));
+              } else { set(el, 'role', 'heading'); set(el, 'aria-level', String(n)); }
+            });
+          }
+        } catch (e) {}
+        return origHeading.apply(this, arguments);
+      };
+      u1.fix.heading.__u1PatchHeadingWrap = true;
+      if (origHeading.__u1PatchFilled) u1.fix.heading.__u1PatchFilled = true;
+    }
+
     // ── Record what the SITE itself asked for ─────────────────────────────
     //
     // Every fix the page runs, as it runs it: the type, the selector and the
@@ -596,10 +663,18 @@
     // only observes — the original is called with `arguments` untouched, and
     // a throw here must never take the site's own fix down, hence the catch.
     P.calls = P.calls || [];
+    // The flags that say "this function is the patch's own" ride along onto
+    // the recording wrapper — without that, ensureFixers could not tell its
+    // own stand-in from a real engine fixer once it had been wrapped, and a
+    // re-injected patch kept the old stand-in for the life of the page.
+    var keepFlags = function (from, to) {
+      ['__u1PatchFilled', '__u1PatchHeadingWrap'].forEach(function (k) { if (from && from[k]) to[k] = from[k]; });
+      return to;
+    };
     Object.keys(u1.fix).forEach(function (name) {
       if (name.charAt(0) === '_' || typeof u1.fix[name] !== 'function') return;
       var inner = u1.fix[name];
-      u1.fix[name] = function (selector, props) {
+      u1.fix[name] = keepFlags(inner, function (selector, props) {
         try {
           if (typeof selector === 'string') {
             P.calls.push({
@@ -614,7 +689,7 @@
           }
         } catch (e) {}
         return inner.apply(this, arguments);
-      };
+      });
     });
 
     // ── Filling in a fixer the build does not have ────────────────────────
@@ -673,7 +748,7 @@
     Object.keys(u1.fix).forEach(function (name) {
       if (name.charAt(0) === '_' || typeof u1.fix[name] !== 'function') return;
       var inner = u1.fix[name];
-      u1.fix[name] = function (selector, props) {
+      u1.fix[name] = keepFlags(inner, function (selector, props) {
         try {
           if (typeof selector === 'string') {
             var lifted = liftOptOut(selector);
@@ -681,7 +756,7 @@
           }
         } catch (e) {}
         return inner.apply(this, arguments);
-      };
+      });
     });
 
     u1.fix.__u1PatchWrapped = true;
@@ -847,6 +922,73 @@
       });
     });
   });
+
+  // ── The skip links the CONFIG asked for ───────────────────────────────────
+  // Read off the engine: SkipLinkFixer renders from a hard-coded list of three
+  // landmarks — nav, main, footer — and never reads config.skipLinks at all.
+  // Studio's Config lets a person write five ("skip to sign in", "skip to
+  // search"); the first three happened to coincide with the engine's own and
+  // the rest never appeared, with nothing to say why. So anything in
+  // config.skipLinks the page does not already have a link for is rendered
+  // here, in the engine's own class (so u1.css styles it the same), right
+  // after the engine's links so the order a keyboard user meets them is the
+  // order the config lists them. The engine's own link for the same target
+  // always wins: if it turns up later, ours for that target comes out.
+  // Exposed as well as registered: Studio calls it straight after it writes
+  // the config, so the links exist before anyone looks for them — the
+  // corrector pass waits for the engine and for a mutation, and "Verify on
+  // page" cannot wait for either.
+  P.renderSkipLinks = function () {
+    var u1 = W.u1 !== undefined ? W.u1 : W.U1 !== undefined ? W.U1 : W.user1st;
+    var cfg = u1 && u1.config;
+    // Studio and the exported config both leave a copy on window.__u1SkipLinks,
+    // because the engine's setConfiguration replaces u1.config and the list
+    // was seen to vanish with it. Whichever is there; the first non-empty one
+    // is kept for the rest of the page's life.
+    var list = (Array.isArray(W.__u1SkipLinks) && W.__u1SkipLinks.length) ? W.__u1SkipLinks
+             : (cfg && Array.isArray(cfg.skipLinks) && cfg.skipLinks.length) ? cfg.skipLinks
+             : P.skipLinks;
+    var report = { build: P.build, list: Array.isArray(list) ? list.length : 0, made: 0, kept: 0, missing: [], errors: [] };
+    if (!Array.isArray(list) || !list.length) return report;
+    P.skipLinks = list;
+    var engineLinks = qsa('a.u1st-skip-link:not(.u1p-skip-link)');
+    // Ours duplicated by the engine's since the last pass → out.
+    qsa('a.u1p-skip-link').forEach(function (mine) {
+      var href = mine.getAttribute('href');
+      if (engineLinks.some(function (e) { return e.getAttribute('href') === href; })) mine.remove();
+    });
+    var all = qsa('a.u1st-skip-link');
+    var after = all.length ? all[all.length - 1] : null;
+    list.forEach(function (sl) {
+      try {
+      if (!sl || !sl.label) return;
+      var target = null;
+      var href = typeof sl.target === 'string' && sl.target.charAt(0) === '#' ? sl.target : '';
+      if (href) target = document.getElementById(href.slice(1));
+      if (!target && sl.selector) { try { target = document.querySelector(sl.selector); } catch (e) {} }
+      if (!target && typeof sl.target === 'string' && !href) { try { target = document.querySelector(sl.target); } catch (e) {} }
+      if (!target) { report.missing.push(sl.selector || sl.target || sl.label); return; }
+      if (!target.id) target.id = sl.syntheticId || ('u1p-skip-' + Math.random().toString(36).slice(2, 8));
+      href = '#' + target.id;
+      var have = false;
+      try { have = !!document.querySelector('a.u1st-skip-link[href="' + href.replace(/"/g, '\\"') + '"]'); } catch (e) {}
+      if (have) { report.kept++; return; }
+      var a = document.createElement('a');
+      a.className = 'u1st-skip-link u1p-skip-link';
+      a.href = href;
+      var label = String(sl.label).trim();
+      // "sign in" → "Skip to sign in"; a label already phrased as one is kept.
+      if (!/^(skip|דלג|דלגו|перейти|saltar|passer|springe)/i.test(label)) label = 'Skip to ' + label;
+      a.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+      if (after && after.parentNode) after.insertAdjacentElement('afterend', a);
+      else document.body.insertAdjacentElement('afterbegin', a);
+      after = a;
+      report.made++;
+      } catch (e) { report.errors.push(String(e && e.message || e)); }
+    });
+    return report;
+  };
+  P.correct(P.renderSkipLinks);
 })();
 //#endregion
 
@@ -2318,6 +2460,129 @@
     });
   });
 
+  // ── enterSelects: arrows only move, Enter picks ────────────────────────────
+  //
+  // Opt-in per mapping (P.enterSelects, collected by the core's u1.fix.listbox
+  // intercept). The list where it is on runs the aria-activedescendant model
+  // and nothing else: keyboard focus sits on the LIST, never on an option, so
+  // whatever the site does when an option receives focus — on one client the
+  // options are links that navigate the moment they are focused — never
+  // happens from the keyboard. The highlight moves by attribute (and an inline
+  // outline, since the exported bundle ships no stylesheet); Enter or Space
+  // clicks the highlighted option; Tab leaves without clicking anything,
+  // which the library's own handler would otherwise do (its Tab case
+  // dispatches a click on the active option). Registered at document capture
+  // BEFORE the roving below, and it stops propagation, so neither the roving
+  // nor the library's list handler runs for these keys on such a list.
+  var esEntryFor = function (list) {
+    var L = P.enterSelects || [];
+    for (var i = 0; i < L.length; i++) {
+      try { if (L[i].listSel && list.matches(L[i].listSel)) return L[i]; } catch (e) {}
+    }
+    return null;
+  };
+  var esOptions = function (list, entry) {
+    var o = entry && entry.optionsSel ? u.qsa(entry.optionsSel, list) : u.qsa(OPT, list);
+    if (!o.length) o = u.qsa(':scope > *', list);
+    return o.filter(u.visible);
+  };
+  var esActive = function (list, opts) {
+    var id = u.get(list, 'aria-activedescendant');
+    var el = id && document.getElementById(id);
+    if (el && opts.indexOf(el) !== -1) return el;
+    return opts.filter(function (o) { return u.get(o, 'aria-selected') === 'true'; })[0] || null;
+  };
+  var esSetActive = function (list, opts, el) {
+    opts.forEach(function (o) {
+      if (o === el) return;
+      if (u.get(o, 'aria-selected') === 'true') u.set(o, 'aria-selected', 'false');
+      if (o.hasAttribute('data-u1p-es-outline')) { o.style.outline = o.getAttribute('data-u1p-es-outline'); o.removeAttribute('data-u1p-es-outline'); }
+    });
+    if (!el) return;
+    if (!el.id) el.id = 'u1p-opt-' + Math.random().toString(36).slice(2, 9);
+    u.set(list, 'aria-activedescendant', el.id);
+    u.set(el, 'aria-selected', 'true');
+    if (!el.hasAttribute('data-u1p-es-outline')) {
+      el.setAttribute('data-u1p-es-outline', el.style.outline || '');
+      el.style.outline = '2px solid Highlight';
+      el.style.outlineOffset = '-2px';
+    }
+    try { el.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+  };
+  // Focus belongs on the list. Every focusable inside an option comes out of
+  // the tab order (setTabIndex keeps the original for revert), the list gets
+  // a tab stop, and a highlight exists from the first moment.
+  var esArm = function (list, entry) {
+    var opts = esOptions(list, entry);
+    if (!opts.length) return;
+    u.qsa(u.FOCUSABLE, list).forEach(function (f) { u.setTabIndex(f, -1); });
+    if (list.tabIndex < 0 || !list.hasAttribute('tabindex')) u.setTabIndex(list, 0);
+    if (!esActive(list, opts)) esSetActive(list, opts, opts[0]);
+    if (list.contains(document.activeElement) && document.activeElement !== list) {
+      try { list.focus(); } catch (e) {}
+    }
+  };
+  P.correct(function () {
+    if (!(P.enterSelects || []).length) return;
+    u.qsa('[role="listbox"]').forEach(function (list) {
+      var entry = esEntryFor(list);
+      if (entry && u.visible(list)) esArm(list, entry);
+    });
+  });
+  // The opening path above (moveIn) puts focus ON AN OPTION; for these lists
+  // it must land on the list itself.
+  var plainMoveIn = moveIn;
+  moveIn = function (trigger, list) {
+    var entry = esEntryFor(list);
+    if (!entry) return plainMoveIn(trigger, list);
+    if (document.activeElement !== trigger) return;
+    esArm(list, entry);
+    try { list.focus(); } catch (e) {}
+  };
+  // A stray focus on an option (the site's own script, a mouse click) is
+  // pulled back to the list, with that option highlighted.
+  document.addEventListener('focusin', function (e) {
+    if (!(P.enterSelects || []).length) return;
+    var list = u.closest(e.target, '[role="listbox"]');
+    if (!list || e.target === list) return;
+    var entry = esEntryFor(list);
+    if (!entry) return;
+    var opts = esOptions(list, entry);
+    var opt = opts.filter(function (o) { return o === e.target || o.contains(e.target); })[0];
+    if (opt) esSetActive(list, opts, opt);
+    try { list.focus(); } catch (err) {}
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (!(P.enterSelects || []).length) return;
+    if (u.isTyping(e.target)) return;
+    var list = u.closest(e.target, '[role="listbox"]');
+    if (!list) return;
+    var entry = esEntryFor(list);
+    if (!entry) return;
+    var opts = esOptions(list, entry);
+    if (!opts.length) return;
+    var cur = esActive(list, opts), here = opts.indexOf(cur), n = opts.length, to = -1;
+    if (e.key === 'ArrowDown') to = here === -1 ? 0 : (here + 1) % n;
+    else if (e.key === 'ArrowUp') to = here === -1 ? n - 1 : (here - 1 + n) % n;
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = n - 1;
+    else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (!cur) return;
+      var hits = u.qsa('a[href],button', cur);
+      (hits.length === 1 ? hits[0] : cur).click();
+      return;
+    } else if (e.key === 'Tab') {
+      // Leave without choosing. The library's Tab case would click the
+      // active option; that is exactly the behaviour this switch removes.
+      e.stopImmediatePropagation();
+      return;
+    } else return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    esSetActive(list, opts, opts[to]);
+    if (document.activeElement !== list) { try { list.focus(); } catch (err) {} }
+  }, true);
+
   // Vertical by default: that is the role's default orientation, and unlike a
   // tablist a listbox that says nothing means Up/Down.
   P.rove('[role="listbox"]', OPT, { arrows: true, vertical: 'auto', orientationDefault: 'vertical' });
@@ -2624,6 +2889,88 @@
 })();
 //#endregion
 
+//#region u1-patch:focus
+// The focus ring U1 draws, on the elements it cannot draw it on.
+//
+// u1.css paints the ring with `body *:focus { outline … !important }`, and it
+// ships a hook for the one shape that ring is wrong on:
+//   [data-u1-focus-fix]:focus { display: inline-block !important }
+// Nothing in the engine ever sets that attribute (checked: zero references in
+// u1_vanilla-js-a11y.js). So an inline <a> wrapping an <img> — every logo on
+// every site — gets its outline drawn round the anchor's LINE BOX, which is a
+// stripe through the middle of the picture. Photographed on molinahealthcare:
+// `<a id="image" href="/"><img …></a>`, a red line across the logo.
+//
+// Two corrections, both only WHILE FOCUSED and both undone on blur, so the
+// page's design is never changed for anyone who is not tabbing through it:
+//
+//   1. An inline element whose ring would be wrong — it holds an image or a
+//      block, or it wraps onto more than one line — gets U1's own attribute,
+//      which U1's own CSS turns into an inline-block ring round the whole box.
+//
+//   2. An element whose popup is OPEN (aria-expanded="true") has that popup
+//      painted over one side of its ring — the Sign In button under its
+//      dropdown, a menu item under its submenu — because the popup is
+//      positioned and stacked above it. The ring is drawn just inside the
+//      element's box instead (outline-offset −2px, as an inline !important,
+//      which is the only thing that outranks the stylesheet's !important).
+//      Re-evaluated after clicks, since the popup opens after focus lands.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var FIX = 'data-u1-focus-fix';
+  var isEl = function (n) { return n && n.nodeType === 1; };
+
+  var ringIsWrong = function (el) {
+    var cs;
+    try { cs = getComputedStyle(el); } catch (e) { return false; }
+    if (cs.display !== 'inline') return false;
+    try { if (el.getClientRects().length > 1) return true; } catch (e) {}
+    var kids = el.children;
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i], tag = k.tagName;
+      if (tag === 'IMG' || tag === 'SVG' || tag === 'PICTURE' || tag === 'VIDEO' || tag === 'CANVAS') return true;
+      var d = '';
+      try { d = getComputedStyle(k).display; } catch (e) {}
+      if (d === 'block' || d === 'inline-block' || d === 'flex' || d === 'grid' || d === 'table') return true;
+    }
+    return false;
+  };
+
+  var inset = function (el) {
+    try { el.style.setProperty('outline-offset', '-2px', 'important'); } catch (e) {}
+  };
+  var reset = function (el) {
+    try {
+      el.removeAttribute(FIX);
+      if (el.style.getPropertyPriority('outline-offset') === 'important') el.style.removeProperty('outline-offset');
+    } catch (e) {}
+  };
+
+  var evaluate = function (el) {
+    if (!isEl(el) || el === document.body || el === document.documentElement) return;
+    if (ringIsWrong(el)) el.setAttribute(FIX, 'true');
+    if (el.getAttribute('aria-expanded') === 'true') inset(el);
+    else if (el.style.getPropertyPriority('outline-offset') === 'important') el.style.removeProperty('outline-offset');
+  };
+
+  document.addEventListener('focusin', function (e) { evaluate(e.target); }, true);
+  document.addEventListener('focusout', function (e) { if (isEl(e.target)) reset(e.target); }, true);
+  // The popup opens AFTER the click that focused the trigger, and after its
+  // animation. Look again then.
+  document.addEventListener('click', function () {
+    setTimeout(function () { evaluate(document.activeElement); }, 50);
+    setTimeout(function () { evaluate(document.activeElement); }, 600);
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
+    setTimeout(function () { evaluate(document.activeElement); }, 50);
+    setTimeout(function () { evaluate(document.activeElement); }, 600);
+  }, true);
+
+  P.focusRing = { evaluate: evaluate, ringIsWrong: ringIsWrong };
+})();
+//#endregion
+
 //#region u1-patch:statics
 // Static corrections chosen from the scan report.
 //
@@ -2744,6 +3091,108 @@
           th.setAttribute(td.attributes[i].name, td.attributes[i].value);
         }
         td.parentNode.replaceChild(th, td);
+      });
+    });
+  });
+
+  // ── link-newwindow ───────────────────────────────────────────────────────
+  // A link that opens a new tab says so in its name, in the page's language.
+  // Only when the name does not already say it, and by extending the name the
+  // link already has — never replacing it.
+  var NEW_TAB = {
+    he: 'נפתח בכרטיסייה חדשה', ar: 'يفتح في علامة تبويب جديدة', ru: 'открывается в новой вкладке',
+    fr: 'ouvre dans un nouvel onglet', es: 'se abre en una pestaña nueva', de: 'öffnet in neuem Tab', en: 'opens in a new tab',
+  };
+  var SAYS_NEW_TAB = /new (tab|window)|opens? in|external|חלון חדש|לשונית חדשה|כרטיסייה חדשה|nouvel onglet|pestaña nueva|neuem tab|новой вкладке|علامة تبويب جديدة/i;
+  P.correct(function () {
+    if (!on('link-newwindow')) return;
+    var lang = ((document.documentElement.getAttribute('lang') || 'en').slice(0, 2)).toLowerCase();
+    var phrase = NEW_TAB[lang] || NEW_TAB.en;
+    u.qsa('a[href][target="_blank"]').forEach(function (a) {
+      // Judged by CONTENT on every pass, never by a "done" marker: an
+      // aria-label mapping on the same link ("Learn More about Molina in the
+      // Community") rewrites the name after this ran, and the marker then
+      // kept the phrase off for good — seen on molinahealthcare.com. Whatever
+      // wrote the name last, the phrase is put back if it is missing.
+      var name = u.get(a, 'aria-label') || (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!name) {
+        var img = a.querySelector('img[alt],[aria-label]');
+        name = img ? (img.getAttribute('alt') || img.getAttribute('aria-label') || '').trim() : '';
+      }
+      if (!name) return;                              // a nameless link is a different fault
+      if (SAYS_NEW_TAB.test(name + ' ' + (a.getAttribute('title') || ''))) return;
+      a.setAttribute('data-u1p-newtab', '1');
+      u.set(a, 'aria-label', name + ' (' + phrase + ')');
+    });
+  });
+
+  // ── contrast ─────────────────────────────────────────────────────────────
+  // Text too faint against its background. The scan groups the findings by
+  // colour pair and the person approves one darker shade per pair; that lands
+  // here as a rule list — { selectors: [...], color: '#0b6e70' } — and becomes
+  // one <style> the bundle owns. A stylesheet, not inline styles: it survives
+  // re-renders, and removing the mapping removes every trace at once.
+  P.correct(function () {
+    if (!on('contrast')) return;
+    var rules = (window.__u1Statics.contrast || {}).rules;
+    if (!Array.isArray(rules) || !rules.length) return;
+    var css = rules.map(function (r) {
+      var sels = (r.selectors || []).filter(function (x) { return typeof x === 'string' && x; });
+      if (!sels.length || !r.color) return '';
+      return sels.join(',\n') + ' { color: ' + r.color + ' !important; }';
+    }).filter(Boolean).join('\n');
+    var st = document.getElementById('u1p-contrast');
+    if (!st) { st = document.createElement('style'); st.id = 'u1p-contrast'; (document.head || document.documentElement).appendChild(st); }
+    if (st.textContent !== css) st.textContent = css;
+  });
+
+  // ── landmark-noname ──────────────────────────────────────────────────────
+  // role="form" / role="region" with no name is not a landmark a screen
+  // reader lists. The name is on the page already: a search container becomes
+  // role="search" (named after its field); anything else takes the heading or
+  // the first field's label inside it.
+  var SEARCHY = /search|חיפוש|بحث|поиск|buscar|recherche|suche/i;
+  P.correct(function () {
+    if (!on('landmark-noname')) return;
+    u.qsa('[role="form"],[role="region"]').forEach(function (el) {
+      if (u.get(el, 'aria-label') || u.get(el, 'aria-labelledby')) return;
+      var field = el.querySelector('input:not([type=hidden]),select,textarea');
+      var fieldLabel = '';
+      if (field) {
+        var lab = field.id ? document.querySelector('label[for="' + field.id + '"]') : null;
+        fieldLabel = (lab && lab.textContent.trim()) || field.getAttribute('aria-label') || field.getAttribute('placeholder') || '';
+      }
+      var searchy = field && (field.type === 'search' || SEARCHY.test(field.name || '') || SEARCHY.test(field.id || '') || SEARCHY.test(fieldLabel));
+      // role=search only where the role is ours to change. A container the
+      // engine manages (a `form` mapping wrote role="form" and stamps
+      // u1st-avoid-change-detection) gets its role rewritten by the engine on
+      // every tick; fighting that flickers. It keeps role=form and gets the
+      // NAME — a named form around the search field is what the scan then
+      // counts as the search landmark.
+      if (searchy && u.get(el, 'role') === 'form' && !el.hasAttribute('u1st-avoid-change-detection')) u.set(el, 'role', 'search');
+      var heading = el.querySelector('h1,h2,h3,h4,h5,h6,legend');
+      if (heading && heading.textContent.trim()) {
+        if (!heading.id) heading.id = 'u1p-lm-' + Math.random().toString(36).slice(2, 8);
+        u.set(el, 'aria-labelledby', heading.id);
+        return;
+      }
+      var name = fieldLabel.replace(/\s+/g, ' ').trim();
+      if (name) u.set(el, 'aria-label', name);
+    });
+  });
+
+  // ── list-stray-br ────────────────────────────────────────────────────────
+  // A <br> (or an empty spacer) sitting directly inside a <ul>/<ol> makes a
+  // screen reader miscount the items. The fix is not to rebuild the list: the
+  // stray node is hidden from the accessibility tree and the list reads right.
+  P.correct(function () {
+    if (!on('list-stray-br')) return;
+    u.qsa('ul, ol').forEach(function (list) {
+      Array.prototype.forEach.call(list.children, function (kid) {
+        var tag = kid.tagName;
+        if (tag === 'LI' || tag === 'SCRIPT' || tag === 'TEMPLATE') return;
+        var empty = tag === 'BR' || tag === 'HR' || (!(kid.textContent || '').trim() && !kid.querySelector('img,svg,a,button,input,li'));
+        if (empty && u.get(kid, 'aria-hidden') !== 'true') u.set(kid, 'aria-hidden', 'true');
       });
     });
   });

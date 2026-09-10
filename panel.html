@@ -751,6 +751,8 @@
         <option value="keyboard-grid">keyboard grid (custom — arrow nav, no U1)</option>
         <option value="keyboard-tabs">tab strip (custom — full pattern, no U1)</option>
         <option value="keyboard-clickable">make keyboard-clickable (custom — all matches)</option>
+        <option value="hide-element">hide from keyboard &amp; screen reader (manual only — all matches)</option>
+        <option value="focus-order">focus order (manual only — Tab order inside a block)</option>
       </select>
     </div>
 
@@ -825,7 +827,15 @@
       <div class="seg" role="tablist" aria-label="Filter mappings">
         <button class="seg-btn active" id="filterOnPage" role="tab" aria-selected="true">On this page</button>
         <button class="seg-btn" id="filterAll" role="tab" aria-selected="false">All</button>
+        <button class="seg-btn" id="filterToReview" role="tab" aria-selected="false" title="Mappings nobody has ticked as reviewed yet">To review</button>
       </div>
+      <!-- Your own pass over the AI's work: how many rows carry the ✓. Kept in
+           this extension only (a private store key) — it never reaches the
+           export, the report or the server. -->
+      <span class="review-count" id="reviewCount" aria-live="polite"></span>
+      <!-- Click a thing on the page, land on its row here. -->
+      <button type="button" class="btn-outline btn-xs" id="locateMappingBtn"
+              title="Then click any element on the page: its mapping opens here, or you are told there is none. Esc to stop.">🎯 Find on page</button>
     </div>
     <!-- Where the work on screen came from, and anything a colleague changed
          under you. It sits ABOVE the list because it is about the list. -->
@@ -857,24 +867,35 @@
     <span class="u1-gradient-text">Scan</span> the page<span class="dot">.</span>
   </div>
 
+  <!-- Pinned under the top bar for as long as the Scan tab is on screen —
+       through the intro cards AND the long results list below them. This has
+       to sit OUTSIDE any .section: position:sticky only holds an element in
+       place while its own parent box is in view, and the results live in a
+       separate sibling .section further down the tab. Nested inside the
+       first .section, the switcher stuck only through the intro and then
+       scrolled away with it the moment the results section took over — the
+       exact case switching panes while reading results needs it for. -->
+  <div class="scan-choice-sticky">
+    <div class="scan-choice-tabs" role="tablist" aria-label="Scan type">
+      <button type="button" class="scan-choice-tab active" data-scanpane="content" role="tab" aria-selected="true" aria-controls="scanPaneContent">Static Scan</button>
+      <button type="button" class="scan-choice-tab" data-scanpane="mappings" role="tab" aria-selected="false" aria-controls="scanPaneMappings">Dynamic Scan</button>
+    </div>
+  </div>
+
   <div class="section">
     <!-- Two different questions, so two scans. The first asks what is wrong with
          the page's own markup; the second asks whether the fixes already made
          actually work. Neither needs an API key. Shown one at a time, like the
          Picker's Scan/Mappings split — a click switches which question you're
          looking at rather than scrolling past the other one's card. -->
-    <div class="scan-choice-tabs" role="tablist" aria-label="Scan type">
-      <button type="button" class="scan-choice-tab active" data-scanpane="content" role="tab" aria-selected="true" aria-controls="scanPaneContent">Static Scan</button>
-      <button type="button" class="scan-choice-tab" data-scanpane="mappings" role="tab" aria-selected="false" aria-controls="scanPaneMappings">Dynamic Scan</button>
-    </div>
     <div class="scan-choice">
       <div class="scan-choice-card" id="scanPaneContent">
         <div class="scan-choice-title">Static scan — the page's own markup</div>
         <p class="scan-choice-sub">
           Reads the page as it is, without touching anything: headings, alt
-          text, labels, landmarks, focus order, ARIA states — the faults in
-          the page's own markup. Each with its WCAG criterion, severity and a
-          suggested fix.
+          text, labels, landmarks, focus order, colour contrast, ARIA — the
+          faults in the page's own markup, each as a plain question answered
+          passed or to-fix, with its WCAG criterion and a suggested fix.
         </p>
         <div class="scan-progress" id="scanProgress" style="display:none;"></div>
         <div class="btn-row">
@@ -898,7 +919,8 @@
              only way to know what a press would cover was to press it. -->
         <div class="elem-scan-saved" id="elemScanSaved"></div>
         <div class="btn-row">
-          <button class="btn-primary" id="elemScanBtn">🧪 Test every mapping</button>
+          <button class="btn-primary" id="elemScanHereBtn" title="Only the mappings on the page in front — no travelling to other pages">🧪 Test this page</button>
+          <button class="btn-outline" id="elemScanBtn" title="Every mapping on the site, page by page — the run visits each page and comes back">Test all pages</button>
           <button class="btn-outline" id="elemScanStopBtn" style="display:none;">■ Stop</button>
           <button class="btn-outline" id="elemScanClearBtn" style="display:none;">Clear</button>
         </div>

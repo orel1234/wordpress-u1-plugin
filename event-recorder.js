@@ -38,6 +38,16 @@
   const origAdd = EventTarget.prototype.addEventListener;
   const origRemove = EventTarget.prototype.removeEventListener;
 
+  // A page whose Permissions-Policy forbids `unload` reports a violation the
+  // moment anyone registers an unload listener — and because this wrapper is
+  // the frame on top of the stack, the report was filed against the
+  // extension ("Permissions policy violation: unload is not allowed", stack:
+  // event-recorder.js). The listener could never fire there anyway (the
+  // browser does not dispatch unload under that policy), so not forwarding it
+  // loses nothing and keeps the site's violation out of our error list.
+  const unloadBanned = (() => {
+    try { return !!(document.featurePolicy && !document.featurePolicy.allowsFeature('unload')); } catch { return false; }
+  })();
   EventTarget.prototype.addEventListener = function (type, fn, opts) {
     try {
       if (this && this.nodeType === 1) {
@@ -47,6 +57,7 @@
         if (INTERACTION.test(type) && roots.size < MAX_ROOTS) roots.add(this);
       }
     } catch {}
+    if (type === 'unload' && unloadBanned) return undefined;
     return origAdd.call(this, type, fn, opts);
   };
 

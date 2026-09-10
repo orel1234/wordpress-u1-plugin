@@ -1,30 +1,33 @@
 'use strict';
 
-// Third-party static-analysis engines, run in the page and normalised into the
-// shape the scan list already speaks.
+// The one third-party static-analysis engine, run in the page and normalised
+// into the shape the scan list already speaks.
 //
 // The built-in rules in panel.js are hand-written and stay: they know things
 // about THIS product that a general engine cannot — an auto-advancing carousel
 // with no pause control, a U1 mapping whose selector went stale. What they are
-// not is a complete WCAG ruleset, and a client asking "what does axe say" was
-// getting our answer to a different question.
+// not is a complete WCAG ruleset, and colour contrast in particular needs a
+// rendered page and a mature algorithm nobody should rewrite.
 //
-// Two engines, chosen because they disagree:
-//   · axe-core (Deque, MIT) — the de-facto standard, ~90 rules.
-//   · IBM Equal Access (Apache 2.0) — a separate ruleset, stronger on ARIA
-//     relationships and document structure.
+// One engine: axe-core (Deque, MIT), the de-facto standard, ~100 rules. It runs
+// UNDER our wording: every axe rule is translated in panel.js's AXE_RULES into
+// the same plain title / why / fix a hand-written rule carries, and filed under
+// the same checklist question. The reader never sees an axe message.
 //
 // Deliberately NOT here:
+//   · IBM Equal Access. Ran here for a while; removed on request. Its raw
+//     messages were written for the person who wrote the HTML, it flagged
+//     duplicate ids on <script> tags as accessibility failures, and everything
+//     it checked that is static and worth checking is now either an axe rule or
+//     a hand-written one — see scan-coverage.md for the rule-by-rule account.
 //   · Lighthouse. Its accessibility category IS axe-core, so it contributes
 //     nothing but a second copy of the same findings and a much larger runtime.
 //   · WAVE. Genuinely different, but there is no local engine — only a paid
 //     per-page API, and the browser extension cannot be driven from here.
 //   · HTML_CodeSniffer. Its published build contains no rules at all; they are
 //     fetched at run time from a path relative to its own <script src>, which
-//     inside an extension resolves against the client's origin. Bundling all 98
-//     standards and bridging them into its private registry got them loaded and
-//     it still never called back, with no error raised. Not shipped rather than
-//     shipped dead.
+//     inside an extension resolves against the client's origin. Not shipped
+//     rather than shipped dead.
 //
 // Runs in the ISOLATED world: full DOM access, and not subject to the client
 // site's CSP — which matters, because the sites that most need scanning are the
@@ -33,7 +36,12 @@
 (function () {
   if (window.__u1ScanEngines) return;
 
-  /** A CSS path good enough to find the element again, and to read. */
+  /**
+   * The same short selector panel.js's own rules use (`#id`, `tag.class`,
+   * `tag`), plus the index among that selector's matches — together they name
+   * THIS element, and they are what lets an axe finding and a hand-written one
+   * on the same element fold into one row.
+   */
   var selOf = function (el) {
     if (!el || el.nodeType !== 1) return '';
     var ident = function (s) { return /^[A-Za-z][\w-]*$/.test(s); };
@@ -43,11 +51,9 @@
     if (cls.length) return el.tagName.toLowerCase() + '.' + cls.slice(0, 2).join('.');
     return el.tagName.toLowerCase();
   };
-
-  var snippet = function (el) {
-    if (!el) return '';
-    var html = (el.outerHTML || '').replace(/\s+/g, ' ');
-    return html.length > 160 ? html.slice(0, 157) + '…' : html;
+  var idxOf = function (el, sel) {
+    try { return Math.max(0, Array.prototype.indexOf.call(document.querySelectorAll(sel), el)); }
+    catch (e) { return 0; }
   };
 
   // ── axe ──────────────────────────────────────────────────────────────────
@@ -66,6 +72,11 @@
         (res.violations || []).forEach(function (v) {
           (v.nodes || []).forEach(function (n) {
             var target = (n.target || [])[0] || '';
+            // axe's target is a unique CSS path — precise for highlighting,
+            // unreadable as a name. Resolve the element and name it our way.
+            var el = null;
+            if (typeof target === 'string') { try { el = document.querySelector(target); } catch (e) {} }
+            var sel = el ? selOf(el) : (typeof target === 'string' ? target : '');
             out.push({
               engine: 'axe',
               ruleId: 'axe.' + v.id,
@@ -77,7 +88,20 @@
               severity: AXE_SEVERITY[v.impact] || 'Medium',
               wcag: (v.tags || []).filter(function (t) { return /^wcag\d/.test(t); })
                 .map(function (t) { return t.replace(/^wcag/, '').split('').join('.'); })[0] || '',
-              selector: typeof target === 'string' ? target : '',
+              selector: sel,
+              idx: el ? idxOf(el, sel) : 0,
+              target: typeof target === 'string' ? target : '',
+              text: el ? (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '',
+              tag: el ? el.tagName.toLowerCase() : '',
+              // Where a link goes — the text alone ("here", "Learn more.") does
+              // not say which of forty links this is.
+              href: el && el.closest ? ((el.closest('a[href]') || {}).getAttribute ? el.closest('a[href]').getAttribute('href') : '') : '',
+              // The colour pair behind a contrast finding: what it is, what it
+              // needs. Lets the panel group "these 12 are all #009ea0 on white".
+              data: (function () {
+                var d = ((n.any || [])[0] || {}).data || {};
+                return d && d.fgColor ? { fgColor: d.fgColor, bgColor: d.bgColor, contrastRatio: d.contrastRatio, expectedContrastRatio: d.expectedContrastRatio, fontSize: d.fontSize, fontWeight: d.fontWeight } : null;
+              })(),
               detail: n.html || '',
               helpUrl: v.helpUrl || '',
             });
@@ -88,60 +112,14 @@
       .catch(function () { return []; });
   };
 
-  // ── IBM Equal Access ─────────────────────────────────────────────────────
-  //
-  // Its results carry every PASS as well, which is the bulk of them, so the
-  // filter is not cosmetic — an unfiltered run reports thousands of "findings".
-  var IBM_SEVERITY = { violation: 'High', potentialviolation: 'Medium', recommendation: 'Low' };
-
-  var runIbm = function () {
-    if (!window.ace || !window.ace.Checker) return Promise.resolve([]);
-    var checker;
-    try { checker = new window.ace.Checker(); } catch (e) { return Promise.resolve([]); }
-    return checker.check(document, ['IBM_Accessibility'])
-      .then(function (res) {
-        var out = [];
-        (res.results || []).forEach(function (r) {
-          var level = (r.value || [])[1];
-          if (!level || level === 'PASS') return;
-          var kind = level === 'FAIL' ? 'violation'
-            : level === 'POTENTIAL' ? 'potentialviolation' : 'recommendation';
-          var el = null;
-          try { el = r.node || (r.path && document.querySelector(r.path.dom)); } catch (e) {}
-          out.push({
-            engine: 'ibm',
-            ruleId: 'ibm.' + r.ruleId,
-            issue: (r.message || r.ruleId || '').split('.')[0],
-            why: r.message || '',
-            fix: r.message || '',
-            severity: IBM_SEVERITY[kind] || 'Medium',
-            wcag: '',
-            selector: el ? selOf(el) : ((r.path && r.path.dom) || ''),
-            detail: el ? snippet(el) : '',
-            helpUrl: r.help || '',
-          });
-        });
-        return out;
-      })
-      .catch(function () { return []; });
-  };
-
-  window.__u1ScanEngines = function (which) {
-    var wanted = which && which.length ? which : ['axe', 'ibm'];
-    var jobs = [];
-    if (wanted.indexOf('axe') !== -1) jobs.push(runAxe());
-    if (wanted.indexOf('ibm') !== -1) jobs.push(runIbm());
-    return Promise.all(jobs).then(function (lists) {
-      var flat = [];
-      lists.forEach(function (l) { flat = flat.concat(l); });
+  window.__u1ScanEngines = function () {
+    return runAxe().then(function (findings) {
       return {
-        findings: flat,
-        // Which engines actually answered. A missing engine is not zero
-        // findings from it, and reporting the two as one thing is how a scan
-        // that half-ran looks like a clean page.
-        ran: wanted.filter(function (n) {
-          return n === 'axe' ? !!window.axe : !!(window.ace && window.ace.Checker);
-        }),
+        findings: findings,
+        // Whether the engine actually answered. A missing engine is not zero
+        // findings from it, and a scan that half-ran must not look like a
+        // clean page.
+        ran: window.axe ? ['axe'] : [],
       };
     });
   };

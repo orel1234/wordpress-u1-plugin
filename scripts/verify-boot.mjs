@@ -34,6 +34,20 @@ const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) 
 const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://localhost/' });
 const w = dom.window;
 
+// The Scan tab's Static/Dynamic switcher is pinned with position:sticky, which
+// only holds an element in place while its OWN PARENT box is in view. Nested
+// inside the tab's first .section (the intro cards), it stuck through the
+// intro and scrolled away the moment the results — a sibling .section further
+// down — took over, which is exactly the case switching panes while reading a
+// long result list needs it for. It must sit as a direct child of #tab-scan,
+// a sibling of every .section in that tab, not a descendant of one.
+{
+  const sticky = w.document.querySelector('.scan-choice-sticky');
+  check('the Scan tab\'s Static/Dynamic switcher exists', !!sticky);
+  check('…as a direct child of #tab-scan, not nested inside a .section (or it only stays pinned through the intro, not the results below)',
+    !!sticky && sticky.parentElement && sticky.parentElement.id === 'tab-scan' && !sticky.closest('.section'));
+}
+
 // ── The browser, stubbed to the shape the panel expects ────────────────────
 // Everything answers, nothing throws, nothing is granted. A panel that cannot
 // boot against "no data and no permissions" cannot boot on a fresh install.

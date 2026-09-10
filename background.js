@@ -174,11 +174,14 @@ async function injectConfig(tabId, config) {
     injectImmediately: true,
     func: (cfg) => {
       const preExisted = window.u1 !== undefined;
-      console.log('[U1 Studio] document_start: window.u1 already exists?', preExisted, preExisted ? window.u1 : '(not yet)');
+      window.__u1StudioDebug && console.log('[U1 Studio] document_start: window.u1 already exists?', preExisted, preExisted ? window.u1 : '(not yet)');
 
       window.u1 = window.u1 || {};
       window.u1.config = cfg;
-      console.log('[U1 Studio] preset window.u1.config =', cfg);
+      // A copy the engine cannot wipe (setConfiguration replaces u1.config):
+      // the patch renders the config's own skip links from here.
+      window.__u1SkipLinks = Array.isArray(cfg.skipLinks) ? cfg.skipLinks : [];
+      window.__u1StudioDebug && console.log('[U1 Studio] preset window.u1.config =', cfg);
 
       // Assign synthetic ids for CSS-selector skip-link targets. Runs at DOM
       // ready and is retried a few times, because some targets are rendered by
@@ -213,7 +216,7 @@ async function injectConfig(tabId, config) {
           const done = assignSyntheticIds();
           if (done >= total || tries >= 15) {
             clearInterval(poll);
-            console.log('[U1 Studio] synthetic-id pass complete:', done, 'of', total, 'targets resolved after', tries * 300, 'ms');
+            window.__u1StudioDebug && console.log('[U1 Studio] synthetic-id pass complete:', done, 'of', total, 'targets resolved after', tries * 300, 'ms');
           }
         }, 300);
       };
@@ -287,7 +290,7 @@ async function injectMappings(tabId, mappings) {
             }
           } catch (e) { /* keep going */ }
         });
-        console.log('[U1 Studio] auto-applied', applied, 'of', list.length, 'mappings');
+        window.__u1StudioDebug && console.log('[U1 Studio] auto-applied', applied, 'of', list.length, 'mappings');
         return true;
       };
       if (applyAll()) return; // u1.fix already present
@@ -310,14 +313,19 @@ async function injectKeyboardGrids(tabId, grids) {
     target: { tabId },
     func: (list) => {
       if (!window.__u1InstallGridFromMapping || !window.__u1MakeClickable ||
-          !window.__u1InstallTabsFromMapping || !window.__u1InstallBreadcrumbFromMapping) {
-        console.log('[U1 Studio] keyboard-grid: ENGINE NOT LOADED (grid-nav.js missing) for', list.length, 'mapping(s)');
+          !window.__u1InstallTabsFromMapping || !window.__u1InstallBreadcrumbFromMapping ||
+          !window.__u1HideFromAll || !window.__u1FocusOrderFromMapping) {
+        window.__u1StudioDebug && console.log('[U1 Studio] keyboard-grid: ENGINE NOT LOADED (grid-nav.js missing) for', list.length, 'mapping(s)');
         return;
       }
       let n = 0; const errs = [];
       list.forEach(m => {
         try {
-          const r = (m.custom === 'keyboardClickable')
+          const r = (m.custom === 'hideElement')
+            ? window.__u1HideFromAll({ selector: m.primary })
+            : (m.custom === 'focusOrder')
+            ? window.__u1FocusOrderFromMapping(m.primary, m.config)
+            : (m.custom === 'keyboardClickable')
             ? window.__u1MakeClickable({ selector: m.primary,
                 role: (m.config && m.config.role) || 'button',
                 label: (m.config && m.config.label) || '' })
@@ -331,10 +339,89 @@ async function injectKeyboardGrids(tabId, grids) {
           if (r && r.ok) n++; else errs.push((r && r.err) || 'unknown');
         } catch (e) { errs.push(e.message); }
       });
-      console.log('[U1 Studio] keyboard-grid: armed', n, 'of', list.length, errs.length ? errs : '');
+      window.__u1StudioDebug && console.log('[U1 Studio] keyboard-grid: armed', n, 'of', list.length, errs.length ? errs : '');
     },
     args: [grids],
   });
+}
+
+// Static fixes ("Fix all" on a scan rule) are saved as `custom: 'staticFix'`
+// mappings and export fine — but nothing re-applied them on a normal page
+// load: only the panel's own Fix-all press declared window.__u1Statics. So
+// the 39 new-tab links read as fixed, and as broken again on the next reload.
+// The patch (already injected for any site we have work on) holds the
+// correctors; this only switches them on, the way the exported bundle does.
+async function injectStatics(tabId, statics) {
+  await injectPatch(tabId);
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    injectImmediately: true,
+    func: (decl) => {
+      window.__u1Statics = Object.assign(window.__u1Statics || {}, decl);
+      if (window.__u1Patch && window.__u1Patch.schedule) window.__u1Patch.schedule();
+    },
+    args: [statics],
+  });
+}
+// aria-label mappings (a typed name, or "<own text> about <card heading>")
+// were applied by the panel when saved and by the exported bundle on the
+// client's site — and by nothing on the next reload in this browser, so a
+// named dropdown or link read as unnamed again the moment the page was
+// refreshed. Same attribute the panel's applyAriaLabel writes, on load.
+async function injectAriaLabels(tabId, list) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (items) => {
+      var ABOUT = { en: 'about', he: 'על', ar: 'حول', vi: 'về', es: 'sobre', fr: 'sur', pt: 'sobre', ru: 'о', zh: '关于', ko: '관련', ja: 'について', hmn: 'txog', tl: 'tungkol sa', de: 'über', it: 'su', pl: 'o', uk: 'про', fa: 'درباره', hi: 'के बारे में', so: 'ku saabsan', am: 'ስለ', tr: 'hakkında' };
+      var aboutFor = function (el, middle) {
+        if ((middle || '').trim().toLowerCase() !== 'about') return (middle || '').trim();
+        var n = el; var lang = '';
+        while (n && n !== document && !lang) { lang = (n.getAttribute && n.getAttribute('lang')) || ''; n = n.parentNode; }
+        lang = (lang || document.documentElement.lang || 'en').toLowerCase();
+        return ABOUT[lang] || ABOUT[lang.split('-')[0]] || 'about';
+      };
+      var clean = function (s) { return (s || '').replace(/\s+/g, ' ').trim().replace(/[.。:：…]+$/, ''); };
+      const run = () => items.forEach(({ target, label, middleText, headingSel }) => {
+        let els; try { els = document.querySelectorAll(target); } catch (e) { return; }
+        els.forEach((el) => {
+          if (label && label.trim()) { el.setAttribute('aria-label', label.trim()); return; }
+          const ownText = clean(el.textContent);
+          let headingText = '';
+          if (headingSel) {
+            let h = null, node = el.parentElement;
+            while (node && node !== document.body) { try { h = node.querySelector(headingSel); } catch (e) { h = null; } if (h) break; node = node.parentElement; }
+            headingText = h ? clean(h.textContent) : '';
+            if (!headingText) return;
+          }
+          const parts = [ownText, aboutFor(el, middleText), headingText].filter(Boolean);
+          if (parts.length) el.setAttribute('aria-label', parts.join(' '));
+        });
+      });
+      run();
+      // Elements the site renders after load: try again shortly, once.
+      setTimeout(run, 1500);
+    },
+    args: [list],
+  });
+}
+function ariaLabelsOf(list) {
+  return list.filter(m => m && typeof m === 'object' && m.custom === 'ariaLabel' && m.primary).map(m => {
+    const c = m.config || {}; const sel = c.selectors || {};
+    return { target: m.primary, label: c.label || '', middleText: sel.middleText || c.middleText || '', headingSel: sel.headingSelector || c.headingSelector || '' };
+  });
+}
+function staticsOf(list) {
+  const on = {};
+  for (const m of list) {
+    if (m && typeof m === 'object' && m.custom === 'staticFix' && m.primary) {
+      const opts = Object.assign({}, m.config || {});
+      delete opts.selectors;
+      on[m.primary] = opts;
+    }
+  }
+  return on;
 }
 
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
@@ -345,7 +432,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     // the dist/ build mismatch. One line, same convention as everywhere else
     // in this file, so it's findable if a specialist ever hits it for real.
     if (info.status === 'loading') {
-      console.log('[U1 Studio] not injecting on', tab.url, '— not https (or localhost); saved config/mappings for this hostname were not sent.');
+      window.__u1StudioDebug && console.log('[U1 Studio] not injecting on', tab.url, '— not https (or localhost); saved config/mappings for this hostname were not sent.');
     }
     return;
   }
@@ -399,8 +486,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     const early = earlyAll.filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
     if (early.length) { try { await injectMappings(tabId, early); } catch {} }
     // Arm the custom keyboard-grid engine early too (idempotent — it guards itself).
-    const earlyGrids = earlyAll.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList' || m.custom === 'breadcrumb') && m.primary);
+    const earlyGrids = earlyAll.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList' || m.custom === 'breadcrumb' || m.custom === 'hideElement' || m.custom === 'focusOrder') && m.primary);
     if (earlyGrids.length) { try { await injectKeyboardGrids(tabId, earlyGrids); } catch {} }
+    const earlyStatics = staticsOf(earlyAll);
+    if (Object.keys(earlyStatics).length) { try { await injectStatics(tabId, earlyStatics); } catch {} }
   }
 
   // ── At page-complete: re-inject U1 CSS/JS for manual-inject hostnames, and
@@ -416,8 +505,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     if (mappings.length) { try { await injectMappings(tabId, mappings); } catch {} }
 
     // Custom keyboard-grid mappings run our own engine — apply them too.
-    const grids = all.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList' || m.custom === 'breadcrumb') && m.primary);
+    const grids = all.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList' || m.custom === 'breadcrumb' || m.custom === 'hideElement' || m.custom === 'focusOrder') && m.primary);
     if (grids.length) { try { await injectKeyboardGrids(tabId, grids); } catch {} }
+    const statics = staticsOf(all);
+    if (Object.keys(statics).length) { try { await injectStatics(tabId, statics); } catch {} }
+    const names = ariaLabelsOf(all);
+    if (names.length) { try { await injectAriaLabels(tabId, names); } catch {} }
 
     const injectData = stored[`manualInject_${hostname}`];
     if (!injectData) return;

@@ -5310,6 +5310,58 @@
    * The fix already exists in the builder — a name built from the link's own
    * text plus the heading in its card. What was missing was finding them.
    */
+  /**
+   * The heading beside THIS target — for the manual builder, which has the
+   * button and needs the other half. Same walk as cardDescriptions (up to
+   * five levels, a real heading first, then aria-labelledby, then the card's
+   * first text), run for every element the target matches, and answered as
+   * ONE selector that reaches every card's heading — a selector pinned to
+   * the first card would name every card after it.
+   */
+  function cardHeadingFor(targetSel) {
+    var els;
+    try { els = Array.prototype.slice.call(document.querySelectorAll(targetSel)); } catch (e) { return null; }
+    if (!els.length) return null;
+    var headings = [];
+    els.forEach(function (el) {
+      for (var p = el.parentElement, up = 0; p && up < 5; p = p.parentElement, up++) {
+        var h = p.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+        if (h && (h === el || h.contains(el))) h = null;
+        if (!h || !(h.textContent || '').trim()) {
+          var lb = p.getAttribute && p.getAttribute('aria-labelledby');
+          if (lb) h = document.getElementById(lb.split(/\s+/)[0]);
+        }
+        if ((!h || !(h.textContent || '').trim()) && up === 4) {
+          var kids = p.children;
+          for (var f = 0; f < kids.length; f++) {
+            if ((kids[f].textContent || '').trim() && kids[f] !== el && !kids[f].contains(el)) { h = kids[f]; break; }
+          }
+        }
+        if (h && (h.textContent || '').trim()) { headings.push(h); break; }
+      }
+    });
+    if (!headings.length) return { heading: '', cards: els.length, found: 0 };
+    var uniq = headings.filter(function (h, i) { return headings.indexOf(h) === i; });
+    var sel = '';
+    var common = uniq.length > 1 ? commonSelectorFor(document.body, uniq, null) : null;
+    if (common && common.selector && isU1Valid(common.selector)) sel = common.selector;
+    if (!sel && uniq.length === 1) {
+      var one = robustSelector(uniq[0]);
+      if (one && isU1Valid(one)) sel = one;
+    }
+    if (sel) {
+      var reaches = 0;
+      try { reaches = document.querySelectorAll(sel).length; } catch (e) { reaches = 0; }
+      if (reaches < uniq.length) sel = '';
+    }
+    return {
+      heading: sel,
+      cards: els.length,
+      found: headings.length,
+      example: (uniq[0].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+    };
+  }
+
   function cardDescriptions(diag) {
     // `diag`, when given, is filled with why the answer is what it is — a run
     // that reports "0 vague-link groups" with no reason is indistinguishable
@@ -5474,7 +5526,7 @@
     // a human's answer, without a model
     describeComponent, elementForMark, elementsForMarks, commonAncestor, ITEM_FIELD,
     // the headings review, and the "Read more" cards beside it
-    headingOutline, cardDescriptions, ambiguousLink,
+    headingOutline, cardDescriptions, cardHeadingFor, ambiguousLink,
     // "there is nothing there" and "I cannot see in there" are different
     // answers, and this is the only honest source of the second one
     shadowReport,

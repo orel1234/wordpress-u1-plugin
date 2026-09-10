@@ -1168,3 +1168,146 @@ window.__u1InstallBreadcrumbFromMapping = function (primary, config) {
   });
 };
 //#endregion
+
+//#region u1-engine:hide
+// ─────────────────────────────────────────────────────────────────────────────
+//  Hide from the keyboard and from screen readers — manual only.
+//
+//  A decorative logo link that takes a tab stop, a second copy of a nav that
+//  reads twice, a widget the site draws for sighted mouse users only: the
+//  answer is "nobody should land here", and there is no u1.fix for that. This
+//  takes every match out of the tab order (tabindex=-1 on it and on every
+//  focusable thing inside it, the original kept for revert) and out of the
+//  accessibility tree (aria-hidden=true). Mouse behaviour is untouched on
+//  purpose: `inert` would also kill clicks, and a sighted mouse user did not
+//  ask for that. Re-applied on re-render, since frameworks rebuild.
+// ─────────────────────────────────────────────────────────────────────────────
+window.__u1HideFromAll = function (opts) {
+  const sel = opts && opts.selector;
+  if (!sel) return { ok: false, err: 'selector is required' };
+  const FOCUSABLE = 'a[href],area[href],button,input,select,textarea,iframe,summary,[tabindex],[contenteditable="true"]';
+  const one = (el) => {
+    if (el.getAttribute('aria-hidden') !== 'true') el.setAttribute('aria-hidden', 'true');
+    el.setAttribute('data-u1-hidden', '1');
+    const targets = [el].concat(Array.from(el.querySelectorAll(FOCUSABLE)));
+    targets.forEach((f) => {
+      if (f.getAttribute('tabindex') === '-1') return;
+      if (f.hasAttribute('tabindex') && !f.hasAttribute('data-u1-tabindex')) f.setAttribute('data-u1-tabindex', f.getAttribute('tabindex'));
+      f.setAttribute('tabindex', '-1');
+    });
+  };
+  const apply = () => {
+    let els;
+    try { els = Array.from(document.querySelectorAll(sel)); } catch (e) { return -1; }
+    els.forEach(one);
+    return els.length;
+  };
+  const n = apply();
+  if (n < 0) return { ok: false, err: 'invalid selector: ' + sel };
+  // One observer for every hide rule on the page; each rule re-applies itself
+  // when the DOM changes, cheaply, because a hidden thing stays hidden.
+  const R = window.__u1HideRules || (window.__u1HideRules = { sels: new Set(), timer: 0, obs: null });
+  R.sels.add(sel);
+  if (!R.obs && document.body) {
+    R.obs = new MutationObserver(() => {
+      clearTimeout(R.timer);
+      R.timer = setTimeout(() => R.sels.forEach((s) => { try { document.querySelectorAll(s).forEach(one); } catch (e) {} }), 120);
+    });
+    R.obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['tabindex', 'aria-hidden'] });
+  }
+  return n ? { ok: true, count: n } : { ok: false, count: 0, err: 'nothing on the page matches ' + sel };
+};
+//#endregion
+
+//#region u1-engine:focusorder
+// ─────────────────────────────────────────────────────────────────────────────
+//  Focus order — manual only.
+//
+//  The DOM says one order, the eye another: a hero whose CTA sits before its
+//  text in the markup, a search box floated to the top-right but coded last.
+//  Positive tabindex values are the classic fix and the classic mistake (they
+//  jump ahead of the whole page). This does it without touching the markup:
+//  Tab and Shift+Tab are intercepted only while focus is on one of the named
+//  elements, or about to enter the set, and sent to the next in the ORDER
+//  GIVEN. Leaving the set goes to whatever naturally follows its last member
+//  in the DOM. Everything else on the page tabs exactly as before.
+//
+//  Screen readers in browse mode read the DOM, not the tab order — this fixes
+//  the keyboard experience, which is what the mapping is for.
+// ─────────────────────────────────────────────────────────────────────────────
+window.__u1FocusOrder = function (opts) {
+  const scope = (opts && opts.container) || '';
+  const order = ((opts && opts.order) || []).map((s) => String(s || '').trim()).filter(Boolean);
+  if (order.length < 2) return { ok: false, err: 'order needs at least two selectors' };
+  const TABBABLE = 'a[href],area[href],button,input,select,textarea,iframe,summary,[tabindex],[contenteditable="true"]';
+  const visible = (el) => {
+    if (!el || !el.getBoundingClientRect) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== 'hidden' && cs.display !== 'none';
+  };
+  const root = () => { if (!scope) return document; try { return document.querySelector(scope) || null; } catch (e) { return null; } };
+  const resolve = () => {
+    const r = root(); if (!r) return [];
+    return order.map((s) => { try { return r.querySelector(s); } catch (e) { return null; } }).filter((el) => el && visible(el));
+  };
+  const tabbables = () => Array.from(document.querySelectorAll(TABBABLE)).filter((el) =>
+    visible(el) && el.tabIndex >= 0 && !el.disabled && !el.closest('[aria-hidden="true"]') && (el.type !== 'hidden'));
+
+  const rule = { scope, order, resolve };
+  const S = window.__u1FocusOrders || (window.__u1FocusOrders = { rules: [], armed: false });
+  // Replace a rule for the same container rather than stacking two.
+  S.rules = S.rules.filter((x) => !(x.scope === scope && x.order.join('|') === order.join('|')));
+  S.rules.push(rule);
+  if (!S.armed) {
+    S.armed = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab' || e.defaultPrevented) return;
+      const cur = document.activeElement;
+      if (!cur || cur === document.body) return;
+      const back = e.shiftKey;
+      for (const rl of S.rules) {
+        const set = rl.resolve();
+        if (set.length < 2) continue;
+        const all = tabbables();
+        const i = set.indexOf(cur);
+        let target = null;
+        if (i >= 0) {
+          if (!back && i < set.length - 1) target = set[i + 1];
+          else if (back && i > 0) target = set[i - 1];
+          else {
+            // Leaving the set: the natural neighbour of its DOM-extreme
+            // member, skipping members already visited.
+            const idxs = set.map((s) => all.indexOf(s)).filter((x) => x >= 0);
+            if (!idxs.length) continue;
+            let k = back ? Math.min.apply(null, idxs) - 1 : Math.max.apply(null, idxs) + 1;
+            while (k >= 0 && k < all.length && set.includes(all[k])) k += back ? -1 : 1;
+            target = all[k] || null;
+          }
+        } else {
+          // Entering: the natural next stop is a member, so the set's own
+          // first (or last, going backwards) is where focus should land.
+          const c = all.indexOf(cur);
+          if (c < 0) continue;
+          const native = back ? all[c - 1] : all[c + 1];
+          if (native && set.includes(native)) target = back ? set[set.length - 1] : set[0];
+        }
+        if (!target) continue;
+        e.preventDefault(); e.stopPropagation();
+        try { target.focus(); } catch (err) {}
+        return;
+      }
+    }, true);
+  }
+  const found = resolve().length;
+  return found >= 2
+    ? { ok: true, count: found, missing: order.length - found }
+    : { ok: false, count: found, err: `only ${found} of ${order.length} order selectors match something visible${scope ? ' inside ' + scope : ''}` };
+};
+window.__u1FocusOrderFromMapping = function (container, config) {
+  const raw = (config && config.order) || '';
+  const order = Array.isArray(raw) ? raw : String(raw).split(';');
+  return window.__u1FocusOrder({ container, order });
+};
+//#endregion

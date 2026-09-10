@@ -6,8 +6,14 @@
 (async () => {
   const { __closeOutReportHtml } = await chrome.storage.local.get('__closeOutReportHtml');
   if (__closeOutReportHtml) {
+    // The report carries an inline <script> for the standalone .html download
+    // (print button, PDF file name). Here it is an extension page: MV3's
+    // script-src 'self' blocks that inline copy — and logged "Executing inline
+    // script violates the Content Security Policy" against the extension on
+    // every report. Everything it does is wired below from this file, so the
+    // inline copy is dropped before the document is written, not left to fail.
     document.open();
-    document.write(__closeOutReportHtml);
+    document.write(__closeOutReportHtml.replace(/<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi, ''));
     document.close();
 
     // Say so, for whoever is waiting to print this to a PDF.

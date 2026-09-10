@@ -157,7 +157,7 @@ const COMPONENT_SCHEMAS = {
     // trigger, so it is the fix() first arg when provided.
     selectors:{listbox:'PRIMARY', trigger:'', options:'', label:''},
     fields:['trigger','options','label'],
-    rootFields:{closeOnSelect:true},
+    rootFields:{closeOnSelect:true, enterSelects:false},
     firstArgFrom:'trigger',
     req:['listbox','trigger','options'],
     desc:{
@@ -166,6 +166,7 @@ const COMPONENT_SCHEMAS = {
       options:'Selector of all options in the list.',
       label:'(Optional) Selector of the label of the listbox, if it exists.',
       closeOnSelect:'Default true. Set false for a multi-selection listbox that stays open.',
+      enterSelects:'Arrows only move the highlight; only Enter or Space picks. Turn on when an option acts the moment it gets focus (options that are links and navigate on focus) — keyboard focus then stays on the list and the highlighted option is named by aria-activedescendant. Read by the exported corrections, not by U1.',
     },
   },
 
@@ -384,18 +385,22 @@ const COMPONENT_SCHEMAS = {
     custom:'ariaLabel',
     selectors:{target:'PRIMARY'},
     fields:[],
-    rootFields:{middleText:'', headingSelector:''},
+    rootFields:{middleText:'', headingSelector:'', label:''},
     selectorRoots:['headingSelector'], // option fields that are selectors → get 🔍
-    req:['target'],
+    // The heading is the WHOLE point: "Read more" + "about" is still "Read
+    // more". Without a heading to borrow from, this mapping has nothing to
+    // add, so it is required like the target itself — in the form, in
+    // validateMapping, and in the one save path.
+    req:['target','headingSelector'],
     labels:{
       target:'Button to describe (its current text is kept)',
       middleText:'Text to add in the middle',
-      headingSelector:'Heading to add at the end (CSS selector)',
+      headingSelector:'Heading whose text is added at the end (CSS selector)',
     },
     desc:{
       target:'The button or link to give a better name to. Its existing text is used as the start of the new label.',
-      middleText:'Plain words inserted after the button’s text — e.g. " about " (include the spaces). Not a selector.',
-      headingSelector:'CSS selector of the heading whose text is added at the end. Found in the same card as each button.',
+      middleText:'Plain words inserted after the button’s text. "about" is translated to the page’s lang (על, sobre, về…); anything else is used as typed. Not a selector.',
+      headingSelector:'CSS selector of the heading whose text becomes the end of the name — the reason this mapping exists. Looked up in the same card as each button; a button whose card has no such heading is left as it is.',
     },
   },
 
@@ -541,6 +546,38 @@ const COMPONENT_SCHEMAS = {
       direction:'auto = detect the grid’s text direction and make → / ← follow what the user sees. Force ltr or rtl if auto guesses wrong.',
     },
   },
+
+  // ── Manual-only. Neither is offered to the model (U1_TYPES in ai-advisor.js
+  // does not list them): both are decisions a person makes about a page,
+  // not things a scan can find. Custom (NOT a u1.fix call) — the engine is
+  // in grid-nav.js and ships in the export.
+  'hide-element': {
+    custom:'hideElement',
+    selectors:{target:'PRIMARY'},
+    fields:[],
+    rootFields:{},
+    req:['target'],
+    labels:{ target:'Element(s) to take out of the tab order and the accessibility tree — ALL matches' },
+    desc:{
+      target:'Every match gets aria-hidden="true" and tabindex="-1" (also on every focusable thing inside it). The keyboard skips it and a screen reader does not announce it. Mouse clicks still work. Use for a duplicate, a decorative link, or a widget meant for sighted mouse users only.',
+    },
+  },
+  'focus-order': {
+    custom:'focusOrder',
+    selectors:{container:'PRIMARY'},
+    fields:[],
+    rootFields:{order:''},
+    placeholders:{ order:'.hero-title; .hero-text; .hero-cta' },
+    req:['container','order'],
+    labels:{
+      container:'Container the elements live in (scopes the selectors)',
+      order:'Tab order — selectors separated by ; in the order Tab should visit them',
+    },
+    desc:{
+      container:'The block whose tab order is wrong. Every selector in "order" is looked up inside it.',
+      order:'Two or more selectors, separated by semicolons, in the order the keyboard should reach them. Tab and Shift+Tab follow this order while inside the set; leaving the set continues after its last element in the page. Nothing in the markup changes and no positive tabindex is written.',
+    },
+  },
 };
 
 // Helpers to set/read nested values via dotted keys ("year.label")
@@ -591,6 +628,7 @@ const VALID_MAPPING_TYPES = new Set([
   'button','link','menu','accordion','carousel','datepicker','dialog','listbox','combobox',
   'checkbox','radio','tabs','form','table','grid','pagination','loading','tooltip','heading',
   'breadcrumb','aria-label','link-list','keyboard-tabs','keyboard-grid','keyboard-clickable',
+  'hide-element','focus-order',
 ]);
 
 // One mapping's stored shape, validated and stripped down to what is safe to
@@ -770,18 +808,44 @@ function formatJsObject(obj, indent = 0) {
 // Returns { type, primary, config, code }.
 // Custom "aria-label" mapping — a plain script (not a u1.fix call). New label =
 // the button's own text + middle text + the nearby heading's text.
-function buildAriaLabelCode(target, middleText, headingSel) {
+// The word between a link's own text and its card heading, per language.
+// "about" in a mapping means THIS word in the page's language, not the English
+// word — the same site is served in English, Spanish, Vietnamese and Hmong
+// from one template, and the name has to be in the reader's language too.
+const ARIA_LABEL_RUNTIME = String.raw`var ABOUT = { en: 'about', he: 'על', ar: 'حول', vi: 'về', es: 'sobre', fr: 'sur', pt: 'sobre', ru: 'о', zh: '关于', ko: '관련', ja: 'について', hmn: 'txog', tl: 'tungkol sa', de: 'über', it: 'su', pl: 'o', uk: 'про', fa: 'درباره', hi: 'के बारे में', so: 'ku saabsan', am: 'ስለ', tr: 'hakkında' };
+var aboutFor = function (el, middle) {
+  if ((middle || '').trim().toLowerCase() !== 'about') return (middle || '').trim();
+  var n = el; var lang = '';
+  while (n && n !== document && !lang) { lang = (n.getAttribute && n.getAttribute('lang')) || ''; n = n.parentNode; }
+  lang = (lang || document.documentElement.lang || 'en').toLowerCase();
+  return ABOUT[lang] || ABOUT[lang.split('-')[0]] || 'about';
+};
+var clean = function (s) { return (s || '').replace(/\s+/g, ' ').trim().replace(/[.。:：…]+$/, ''); };`;
+function buildAriaLabelCode(target, middleText, headingSel, label) {
+  // A name typed by a person is used as it is — "988 Suicide & Crisis Lifeline
+  // website" for a link that says "here". Nothing to derive.
+  if (label && String(label).trim()) {
+    return `document.querySelectorAll(${JSON.stringify(target)}).forEach(function (el) {
+  el.setAttribute('aria-label', ${JSON.stringify(String(label).trim())});
+});`;
+  }
+  // Mirrors applyAriaLabel: the heading is taken from the nearest card that
+  // holds one, and a button with no heading near it is left alone rather than
+  // named "Read more about".
   const headBlock = headingSel
-    ? `  var h = null, node = el;
+    ? `  var h = null, node = el.parentElement;
   while (node && node !== document.body) { h = node.querySelector(${JSON.stringify(headingSel)}); if (h) break; node = node.parentElement; }
-  if (!h) h = document.querySelector(${JSON.stringify(headingSel)});
-  var headingText = h ? (h.textContent || '').trim().replace(/\\s+/g, ' ') : '';
+  var headingText = h ? clean(h.textContent) : '';
+  if (!headingText) return;
 `
     : `  var headingText = '';
 `;
-  return `document.querySelectorAll(${JSON.stringify(target)}).forEach(function (el) {
-  var ownText = (el.textContent || '').trim().replace(/\\s+/g, ' ');
-${headBlock}  var parts = [ownText, ${JSON.stringify(middleText.trim())}, headingText].filter(Boolean);
+  // "about" follows the page's language at run time (see ABOUT_BY_LANG) —
+  // the exported site may serve the same template in several languages.
+  return `${ARIA_LABEL_RUNTIME}
+document.querySelectorAll(${JSON.stringify(target)}).forEach(function (el) {
+  var ownText = clean(el.textContent);
+${headBlock}  var parts = [ownText, aboutFor(el, ${JSON.stringify(middleText.trim())}), headingText].filter(Boolean);
   el.setAttribute('aria-label', parts.join(' '));
 });`;
 }
@@ -799,9 +863,31 @@ function buildTemplate(type, primary, fieldValues, rootValues) {
     const target = primary.trim();
     const middleText = (rootValues && rootValues.middleText) || '';
     const headingSelector = (rootValues && rootValues.headingSelector) || '';
-    const config = { middleText, headingSelector };
-    const code = buildAriaLabelCode(target, middleText, headingSelector);
+    const label = (rootValues && rootValues.label) || '';
+    const config = label ? { label } : { middleText, headingSelector };
+    const code = buildAriaLabelCode(target, middleText, headingSelector, label);
     return { type, primary: target, firstArg: target, config, code, custom: 'ariaLabel' };
+  }
+
+  // Custom, manual-only: out of the tab order and the accessibility tree.
+  if (schema.custom === 'hideElement') {
+    const target = primary.trim();
+    const config = { selectors: { target } };
+    const code = `/* Take every match out of the keyboard's tab order and out of the accessibility tree.\n` +
+      `   aria-hidden + tabindex=-1 (on it and on everything focusable inside). Mouse untouched.\n` +
+      `   Standalone: needs neither U1 nor the extension. Engine is included in the export. */\n` +
+      `window.__u1HideFromAll(${JSON.stringify({ selector: target })});`;
+    return { type, primary: target, firstArg: target, config, code, custom: 'hideElement' };
+  }
+  // Custom, manual-only: the keyboard's tab order inside a block.
+  if (schema.custom === 'focusOrder') {
+    const container = primary.trim();
+    const order = String((rootValues && rootValues.order) || '').split(';').map((x) => x.trim()).filter(Boolean);
+    const config = { selectors: { container }, order: order.join('; ') };
+    const code = `/* Tab order inside ${container}: Tab/Shift+Tab visit these in this order.\n` +
+      `   No markup change, no positive tabindex. Engine is included in the export. */\n` +
+      `window.__u1FocusOrder(${JSON.stringify({ container, order })});`;
+    return { type, primary: container, firstArg: container, config, code, custom: 'focusOrder' };
   }
 
   // Custom: make elements keyboard-operable (no U1).
@@ -1063,6 +1149,12 @@ async function applyConfig(config) {
         // actually happens once the same config is deployed for real.
         if (cfg.direction) u1.dir = cfg.direction;
         if (cfg.language) u1.lang = cfg.language;
+        // The patch renders the config's own skip links from a copy the
+        // engine's setConfiguration cannot replace; it runs on mutations, and
+        // a config write is not one, so it is woken.
+        window.__u1SkipLinks = Array.isArray(cfg.skipLinks) ? cfg.skipLinks : [];
+        try { if (window.__u1Patch && window.__u1Patch.renderSkipLinks) window.__u1Patch.renderSkipLinks(); } catch (e) {}
+        try { if (window.__u1Patch && window.__u1Patch.schedule) setTimeout(window.__u1Patch.schedule, 0); } catch (e) {}
 
         // 4) The engine's real configuration API — the only one it has. The
         // old list here ('applyConfig', 'refresh', 'init', 'run', 'start')
@@ -1107,31 +1199,57 @@ async function applyAriaLabel(target, config) {
   try {
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (target, middleText, headingSel) => {
+      func: (target, middleText, headingSel, label) => {
         let els;
         try { els = document.querySelectorAll(target); }
         catch (e) { return { ok: false, err: 'Invalid target selector: ' + e.message }; }
-        let count = 0;
+        let count = 0, noHeading = 0;
+        if (label && label.trim()) {
+          els.forEach(el => { el.setAttribute('aria-label', label.trim()); count++; });
+          return { ok: count > 0, count, noHeading: 0, err: count ? '' : 'Nothing matches the selector.' };
+        }
+        // "about" is the default, not a word: it is said in the language the
+        // element is in — <html lang>, or a closer lang= — so a Vietnamese
+        // "Tìm hiểu thêm" is not named "Tìm hiểu thêm about …". A middle
+        // text typed by hand is used exactly as typed.
+        var ABOUT = { en: 'about', he: 'על', ar: 'حول', vi: 'về', es: 'sobre', fr: 'sur', pt: 'sobre', ru: 'о', zh: '关于', ko: '관련', ja: 'について', hmn: 'txog', tl: 'tungkol sa', de: 'über', it: 'su', pl: 'o', uk: 'про', fa: 'درباره', hi: 'के बारे में', so: 'ku saabsan', am: 'ስለ', tr: 'hakkında' };
+        var aboutFor = function (el, middle) {
+          if ((middle || '').trim().toLowerCase() !== 'about') return (middle || '').trim();
+          var n = el; var lang = '';
+          while (n && n !== document && !lang) { lang = (n.getAttribute && n.getAttribute('lang')) || ''; n = n.parentNode; }
+          lang = (lang || document.documentElement.lang || 'en').toLowerCase();
+          return ABOUT[lang] || ABOUT[lang.split('-')[0]] || 'about';
+        };
+        var clean = function (s) { return (s || '').replace(/\s+/g, ' ').trim().replace(/[.。:：…]+$/, ''); };
         els.forEach(el => {
-          const ownText = (el.textContent || '').trim().replace(/\s+/g, ' ');
+          const ownText = clean(el.textContent);
           let headingText = '';
           if (headingSel) {
-            let h = null, node = el;
+            // The nearest card's heading: walk up from the button and take the
+            // first ancestor that holds one. NOT the page-wide first match —
+            // that names every card after the first card's heading.
+            let h = null, node = el.parentElement;
             while (node && node !== document.body) {
               try { h = node.querySelector(headingSel); } catch { h = null; }
               if (h) break;
               node = node.parentElement;
             }
-            if (!h) { try { h = document.querySelector(headingSel); } catch {} }
-            headingText = h ? (h.textContent || '').trim().replace(/\s+/g, ' ') : '';
+            headingText = h ? clean(h.textContent) : '';
           }
-          const parts = [ownText, (middleText || '').trim(), headingText].filter(Boolean);
+          // No heading near this one: "Read more about" is not a name. Left
+          // exactly as it was, and counted, so the report can say so.
+          if (headingSel && !headingText) { noHeading++; return; }
+          const parts = [ownText, aboutFor(el, middleText), headingText].filter(Boolean);
           el.setAttribute('aria-label', parts.join(' '));
           count++;
         });
-        return { ok: true, count };
+        if (!count && noHeading) {
+          return { ok: false, count, noHeading,
+            err: `${noHeading} match${noHeading === 1 ? '' : 'es'}, none with a heading matching ${headingSel} in its card — nothing was named.` };
+        }
+        return { ok: true, count, noHeading };
       },
-      args: [target, config.middleText || '', config.headingSelector || ''],
+      args: [target, config.middleText || '', config.headingSelector || '', config.label || ''],
     });
     return res?.[0]?.result || { ok: false, err: 'No result' };
   } catch (err) {
@@ -1143,7 +1261,29 @@ async function applyAriaLabel(target, config) {
 // `owner` carries the parts of the mapping that are not arguments to u1.fix:
 // today that is the answer to "the site already wrote a role here", which has
 // to reach the page before the fix does.
+// The two manual-only engines. Same shape as the other engine appliers:
+// inject grid-nav.js, call into it, hand back its own verdict.
+async function applyEngineCall(fnName, arg1, arg2) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['grid-nav.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (fn, a, b) => (window[fn] ? window[fn](a, b) : { ok: false, err: 'grid-nav.js not loaded' }),
+      args: [fnName, arg1, arg2 == null ? null : arg2],
+    });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+const applyHideElement = (primary) => applyEngineCall('__u1HideFromAll', { selector: primary });
+const applyFocusOrder = (primary, config) => applyEngineCall('__u1FocusOrderFromMapping', primary, config || {});
+
 async function applyOne(type, primary, config, custom, owner) {
+  if (custom === 'hideElement') return applyHideElement(primary);
+  if (custom === 'focusOrder') return applyFocusOrder(primary, config);
   if (custom === 'ariaLabel') return applyAriaLabel(primary, config);
   if (custom === 'breadcrumb') return applyBreadcrumb(primary, config);
   if (custom === 'keyboardGrid') return applyKeyboardGrid(primary, config);
@@ -2039,36 +2179,67 @@ async function highlightMatch(sel, idx, on) {
         let el;
         try { el = document.querySelectorAll(selector)[i]; } catch { return false; }
         if (!el) return false;
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        const r = el.getBoundingClientRect();
+        // The box was drawn from a rect read DURING a smooth scroll, so it
+        // landed where the element had been, not where it is. Scroll first,
+        // instantly; measure after. A 0×0 element (another slide, a closed
+        // panel) has no place to mark — its nearest visible ancestor is
+        // marked instead and the label says so.
+        let target = el, hiddenNote = '';
+        let rr = el.getBoundingClientRect();
+        if (rr.width < 1 && rr.height < 1) {
+          let a = el.parentElement;
+          while (a && a !== document.body) { const ar = a.getBoundingClientRect(); if (ar.width > 0 && ar.height > 0) break; a = a.parentElement; }
+          if (a && a !== document.body) { target = a; hiddenNote = ' — not visible right now; marking the area it sits in'; }
+        }
+        target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        const r = target.getBoundingClientRect();
 
+        // Unmissable, whatever the page looks like: a magenta ring with a white
+        // halo that pulses, padded out so a 30×16 link is still a target the
+        // eye finds, and a label that says what the thing SAYS, not its tag.
+        const pad = Math.max(0, 14 - Math.min(r.width, r.height) / 2) + 4;
+        if (!document.getElementById('__u1t_overlay_css__')) {
+          const st = document.createElement('style'); st.id = '__u1t_overlay_css__';
+          st.textContent = '@keyframes __u1tPulse{0%{box-shadow:0 0 0 3px #fff,0 0 0 6px #ff2d95,0 0 24px 8px rgba(255,45,149,.55)}100%{box-shadow:0 0 0 3px #fff,0 0 0 6px #ff2d95,0 0 0 18px rgba(255,45,149,0)}}';
+          document.documentElement.appendChild(st);
+        }
         const box = document.createElement('div');
         box.id = BOX;
         Object.assign(box.style, {
-          position: 'fixed', left: r.left + 'px', top: r.top + 'px',
-          width: r.width + 'px', height: r.height + 'px',
-          background: 'rgba(108,76,241,0.28)', border: '1px solid #6c4cf1',
-          boxShadow: '0 0 0 1px rgba(255,255,255,0.5)', boxSizing: 'border-box',
+          position: 'fixed', left: (r.left - pad) + 'px', top: (r.top - pad) + 'px',
+          width: (r.width + pad * 2) + 'px', height: (r.height + pad * 2) + 'px',
+          background: 'rgba(255,45,149,0.18)', border: '3px solid #ff2d95', borderRadius: '6px',
+          boxShadow: '0 0 0 3px #fff, 0 0 0 6px #ff2d95', boxSizing: 'border-box',
+          animation: '__u1tPulse 1.1s ease-out infinite',
           zIndex: '2147483647', pointerEvents: 'none',
         });
         document.body.appendChild(box);
 
         const tag = el.tagName.toLowerCase();
-        const id = el.id ? '#' + el.id : '';
-        const cls = (el.className && typeof el.className === 'string')
-          ? '.' + el.className.trim().split(/\s+/).filter(Boolean).join('.') : '';
+        const says = (el.getAttribute('aria-label') || el.getAttribute('alt') || (el.textContent || '')).replace(/\s+/g, ' ').trim().slice(0, 48);
         const lab = document.createElement('div');
         lab.id = LAB;
-        lab.textContent = `${tag}${id}${cls}  ${Math.round(r.width)} × ${Math.round(r.height)}`;
-        const labTop = r.top > 24 ? (r.top - 22) : (r.bottom + 4);
+        lab.textContent = `${says ? '“' + says + '”  ' : ''}<${tag}>  ${Math.round(rr.width)}×${Math.round(rr.height)}${hiddenNote}`;
+        const labTop = r.top - pad > 30 ? (r.top - pad - 28) : (r.bottom + pad + 6);
         Object.assign(lab.style, {
-          position: 'fixed', left: r.left + 'px', top: labTop + 'px',
-          background: '#6c4cf1', color: '#fff', font: '11px/1.4 monospace',
-          padding: '2px 6px', borderRadius: '3px', zIndex: '2147483647',
+          position: 'fixed', left: Math.max(4, r.left - pad) + 'px', top: labTop + 'px',
+          background: '#ff2d95', color: '#fff', font: '700 13px/1.5 system-ui, sans-serif',
+          padding: '3px 10px', borderRadius: '6px', zIndex: '2147483647',
+          boxShadow: '0 2px 10px rgba(0,0,0,.35), 0 0 0 2px #fff',
           pointerEvents: 'none', whiteSpace: 'nowrap',
           maxWidth: '90vw', overflow: 'hidden', textOverflow: 'ellipsis',
         });
         document.body.appendChild(lab);
+        // Follow the page: if it scrolls while the mark is up, the mark moves with its element.
+        const follow = () => {
+          const b = document.getElementById(BOX), l = document.getElementById(LAB);
+          if (!b || !l) { window.removeEventListener('scroll', follow, true); return; }
+          const q = target.getBoundingClientRect();
+          b.style.left = (q.left - pad) + 'px'; b.style.top = (q.top - pad) + 'px';
+          l.style.left = Math.max(4, q.left - pad) + 'px';
+          l.style.top = (q.top - pad > 30 ? (q.top - pad - 28) : (q.bottom + pad + 6)) + 'px';
+        };
+        window.addEventListener('scroll', follow, true);
         return true;
       },
       args: [sel, idx, on],
@@ -2314,6 +2485,14 @@ function mappingToCode(m) {
     return `/* Accessible grid/datepicker — uses the engine included above. */\n` +
            `window.__u1InstallGridFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
+  if (m.custom === 'hideElement') {
+    return `/* Out of the tab order and the accessibility tree (mouse untouched). Uses the engine included above. */\n` +
+           `window.__u1HideFromAll(${formatJsObject({ selector: m.primary })});`;
+  }
+  if (m.custom === 'focusOrder') {
+    return `/* Keyboard tab order inside this block — no markup change, no positive tabindex. Uses the engine included above. */\n` +
+           `window.__u1FocusOrderFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject({ order: (m.config && m.config.order) || '' })});`;
+  }
   if (m.custom === 'keyboardClickable') {
     return `window.__u1MakeClickable(${formatJsObject({ selector: m.primary, role: (m.config && m.config.role) || 'auto', label: (m.config && m.config.label) || '', activates: (m.config && m.config.activates) || '' })});`;
   }
@@ -2487,6 +2666,144 @@ function mappingKey(m) {
     return m.type + '::' + m.primary + fa;
   }
   return JSON.stringify(m);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  One container, one mapping
+//
+//  mappingKey tells a listbox on `#dd-country_child>ul` opened by `#dd-country`
+//  apart from the same listbox opened by `#dd-country_titleText`, and for a
+//  dialog that distinction is real: several buttons can open one dialog and
+//  each wants its own aria-haspopup. For everything else it is a duplicate.
+//  U1 decorates a container ONCE per page load (it keeps a Set of what it has
+//  handled), so the second of two mappings on the same list is a no-op — and
+//  when the FIRST one is the broken one, the good one never gets a turn.
+//
+//  Seen on molinahealthcare.com: fix #3 named the trigger `#dd-country`, which
+//  is the original <select> that msDropDown moves into a zero-height
+//  overflow:hidden holder — nothing can click it. Fix #12, made a hundred
+//  seconds later, named `#dd-country_titleText`, the text a person actually
+//  presses. Both were stored; Apply All ran #3 first; the list was marked
+//  handled with an unreachable trigger; #12 did nothing. "The listbox doesn't
+//  work again" — with two mappings that each looked complete.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The identity a mapping shares with every other mapping on the same widget, or null when several are allowed. */
+function containerKey(m) {
+  if (!m || typeof m !== 'object' || !m.type || !m.primary) return null;
+  if (m.type === 'dialog') return null;
+  return m.type + '::' + m.primary;
+}
+
+/**
+ * Of several mappings on one container, the one that stays.
+ *
+ * `usable` is what the page said about each firstArg: true (it has a box and
+ * nothing clips it away), false (hidden, or in a zero-size clipped holder), or
+ * undefined (couldn't be measured). A reachable trigger beats an unmeasured
+ * one, which beats an unreachable one; between equals the newest wins, because
+ * the later save was made with the earlier one in view.
+ */
+function pickContainerSurvivor(group, usable) {
+  const rank = (m) => {
+    const u = usable ? usable[m.firstArg || m.primary] : undefined;
+    return u === true ? 2 : u === undefined ? 1 : 0;
+  };
+  return group.slice().sort((a, b) =>
+    (rank(b) - rank(a)) || ((b.capturedAt || 0) - (a.capturedAt || 0)))[0];
+}
+
+/**
+ * Can a person reach these elements? `{ selector: true|false }`, or null when
+ * the page could not be asked. Stricter than selectorsPresentOnPage's visible
+ * test in one way that matters here: an ancestor that clips to nothing
+ * (msDropDown's `height:0; overflow:hidden` holder around the original
+ * <select>) hides the element just as surely as display:none, while the
+ * element's own rect stays perfectly normal.
+ */
+async function triggersUsableOnPage(sels) {
+  const tab = await getTab();
+  if (!isInjectable(tab) || !sels.length) return null;
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (list) => {
+        const out = {};
+        for (const s of list) {
+          try {
+            const el = document.querySelector(s);
+            if (!el) { out[s] = false; continue; }
+            const r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) { out[s] = false; continue; }
+            const cs = getComputedStyle(el);
+            if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) { out[s] = false; continue; }
+            let ok = true;
+            for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+              const ac = getComputedStyle(a);
+              if (ac.display === 'none' || ac.visibility === 'hidden') { ok = false; break; }
+              if (ac.overflow === 'visible' && ac.overflowX === 'visible' && ac.overflowY === 'visible') continue;
+              const ar = a.getBoundingClientRect();
+              if (ar.width < 1 || ar.height < 1) { ok = false; break; }
+              const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+              if (cx < ar.left || cx > ar.right || cy < ar.top || cy > ar.bottom) { ok = false; break; }
+            }
+            out[s] = ok;
+          } catch { out[s] = false; }
+        }
+        return out;
+      },
+      args: [sels],
+    });
+    return (res && res[0] && res[0].result) || null;
+  } catch { return null; }
+}
+
+/**
+ * Fold every set of mappings that share a container down to one, in place.
+ * Writes the list back under `storeKey` when anything was dropped, with the
+ * same bookkeeping a deliberate delete does, and returns what was decided so
+ * the caller can say it. Runs on every list load, which is how duplicates
+ * that were stored before the save path refused them get healed.
+ */
+async function collapseContainerDuplicates(list, storeKey) {
+  const groups = new Map();
+  list.forEach((m, i) => {
+    const ck = containerKey(m);
+    if (!ck) return;
+    if (!groups.has(ck)) groups.set(ck, []);
+    groups.get(ck).push(i);
+  });
+  const dupes = Array.from(groups.values()).filter(g => g.length > 1);
+  if (!dupes.length) return [];
+
+  const triggers = Array.from(new Set(dupes.flat().map(i => list[i].firstArg || list[i].primary)));
+  const usable = await triggersUsableOnPage(triggers);
+  const decisions = [];
+  const drop = new Set();
+  for (const g of dupes) {
+    const group = g.map(i => list[i]);
+    const keep = pickContainerSurvivor(group, usable);
+    const gone = group.filter(m => m !== keep);
+    gone.forEach(m => drop.add(m));
+    decisions.push({ kept: keep, dropped: gone, usable: usable || {} });
+  }
+  const goneKeys = Array.from(drop).map(mappingKey);
+  for (let i = list.length - 1; i >= 0; i--) if (drop.has(list[i])) list.splice(i, 1);
+  await U1Store.set({ [storeKey]: list });
+  try { await rememberSelfApplied(goneKeys); } catch {}
+  try { await forgetDeclinedFixes(goneKeys); } catch {}
+  return decisions;
+}
+
+/** The sentence for what collapseContainerDuplicates did. */
+function describeCollapse(decisions) {
+  return decisions.map(d => {
+    const why = (sel) => d.usable[sel] === false ? ' (not reachable on this page)' : '';
+    const gone = d.dropped.map(m => `${m.firstArg || m.primary}${why(m.firstArg || m.primary)}`).join(', ');
+    return `${d.kept.type} ${d.kept.primary} was mapped ${d.dropped.length + 1} times with different triggers — ` +
+      `U1 handles a container once per page load, so only the first would have run. Kept ` +
+      `${d.kept.firstArg || d.kept.primary}${d.usable[d.kept.firstArg || d.kept.primary] === true ? ' (reachable)' : ''}, dropped ${gone}.`;
+  }).join(' ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4207,25 +4524,31 @@ async function loadConfigForm() {
   // rewritten: it is the specialist's setting, and silently changing saved
   // data is how a tool stops being trusted. But the consequence is specific
   // enough to name, so it is named.
+  // The page declares its language and renders a direction; the config
+  // follows them. This used to only WARN about a mismatch and leave the wrong
+  // value in place — "the site has lang, choose the direction automatically".
+  // U1 decides arrow-key direction from the configured language, so a config
+  // that disagrees with the page makes every carousel, menu and tab strip step
+  // backwards while reporting the fix as applied. Corrected here, saved, and
+  // said once, so the specialist knows the page decided it.
   (async () => {
     const box = document.getElementById('langMismatch');
-    if (!box) return;
     const site = await pageLangDir();
-    if (!site) { box.style.display = 'none'; return; }
-    const bad = [];
-    if (site.lang && cfg.language && site.lang !== cfg.language) {
-      bad.push(`the page declares lang="${site.lang}" but this config says "${cfg.language}"`);
+    if (!site) { if (box) box.style.display = 'none'; return; }
+    const changed = [];
+    const langKnown = site.lang && [...$langSelect.options].some(o => o.value === site.lang);
+    if (langKnown && cfg.language !== site.lang) { cfg.language = site.lang; changed.push(`language → ${site.lang}`); }
+    if (site.dir !== (cfg.direction || 'ltr')) { cfg.direction = site.dir; changed.push(`direction → ${site.dir.toUpperCase()}`); }
+    if (!changed.length) { if (box) box.style.display = 'none'; return; }
+    if (cfg.language) $langSelect.value = cfg.language;
+    document.querySelectorAll('input[name="direction"]').forEach(r => { r.checked = r.value === cfg.direction; });
+    try { await U1Store.set({ [key]: cfg }); } catch {}
+    updateConfigPreview();
+    if (box) {
+      box.className = 'notice info';
+      box.textContent = `Set from the page: ${changed.join(', ')} (the page declares lang="${site.lang || '?'}" and renders ${site.dir.toUpperCase()}). Saved.`;
+      box.style.display = 'block';
     }
-    if (site.dir !== (cfg.direction || 'ltr')) {
-      bad.push(`the page renders ${site.dir.toUpperCase()} but this config says ` +
-               `${(cfg.direction || 'ltr').toUpperCase()}`);
-    }
-    if (!bad.length) { box.style.display = 'none'; return; }
-    box.textContent =
-      `Does not match the site: ${bad.join(', ')}. U1 decides arrow-key direction from the ` +
-      `configured language — with the wrong one, every carousel, menu and tab strip steps ` +
-      `backwards while still reporting the fix as applied. Set it above and save.`;
-    box.style.display = 'block';
   })();
 
   if (cfg.visualFocus?.style) {
@@ -4300,18 +4623,58 @@ async function verifySkipLinksOnPage() {
   const tab = await getTab();
   if (!links.length || !isInjectable(tab)) return;
 
+  // Before looking: make sure the page HAS what it is being checked for. The
+  // renderer lives in the patch and reads window.__u1SkipLinks — both may be
+  // missing on a page loaded before this config was saved, and then "not
+  // rendered" is true and useless. Put them there, render, then verify.
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['u1-patch.js'] });
+  } catch {}
+  // And SAY what happened in there — which patch build the page runs, whether
+  // it has the renderer, how many it made, what it could not find. "Not
+  // rendered" three times over taught nothing; this does.
+  let diag = null;
+  try {
+    const d = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: (items) => {
+        window.__u1SkipLinks = items;
+        const P = window.__u1Patch;
+        const out = { build: P && P.build, renderer: !!(P && P.renderSkipLinks), u1: typeof (window.u1 || window.U1 || window.user1st), report: null, err: '' };
+        try { if (out.renderer) out.report = P.renderSkipLinks(); } catch (e) { out.err = String(e && e.message || e); }
+        out.links = Array.from(document.querySelectorAll('a.u1st-skip-link')).map(a => a.getAttribute('href') + ' ' + (a.textContent || '').trim());
+        return out;
+      },
+      args: [links],
+    });
+    diag = d && d[0] ? d[0].result : null;
+  } catch (e) { diag = { err: 'could not run in the page: ' + (e && e.message || e) }; }
+  const box = document.getElementById('configSkipList');
+  if (box) {
+    let line = box.querySelector('.skip-verify-diag');
+    if (!line) { line = document.createElement('div'); line.className = 'skip-verify-diag map-mode-hint'; box.appendChild(line); }
+    const r = diag && diag.report;
+    line.textContent = !diag ? 'Could not read the page.'
+      : diag.err ? `Page: ${diag.err}`
+      : !diag.renderer ? `The page runs patch ${diag.build || '(none)'} without the skip-link renderer — reload the page (and the extension) and verify again.`
+      : `Patch ${diag.build} · ${r ? `${r.list} in the list, ${r.made} added now, ${r.kept} already there${r.missing.length ? `, not on this page: ${r.missing.join(', ')}` : ''}${r.errors.length ? `, errors: ${r.errors.join('; ')}` : ''}` : 'renderer returned nothing'} · links on the page now: ${(diag.links || []).length}`;
+  }
   let results;
   try {
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (items) => items.map(s => {
-        const href = s.target; // e.g. "#main-content"
-        let targetExists = false;
-        try { targetExists = !!document.querySelector(href); } catch { targetExists = false; }
-        // U1 renders skip links as real anchors with a matching href — find one
-        // regardless of internal class names, matched by href + rough label text.
-        const anchors = Array.from(document.querySelectorAll(`a[href="${CSS.escape(href)}"], a[href$="${CSS.escape(href)}"]`));
-        const rendered = anchors.length > 0;
+        const href = s.target; // e.g. "#main-content" (or a synthetic "#u1-anchor-…")
+        let el = null;
+        try { el = document.querySelector(href); } catch {}
+        // A synthetic id is only on the element once the config has run on
+        // this page; the selector it stands for is the truer test.
+        if (!el && s.selector) { try { el = document.querySelector(s.selector); } catch {} }
+        const targetExists = !!el;
+        // Rendered = an anchor pointing at the target, by the stored href OR
+        // by the id the element carries now.
+        const hrefs = [href, el && el.id ? '#' + el.id : ''].filter(Boolean);
+        const rendered = hrefs.some(h => { try { return !!document.querySelector(`a[href="${CSS.escape(h)}"], a[href$="${CSS.escape(h)}"]`); } catch { return false; } });
         return { targetExists, rendered };
       }),
       args: [links],
@@ -4467,6 +4830,13 @@ const $templatePreview = document.getElementById('templatePreview');
 //  one.
 // ─────────────────────────────────────────────────────────────────────────────
 const FIELD_HOW = {
+  'hide-element': {
+    target: 'The thing nobody should land on by keyboard or hear in a screen reader — a decorative logo link, a duplicate nav, a mouse-only widget. All matches are handled.',
+  },
+  'focus-order': {
+    container: 'The block whose visual order and tab order disagree. The order list is looked up inside it.',
+    order: 'Selectors separated by semicolons, in the order the eye reads them: ".hero-title; .hero-text; .hero-cta".',
+  },
   button: {
     element: 'The element a person clicks. If a <div> wraps a <button>, it is the <button> — the one carrying the click handler, not the box round it.',
     focusTo: 'Where focus should land after the click. Usually the region the button scrolled to or revealed.',
@@ -4713,6 +5083,18 @@ const TYPE_GUIDE = {
       ['Only sets a value, no panel swap', 'That is a radio group → use "radio".'],
       ['Marked each tab with keyboard-clickable role=tab', 'Undo that. It announces "tab" but gives no arrows and no aria-selected — a broken promise, worse than plain buttons.'],
     ] },
+  'hide-element': { what:'Manual only, extension engine (no U1): takes every match out of the keyboard\'s tab order (tabindex=-1, inside too) and out of the accessibility tree (aria-hidden). Mouse untouched.', keys:'Tab skips it · screen readers do not announce it.', wcag:[['2.4.3','Focus Order'],['1.3.2','Meaningful Sequence']], apg:'',
+    when:[
+      ['A duplicate of something already reachable', 'Yes — the second copy of a nav, a logo link beside a "Home" link.'],
+      ['Decorative, but coded as a link or button', 'Yes.'],
+      ['It is the ONLY way to reach something', 'No. Hiding it hides the function. Map the widget instead.'],
+    ] },
+  'focus-order': { what:'Manual only, extension engine (no U1): Tab and Shift+Tab visit the listed elements in the order given, without touching the markup or writing positive tabindex.', keys:'Tab / Shift+Tab follow the given order inside the set; leaving the set continues after its last element.', wcag:[['2.4.3','Focus Order'],['1.3.2','Meaningful Sequence']], apg:'',
+    when:[
+      ['The eye reads A, B, C but Tab goes B, C, A', 'Yes — list them as A; B; C.'],
+      ['A whole page is scrambled', 'That is a markup problem for the site; this is for one block.'],
+      ['Screen reader reads it in the wrong order', 'Browse mode follows the DOM, not the tab order — this fixes the keyboard, not reading order.'],
+    ] },
 };
 
 // Renders the guide for the chosen type (or hides it when nothing is selected).
@@ -4775,20 +5157,27 @@ document.addEventListener('keydown', (e) => {
 
 // Currently built template (set by Generate, consumed by Apply / Add to Mapping)
 let currentTemplate = null;
-let mappingsFilter = 'onpage'; // 'onpage' | 'all' — MAPPINGS list filter toggle
+let mappingsFilter = 'onpage'; // 'onpage' | 'all' | 'review' — MAPPINGS list filter toggle
+// Set from outside the toolbar too: the end of an autonomous AI run lands on
+// the "To review" view, since going over what it built is the next thing.
+let setMappingsFilter = (mode) => { mappingsFilter = mode; };
 (function wireMappingsFilter() {
-  const onPageBtn = document.getElementById('filterOnPage');
-  const allBtn = document.getElementById('filterAll');
-  if (!onPageBtn || !allBtn) return;
+  const btns = {
+    onpage: document.getElementById('filterOnPage'),
+    all: document.getElementById('filterAll'),
+    review: document.getElementById('filterToReview'),
+  };
+  if (!btns.onpage || !btns.all) return;
   const set = (mode) => {
     mappingsFilter = mode;
-    const isOn = mode === 'onpage';
-    onPageBtn.classList.toggle('active', isOn); onPageBtn.setAttribute('aria-selected', String(isOn));
-    allBtn.classList.toggle('active', !isOn); allBtn.setAttribute('aria-selected', String(!isOn));
+    for (const [k, b] of Object.entries(btns)) {
+      if (!b) continue;
+      b.classList.toggle('active', k === mode); b.setAttribute('aria-selected', String(k === mode));
+    }
     loadMappingsList();
   };
-  onPageBtn.addEventListener('click', () => set('onpage'));
-  allBtn.addEventListener('click', () => set('all'));
+  for (const [k, b] of Object.entries(btns)) if (b) b.addEventListener('click', () => set(k));
+  setMappingsFilter = set;
 })();
 // When editing an existing mapping, its key — so "Add to Mapping" replaces it.
 let editingMappingKey = null;
@@ -4809,6 +5198,8 @@ $componentType.addEventListener('change', () => {
 // explains what element to point at and gives a concrete example selector that
 // also becomes the input placeholder.
 const PRIMARY_HELP = {
+  'hide-element': { help:'The element to take out of the tab order and the accessibility tree. Every match is handled; mouse clicks keep working.', ex:'.navbar-brand' },
+  'focus-order':  { help:'The container whose tab order is wrong. Then list the elements inside it, in the right order, in the field below.', ex:'.hero' },
   button:     { help:'The clickable button element itself (the thing that has the click event).', ex:'.test-btn' },
   link:       { help:'The element that behaves like a link (has the click/navigation event).', ex:'.accessibility-link' },
   menu:       { help:'The outermost <ul>/<nav> that wraps the whole menu (not a single item).', ex:'#main-menu' },
@@ -4960,8 +5351,11 @@ function renderSubSelectorInputs(type, into, opts) {
             }).join('') + `</select>`
           : `<input type="text" data-root="${escapeHtml(k)}" value="${escapeHtml(String(defaultVal || ''))}"` +
             (ph ? ` placeholder="${escapeHtml(ph)}"` : '') + `>`;
+        // A root field the schema requires (aria-label's heading) is not an
+        // option, and saying "(option)" on it was read as exactly that.
+        const rootTag = req.includes(k) ? '★ required' : '(option)';
         row.innerHTML = `
-          <label>${escapeHtml(labelOf(k))} <span class="root-tag">(option)</span></label>
+          <label>${escapeHtml(labelOf(k))} <span class="root-tag">${rootTag}</span></label>
           ${isSelRoot
             ? `<div class="selector-test-row"><span class="sel-strength-wrap">${inputHtml}<span class="sel-strength" data-level="empty" aria-hidden="true"></span></span><button class="btn-ghost btn-xs sel-test" title="Test selector on page">🔍</button></div>`
             : inputHtml}
@@ -4976,7 +5370,67 @@ function renderSubSelectorInputs(type, into, opts) {
   $subSelSection.style.display = 'block';
   $previewSection.style.display = 'none';
   refreshStrength();
+  // The heading is required and the page knows which one it is.
+  if (type === 'aria-label') autofillAriaLabelHeading();
 }
+
+/**
+ * Fill aria-label's heading field from the page.
+ *
+ * The field is required, and it was arriving empty on a picked "Learn more"
+ * link — the one case where the answer is fully determined: the target is
+ * known, its card is right there, and cardHeadingFor finds the heading the
+ * same way the AI route does. Typing it by hand meant opening devtools to
+ * read a selector the tool had already computed for the AI card.
+ *
+ * Runs when the type becomes aria-label and when the element selector
+ * changes. A value already typed is left alone unless `force`.
+ */
+let ariaHeadingFillTimer = null;
+async function autofillAriaLabelHeading(force) {
+  if ($componentType.value !== 'aria-label') return;
+  const primary = ($primarySelectorInput.value || '').trim();
+  const inp = $subSelArea.querySelector('[data-root="headingSelector"]');
+  if (!inp || !primary) return;
+  if (inp.value.trim() && !force) return;
+  const hint = inp.closest('.root-text')?.querySelector('.input-hint');
+  const say = (text, bad) => {
+    if (!hint) return;
+    let line = hint.querySelector('.autofill-note');
+    if (!line) { line = document.createElement('div'); line.className = 'autofill-note'; hint.appendChild(line); }
+    line.textContent = text;
+    line.style.color = bad ? 'var(--u1-warn, #d97706)' : 'var(--u1-success, #22c55e)';
+  };
+  try {
+    const tab = await getTab();
+    if (!isInjectable(tab)) return;
+    const r = await inPage(tab.id, (s) => {
+      const S = window.__u1SelectorIntel;
+      return S && S.cardHeadingFor ? S.cardHeadingFor(s) : null;
+    }, [primary]);
+    if (!r) return;
+    if (r.heading) {
+      inp.value = r.heading;
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      say(`Filled from the page — the heading beside ${r.cards === 1 ? 'this element' : `each of the ${r.cards} matches`}` +
+          (r.example ? `, e.g. “${r.example}”` : '') + '. Change it if it is the wrong one.');
+      refreshStrength();
+    } else if (r.found) {
+      say(`Found a heading beside ${r.found} of ${r.cards}, but no single selector reaches all of them — point at it by hand.`, true);
+    } else {
+      say('No heading found near this element on the page — point at the card\'s heading by hand.', true);
+    }
+  } catch { /* the page went away; the field stays as it is */ }
+}
+
+// The element selector changed under an aria-label form: the heading belongs
+// to THAT element, so it is looked up again. Debounced — typing a selector
+// character by character must not ask the page on every keystroke.
+$primarySelectorInput.addEventListener('input', () => {
+  if ($componentType.value !== 'aria-label') return;
+  clearTimeout(ariaHeadingFillTimer);
+  ariaHeadingFillTimer = setTimeout(() => autofillAriaLabelHeading(true), 500);
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Selector strength meter
@@ -8424,6 +8878,56 @@ document.getElementById('aiCompTrack')?.addEventListener('click', async (e) => {
 // outside it read as "the AI keeps missing it". Owner decision (2026-09-01):
 // a scan starts fresh every time — ✕ takes a row off the CURRENT list only,
 // and nothing a person skipped once is held against the next run.
+/** The saved mappings as `{ type, sel }` pairs — every selector each one owns. */
+async function mappedSelectors() {
+  const out = [];
+  try {
+    const key = storageKey('mappings', currentHostname);
+    for (const m of (await U1Store.get([key]))[key] || []) {
+      if (!m || typeof m !== 'object' || !m.type) continue;
+      for (const sel of new Set([m.primary, m.firstArg].filter(Boolean))) out.push({ type: m.type, sel });
+    }
+  } catch {}
+  return out;
+}
+
+/**
+ * Which of these selectors land on something a saved mapping already owns —
+ * the same element, inside it, or around it. That is the test the build step
+ * applies before it saves anything (overlappingMappings), so what it says
+ * here is exactly what would come back "Skipped — already mapped" later.
+ *
+ * Asked of the PAGE, not of the strings: alreadyHandled() drops a candidate
+ * only when its selector is byte-for-byte a saved one, and the survey names
+ * elements its own way, so `.mainNav` in the drawer and `#header>nav>ul` in
+ * the survey were the same menu counted as new work every time.
+ *
+ * Returns `{ selector: 'menu' }` — the type of the mapping it overlaps — or
+ * null when the page could not be asked.
+ */
+async function mappedOverlapOnPage(tab, sels, mapped) {
+  if (!isInjectable(tab) || !sels.length || !mapped.length) return {};
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (list, owned) => {
+        const q = (s) => { try { return Array.from(document.querySelectorAll(s)); } catch { return []; } };
+        const own = owned.map(o => ({ type: o.type, els: q(o.sel) })).filter(o => o.els.length);
+        const out = {};
+        for (const s of list) {
+          const mine = q(s);
+          if (!mine.length) continue;
+          const hit = own.find(o => o.els.some(el => mine.some(x => x === el || x.contains(el) || el.contains(x))));
+          if (hit) out[s] = hit.type;
+        }
+        return out;
+      },
+      args: [sels, mapped],
+    });
+    return (res && res[0] && res[0].result) || {};
+  } catch { return null; }
+}
+
 async function alreadyHandled() {
   const out = new Set();
   try {
@@ -10426,6 +10930,8 @@ async function runSweep(tab) {
   // sweep goes, everything it has already found. Without the second half the
   // sticky header is discovered again at every scroll position.
   const handled = await alreadyHandled();
+  // The same mappings, for the by-element test each section runs.
+  const mapped = await mappedSelectors();
 
   // The camera that does not need the tab in front. It was written, documented
   // at length, and never once called — so every section still went through
@@ -10445,6 +10951,7 @@ async function runSweep(tab) {
         n, scrollY: 0, thumb: null, cost: 0,
         count: 0, components: '', inventory: '', truncated: false, sticky: 0, probed: [],
         compSels: [], continuedFrom: 0, continuesOnto: 0, positional: 0,
+        mapped: 0, mappedKinds: '', mappedSels: [],
         scanned: false, found: [], indexes: [],
       };
       aiSweep.stops.push(stop);
@@ -10525,6 +11032,29 @@ async function runSweep(tab) {
       });
       if (collected.err) { sweepLog(n, collected.err, 'err'); break; }
       stop.thumb = collected.thumb || null;
+
+      // What here is ALREADY MAPPED — by the element, not the selector string
+      // (see mappedOverlapOnPage). Counted on its own and taken out of the
+      // component line, so a section reads "form · already mapped: menu,
+      // listbox" instead of listing the site's mapped header as new work on
+      // every section. The read step skips them too (stop.mappedSels), so
+      // nothing is paid to have the model look at them again.
+      {
+        const compSel = (c) => c.component && c.selector ? c.selector : '';
+        const probeSel = (o) => (o && o.root) || '';
+        const ask = Array.from(new Set([
+          ...collected.candidates.map(compSel), ...observed.map(probeSel)].filter(Boolean)));
+        const hits = await mappedOverlapOnPage(tab, ask, mapped);
+        const isMapped = (sel) => !!(hits && sel && hits[sel]);
+        const kinds = new Map();
+        for (const sel of ask) if (isMapped(sel)) kinds.set(hits[sel], (kinds.get(hits[sel]) || 0) + 1);
+        stop.mappedSels = ask.filter(isMapped);
+        stop.mapped = stop.mappedSels.length;
+        stop.mappedKinds = [...kinds.entries()].map(([k, v]) => (v > 1 ? `${v} ${k}s` : k)).join(', ');
+        collected.candidates = collected.candidates.filter(c => !isMapped(compSel(c)));
+        observed = observed.filter(o => !isMapped(probeSel(o)));
+      }
+
       stop.count = collected.candidates.length;
       stop.truncated = !!collected.truncated;
       stop.inventory = screenInventory(collected.candidates);
@@ -10558,11 +11088,12 @@ async function runSweep(tab) {
       stop.positional = collected.candidates
         .filter(c => c.component && /:nth-|:first-child|:last-child|:only-child/.test(c.selector || '')).length;
       sweepLog(n,
-        stop.count
+        (stop.count
           ? (stop.components ? stop.components + ' — ' : 'no complex components — ') +
             `${stop.count}${stop.truncated ? '+' : ''} elements` +
             (stop.truncated ? ' · truncated' : '')
-          : 'nothing on this section',
+          : 'nothing on this section') +
+        (stop.mapped ? ` · already mapped: ${stop.mappedKinds}` : ''),
         stop.count ? '' : 'skip');
 
       if (aiSweep.abort) break;
@@ -10816,27 +11347,33 @@ async function sweepBackIfNavigated(tab, n) {
   const now = await chrome.tabs.get(tab.id).then((t) => t && t.url).catch(() => null);
   if (!now || bare(now) === bare(from)) return true;
 
-  sweepLog(n, `the page went to ${bare(now)} — going back`, 'err');
-  showSweepBusy(`Section ${n}`, 'Something navigated the page. Going back to where the survey was.');
-  try {
-    await chrome.tabs.update(tab.id, { url: from });
-  } catch { return false; }
-
-  // Wait for it to actually be there. A fixed sleep is either too short on a
-  // slow site or wasted on a fast one, so it is polled — and capped, because a
-  // page that never comes back must not hold the run forever.
-  for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 250));
+  sweepLog(n, `the page went to ${bare(now)} — waiting to be back on the surveyed page`, 'err');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const there = async () => {
     const t = await chrome.tabs.get(tab.id).catch(() => null);
-    if (t && t.status === 'complete' && bare(t.url) === bare(from)) {
-      // The page is new, so anything the run injected into the old one is gone.
-      try {
-        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
-      } catch {}
-      return true;
-    }
+    return !!(t && t.status === 'complete' && bare(t.url) === bare(from));
+  };
+  // The same three steps the dynamic scan takes, gentlest first — Back in the
+  // history, then WAIT for the person to come back to the surveyed page (a
+  // long, live countdown; Stop still works), and only then a hard
+  // re-navigation. The survey continues from where it stopped, on the page it
+  // was reading, never on the one a press happened to open.
+  showSweepBusy(`Section ${n}`, 'Something navigated the page. Going back to where the survey was.');
+  let back = false;
+  try { await chrome.tabs.goBack(tab.id); } catch {}
+  for (let i = 0; i < 16 && !back && !aiSweep.abort; i++) { await sleep(250); back = await there(); }
+  if (!back && !aiSweep.abort) {
+    try { await chrome.tabs.update(tab.id, { url: from }); } catch { return false; }
+    for (let i = 0; i < 60 && !back; i++) { await sleep(250); back = await there(); }
   }
-  return false;
+  if (!back) return false;
+  // The page is new, so anything the run injected into the old one is gone.
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] });
+  } catch {}
+  // And let the site's own scripts (and U1) settle before pressing anything.
+  await sleep(600);
+  return true;
 }
 
 async function probeScreen(tab, band) {
@@ -11057,14 +11594,18 @@ function renderSweepScreens() {
         // with a carousel" starts from none rather than from all. "All" means
         // all the UNREAD ones — the read ones are paid for and are not part of
         // what the next press will charge for.
-        `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
-        `Include <span id="sweepUnreadCount">${todo}</span> unread section${todo === 1 ? '' : 's'}` +
-        // The dash state. A half-ticked box is the commonest thing on this
-        // screen — you untick a couple of sections — and nothing said so, which
-        // made it read as broken rather than as "some".
-        (pickable > todo
-          ? ` <span class="sweep-all-sub">(${pickable - todo} already read — not ticked, cost nothing)</span>`
-          : '') + `</label>` +
+        // Nothing left to read: a ticked box offering to include zero sections
+        // is a form for a decision that no longer exists. Say what happened.
+        (todo === 0 && pickable > 0
+          ? `<div class="ai-meta">All ${pickable} section${pickable === 1 ? '' : 's'} read — nothing left to include.</div>`
+          : `<label class="sweep-all"><input type="checkbox" id="sweepAllTick"${todo ? ' checked' : ''}>` +
+            `Include <span id="sweepUnreadCount">${todo}</span> unread section${todo === 1 ? '' : 's'}` +
+            // The dash state. A half-ticked box is the commonest thing on this
+            // screen — you untick a couple of sections — and nothing said so, which
+            // made it read as broken rather than as "some".
+            (pickable > todo
+              ? ` <span class="sweep-all-sub">(${pickable - todo} already read — not ticked, cost nothing)</span>`
+              : '') + `</label>`) +
         // ── How the run should behave, as one either/or ──────────────────
         // Two answers to one question, not two independent switches: either the
         // run stops at each section and waits for you, or it does not stop at
@@ -11331,6 +11872,7 @@ function sweepScreenRowHtml(stop) {
             : ''}
           ${stop.truncated ? '<span class="ai-sev" data-need="1" title="This section holds more than 250 elements; only the first 250 were counted, so the numbers here are a floor">only the first 250 counted</span>' : ''}
           ${stop.positional ? '<span class="ai-sev" data-need="1" title="Some elements here have no id, class or role to point at — they can only be reached by their position in the page, which breaks the moment the page changes">positional</span>' : ''}
+          ${stop.mapped ? `<span class="ai-sev" data-need="0" title="Already mapped on this site: ${escapeHtml(stop.mappedKinds)}. Not counted above, not read again, not built again.">${stop.mapped} already mapped</span>` : ''}
           ${// The card folds. Closed, it is the section number and what the
             // survey found — the two things the choice is made from. The
             // counts, the chips and the positional note sit under a caret:
@@ -11341,6 +11883,10 @@ function sweepScreenRowHtml(stop) {
                      title="${open ? 'Hide' : 'Show'} details" aria-label="${open ? 'Hide' : 'Show'} details for section ${stop.n}">▾</button>`}
           <div class="sweep-more"${open ? '' : ' hidden'}>
             <div class="ai-approved-why sw-chips">${chips}</div>
+            ${stop.mapped
+              ? `<div class="sw-warn" role="note" style="opacity:.8">✓ already mapped here: ${escapeHtml(stop.mappedKinds)}` +
+                `<span class="sw-warn-sub">found on this section but a saved mapping already owns the element — left out of the counts, and not read or built again</span></div>`
+              : ''}
             ${// Pulled out of the sentence and onto a row of its own: this is
               // the one thing on the card the client has to act on, and it was
               // buried as the fifth clause of a line about link counts.
@@ -11425,7 +11971,10 @@ function updateSweepModeWording() {
     const todo = stops.filter(s => s.count && !s.scanned).length;
     const pickedUnread = stops.filter(s => s.count && !s.scanned && picked.includes(s.n)).length;
     if (unread) unread.textContent = String(todo);
-    if (readNow) readNow.textContent = `${pickedUnread} of ${todo} unread section${todo === 1 ? '' : 's'}`;
+    const readAll = stops.filter(s => s.count && s.scanned).length;
+    if (readNow) readNow.textContent = todo === 0 && readAll
+      ? `all ${readAll} section${readAll === 1 ? '' : 's'} read`
+      : `${pickedUnread} of ${todo} unread section${todo === 1 ? '' : 's'}`;
   }
 }
 
@@ -11586,6 +12135,15 @@ function openSweepReadDialog() {
   const body = document.getElementById('sweepReadBody');
   const dlg = document.getElementById('sweepReadDialog');
   if (body) body.innerHTML = sweepReadSummaryHtml;
+  // The cached HTML carries the radio labels and the "Read / Mode" answers
+  // as EMPTY spans — they are filled by updateSweepModeWording, which ran
+  // against the live summary at render time and never against this copy.
+  // So the dialog opened with two blank radios and "Read 0 unread sections".
+  if (typeof updateSweepModeWording === 'function') updateSweepModeWording();
+  // A finished run is a record, not a form: the settings row stays open so
+  // the record is readable without a second click.
+  const det = body && body.querySelector('#sweepSettings');
+  if (det) det.open = true;
   if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
 }
 
@@ -12417,6 +12975,9 @@ async function scanPickedScreens(numbers) {
 
   const stops = aiSweep.stops.filter(s => numbers.includes(s.n));
   const handled = await alreadyHandled();
+  // What the survey found to be already mapped — by element, under whatever
+  // name the survey gave it — is not read again either.
+  for (const st of stops) for (const sel of st.mappedSels || []) handled.add(sel);
   // Low-confidence rows published unticked, keyed by selector so a later,
   // confident reading of the same element can replace its hesitant twin.
   const heldAt = new Map();
@@ -12984,6 +13545,20 @@ async function scanPickedScreens(numbers) {
         head + ` ${done} made accessible and saved to Mappings.` +
         (failedC ? ` ${failedC} could not be built — each one's reason is one line in the run log above.` : ''),
         failedC ? 'warn' : 'success', 20000);
+      // The run is over; going over what it built is what comes next. So the
+      // panel goes THERE — the Mappings list, filtered to what has not been
+      // ticked as reviewed — rather than resting on the finished run's
+      // screen with the work one tab away. Only when something was built:
+      // an empty run has nothing to review.
+      if (done && !aiSweep.abort) {
+        setMappingsFilter('review');
+        if (typeof setPickerPane === 'function') setPickerPane('mappings');
+        const ms = document.getElementById('mappingsStatus');
+        if (ms) showNotice(ms,
+          `The AI run finished — ${done} new mapping${done === 1 ? '' : 's'}. This is the To-review view: ` +
+          `open each one, check it on the page, and tick ○ review when it is right. The ticks stay in this extension only.`,
+          'info', 20000);
+      }
       return;
     }
     aiSweep.phase = 'components';
@@ -14132,11 +14707,22 @@ async function callTestEngine(fnName, args, forTab) {
     });
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (fn, a) => (window.__u1TestEngine && window.__u1TestEngine[fn]) ? window.__u1TestEngine[fn].apply(null, a) : null,
+      // The engine's own throw comes back as a message, not as null: "could
+      // not run" with no reason sent the person hunting in the dark.
+      func: async (fn, a) => {
+        try {
+          if (!(window.__u1TestEngine && window.__u1TestEngine[fn])) return { __err: 'the test engine is not on this page (it could not be injected)' };
+          return await window.__u1TestEngine[fn].apply(null, a);
+        } catch (e) { return { __err: String((e && e.message) || e) }; }
+      },
       args: [fnName, args || []],
     });
     return res && res[0] ? res[0].result : null;
-  } catch { return null; }
+  } catch (e) {
+    // executeScript itself failed: the page navigated away mid-test ("Frame
+    // … was removed"), the tab closed, or the page is not injectable.
+    return { __err: /Frame|removed|closed|No tab/i.test(String(e && e.message)) ? `the page navigated away while this was being driven (${e.message})` : String((e && e.message) || e) };
+  }
 }
 
 async function recommendSelector(type, primary) {
@@ -14152,17 +14738,25 @@ function cleanPageUrl(u) {
   catch { return (u || '').split('#')[0].split('?')[0].replace(/\/+$/, ''); }
 }
 
-// A mapping belongs to "this page" if its selector matches something visible
-// RIGHT NOW, or if it was captured on this exact URL. The second half matters
-// — without it, a dialog/dropdown/datepicker that only renders while OPEN
-// reads as gone the instant it's closed, even standing on the very page it
-// belongs to, because selectorsPresentOnPage only sees what's visible this
-// instant. `present` is the Set from selectorsPresentOnPage (or null, meaning
-// "couldn't check" — treated as "don't rule it out" rather than "not here").
+// A mapping belongs to "this page" if, in this order:
+//   1. its selector matches something VISIBLE right now, or
+//   2. its selector matches something IN THE DOM right now, even if hidden —
+//      a closed dropdown, a dialog waiting behind its trigger, a cookie
+//      banner already dismissed. These are in the page on every load; they
+//      just aren't visible until opened. A site-wide header widget (the
+//      sign-in dropdown, the language switcher) is exactly this shape on
+//      EVERY page of the site, which is why the URL test below alone was not
+//      enough: captured once on the homepage, it read as "elsewhere" from any
+//      other page even though it's right there in the header, or
+//   3. it was captured on this exact URL (a widget rendered into the DOM only
+//      while open, which the DOM test can't see while shut).
+// `present` is what selectorsPresentOnPage returned: `{ visible, exists }`
+// Sets, or null meaning "couldn't check" — treated as "don't rule it out".
 function mappingOnPage(m, present, hereUrl) {
   if (!m || typeof m !== 'object') return true;
   const p = m.primary || m.firstArg || '';
-  if (present && p && present.has(p)) return true;               // visible right now
+  if (present && p && present.visible.has(p)) return true;       // visible right now
+  if (present && p && present.exists.has(p)) return true;        // in the DOM, just not showing
   if (m.pageUrl && hereUrl && cleanPageUrl(m.pageUrl) === hereUrl) return true; // captured here
   return present ? false : true;                                  // couldn't check → don't hide
 }
@@ -14173,27 +14767,36 @@ async function selectorsPresentOnPage(sels) {
   try {
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      // "Present" means an element that actually MATCHES *and is visible* — not
-      // merely in the DOM. Header/menu duplicates, mobile variants and leftover
-      // nodes are often display:none / zero-box; counting those made mappings
-      // wrongly show as "on this page" after navigating. Mirrors the Scan tab's
-      // visible() test. Widgets that exist only while open (dialog/datepicker)
-      // still surface via the captured-on-this-URL fallback in onPage().
-      func: (list) => list.filter(s => {
-        try {
-          const el = document.querySelector(s);
-          if (!el || !el.getBoundingClientRect) return false;
-          const r = el.getBoundingClientRect();
-          if (r.width < 1 || r.height < 1) return false;
-          const cs = getComputedStyle(el);
-          if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) return false;
-          if (el.offsetParent === null && cs.position !== 'fixed') return false;
-          return true;
-        } catch { return false; }
-      }),
+      // Two answers per selector, in one round trip. `visible` is what it
+      // always was — matches AND is actually showing (not display:none, not a
+      // zero box, not opacity 0); header/menu duplicates, mobile variants and
+      // leftover nodes are often hidden, and counting those made mappings
+      // wrongly read as "on this page" after navigating. `exists` is the
+      // looser question — is it in the DOM at all — which is what a closed
+      // dropdown, a dialog behind its trigger or a dismissed banner answers
+      // yes to on every page load. mappingOnPage ranks them.
+      func: (list) => {
+        const visible = [], exists = [];
+        for (const s of list) {
+          try {
+            const el = document.querySelector(s);
+            if (!el) continue;
+            exists.push(s);
+            if (!el.getBoundingClientRect) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) continue;
+            const cs = getComputedStyle(el);
+            if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) continue;
+            if (el.offsetParent === null && cs.position !== 'fixed') continue;
+            visible.push(s);
+          } catch {}
+        }
+        return { visible, exists };
+      },
       args: [sels],
     });
-    return new Set((res && res[0] && res[0].result) || []);
+    const out = (res && res[0] && res[0].result) || { visible: [], exists: [] };
+    return { visible: new Set(out.visible || []), exists: new Set(out.exists || []) };
   } catch { return null; }
 }
 
@@ -14211,8 +14814,12 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
 
   // Required-field presence (no page needed).
   for (const r of req) {
-    const val = (r === pKey) ? primary : fieldValues[r];
-    if (!val || !String(val).trim()) notes.push({ level: 'err', msg: `Required field “${r}” is empty.` });
+    // aria-label: a typed name stands in for the heading it would otherwise borrow.
+    if (r === 'headingSelector' && rootValues && String(rootValues.label || '').trim()) continue;
+    const val = (r === pKey) ? primary
+      : (fieldValues[r] != null && fieldValues[r] !== '') ? fieldValues[r]
+      : (rootValues ? rootValues[r] : undefined);   // a required ROOT field (aria-label's heading)
+    if (!val || !String(val).trim()) notes.push({ level: 'err', msg: `Required field “${labels[r] || r}” is empty.` });
   }
 
   // A name our own tooling writes cannot appear in a mapping.
@@ -14599,6 +15206,8 @@ document.getElementById('resetPickerBtn').addEventListener('click', resetPicker)
 
 let scanEnginesRan = [];   // which third-party engines actually answered
 let scanResults = [];      // enriched findings [{ruleId, cat, severity, wcag, why, fix, issue, text, selector, detail}]
+let scanInventory = null;  // what the page holds — the evidence beside each checklist row
+let scanView = 'checklist'; // 'checklist' | 'all' — how the findings are shown
 let scanActiveCat = '*';   // current category filter
 let scanActiveSev = '*';   // current severity filter
 
@@ -14626,7 +15235,7 @@ const SCAN_RULES = {
   'table-noheaders':      { title: 'Data table missing headers', wcag: '1.3.1', severity: 'High', category: 'Tables', why: 'Screen reader users cannot understand rows/columns.', fix: 'Use <th> header cells and set scope correctly.' },
   'tabindex-positive':    { title: 'Positive tabindex breaks focus order', wcag: '2.4.3', severity: 'High', category: 'Reading and Focus Order', why: 'A positive tabindex makes keyboard focus jump in a confusing order.', fix: 'Match the HTML order to the visual order; avoid positive tabindex.' },
   'aria-hidden-focusable':{ title: 'Keyboard-focusable but hidden from screen readers', wcag: '4.1.2', severity: 'Medium', category: 'Focus access', why: 'Element receives Tab focus but is ignored by screen readers (aria-hidden).', fix: "Remove aria-hidden='true', or add tabindex='-1' to take it out of the tab order." },
-  'dup-ids':              { title: 'Duplicate id attribute', wcag: '4.1.1', severity: 'Medium', category: 'Screen Reader Support', why: 'Duplicate IDs break label and ARIA associations.', fix: 'Make every id on the page unique.' },
+  'dup-ids':              { title: 'Duplicate id (note for the developers)', wcag: '4.1.1', severity: 'Low', note: true, category: 'Screen Reader Support', why: 'Not an accessibility failure on its own — nobody is blocked by it. It becomes one only when a label, aria-labelledby or aria-controls points at the id, because then the browser picks the first element and the reference can land on the wrong one.', fix: 'A note for the developers: give each element its own id. Nothing to map.' },
   'zoom-disabled':        { title: 'Zoom is disabled', wcag: '1.4.4', severity: 'High', category: 'Text Resize and Magnification', why: 'Users cannot enlarge content enough to read.', fix: 'Do not disable zoom; avoid user-scalable=no / maximum-scale.' },
   'autoplay-audio':       { title: 'Autoplay media cannot be stopped', wcag: '1.4.2', severity: 'High', category: 'Media Animation Motion', why: 'Autoplay audio interrupts users and screen readers.', fix: 'Do not autoplay, or provide pause/stop/mute controls.' },
   'carousel-nopause':     { title: 'Auto-advancing carousel has no pause control', wcag: '2.2.2', severity: 'High', category: 'Media Animation Motion', why: 'Content that moves, updates, or auto-advances for more than five seconds must be pausable — this carousel changes slides on its own with no way to stop it.', fix: 'Add a visible pause/stop control placed and styled to match the rest of the page — not something to auto-generate; where it belongs is a design decision for this specific site.' },
@@ -14640,65 +15249,220 @@ const SCAN_RULES = {
   'clickable-div':        { title: 'Clickable element not identified as interactive', wcag: '4.1.2', severity: 'High', category: 'Screen Reader Support', why: 'A div/span with a click handler lacks an interactive role, so it is not announced as activatable.', fix: 'Use <button>/<a>, or add role="button" and tabindex="0".' },
   'aria-ref-broken':      { title: 'ARIA reference points to a missing id', wcag: '1.3.1', severity: 'Medium', category: 'Screen Reader Support', why: 'aria-labelledby / describedby / controls references an element that does not exist.', fix: 'Point the reference at a real element id.' },
   'target-size-small':    { title: 'Touch target too small', wcag: '2.5.8', severity: 'Medium', category: 'Custom Components', why: 'Users miss taps and hit the wrong item.', fix: 'Increase target size (~24px) or add spacing around targets.' },
+
+  // ── Static checks the removed IBM engine used to make, in our words ──────
+  'img-alt-filename':     { title: 'Alt text is just the file name', wcag: '1.1.1', severity: 'Medium', category: 'Images', why: 'A screen reader will read “Career_HealthNews” or “banner.png” aloud — the file name says nothing about what the picture shows or why it is there.', fix: 'Write what the picture is FOR in a few words, or alt="" if it is decoration.' },
+  'label-for-broken':     { title: 'Label points at a field that does not exist', wcag: '1.3.1', severity: 'High', category: 'Forms and Inputs', why: 'The <label for="…"> names an id no field has, so the field it sits next to is announced with no label at all.', fix: 'Make the label\'s for="" match the field\'s id.' },
+  'link-newwindow':       { title: 'Link opens a new tab without saying so', wcag: '3.2.5', severity: 'Low', category: 'Link and Button Labels', why: 'target="_blank" moves the user to a new tab with no warning; screen reader users lose their place and the Back button stops working.', fix: 'Say it in the name — “Careers (opens in a new tab)” — with an aria-label mapping, or drop the target.' },
+  'media-nocontrols':     { title: 'Video or audio has no controls', wcag: '2.1.1', severity: 'Medium', category: 'Media Animation Motion', why: 'Without the controls attribute or a custom control bar there is no keyboard way to play, pause or change the volume.', fix: 'Add the controls attribute, or make sure the custom controls are real buttons.' },
+  'title-weak':           { title: 'Page title looks like a file name', wcag: '2.4.2', severity: 'Low', category: 'Page Structure', why: 'The tab title is a file name, a URL or “Untitled” — it does not tell a user which page they are on.', fix: 'Set a <title> that names the page and the site: “Members – Molina Healthcare”.' },
+  'list-stray-br':        { title: 'Line break or spacer sitting directly inside a list', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A <br> or an empty spacer between the items is counted as one — the screen reader says “list, 7 items” for 5 links.', fix: 'Hide the stray nodes from screen readers (aria-hidden="true"). The list stays exactly as it looks.' },
+  'list-structure':       { title: 'List holds things that are not list items', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'A <ul>/<ol> contains elements other than <li> and carries no roles of its own, so the count and the items a screen reader announces are wrong.', fix: 'Put only <li> directly inside the list, or map it as the component it really is (a menu, a tab strip) so it gets the right roles.' },
+  'landmark-noname':      { title: 'Several form/region landmarks with no name (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'Not a failure: an unnamed role="form" or role="region" is simply not listed as a landmark, and one of them costs nobody anything. Two or more without names is the case worth a note — a screen reader\'s landmark list then reads “form, form”, and the person cannot tell which is which. A form that is a U1 mapping is already the treatment and is not counted here.', fix: 'Optional: give each a name (“Search”, “Newsletter”) — Fix all takes it from the field\'s own label or the heading inside.' },
 };
 
 // ── Equivalent findings across engines ───────────────────────────────────────
 //
-// axe, IBM and our own rules all flag a missing lang attribute, and they call
-// it html-has-lang, html_lang_exists and lang-missing. Shown as three rows that
-// is one fault reported three times, and the list stops being countable — which
-// is what a client is actually doing with it.
+// axe and our own rules both flag a missing lang attribute, and they call it
+// html-has-lang and lang-missing. Shown as two rows that is one fault reported
+// twice, and the list stops being countable — which is what a client is
+// actually doing with it.
 //
 // So known equivalents collapse onto a shared concept. A hand-kept table rather
 // than fuzzy text matching, because a wrong merge HIDES a finding: two genuinely
 // different faults on one element would become one, and the one that disappears
 // is the one nobody knows to look for. Anything not in the table keeps its own
 // identity, which is the safe direction to be wrong in.
+//
+// Our own rules map here; axe's map through AXE_RULES below (`as` names the
+// hand-written rule an axe rule IS, `concept` names the question it answers).
 const SCAN_CONCEPTS = {
-  'lang-missing': 'lang', 'axe.html-has-lang': 'lang', 'axe.html-lang-valid': 'lang',
-  'ibm.html_lang_exists': 'lang', 'ibm.html_lang_valid': 'lang',
-
-  'title-missing': 'doc-title', 'axe.document-title': 'doc-title',
-  'ibm.page_title_exists': 'doc-title', 'ibm.page_title_valid': 'doc-title',
-
-  'img-alt-missing': 'img-alt', 'axe.image-alt': 'img-alt', 'axe.input-image-alt': 'img-alt',
-  'ibm.img_alt_valid': 'img-alt', 'ibm.img_alt_null': 'img-alt',
-
-  'button-noname': 'button-name', 'axe.button-name': 'button-name',
-  'ibm.aria_accessiblename_exists': 'button-name',
-
-  'link-empty': 'link-name', 'axe.link-name': 'link-name', 'ibm.a_text_purpose': 'link-name',
-
-  'input-nolabel': 'input-label', 'axe.label': 'input-label',
-  'axe.form-field-multiple-labels': 'input-label', 'ibm.input_label_exists': 'input-label',
-
-  'dup-ids': 'dup-id', 'axe.duplicate-id': 'dup-id', 'axe.duplicate-id-active': 'dup-id',
-  'axe.duplicate-id-aria': 'dup-id', 'ibm.element_id_unique': 'dup-id',
-
-  'heading-skip': 'heading-order', 'axe.heading-order': 'heading-order',
-  'ibm.heading_level_valid': 'heading-order',
-  'heading-empty': 'heading-empty', 'axe.empty-heading': 'heading-empty',
-
-  'iframe-notitle': 'frame-title', 'axe.frame-title': 'frame-title',
-  'ibm.frame_title_exists': 'frame-title',
-
-  'zoom-disabled': 'zoom', 'axe.meta-viewport': 'zoom', 'ibm.meta_viewport_zoomable': 'zoom',
-
-  'landmarks-missing': 'landmarks', 'axe.region': 'landmarks',
-  'skip-link-missing': 'skip-link', 'ibm.skip_main_exists': 'skip-link',
-  'ibm.html_skipnav_exists': 'skip-link',
-
-  'table-noheaders': 'table-headers', 'axe.th-has-data-cells': 'table-headers',
-  'ibm.table_headers_exists': 'table-headers',
-
-  'tabindex-positive': 'tabindex', 'axe.tabindex': 'tabindex',
+  'list-stray-br': 'list-structure',
+  'lang-missing': 'lang',
+  'title-missing': 'doc-title', 'title-weak': 'doc-title',
+  'img-alt-missing': 'img-alt',
+  'button-noname': 'button-name',
+  'link-empty': 'link-name',
+  'input-nolabel': 'input-label',
+  'dup-ids': 'dup-id',
+  'heading-skip': 'heading-order',
+  'heading-empty': 'heading-empty',
+  'iframe-notitle': 'frame-title',
+  'zoom-disabled': 'zoom',
+  'landmarks-missing': 'landmarks',
+  'skip-link-missing': 'skip-link',
+  'table-noheaders': 'table-headers',
+  'tabindex-positive': 'tabindex',
 };
+
+// ── Every axe rule, in our words ─────────────────────────────────────────────
+//
+// axe runs under the hood (scan-engines.js) because colour contrast and the
+// ARIA grammar need a rendered page and a mature algorithm nobody should
+// rewrite. What the reader sees is never axe's message: each rule is either
+// the SAME fault a hand-written rule already describes (`as`), or gets its own
+// plain title / why / fix here, and is filed under a checklist question via
+// its `concept`. A rule missing from this table would surface with axe's own
+// wording under "Other findings" — verify-scan-engines.mjs fails the build on
+// that, so the table stays complete as axe versions move.
+//
+// Severity is ours, not axe's impact: axe calls a missing <h1> "moderate" and a
+// wrong ARIA attribute "critical", which is the grammar's view, not the user's.
+const AXE_RULES = {
+  // ── The same faults our rules find ────────────────────────────────────────
+  'document-title': { as: 'title-missing' },
+  'html-has-lang': { as: 'lang-missing' },
+  'image-alt': { as: 'img-alt-missing' }, 'input-image-alt': { as: 'img-alt-missing' },
+  'button-name': { as: 'button-noname' }, 'input-button-name': { as: 'button-noname' },
+  'link-name': { as: 'link-empty' },
+  'label': { as: 'input-nolabel' },
+  'duplicate-id': { as: 'dup-ids' }, 'duplicate-id-active': { as: 'dup-ids' }, 'duplicate-id-aria': { as: 'dup-ids' },
+  'heading-order': { as: 'heading-skip' }, 'empty-heading': { as: 'heading-empty' },
+  'page-has-heading-one': { as: 'h1-missing' },
+  'frame-title': { as: 'iframe-notitle' },
+  'meta-viewport': { as: 'zoom-disabled' },
+  'region': { as: 'landmarks-missing' },
+  'bypass': { as: 'skip-link-missing' },
+  'th-has-data-cells': { as: 'table-noheaders' }, 'td-has-header': { as: 'table-noheaders' },
+  'tabindex': { as: 'tabindex-positive' },
+  'aria-hidden-focus': { as: 'aria-hidden-focusable' },
+  'no-autoplay-audio': { as: 'autoplay-audio' },
+  'video-caption': { as: 'video-nocaptions' },
+  'target-size': { as: 'target-size-small' },
+  'focus-order-semantics': { as: 'clickable-div' },
+  'image-redundant-alt': { as: 'img-alt-filename' },
+
+  // ── Colour ────────────────────────────────────────────────────────────────
+  'color-contrast': { concept: 'contrast', title: 'Text is too faint against its background', wcag: '1.4.3', severity: 'High', category: 'Colour and Contrast', why: 'The text and its background are too close in colour (under 4.5:1, or 3:1 for large text). People with low vision, and anyone in sunlight, cannot read it.', fix: 'Darken the text or lighten the background until the ratio is 4.5:1 — a CSS change on the site; U1 does not restyle text.' },
+  'link-in-text-block': { concept: 'link-color-only', title: 'Link in a paragraph is told apart by colour alone', wcag: '1.4.1', severity: 'Medium', category: 'Colour and Contrast', why: 'Inside running text the link differs from the words around it only by colour, so a colour-blind reader cannot see there is a link.', fix: 'Underline links inside paragraphs, or make the link colour differ from the text by at least 3:1 — a CSS change on the site.' },
+
+  // ── Language ──────────────────────────────────────────────────────────────
+  'html-lang-valid': { concept: 'lang', title: 'Page language code is not valid', wcag: '3.1.1', severity: 'High', category: 'Page Structure', why: 'The <html lang> value is not a real language code, so the screen reader falls back to its default voice.', fix: 'Use a real code: lang="en", lang="he", lang="es".' },
+  'valid-lang': { concept: 'lang', title: 'A lang attribute inside the page is not valid', wcag: '3.1.2', severity: 'Medium', category: 'Page Structure', why: 'An element switches language with a code that is not real, so that passage is read in the wrong voice.', fix: 'Use a real code on the element (lang="fr"), or remove the attribute.' },
+  'html-xml-lang-mismatch': { concept: 'lang', title: 'lang and xml:lang disagree', wcag: '3.1.1', severity: 'Low', category: 'Page Structure', why: 'The page declares two different languages; screen readers may pick either.', fix: 'Make lang and xml:lang the same, or drop xml:lang.' },
+
+  // ── Headings and text structure ───────────────────────────────────────────
+  'p-as-heading': { concept: 'fake-heading', title: 'Bold paragraph used as a heading', wcag: '1.3.1', severity: 'Medium', category: 'Headings', why: 'It looks like a heading but is a styled <p>, so it is missing from the heading list a screen reader user navigates by.', fix: 'Map it as a heading at the right level — the finding tells you which.' },
+  'list': { concept: 'list-structure', title: 'List holds things that are not list items (axe wording, unused)', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'A <ul>/<ol> contains elements other than <li>, so the screen reader miscounts the items or announces stray content.', fix: 'Put only <li> directly inside the list; move the rest out or wrap it in an item.' },
+  'listitem': { concept: 'list-structure', title: 'List item outside a list', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'An <li> is not inside a <ul>/<ol>, so it is announced with no list context and no count.', fix: 'Wrap the items in a <ul> or <ol>, or use a different element.' },
+  'definition-list': { concept: 'list-structure', title: 'Definition list is not structured correctly', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A <dl> must alternate terms (<dt>) and definitions (<dd>); anything else breaks how it is read.', fix: 'Keep only <dt>/<dd> pairs (optionally wrapped in <div>) inside the <dl>.' },
+  'dlitem': { concept: 'list-structure', title: '<dt> or <dd> outside a <dl>', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A term or definition with no list around it loses its meaning to a screen reader.', fix: 'Wrap them in a <dl>, or use ordinary elements.' },
+
+  // ── Images ────────────────────────────────────────────────────────────────
+  'role-img-alt': { concept: 'img-alt', title: 'Element marked as an image has no alt text', wcag: '1.1.1', severity: 'High', category: 'Images', why: 'role="img" tells the screen reader “this is a picture” and then gives it nothing to say.', fix: 'Add an aria-label saying what it shows, or remove the role if it is decoration.' },
+  'svg-img-alt': { concept: 'img-alt', title: 'SVG icon has no name', wcag: '1.1.1', severity: 'High', category: 'Images', why: 'An inline <svg> with role="img" and no <title> or aria-label is announced as “image” with nothing more.', fix: 'Add a <title> inside the svg or an aria-label — or aria-hidden="true" if it is decoration.' },
+  'object-alt': { concept: 'img-alt', title: 'Embedded object has no text alternative', wcag: '1.1.1', severity: 'Medium', category: 'Images', why: 'An <object> (PDF, Flash-era media) with no fallback text is a hole in the page for a screen reader.', fix: 'Put fallback text inside the <object>, or an aria-label on it.' },
+  'area-alt': { concept: 'img-alt', title: 'Image-map area has no alt text', wcag: '2.4.4', severity: 'High', category: 'Images', why: 'Each clickable <area> of an image map is a link; without alt it is a link with no name.', fix: 'Add alt="" text naming where each area goes.' },
+  'server-side-image-map': { concept: 'image-map', title: 'Server-side image map', wcag: '2.1.1', severity: 'High', category: 'Images', why: 'An <img ismap> sends click coordinates to the server — there is nothing a keyboard can activate.', fix: 'Replace it with a client-side map (<map>/<area>) or plain links.' },
+
+  // ── Names for controls ────────────────────────────────────────────────────
+  'aria-command-name': { concept: 'button-name', title: 'Custom button, link or menu item has no name', wcag: '4.1.2', severity: 'Critical', category: 'Link and Button Labels', why: 'role="button"/"link"/"menuitem" with no text, aria-label or labelled-by is announced as just “button”.', fix: 'Give it a name with an aria-label mapping, or visible text.' },
+  'summary-name': { concept: 'button-name', title: 'Expandable section (<summary>) has no name', wcag: '4.1.2', severity: 'High', category: 'Link and Button Labels', why: 'The <summary> is the button that opens the <details>; empty, it is “button, collapsed” with no subject.', fix: 'Put text in the <summary>, or give it an aria-label.' },
+  'aria-toggle-field-name': { concept: 'button-name', title: 'Custom checkbox, switch or radio has no name', wcag: '4.1.2', severity: 'Critical', category: 'Forms and Inputs', why: 'A role="checkbox"/"switch"/"radio" with no name is announced as “checkbox, not checked” — checkbox for what?', fix: 'Name it with an aria-label mapping or aria-labelledby.' },
+  'aria-input-field-name': { concept: 'input-label', title: 'Custom text field, combobox or listbox has no name', wcag: '4.1.2', severity: 'Critical', category: 'Forms and Inputs', why: 'A role="textbox"/"combobox"/"listbox"/"spinbutton" with no name is announced with no purpose.', fix: 'Name it with an aria-label mapping or a visible label tied by aria-labelledby.' },
+  'select-name': { concept: 'input-label', title: 'Dropdown (<select>) has no label', wcag: '4.1.2', severity: 'Critical', category: 'Forms and Inputs', why: 'The dropdown is announced as “combobox” with no idea what is being chosen.', fix: 'Add a <label for>, or an aria-label mapping.' },
+  'form-field-multiple-labels': { concept: 'input-label', title: 'Field has more than one label', wcag: '3.3.2', severity: 'Low', category: 'Forms and Inputs', why: 'Two <label for> point at one field; screen readers read one, the other, or both joined.', fix: 'Keep one <label>; make the rest plain text or aria-describedby.' },
+  'label-title-only': { concept: 'label-hidden', title: 'Field is labelled only by a tooltip', wcag: '3.3.2', severity: 'Medium', category: 'Forms and Inputs', why: 'The only name comes from title= or aria-describedby — nothing is visible, and sighted keyboard users get no label.', fix: 'Add a visible label, or at least an aria-label.' },
+  'label-content-name-mismatch': { concept: 'label-mismatch', title: 'Spoken name differs from the visible text', wcag: '2.5.3', severity: 'High', category: 'Link and Button Labels', why: 'The button shows one word and its aria-label says another, so a voice-control user saying the visible word cannot activate it.', fix: 'Start the aria-label with the visible text, or remove it and let the text be the name.' },
+  'autocomplete-valid': { concept: 'autocomplete', title: 'autocomplete value is not valid', wcag: '1.3.5', severity: 'Medium', category: 'Forms and Inputs', why: 'The autocomplete token is not a real one, so the browser and assistive tools cannot fill the field for the user.', fix: 'Use a real token: autocomplete="email", "given-name", "tel", "postal-code".' },
+
+  // ── Widgets ───────────────────────────────────────────────────────────────
+  'aria-meter-name': { concept: 'meter-name', title: 'Meter has no name', wcag: '1.1.1', severity: 'High', category: 'Semantic Mapping', why: 'A role="meter" announces a value with nothing saying what it measures.', fix: 'Add an aria-label naming what it measures.' },
+  'aria-progressbar-name': { concept: 'meter-name', title: 'Progress bar has no name', wcag: '1.1.1', severity: 'High', category: 'Semantic Mapping', why: 'A role="progressbar" announces “50%” with nothing saying 50% of what.', fix: 'Add an aria-label naming the task.' },
+  'aria-dialog-name': { concept: 'dialog-name', title: 'Dialog has no name', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'A role="dialog" opens and the screen reader says only “dialog” — the title inside it is not tied to it.', fix: 'Map it as a dialog and point it at its heading (aria-labelledby).' },
+  'aria-tooltip-name': { concept: 'tooltip-name', title: 'Tooltip has no text', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'A role="tooltip" with no content is announced as nothing.', fix: 'Put the tooltip text inside it, or remove the role.' },
+  'aria-treeitem-name': { concept: 'treeitem-name', title: 'Tree item has no name', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'A role="treeitem" with no text is an unnamed branch in the tree.', fix: 'Give each tree item text or an aria-label.' },
+
+  // ── ARIA used correctly ───────────────────────────────────────────────────
+  'aria-roles': { concept: 'aria-grammar', title: 'role= value is not a real role', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'The role is misspelt or invented, so the browser ignores it and the element is announced as plain.', fix: 'Use a real role (button, dialog, tablist…), or remove it.' },
+  'aria-allowed-role': { concept: 'aria-grammar', title: 'Role does not fit this element', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'A role this element may not carry (e.g. role="button" on an <a href>, role="heading" on a <li>) confuses what is announced.', fix: 'Use an element that fits the role, or a role that fits the element.' },
+  'aria-deprecated-role': { concept: 'aria-grammar', title: 'Deprecated ARIA role', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'The role was dropped from the ARIA spec and newer screen readers may ignore it.', fix: 'Replace it with its current equivalent.' },
+  'aria-valid-attr': { concept: 'aria-grammar', title: 'aria-* attribute does not exist', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'The attribute is misspelt (aria-lable, aria-labeledby) so it does nothing — usually a name that was meant to be there is missing.', fix: 'Fix the spelling.' },
+  'aria-valid-attr-value': { concept: 'aria-grammar', title: 'aria-* attribute has an invalid value', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'aria-expanded="yes", aria-controls pointing at no id, aria-live="on" — the value is not one the attribute accepts, so it is ignored.', fix: 'Use the allowed values (true/false, a real id, polite/assertive).' },
+  'aria-allowed-attr': { concept: 'aria-grammar', title: 'ARIA attribute not allowed on this role', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'The attribute means nothing for this role (aria-checked on a link, aria-expanded on a heading) and is either ignored or mis-announced.', fix: 'Remove it, or change the role to one that supports it.' },
+  'aria-prohibited-attr': { concept: 'aria-grammar', title: 'aria-label on an element that cannot carry a name', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Plain <div>, <span>, <p> and the like have no role, so their aria-label is ignored by most screen readers — the name the author wanted is silently lost.', fix: 'Give the element a role that takes a name, or put the text where it is read as content.' },
+  'aria-conditional-attr': { concept: 'aria-grammar', title: 'ARIA attribute used where the role forbids it', wcag: '4.1.2', severity: 'Medium', category: 'Semantic Mapping', why: 'The attribute is only valid under certain conditions for this role (e.g. aria-checked on a native checkbox) and here it conflicts with the element itself.', fix: 'Remove the attribute; the native element already conveys the state.' },
+  'aria-required-attr': { concept: 'aria-grammar', title: 'Role is missing an attribute it needs', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Some roles are meaningless without a state: a checkbox without aria-checked, a slider without aria-valuenow, a combobox without aria-expanded.', fix: 'Add the missing attribute — mapping the element as that component does it for you.' },
+  'aria-required-children': { concept: 'aria-structure', title: 'Composite role is missing its parts', wcag: '1.3.1', severity: 'High', category: 'Semantic Mapping', why: 'A tablist with no tabs, a list with no listitems, a menu with no menuitems — the screen reader announces the container and then finds nothing inside.', fix: 'Give the children the matching roles — mapping the component as tabs / menu / listbox does exactly this.' },
+  'aria-required-parent': { concept: 'aria-structure', title: 'Role used outside the container it belongs in', wcag: '1.3.1', severity: 'High', category: 'Semantic Mapping', why: 'A tab outside a tablist, an option outside a listbox, a menuitem outside a menu — the role is announced but its position (“2 of 5”) is lost.', fix: 'Map the whole component, container included, rather than the item alone.' },
+  'aria-roledescription': { concept: 'aria-grammar', title: 'aria-roledescription on an element with no role', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'A custom role description only applies when there is a role to describe; here it is ignored.', fix: 'Add a role, or remove the description.' },
+  'aria-text': { concept: 'aria-grammar', title: 'role="text" hides focusable content', wcag: '4.1.2', severity: 'Medium', category: 'Semantic Mapping', why: 'role="text" flattens everything inside to plain text, so links or buttons within it stop being announced as such.', fix: 'Remove the role, or move the controls outside it.' },
+  'aria-braille-equivalent': { concept: 'aria-grammar', title: 'Braille label with no spoken equivalent', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'aria-braillelabel is set but there is no aria-label or text for speech users.', fix: 'Add the ordinary name as well.' },
+  'aria-hidden-body': { concept: 'aria-grammar', title: 'The whole page is hidden from screen readers', wcag: '4.1.2', severity: 'Critical', category: 'Screen Reader Support', why: 'aria-hidden="true" on <body> removes every element from assistive technology — the page is blank to a screen reader.', fix: 'Remove aria-hidden from <body>. Usually a modal script that forgot to undo it.' },
+  'presentation-role-conflict': { concept: 'aria-grammar', title: 'Element is “presentational” but also interactive or labelled', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'role="none"/"presentation" says “ignore me”, while a tabindex or aria-label on the same element says the opposite; screen readers disagree on which wins.', fix: 'Pick one: remove the role, or remove the tabindex / aria attributes.' },
+  'nested-interactive': { concept: 'nested-controls', title: 'Control inside a control', wcag: '4.1.2', severity: 'High', category: 'Focus access', why: 'A button inside a link, or a link inside a role="button" — screen readers announce only the outer one and keyboard focus can get stuck.', fix: 'Flatten it: one interactive element per action, side by side.' },
+
+  // ── Keyboard reach ────────────────────────────────────────────────────────
+  'scrollable-region-focusable': { concept: 'scroll-keyboard', title: 'Scrolling area cannot be reached by keyboard', wcag: '2.1.1', severity: 'High', category: 'Focus access', why: 'A box with its own scrollbar has nothing focusable inside and no tabindex, so keyboard users cannot scroll it and never see the rest of its content.', fix: 'Give the scrolling element tabindex="0" (a static fix), and a name with aria-label.' },
+  'frame-focusable-content': { concept: 'frame-tabindex', title: 'Iframe with controls is taken out of the tab order', wcag: '2.1.1', severity: 'High', category: 'Focus access', why: 'tabindex="-1" on an <iframe> that contains links or fields makes everything inside unreachable by keyboard.', fix: 'Remove the tabindex from the iframe.' },
+  'skip-link': { concept: 'skip-link', title: 'Skip link points at nothing', wcag: '2.4.1', severity: 'Medium', category: 'Page Structure', why: 'The “skip to content” link\'s href names an id that is not on the page, or a target that cannot take focus — pressing it goes nowhere.', fix: 'Point it at the main content\'s id, and make sure that element can take focus (tabindex="-1").' },
+  'accesskeys': { concept: 'accesskey-dup', title: 'Same accesskey on more than one element', wcag: '4.1.2', severity: 'Low', category: 'Focus access', why: 'Two elements share a keyboard shortcut, so pressing it activates only one and the other can never be reached that way.', fix: 'Give each accesskey a different letter, or drop them.' },
+
+  // ── Landmarks ─────────────────────────────────────────────────────────────
+  'landmark-one-main': { concept: 'landmarks', title: 'Page has no main landmark', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'Without <main> a screen reader user cannot jump straight to the content past the header.', fix: 'Map the content area as the main landmark — Config does this.' },
+  'landmark-no-duplicate-main': { concept: 'landmark-structure', title: 'More than one main landmark', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'Two <main> elements: “jump to main content” becomes a guess.', fix: 'Keep one <main>; the rest become <section> or plain <div>.' },
+  'landmark-no-duplicate-banner': { concept: 'landmark-structure', title: 'More than one page header (banner) landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'Two top-level <header>/role="banner": the landmark list shows two page headers.', fix: 'Keep one page header; give inner <header>s a section around them or no role.' },
+  'landmark-no-duplicate-contentinfo': { concept: 'landmark-structure', title: 'More than one page footer (contentinfo) landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'Two top-level <footer>/role="contentinfo": the landmark list shows two page footers.', fix: 'Keep one page footer.' },
+  'landmark-main-is-top-level': { concept: 'landmark-structure', title: 'Main landmark is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: '<main> inside <nav>, <header> or <aside> is announced as part of that region, not as the page content.', fix: 'Move <main> out so it sits directly under <body>.' },
+  'landmark-banner-is-top-level': { concept: 'landmark-structure', title: 'Page header landmark is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A banner inside main or nav is not the page header any more; the landmark list gets confusing.', fix: 'Move the <header> to the top level, or remove role="banner".' },
+  'landmark-contentinfo-is-top-level': { concept: 'landmark-structure', title: 'Page footer landmark is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A footer inside main is announced as part of the content, not as the page footer.', fix: 'Move the <footer> to the top level, or remove role="contentinfo".' },
+  'landmark-complementary-is-top-level': { concept: 'landmark-structure', title: 'Sidebar (aside) is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'An <aside> inside <main> is announced as part of the content, not as a sidebar.', fix: 'Move it out, or drop the aside for a plain <div>.' },
+  'landmark-unique': { concept: 'landmark-structure', title: 'Several landmarks of the same kind with the same (or no) name', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'Three <nav>s with no names are listed as “navigation, navigation, navigation” — the user cannot tell the menu from the footer links.', fix: 'Give each one an aria-label (“Main menu”, “Footer links”).' },
+
+  // ── Iframes and tables ────────────────────────────────────────────────────
+  'frame-title-unique': { concept: 'frame-title-dup', title: 'Two iframes share the same title', wcag: '4.1.2', severity: 'Low', category: 'Iframes', why: 'The frame list reads the same name twice, so the user cannot tell them apart.', fix: 'Give each iframe its own title (“Map”, “Chat”).' },
+  'td-headers-attr': { concept: 'table-structure', title: 'Cell headers= points at cells that do not exist', wcag: '1.3.1', severity: 'Medium', category: 'Tables', why: 'A <td headers="…"> names ids that are not header cells in this table, so the header is not announced.', fix: 'Point headers= at the ids of real <th> cells in the same table.' },
+  'scope-attr-valid': { concept: 'table-structure', title: 'Header cell scope= is wrong', wcag: '1.3.1', severity: 'Low', category: 'Tables', why: 'scope must be row/col/rowgroup/colgroup and belongs on <th>; anything else is ignored.', fix: 'Use scope="col" on column headers and scope="row" on row headers.' },
+  'table-fake-caption': { concept: 'table-structure', title: 'Table title is a cell, not a caption', wcag: '1.3.1', severity: 'Low', category: 'Tables', why: 'The first row holds the table\'s title as a merged cell, so it is read as data and never as the table\'s name.', fix: 'Move the title into a <caption>.' },
+  'table-duplicate-name': { concept: 'table-structure', title: 'Table caption repeats its summary', wcag: '1.3.1', severity: 'Low', category: 'Tables', why: 'The same text is announced twice when the table is reached.', fix: 'Keep the <caption>; drop or change the summary.' },
+  'empty-table-header': { concept: 'table-structure', title: 'Header cell is empty', wcag: '1.3.1', severity: 'Low', category: 'Tables', why: 'A <th> with no text gives the column no name; each cell under it is announced with a blank header.', fix: 'Put the column\'s name in the <th>, or make it a <td>.' },
+
+  // ── Zoom, motion, time ────────────────────────────────────────────────────
+  'meta-viewport-large': { concept: 'zoom', title: 'Zoom is capped below 500%', wcag: '1.4.4', severity: 'Low', category: 'Text Resize and Magnification', why: 'maximum-scale stops the page short of the zoom some low-vision users need.', fix: 'Remove maximum-scale, or set it to 5 or more.' },
+  'css-orientation-lock': { concept: 'orientation', title: 'Page is locked to one screen orientation', wcag: '1.3.4', severity: 'Medium', category: 'Text Resize and Magnification', why: 'A CSS rotate forces portrait or landscape; a user whose device is mounted one way cannot use the page.', fix: 'Remove the orientation lock in CSS.' },
+  'avoid-inline-spacing': { concept: 'text-spacing', title: 'Text spacing is forced with !important', wcag: '1.4.12', severity: 'Medium', category: 'Text Resize and Magnification', why: 'Inline line-height / letter-spacing / word-spacing with !important cannot be overridden by a reader\'s own spacing stylesheet.', fix: 'Drop the !important from the inline spacing styles.' },
+  'blink': { concept: 'blinking', title: 'Blinking text', wcag: '2.2.2', severity: 'High', category: 'Media Animation Motion', why: 'A <blink> element flashes for ever with no way to stop it.', fix: 'Remove the <blink> element.' },
+  'marquee': { concept: 'blinking', title: 'Scrolling marquee text', wcag: '2.2.2', severity: 'High', category: 'Media Animation Motion', why: 'A <marquee> moves for ever with no pause, and is unreadable to many users.', fix: 'Remove the <marquee>; show the text still.' },
+  'meta-refresh': { concept: 'auto-refresh', title: 'Page reloads or redirects itself on a timer', wcag: '2.2.1', severity: 'High', category: 'Media Animation Motion', why: 'A <meta http-equiv="refresh"> with a delay moves the user without warning — mid-form, mid-read.', fix: 'Remove the timed refresh; redirect immediately (delay 0) or on a button.' },
+  'audio-caption': { concept: 'audio-transcript', title: 'Audio has no captions or transcript', wcag: '1.2.1', severity: 'High', category: 'Media Animation Motion', why: 'A deaf user gets nothing from an <audio> element with no text version.', fix: 'Add a <track kind="captions"> or a transcript beside it.' },
+};
+
+/** axe rules deliberately not shown, and why. Kept so the coverage account is honest. */
+const AXE_SKIP = {
+  // Lists are ours: axe fails a <ul> for a stray <br> the same as for real
+  // junk, and fails a list that carries proper roles (a menu built on <ul>).
+  // Our check tells the two apart and offers the right fix for each.
+  'list': 'ours instead — a stray <br> gets aria-hidden, a list with roles passes',
+  'listitem': 'ours instead — see list',
+  'frame-tested': 'about axe itself (did it run inside every iframe), not about the page',
+  'hidden-content': 'informational — "there is hidden content", which every page has',
+  'color-contrast-enhanced': 'WCAG AAA (7:1) — beyond the AA target',
+  'identical-links-same-purpose': 'WCAG AAA — and it guesses at intent',
+  'meta-refresh-no-exceptions': 'WCAG AAA — the AA rule (meta-refresh) is shown',
+};
+
+/** The catalog entry an axe finding is shown as, or null when it is skipped. */
+function axeCatalog(ruleId) {
+  const id = String(ruleId || '').replace(/^axe\./, '');
+  if (AXE_SKIP[id]) return null;
+  const t = AXE_RULES[id];
+  if (!t) return undefined; // not translated — verify-scan-engines.mjs keeps this from shipping
+  if (t.as) return { ...SCAN_RULES[t.as], ruleId: t.as, concept: SCAN_CONCEPTS[t.as] || t.as };
+  return { ...t, ruleId: 'axe.' + id, concept: t.concept };
+}
+
+/** The checklist question a rule answers — ours by table, axe's by translation. */
+function conceptOfRule(ruleId) {
+  if (SCAN_CONCEPTS[ruleId]) return SCAN_CONCEPTS[ruleId];
+  if (/^axe\./.test(ruleId || '')) { const c = axeCatalog(ruleId); if (c && c.concept) return c.concept; }
+  return ruleId;
+}
 
 const SEVERITY_RANK = { Critical: 0, High: 1, Medium: 2, Low: 3 };
 
-// Shown on every finding. Two engines agreeing is the strongest signal in the
-// list — it is what separates "a ruleset has an opinion" from "this is broken".
-const ENGINE_LABEL = { u1: 'U1', axe: 'axe', ibm: 'IBM' };
+// Kept on each finding for the record (and the report), no longer shown as a
+// chip: every row reads in our words now, wherever the fault was found.
+const ENGINE_LABEL = { u1: 'U1', axe: 'axe' };
 
 /**
  * One row per real fault, carrying the engines that found it.
@@ -14715,10 +15479,10 @@ function mergeScanFindings(findings) {
   const byKey = new Map();
   for (const f of findings) {
     if (!f || !f.ruleId) continue;
-    const concept = SCAN_CONCEPTS[f.ruleId] || f.ruleId;
-    // Same element, same concept — the selector matters, or every missing alt
-    // on the page would fold into one row.
-    const key = concept + '\u0000' + (f.selector || '') + '\u0000' + (f.detail || '');
+    const concept = conceptOfRule(f.ruleId);
+    // Same element, same concept — the selector AND its index matter, or every
+    // missing alt on the page would fold into one row (`img` names them all).
+    const key = concept + '\u0000' + (f.selector || '') + '\u0000' + (f.idx ?? '');
     const seen = byKey.get(key);
     if (!seen) {
       byKey.set(key, { ...f, engines: [f.engine || 'u1'] });
@@ -14757,7 +15521,7 @@ async function runScanEngines(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ['vendor/axe.min.js', 'vendor/ace.js', 'scan-engines.js'],
+      files: ['vendor/axe.min.js', 'scan-engines.js'],
     });
     const [res] = await chrome.scripting.executeScript({
       target: { tabId },
@@ -14825,16 +15589,25 @@ async function scanPageStatic() {
         // Element-based findings are only relevant if the element is actually
         // visible on the page — skip hidden dropdowns, closed modals, templates.
         // `force:true` keeps document-level or intentionally-hidden checks.
+        // The selector is short on purpose (`h4`, `a.externalLink`) and can
+        // match more than one element; the index among its matches is what
+        // makes it THIS one — for the highlight, and for folding an axe finding
+        // on the same element into the same row.
+        const idxOf = (el, sel) => { try { return Math.max(0, Array.prototype.indexOf.call(document.querySelectorAll(sel), el)); } catch (e) { return 0; } };
         const add = (ruleId, el, text, detail, force) => {
           if (el && !force && !visible(el)) return;
           const selector = el ? selOf(el) : '';
-          const key = ruleId + '|' + selector + '|' + (text || '').slice(0, 30);
+          const idx = el ? idxOf(el, selector) : 0;
+          const key = ruleId + '|' + selector + '|' + idx + '|' + (text || '').slice(0, 30);
           if (seen.has(key)) return; seen.add(key);
-          out.push({ ruleId, selector, text: (text || '').slice(0, 120), detail: detail || '' });
+          out.push({ ruleId, selector, idx, text: (text || '').slice(0, 120), detail: detail || '' });
         };
 
         // ── Page title / language ──────────────────────────────────────
-        if (!(document.title || '').trim()) add('title-missing', null, '(no <title>)');
+        const docTitle = (document.title || '').trim();
+        if (!docTitle) add('title-missing', null, '(no <title>)');
+        else if (/^(untitled|home|index|default|document|new page)$/i.test(docTitle) || /\.(html?|aspx?|php|jsp)$/i.test(docTitle) || /^https?:\/\//i.test(docTitle))
+          add('title-weak', null, docTitle);
         if (!document.documentElement.getAttribute('lang')) add('lang-missing', null, '<html> has no lang');
 
         // ── Headings ───────────────────────────────────────────────────
@@ -14861,8 +15634,22 @@ async function scanPageStatic() {
         // ── Images ─────────────────────────────────────────────────────
         Array.from(document.querySelectorAll('img')).slice(0, 200).forEach(el => {
           const decorative = el.getAttribute('role') === 'presentation' || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('alt') === '';
+          const file = (el.getAttribute('src') || '').split('/').pop().split('?')[0];
           if (el.getAttribute('alt') === null && !decorative)
-            add('img-alt-missing', el, (el.getAttribute('src') || '').split('/').pop() || '(image)');
+            add('img-alt-missing', el, file || '(image)');
+          else if (!decorative) {
+            // "Career_HealthNews.jpg → Career_HealthNews": the alt is the file
+            // name, or a file name outright. Says nothing about the picture.
+            const alt = (el.getAttribute('alt') || '').trim();
+            const stem = file.replace(/\.[a-z0-9]+$/i, '');
+            const norm = (x) => x.toLowerCase().replace(/[\s_\-]+/g, '');
+            // "View Personal Health Record" beside ViewPersonalHealthRecord.png
+            // is a real alt that happens to match the file — words with spaces
+            // pass. A token with no spaces that equals the file's stem, or any
+            // alt that ends in an image extension, does not.
+            if (alt && (/\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(alt) || (stem.length > 3 && !/\s/.test(alt) && norm(alt) === norm(stem))))
+              add('img-alt-filename', el, `${file} → “${alt}”`);
+          }
         });
 
         // ── Links ──────────────────────────────────────────────────────
@@ -14872,6 +15659,13 @@ async function scanPageStatic() {
           const name = accName(el);
           if (!name) add('link-empty', el, (el.getAttribute('href') || '').slice(0, 50));
           else if (generic.test(name)) add('link-generic', el, name, (el.getAttribute('href') || '').slice(0, 40));
+          // Opens elsewhere without saying so — in the name, the title, or an
+          // icon's alt. Low severity: an advisory, not a blocker.
+          if (el.getAttribute('target') === '_blank') {
+            const said = name + ' ' + (el.getAttribute('title') || '');
+            if (!/new (tab|window)|opens? in|external|חלון חדש|לשונית חדשה|כרטיסייה חדשה/i.test(said))
+              add('link-newwindow', el, name, (el.getAttribute('href') || '').slice(0, 40));
+          }
         });
 
         // ── Buttons ────────────────────────────────────────────────────
@@ -14891,6 +15685,38 @@ async function scanPageStatic() {
           else if (!label) add('input-nolabel', el, '(unlabelled ' + el.tagName.toLowerCase() + ')', el.getAttribute('type') || '');
         });
 
+        // ── <label for> pointing at nothing ────────────────────────────
+        Array.from(document.querySelectorAll('label[for]')).slice(0, 200).forEach(el => {
+          const id = el.getAttribute('for');
+          if (id && !document.getElementById(id)) add('label-for-broken', el, txt(el).slice(0, 60) || '(label)', `for="${id}"`);
+        });
+
+        // ── Named landmarks that have no name ──────────────────────────
+        // A landmark is not named by its contents — only by aria-label,
+        // aria-labelledby or title. A hidden <label> inside a role="form" does
+        // not name the form.
+        const landmarkName = (el) => {
+          const al = (el.getAttribute('aria-label') || '').trim(); if (al) return al;
+          const lb = el.getAttribute('aria-labelledby');
+          if (lb) { const t = lb.split(/\s+/).map(id => { const e = document.getElementById(id); return e ? txt(e) : ''; }).join(' ').trim(); if (t) return t; }
+          return (el.getAttribute('title') || '').trim();
+        };
+        // Not a failure on its own: an unnamed role=form/region is just not a
+        // landmark, and a form that is a U1 mapping (it carries the engine's
+        // marker) IS the treatment — every other mapped form on the page
+        // passes for the same reason, and this one must not read differently.
+        // The one case worth a NOTE is two or more unnamed ones: the landmark
+        // list then says “form, form” and nobody can tell them apart.
+        const unnamedLandmarks = Array.from(document.querySelectorAll('[role=form],[role=region]')).slice(0, 50)
+          .filter(el => !landmarkName(el) && !el.hasAttribute('u1st-avoid-change-detection'));
+        if (unnamedLandmarks.length >= 2) unnamedLandmarks.forEach(el => {
+          const f = el.querySelector('input:not([type=hidden]),select,textarea');
+          let about = '';
+          if (f) { const lab = f.id ? document.querySelector(`label[for="${CSS.escape(f.id)}"]`) : null; about = (lab && txt(lab)) || f.getAttribute('aria-label') || f.getAttribute('placeholder') || f.getAttribute('name') || ''; }
+          if (!about) { const h = el.querySelector('h1,h2,h3,h4,h5,h6'); about = h ? txt(h) : txt(el).slice(0, 40); }
+          add('landmark-noname', el, `the ${el.getAttribute('role')} around “${about.slice(0, 40)}” — one of ${unnamedLandmarks.length} without a name`, '', true);
+        });
+
         // ── Radio/checkbox groups without a group label ────────────────
         const groups = {};
         Array.from(document.querySelectorAll('input[type=radio][name],input[type=checkbox][name]')).forEach(el => {
@@ -14902,6 +15728,24 @@ async function scanPageStatic() {
           const grouped = els[0].closest('fieldset') || els[0].closest('[role=group],[role=radiogroup]');
           const labelled = grouped && (grouped.querySelector('legend') || grouped.getAttribute('aria-label') || grouped.getAttribute('aria-labelledby'));
           if (!labelled) add('group-nolabel', els[0], `Group "${name}" (${els.length} options)`);
+        });
+
+        // ── Lists: what sits directly inside a <ul>/<ol> ───────────────
+        // A list that carries roles of its own (a menu, a tab strip, a
+        // listbox, or role=list with role=listitem children) is judged by
+        // those roles, not by its tags — it passes here. A stray <br> or an
+        // empty spacer is one finding with one fix (hide it); real non-item
+        // content is the other.
+        Array.from(document.querySelectorAll('ul, ol')).slice(0, 150).forEach(list => {
+          const role = (list.getAttribute('role') || '').toLowerCase();
+          if (role && role !== 'list') return;                     // a component — its own roles decide
+          const kids = Array.from(list.children);
+          const offenders = kids.filter(k => !/^(LI|SCRIPT|TEMPLATE)$/.test(k.tagName));
+          if (!offenders.length) return;
+          if (offenders.every(k => (k.getAttribute('role') || '').toLowerCase() === 'listitem' || k.getAttribute('aria-hidden') === 'true')) return;
+          const stray = offenders.filter(k => /^(BR|HR)$/.test(k.tagName) || (!(k.textContent || '').trim() && !k.querySelector('img,svg,a,button,input,li')));
+          if (stray.length === offenders.length) add('list-stray-br', list, `${stray.length} stray <${stray[0].tagName.toLowerCase()}> in a list of ${kids.length - stray.length}`, '', true);
+          else add('list-structure', list, txt(list).slice(0, 60), offenders.map(k => '<' + k.tagName.toLowerCase() + '>').slice(0, 4).join(' '));
         });
 
         // ── Iframes ────────────────────────────────────────────────────
@@ -14932,7 +15776,14 @@ async function scanPageStatic() {
         // ── Duplicate ids ──────────────────────────────────────────────
         const idMap = {};
         Array.from(document.querySelectorAll('[id]')).forEach(el => { const id = el.id; if (id) (idMap[id] = idMap[id] || []).push(el); });
-        Object.keys(idMap).forEach(id => { if (idMap[id].length > 1) add('dup-ids', idMap[id][0], `id="${id}" used ${idMap[id].length}×`); });
+        Object.keys(idMap).forEach(id => {
+          if (idMap[id].length < 2) return;
+          // Which ones actually break something: a label or ARIA reference
+          // pointing at this id lands on the first element only.
+          let referenced = false;
+          try { referenced = !!document.querySelector(`label[for="${CSS.escape(id)}"],[aria-labelledby~="${CSS.escape(id)}"],[aria-describedby~="${CSS.escape(id)}"],[aria-controls~="${CSS.escape(id)}"]`); } catch (e) {}
+          add('dup-ids', idMap[id][0], `id="${id}" used ${idMap[id].length}×${referenced ? ' — and a label/ARIA reference points at it' : ''}`, '', true);
+        });
 
         // ── Zoom disabled ──────────────────────────────────────────────
         const vp = document.querySelector('meta[name=viewport]');
@@ -14942,6 +15793,13 @@ async function scanPageStatic() {
         Array.from(document.querySelectorAll('audio[autoplay],video[autoplay]')).forEach(el => {
           if (!el.muted && !el.controls) add('autoplay-audio', el, el.tagName.toLowerCase() + ' autoplay');
         });
+        // Media with sound and no way to drive it. A muted, looping background
+        // video is decoration and is left alone.
+        Array.from(document.querySelectorAll('audio,video')).slice(0, 20).forEach(el => {
+          if (el.hasAttribute('controls') || ((el.muted || el.hasAttribute('muted')) && el.hasAttribute('loop'))) return;
+          const custom = el.parentElement && el.parentElement.querySelector('button,[role=button]');
+          if (!custom) add('media-nocontrols', el, el.tagName.toLowerCase() + (el.getAttribute('src') ? ' ' + el.getAttribute('src').split('/').pop().slice(0, 40) : ''));
+        });
 
         // ── Carousel with no pause control (WCAG 2.2.2) ─────────────────
         // Recommendation only — U1 does not inject a button for this (see
@@ -14950,11 +15808,43 @@ async function scanPageStatic() {
         // flagged issue that doesn't apply to it would be its own false
         // positive. A real pause/stop control anywhere in the carousel
         // (however the site built it) means this is already handled.
-        Array.from(document.querySelectorAll('[role="group"][aria-roledescription="carousel"],.u1st-carousel,[data-u1-carousel]')).forEach(el => {
-          const moves = !!el.querySelector('[aria-hidden="true"],[hidden]');
+        //
+        // The control is wherever the site put it. Molina's is
+        // <a title="Pause" class="pausebtn">Play/Pause</a> in a sibling <div>
+        // BEFORE the carousel, not inside it — so the search covers the
+        // carousel, then each ancestor up to three levels (the banner wrapper),
+        // and reads title, aria-label, class, id, text and an icon's alt, not
+        // aria-label alone. Missing a real button is the false positive that
+        // costs the most: the client checks, finds the button, and stops
+        // trusting the list.
+        const PAUSE_WORDS = /\b(pause|stop|play\/pause|autoplay|עצור|עצירה|השהה|הפסק)\b/i;
+        const looksLikePause = (c) => {
+          const attrs = [c.getAttribute('aria-label'), c.getAttribute('title'), c.className && String(c.className), c.id,
+            (c.textContent || '').trim().slice(0, 60)];
+          const img = c.querySelector('img[alt],svg title,[aria-label]');
+          if (img) attrs.push(img.getAttribute('alt') || img.getAttribute('aria-label') || img.textContent);
+          return attrs.some(a => a && PAUSE_WORDS.test(String(a).replace(/[-_]/g, ' ')));
+        };
+        const findPauseControl = (root) => {
+          let scope = root;
+          for (let up = 0; scope && scope !== document.body && up <= 3; up++, scope = scope.parentElement) {
+            const found = Array.from(scope.querySelectorAll('button,a,[role=button],input[type=button],[onclick]')).find(looksLikePause);
+            if (found) return found;
+          }
+          return null;
+        };
+        const carousels = new Set(Array.from(document.querySelectorAll(
+          '[role="group"][aria-roledescription="carousel"],.u1st-carousel,[data-u1-carousel],' +
+          // Frameworks whose markup SAYS it auto-advances:
+          '.carousel[data-ride="carousel"],.carousel[data-bs-ride="carousel"],[data-autoplay]:not([data-autoplay="false"]),[data-swiper-autoplay],.slick-slider[data-slick*="autoplay"]')));
+        carousels.forEach(el => {
+          // One finding per carousel: a decorated inner track inside a framework
+          // wrapper is the same carousel.
+          if (Array.from(carousels).some(o => o !== el && o.contains(el))) return;
+          const declared = /data-(bs-)?ride|data-autoplay|data-swiper-autoplay|autoplay/i.test(el.outerHTML.slice(0, 400));
+          const moves = declared || !!el.querySelector('[aria-hidden="true"],[hidden]');
           if (!moves) return;
-          const hasPauseControl = !!el.querySelector('[aria-label*="pause" i],[aria-label*="stop" i],button[class*="pause" i]');
-          if (!hasPauseControl) add('carousel-nopause', el, '(auto-advancing carousel)');
+          if (!findPauseControl(el)) add('carousel-nopause', el, '(auto-advancing carousel)');
         });
         Array.from(document.querySelectorAll('video')).slice(0, 20).forEach(el => {
           if (!el.querySelector('track[kind=captions],track[kind=subtitles]')) add('video-nocaptions', el, '(video without captions track)');
@@ -14997,13 +15887,208 @@ async function scanPageStatic() {
           if (r.width < 24 && r.height < 24) { add('target-size-small', el, `${Math.round(r.width)}×${Math.round(r.height)}px`); smallCount++; }
         });
 
-        return { results: out, total: out.length };
+        // What the page HOLDS, so the checklist can say "passed" with the
+        // evidence beside it, and "nothing to check" when there is nothing —
+        // a title that exists can still be wrong, and only a person can say.
+        const q = (s) => Array.from(document.querySelectorAll(s));
+        // selOf can answer a bare `img` for a picture with no id or class; the
+        // index among that selector's matches (idxOf, above) is what makes it
+        // THIS picture.
+        const inventory = {
+          title: (document.title || '').trim(),
+          lang: (document.documentElement.getAttribute('lang') || '').trim(),
+          headings: q('h1,h2,h3,h4,h5,h6,[role=heading][aria-level]').filter(visible).slice(0, 80).map(h => ({
+            // aria-level wins over the tag — that is how a mapping re-levels
+            // a real <h4>, and what a screen reader announces.
+            level: (+h.getAttribute('aria-level') || (/^H[1-6]$/.test(h.tagName) ? +h.tagName[1] : 2)),
+            text: txt(h).slice(0, 90), selector: selOf(h), idx: idxOf(h, selOf(h)),
+          })),
+          images: q('img').filter(visible).slice(0, 60).map(img => ({
+            selector: selOf(img), idx: idxOf(img, selOf(img)), alt: img.hasAttribute('alt') ? img.getAttribute('alt') : null,
+            src: (img.currentSrc || img.src || '').split('/').pop().split('?')[0].slice(0, 40),
+            decorative: img.getAttribute('alt') === '' || img.getAttribute('role') === 'presentation',
+          })),
+          imagesTotal: q('img').filter(visible).length,
+          links: q('a[href]').filter(visible).length,
+          buttons: q('button,[role=button],input[type=submit],input[type=button]').filter(visible).length,
+          inputs: q('input:not([type=hidden]),select,textarea').filter(visible).length,
+          iframes: q('iframe').map(f => ({ selector: selOf(f), idx: idxOf(f, selOf(f)), title: (f.getAttribute('title') || '').trim(), src: (f.src || '').slice(0, 60) })),
+          tables: q('table').filter(visible).length,
+          media: q('video,audio').length,
+          landmarks: {
+            main: q('main,[role=main]').length, nav: q('nav,[role=navigation]').length,
+            header: q('header,[role=banner]').length, footer: q('footer,[role=contentinfo]').length,
+            // A search that carries no role=search is still a search — the
+            // field says so (type, name, label or placeholder). Counted, and
+            // marked so the evidence can say "there, but not marked".
+            // role=search, OR a NAMED form around a search field — the shape
+            // a U1 `form` mapping leaves (role="form" it re-writes on every
+            // tick, so the name is the fix there, not the role).
+            search: (() => {
+              const SEARCHQ = 'input[type=search],input[name*="search" i],input[id*="search" i],input[placeholder*="search" i],input[aria-label*="search" i],input[placeholder*="חיפוש"],input[aria-label*="חיפוש"]';
+              // A named form around the search field, or one that is a U1
+              // form mapping (the engine's marker), is the search landmark as
+              // far as this page is concerned.
+              const named = q('[role=form][aria-label],[role=form][aria-labelledby],form[aria-label],form[aria-labelledby],[role=form][u1st-avoid-change-detection]').filter(f => f.querySelector(SEARCHQ));
+              return q('[role=search]').length + named.length;
+            })(),
+            searchUnmarked: (() => {
+              const SEARCHQ = 'input[type=search],input[name*="search" i],input[id*="search" i],input[placeholder*="search" i],input[aria-label*="search" i],input[placeholder*="חיפוש"],input[aria-label*="חיפוש"]';
+              const fields = q(SEARCHQ).filter(visible);
+              return fields.filter(f => !f.closest('[role=search],[role=form][aria-label],[role=form][aria-labelledby],form[aria-label],form[aria-labelledby],[role=form][u1st-avoid-change-detection]')).length;
+            })(),
+          },
+          skipLink: (() => {
+            const a = q('a[href^="#"]').find(x => /skip|דלג|main|content|תוכן/i.test(txt(x) + ' ' + (x.getAttribute('aria-label') || '')));
+            return a ? txt(a) || (a.getAttribute('aria-label') || '') : '';
+          })(),
+          // Every skip link on the page — the engine's, the config's, the
+          // site's own — and whether each one lands on something.
+          skipLinks: q('a[href^="#"]').filter(x => x.classList.contains('u1st-skip-link') || /skip|דלג/i.test(txt(x) + ' ' + (x.getAttribute('aria-label') || ''))).slice(0, 12).map(x => {
+            const id = (x.getAttribute('href') || '').slice(1);
+            let t = null; try { t = id && document.getElementById(id); } catch (e) {}
+            return { text: txt(x) || (x.getAttribute('aria-label') || ''), href: x.getAttribute('href') || '', lands: !!t, target: t ? selOf(t) : '' };
+          }),
+          positiveTabindex: q('[tabindex]').filter(x => +x.getAttribute('tabindex') > 0).length,
+        };
+        return { results: out, total: out.length, inventory };
       },
     });
     return res?.[0]?.result || { err: 'No result' };
   } catch (err) {
     return { err: err.message };
   }
+}
+
+// ── "This alt is right" ──────────────────────────────────────────────────────
+//
+// The scan can only ask whether an alt says what the picture is for; a person
+// answers. An approved image (by file name + alt) stops being a finding and
+// shows a tick in the evidence list, on every scan of this site, until the
+// alt changes. Local, private, never exported.
+const altOkKey = (host) => (U1Store.PRIVATE_PREFIX || '__') + 'altOk_' + (host || currentHostname);
+let scanAltOk = new Set();
+const altOkId = (src, alt) => `${(src || '').split('/').pop().split('?')[0]}|${(alt || '').trim()}`;
+async function loadAltOk() {
+  try { const k = altOkKey(); const v = (await U1Store.get([k]))[k]; scanAltOk = new Set(Array.isArray(v) ? v : []); }
+  catch { scanAltOk = new Set(); }
+  return scanAltOk;
+}
+async function setAltOk(ids, on) {
+  for (const id of ids || []) { if (on) scanAltOk.add(id); else scanAltOk.delete(id); }
+  try { await U1Store.setLocalOnly({ [altOkKey()]: [...scanAltOk].slice(-1500) }); } catch {}
+}
+// The image finding's text is `file → “alt”`; approval is keyed the same way.
+const altOkIdOfFinding = (r) => {
+  const m = /^(.*?) → “(.*)”$/.exec(r.text || '');
+  return m ? altOkId(m[1], m[2]) : '';
+};
+function dropApprovedAlts(list) {
+  return list.filter(r => !(r.ruleId === 'img-alt-filename' && scanAltOk.has(altOkIdOfFinding(r))));
+}
+
+// ── "Ignore this one" ────────────────────────────────────────────────────────
+//
+// A finding the person has looked at and decided is not theirs to fix — a
+// third-party widget, a false alarm, a thing the client accepted. Ignored
+// per site (private key, never exported), by rule + element, so it stays
+// ignored on the next scan of this page and comes back the moment the
+// element or the rule changes. Never silently: the row count says how many
+// are ignored, and one click shows them again.
+const ignoredKey = (host) => (U1Store.PRIVATE_PREFIX || '__') + 'scanIgnored_' + (host || currentHostname);
+let scanIgnored = new Map(); // id → { at, title, text }
+let scanShowIgnored = false;
+const ignoreIdOf = (r) => `${r.ruleId}|${r.selector || ''}|${r.idx || 0}|${(r.text || '').slice(0, 60)}`;
+async function loadIgnored() {
+  try { const k = ignoredKey(); const v = (await U1Store.get([k]))[k]; scanIgnored = new Map(Object.entries(v && typeof v === 'object' ? v : {})); }
+  catch { scanIgnored = new Map(); }
+  return scanIgnored;
+}
+async function setIgnored(r, on) {
+  const id = ignoreIdOf(r);
+  if (on) scanIgnored.set(id, { at: Date.now(), title: r.issue || r.ruleId, text: r.text || '' }); else scanIgnored.delete(id);
+  const obj = {}; for (const [k, v] of [...scanIgnored.entries()].slice(-1000)) obj[k] = v;
+  try { await U1Store.setLocalOnly({ [ignoredKey()]: obj }); } catch {}
+}
+const isIgnored = (r) => scanIgnored.has(ignoreIdOf(r));
+
+/** Our raw in-page findings, dressed with their catalog rule. */
+function enrichOurFindings(results) {
+  return (results || []).map(f => {
+    const rule = SCAN_RULES[f.ruleId] || {};
+    return {
+      engine: 'u1',
+      ruleId: f.ruleId, selector: f.selector, text: f.text, detail: f.detail,
+      issue: rule.title || f.ruleId, why: rule.why || '', fix: rule.fix || '',
+      severity: rule.severity || 'Medium', wcag: rule.wcag || '', cat: rule.category || 'Other',
+      note: !!rule.note, idx: f.idx || 0,
+    };
+  });
+}
+
+/**
+ * Re-read the page after a mapping was applied from the scan, so the list
+ * moves in real time: the outline shows the new level, the count drops, and
+ * the row that was mapped stays — marked resolved — instead of vanishing.
+ *
+ * Only OUR checks are re-run (they take milliseconds); the engine's findings
+ * from the last full scan are kept as they were. A row mapped here whose
+ * fault is gone from the fresh read is kept as `resolved` so the person sees
+ * what they did land; a mapped row whose fault is STILL there keeps its
+ * "mapped" mark and stays counted — the mapping did not take, and hiding
+ * that is worse than showing it.
+ */
+async function refreshScanAfterMapping(focusRule) {
+  // U1 and the patch apply on their own tick; read after they have.
+  await new Promise(r => setTimeout(r, 700));
+  const res = await scanPageStatic();
+  if (!res || res.err) { renderScanResults(); return; }
+  const prev = scanResults;
+  const keyOf = (r) => r.ruleId + '|' + (r.selector || '') + '|' + (r.idx || 0) + '|' + (r.text || '');
+  const theirs = prev.filter(r => !r.resolved && !(r.engines || ['u1']).includes('u1'))
+    .map(r => ({ ...r, engine: 'axe', engines: undefined, mapped: undefined }));
+  const next = mergeScanFindings([...dropApprovedAlts(enrichOurFindings(res.results)), ...theirs])
+    .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
+  const byKey = new Map(next.map(n => [keyOf(n), n]));
+  for (const r of prev) {
+    if (!r.mapped && !r.resolved) continue;
+    const hit = byKey.get(keyOf(r));
+    if (hit) { hit.mapped = true; continue; }
+    if (!r.resolved) r.resolved = true;
+    next.push(r);
+  }
+  // Rows that were on the list for the rule just fixed and are gone from the
+  // fresh read are FIXED — kept, marked, so the person sees each one land.
+  if (focusRule) {
+    for (const r of prev) {
+      if (r.ruleId !== focusRule || r.resolved || r.note) continue;
+      const still = byKey.get(keyOf(r));
+      if (still) { still.stillAfterFix = true; continue; }
+      next.push({ ...r, resolved: true, fixedBy: focusRule });
+    }
+  }
+  scanResults = next;
+  scanInventory = res.inventory || scanInventory;
+  await loadScanMappingStatus();
+  // Say, row by row, what the fix did: "44 fixed · 2 still there: …".
+  if (focusRule) {
+    const was = prev.filter(r => r.ruleId === focusRule && !r.resolved && !r.note);
+    const still = next.filter(r => r.ruleId === focusRule && !r.resolved && !r.note);
+    const fixed = was.length - still.length;
+    const rule = SCAN_RULES[focusRule] || {};
+    const tail = still.length ? ` Still there: ${still.slice(0, 6).map(r => `“${(r.text || r.selector || '').slice(0, 40)}”`).join(', ')}${still.length > 6 ? ` +${still.length - 6} more` : ''} — those need a look by hand.` : '';
+    showNotice(document.getElementById('scanStatus'),
+      `${rule.title || focusRule}: ${fixed} of ${was.length} fixed on the page.${tail}`, still.length ? 'warn' : 'success', 12000);
+  }
+  const crit = scanResults.filter(r => !r.resolved && r.severity === 'Critical').length;
+  const high = scanResults.filter(r => !r.resolved && r.severity === 'High').length;
+  const live = scanResults.filter(r => !r.resolved && !r.note).length;
+  const cnt = document.getElementById('scanCount');
+  if (cnt) cnt.textContent = live ? `${computeScanScore(scanResults)}% · ${live} issues${crit ? ` · ${crit} critical` : ''}${high ? ` · ${high} high` : ''}` : '100%';
+  // The history row for this page moves with it.
+  getTab().then(t => saveScanToHistory(t, scanResults, scanEnginesRan, scanInventory)).catch(() => {});
+  renderScanFilters();
+  renderScanResults();
 }
 
 // Which findings pass the active severity + category filters.
@@ -15018,7 +16103,7 @@ function renderScanFilters() {
   if (!el) return;
   // Severity row (ordered Critical→Low) + category row.
   const sevCounts = {};
-  for (const r of scanResults) sevCounts[r.severity] = (sevCounts[r.severity] || 0) + 1;
+  for (const r of scanResults) { if (!r.resolved && !isIgnored(r)) sevCounts[r.severity] = (sevCounts[r.severity] || 0) + 1; }
   const sevChip = (s, label) => {
     const n = s === '*' ? scanResults.length : (sevCounts[s] || 0);
     if (s !== '*' && !n) return '';
@@ -15053,6 +16138,9 @@ const STATIC_FIXABLE = {
   'table-noheaders':     { does: 'Turn the first row of each data table into <th scope="col">.' },
   'zoom-disabled':       { does: 'Let the page be enlarged: remove user-scalable=no and raise maximum-scale.' },
   'autoplay-audio':      { does: 'Remove the autostart and make sure there is a control. The media stays.' },
+  'landmark-noname':     { does: 'Name each unnamed form/region from what is inside it: a search box becomes role="search" named after its field; others take their heading or first field label as the name.' },
+  'link-newwindow':      { does: 'Add “(opens in a new tab)” — in the page’s language — to the name of every link that opens one and does not say so. The visible text is untouched; the name a screen reader hears is extended.' },
+  'list-stray-br':       { does: 'Hide every <br> and empty spacer sitting directly inside a list from screen readers (aria-hidden="true"), so the item count is right. Nothing visible changes.' },
   'lang-missing':        { does: 'Set the page language, so a screen reader reads it in the right voice.', needsLang: true },
 };
 
@@ -15094,7 +16182,14 @@ const STATIC_WHY_NOT = {
   'combobox-noexpanded': 'map it as an autocomplete', 'video-nocaptions': 'needs caption files',
   'target-size-small': 'a CSS change — the exported bundle carries no stylesheet',
   'carousel-nopause': 'a visible control the client places — U1 does not add UI to the page',
-  'dup-ids': 'renaming an id breaks whatever queries it',
+  'dup-ids': 'a note for the developers, not a failure — renaming an id breaks whatever queries it',
+  'img-alt-filename': 'needs alt text only you can write',
+  'label-for-broken': 'the for="" must be corrected in the page',
+  'media-nocontrols': 'add the controls attribute in the page',
+  'title-weak': 'needs a page title',
+  'list-structure': 'map it as the component it is (menu, tabs), or fix the markup',
+  'axe.color-contrast': 'colours are the site\'s to set — a shade that passes is suggested beside each colour pair',
+  'axe.link-in-text-block': 'an underline is a CSS change on the site',
   'heading-skip': 'map the heading and give it the right level',
   'h1-missing': 'decide which element is the page heading', 'h1-multiple': 'decide which one is the page heading',
   'heading-empty': 'decide whether it is a heading at all',
@@ -15130,17 +16225,51 @@ function setScanChoicePane(name) {
   const mappings = document.getElementById('scanPaneMappings');
   if (content) content.hidden = pane !== 'content';
   if (mappings) mappings.hidden = pane !== 'mappings';
+  // Each pane's results belong to it. They used to sit below BOTH panes, so
+  // the Static pane showed the last mapping run under its own card.
+  const s = document.getElementById('scanResultsSection');
+  const m = document.getElementById('elemScanSection');
+  if (s) s.style.display = pane === 'content' && scanResults.length ? 'block' : 'none';
+  if (m) m.style.display = pane === 'mappings' && elemScanResults.length ? 'block' : 'none';
+  // The Dynamic pane opens on its last run, not empty: it was kept.
+  if (pane === 'mappings' && !elemScanResults.length && !elemScanRunning) {
+    loadElemLastRun().then(async (run) => {
+      if (!run || !run.results || !run.results.length || elemScanResults.length) return;
+      elemScanResults = run.results;
+      elemScanActiveStatus = '*';
+      elemScanPageFilter = 'here';
+      const t = await getTab().catch(() => null); elemScanHereUrl = (t && t.url) || '';
+      document.getElementById('elemScanCount').textContent = elemRunCountText(run.results) + ` (saved ${new Date(run.at).toLocaleString()})`;
+      renderElemScanFilters(); renderElemScanResults();
+      document.getElementById('elemScanClearBtn').style.display = '';
+      document.getElementById('elemScanReportRow').style.display = '';
+      if (m && document.querySelector('.scan-choice-tab.active')?.dataset.scanpane === 'mappings') m.style.display = 'block';
+    }).catch(() => {});
+  }
+}
+function elemRunCountText(results) {
+  const tested = results.filter(r => ['pass', 'warn', 'fail'].includes(r.status)).length;
+  const failed = results.filter(r => r.status === 'fail').length;
+  return `${tested} tested · ${failed} failing`;
 }
 document.querySelectorAll('.scan-choice-tab').forEach((b) => {
   b.addEventListener('click', () => setScanChoicePane(b.dataset.scanpane));
 });
+// The sticky switcher sits exactly under the top bar, whatever height the bar
+// has right now (it changes with the licence line and the tab card).
+{
+  const topbar = document.querySelector('.topbar');
+  if (topbar) {
+    const setH = () => document.documentElement.style.setProperty('--u1-topbar-h', topbar.offsetHeight + 'px');
+    setH();
+    try { new ResizeObserver(setH).observe(topbar); } catch { window.addEventListener('resize', setH); }
+  }
+}
 
 function showOnlyScan(which) {
   setScanChoicePane(which === 'mappings' ? 'mappings' : 'content');
-  const s = document.getElementById('scanResultsSection');
   const m = document.getElementById('elemScanSection');
-  if (s) s.style.display = which === 'static' && scanResults.length ? 'block' : 'none';
-  if (m) m.style.display = which === 'mappings' ? 'block' : 'none';
+  if (m && which === 'mappings') m.style.display = 'block';
   // And say which of the two the results below belong to. With only one on
   // screen there is nothing else to tell you which question was asked.
   const cards = document.querySelectorAll('#tab-scan .scan-choice-card');
@@ -15148,9 +16277,648 @@ function showOnlyScan(which) {
     (which === 'static' && i === 0) || (which === 'mappings' && i === 1)));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  The checklist — the fixed list of questions a page is asked
+//
+//  Three engines, forty rule names, two severities per rule and a chip for each
+//  engine that agreed: the "all findings" view is complete and it is
+//  unreadable at a glance — "I cannot understand what the faults are", verbatim.
+//  A monitoring report asks a fixed set of plain questions and answers each one
+//  PASS or FAIL. This is that: one row per question, in a fixed order, with the
+//  evidence beside it — the page title itself, the heading outline, every
+//  image's alt — because a title that exists can still be the wrong title, and
+//  only a person looking at it can say. Engine findings still count: each one
+//  is filed under the question it answers (via SCAN_CONCEPTS), and whatever
+//  matches no question goes in one last row, folded.
+// ─────────────────────────────────────────────────────────────────────────────
+const SCAN_CHECKS = [
+  { id: 'title', title: 'Page title', ask: 'Does the tab title say what this page is?',
+    rules: ['doc-title'], evidence: 'title' },
+  { id: 'lang', title: 'Page language', ask: 'Is the language declared and valid, so screen readers use the right voice?',
+    rules: ['lang'], evidence: 'lang' },
+  { id: 'headings', title: 'Heading structure', ask: 'One H1, levels in order, none empty, nothing bold pretending — does the outline read like a table of contents?',
+    rules: ['h1-missing', 'h1-multiple', 'heading-order', 'heading-empty', 'fake-heading'], evidence: 'headings', needs: 'headings' },
+  { id: 'images', title: 'Images', ask: 'Does every meaningful image, icon and SVG have alt text, and is the alt text right?',
+    rules: ['img-alt', 'img-alt-filename', 'image-map'], evidence: 'images', needs: 'imagesTotal' },
+  { id: 'links', title: 'Link text', ask: 'Does every link say where it goes, on its own — and warn when it opens a new tab?',
+    rules: ['link-name', 'link-generic', 'link-newwindow', 'label-mismatch'], needs: 'links' },
+  { id: 'buttons', title: 'Button names', ask: 'Does every button, including icon-only and custom ones, have a name?',
+    rules: ['button-name'], needs: 'buttons' },
+  { id: 'forms', title: 'Form fields', ask: 'Is every field labelled — visibly, once, correctly — and every option group named?',
+    rules: ['input-label', 'input-placeholder', 'group-nolabel', 'label-for-broken', 'label-hidden', 'autocomplete'], needs: 'inputs' },
+  { id: 'contrast', title: 'Colour contrast', ask: 'Is text readable against its background, and are links told apart by more than colour?',
+    rules: ['contrast', 'link-color-only'], engine: 'axe' },
+  { id: 'landmarks', title: 'Landmarks', ask: 'Can a screen reader jump to main, navigation, header, footer? (Several unnamed forms/regions are listed as a note.)',
+    rules: ['landmarks', 'landmark-structure', 'landmark-noname'], evidence: 'landmarks' },
+  { id: 'skip', title: 'Skip link', ask: 'Can the keyboard skip the menu and land on the content?',
+    rules: ['skip-link'], evidence: 'skipLink' },
+  { id: 'focus', title: 'Keyboard reach and focus order', ask: 'Can everything clickable be reached in a sensible order, with nothing hidden from screen readers while focusable?',
+    rules: ['tabindex', 'misleading-role', 'clickable-div', 'aria-hidden-focusable', 'nested-controls', 'scroll-keyboard', 'frame-tabindex', 'accesskey-dup'] },
+  { id: 'aria', title: 'ARIA used correctly', ask: 'Are roles and aria-* attributes real, allowed, complete, and in the right container?',
+    rules: ['aria-grammar', 'aria-structure'], engine: 'axe' },
+  { id: 'structure', title: 'Lists and text structure', ask: 'Are lists real lists, so items are counted and announced?',
+    rules: ['list-structure'], engine: 'axe' },
+  { id: 'iframes', title: 'Iframes', ask: 'Is every embedded frame titled, each differently?',
+    rules: ['frame-title', 'frame-title-dup'], evidence: 'iframes', needs: 'iframes' },
+  { id: 'tables', title: 'Data tables', ask: 'Do data tables have header cells, tied to the right columns and rows?',
+    rules: ['table-headers', 'table-structure'], needs: 'tables' },
+  { id: 'zoom', title: 'Zoom and text spacing', ask: 'Can the page be enlarged, respaced, and turned sideways?',
+    rules: ['zoom', 'orientation', 'text-spacing'] },
+  { id: 'media', title: 'Media and motion', ask: 'Nothing autoplays, blinks or reloads without a stop; carousels can be paused; video and audio have captions and controls?',
+    rules: ['autoplay-audio', 'carousel-nopause', 'video-nocaptions', 'audio-transcript', 'media-nocontrols', 'blinking', 'auto-refresh'] },
+  { id: 'widgets', title: 'Custom widgets', ask: 'Do switches, checkboxes, sliders, meters, dialogs and comboboxes announce their state and name?',
+    rules: ['switch-nostate', 'checkbox-nostate', 'slider-novalue', 'meter-novalue', 'combobox-noexpanded', 'meter-name', 'dialog-name', 'tooltip-name', 'treeitem-name'] },
+  { id: 'ids', title: 'IDs and ARIA references', ask: 'Do ARIA references point at something? (Duplicate ids are listed as a note.)',
+    rules: ['dup-id', 'aria-ref-broken'] },
+  { id: 'targets', title: 'Touch targets', ask: 'Are tap targets big enough?',
+    rules: ['target-size-small'] },
+];
+
+const scanConceptOf = (r) => conceptOfRule(r.ruleId);
+// Which checklist rows the person has opened. Everything starts folded — a
+// page with twelve failing questions used to open all twelve at once, which
+// is a wall, not a list — and a row stays open across re-renders (a fix, an
+// approval) once it was opened, so the list does not fold under the hand.
+const scanOpenChecks = new Set();
+document.getElementById('scanResults')?.addEventListener('toggle', (e) => {
+  const d = e.target;
+  if (!d || !d.matches || !d.matches('details.sc-row[data-check]')) return;
+  if (d.open) scanOpenChecks.add(d.dataset.check); else scanOpenChecks.delete(d.dataset.check);
+}, true);
+
+// ── What has already been done about each question, on this page ────────────
+//
+// A passed "Button names" says nothing about WHY it passed. Opened, the row
+// now lists the mappings on this page that answer that question — the
+// aria-label that named the icon button, the heading that fixed the level —
+// each with whether it is on the element right now. The work is documented
+// where the question is asked, not only in the drawer.
+const SCAN_CHECK_MAPPINGS = {
+  headings: { types: ['heading'] },
+  links: { types: ['aria-label', 'link', 'link-list'], statics: ['link-newwindow'] },
+  buttons: { types: ['aria-label', 'button', 'keyboard-clickable', 'link'] },
+  forms: { types: ['form', 'combobox', 'checkbox', 'radio', 'datepicker'], statics: ['input-placeholder'] },
+  landmarks: { types: ['breadcrumb'], statics: ['landmark-noname'] },
+  focus: { types: ['keyboard-clickable', 'focus-order', 'hide-element', 'keyboard-tabs', 'keyboard-grid'], statics: ['tabindex-positive', 'exclude'] },
+  aria: { types: ['menu', 'tabs', 'accordion', 'dialog', 'listbox', 'combobox', 'tooltip', 'carousel', 'pagination', 'grid', 'table', 'loading'] },
+  structure: { statics: ['list-stray-br'] },
+  tables: { types: ['table', 'grid'], statics: ['table-noheaders'] },
+  zoom: { statics: ['zoom-disabled'] },
+  media: { types: ['carousel'], statics: ['autoplay-audio'] },
+  widgets: { types: ['checkbox', 'radio', 'listbox', 'combobox', 'tooltip', 'loading', 'datepicker'] },
+  ids: { statics: ['aria-ref-broken'] },
+  contrast: { statics: ['contrast'] },
+  lang: { statics: ['lang-missing'] },
+};
+let scanMappingStatus = []; // [{ key, id, fixNo, type, primary, custom, label, state }] for this page
+async function loadScanMappingStatus() {
+  scanMappingStatus = [];
+  try {
+    const tab = await getTab();
+    if (!isInjectable(tab)) return;
+    const key = storageKey('mappings', currentHostname);
+    const list = ((await U1Store.get([key]))[key] || []).filter(m => m && typeof m === 'object' && (m.type || m.custom));
+    if (!list.length) return;
+    const present = await selectorsPresentOnPage(list.map(m => m.primary || m.firstArg || ''));
+    const hereUrl = cleanPageUrl(tab.url);
+    const here = list.filter(m => m.custom === 'staticFix' || mappingOnPage(m, present, hereUrl));
+    if (!here.length) return;
+    const probe = here.map(m => ({ key: mappingKey(m), primary: m.primary || m.firstArg || '', type: m.type || '', custom: m.custom || '', label: (m.config && m.config.label) || '' }));
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: (items) => items.map(it => {
+        if (it.custom === 'staticFix') return { key: it.key, state: (window.__u1Statics && window.__u1Statics[it.primary]) ? 'applied' : 'saved' };
+        let el = null; try { el = document.querySelector(it.primary); } catch (e) {}
+        if (!el) return { key: it.key, state: 'missing' };
+        const says = (el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || (el.textContent || '')).replace(/\s+/g, ' ').trim().slice(0, 50);
+        const tag = el.tagName.toLowerCase();
+        const level = el.getAttribute('aria-level') || (/^h[1-6]$/.test(tag) ? tag.slice(1) : '');
+        const base = { key: it.key, says, tag, level };
+        if (it.custom === 'ariaLabel') return { ...base, state: el.getAttribute('aria-label') ? 'applied' : 'saved' };
+        if (it.type === 'heading') return { ...base, state: (el.getAttribute('aria-level') || el.getAttribute('role') === 'heading') ? 'applied' : 'saved' };
+        const touched = Array.from(el.attributes).some(a => /^(role|tabindex)$|^aria-|^u1st-/.test(a.name)) || !!el.querySelector('[role],[u1st-avoid-change-detection]');
+        return { ...base, state: touched ? 'applied' : 'saved' };
+      }),
+      args: [probe],
+    });
+    const states = new Map(((res && res.result) || []).map(x => [x.key, x]));
+    scanMappingStatus = here.map(m => {
+      const st = states.get(mappingKey(m)) || {};
+      return {
+        key: mappingKey(m), id: m.id || '', fixNo: m.fixNo, type: m.custom === 'staticFix' ? 'static fix' : (m.type || m.custom || ''),
+        primary: m.custom === 'staticFix' ? ((SCAN_RULES[m.primary] || {}).title || m.primary) : (m.primary || m.firstArg || ''),
+        custom: m.custom || '', staticRule: m.custom === 'staticFix' ? m.primary : '', rawType: m.type || '',
+        label: (m.config && m.config.label) || '', level: (m.config && m.config.level) || '',
+        says: st.says || '', tag: st.tag || '', nowLevel: st.level || '', state: st.state || 'saved',
+      };
+    });
+  } catch { scanMappingStatus = []; }
+}
+function scanCheckMappingsHtml(check) {
+  const spec = SCAN_CHECK_MAPPINGS[check.id];
+  if (!spec || !scanMappingStatus.length) return '';
+  const mine = scanMappingStatus.filter(m => (spec.types || []).includes(m.rawType) || (m.staticRule && (spec.statics || []).includes(m.staticRule)) || (check.id === 'links' && m.custom === 'ariaLabel') || (check.id === 'buttons' && m.custom === 'ariaLabel'));
+  if (!mine.length) return '';
+  const st = (m) => m.state === 'applied' ? '<span class="sc-lm">✓ on the page</span>' : m.state === 'missing' ? '<strong class="sc-bad">element not on the page</strong>' : '<span class="sc-lm sc-warnish">saved, not seen on the element</span>';
+  // In words: what the element SAYS and what was done to it. The selector is
+  // the tooltip, not the line.
+  const line = (m) => {
+    if (m.custom === 'staticFix') return `Rule: <strong>${escapeHtml(m.primary)}</strong> — on every matching element`;
+    const what = m.says ? `“${escapeHtml(m.says)}”` : `<code>${escapeHtml(m.primary)}</code>`;
+    if (m.custom === 'ariaLabel') return `${m.tag === 'a' ? 'Link' : m.tag === 'button' ? 'Button' : 'Element'} named ${what}`;
+    if (m.rawType === 'heading') return `Heading ${what} → level ${escapeHtml(String(m.level || m.nowLevel || '?'))}`;
+    return `${escapeHtml(m.type.charAt(0).toUpperCase() + m.type.slice(1))} ${what}`;
+  };
+  return `<details class="sc-evidence sc-fixed"><summary><span class="sc-ev-k">Already handled here — ${mine.length} mapping${mine.length === 1 ? '' : 's'}</span> <span class="sc-ev-note">— other elements on this page, fixed earlier. The findings above are what is still open.</span></summary>` +
+    `<ul class="sc-imgs">${mine.map(m => `<li${m.custom !== 'staticFix' ? ` data-hl-sel="${escapeHtml(m.primary)}" data-hl-idx="0" title="${escapeHtml(m.primary)} — hover to see it on the page"` : ''}>` +
+      `${line(m)} ${st(m)}${m.id ? ` <span class="mh-id">${escapeHtml(m.id)}</span>` : ''}</li>`).join('')}</ul></details>`;
+}
+
+/** Findings filed under each check, plus the ones no check claims. */
+function scanChecklistBuckets() {
+  const byCheck = new Map(SCAN_CHECKS.map(c => [c.id, []]));
+  const rest = [];
+  for (const r of scanResults) {
+    const concept = scanConceptOf(r);
+    const c = SCAN_CHECKS.find(ch => ch.rules.includes(concept) || ch.rules.includes(r.ruleId));
+    if (c) byCheck.get(c.id).push(r); else rest.push(r);
+  }
+  return { byCheck, rest };
+}
+
+/** The evidence block for a check that PASSED — what a person confirms. */
+function scanEvidenceHtml(check, inv) {
+  if (!inv || !check.evidence) return '';
+  const esc = escapeHtml;
+  switch (check.evidence) {
+    case 'title':
+      return inv.title ? `<div class="sc-evidence"><span class="sc-ev-k">Title</span> <strong>${esc(inv.title)}</strong> <span class="sc-ev-note">— confirm it names THIS page, not just the site.</span></div>` : '';
+    case 'lang':
+      return inv.lang ? `<div class="sc-evidence"><span class="sc-ev-k">lang</span> <code>${esc(inv.lang)}</code> <span class="sc-ev-note">— confirm it matches the language of the text.</span></div>` : '';
+    case 'headings': {
+      if (!inv.headings || !inv.headings.length) return '';
+      return `<div class="sc-evidence"><span class="sc-ev-k">Outline</span> <span class="sc-ev-note">— read it top to bottom: does it describe the page?</span>` +
+        `<ol class="sc-outline">${inv.headings.map(h =>
+          `<li style="--lvl:${h.level}" data-hl-sel="${esc(h.selector || '')}" data-hl-idx="${h.idx || 0}" title="Hover to see it on the page"><span class="sc-h-lvl">H${h.level}</span> <span class="sc-h-txt">${esc(h.text || '(empty)')}</span></li>`).join('')}</ol></div>`;
+    }
+    case 'images': {
+      if (!inv.images || !inv.images.length) return '';
+      const named = inv.images.filter(i => i.alt && !i.decorative);
+      const deco = inv.images.filter(i => i.decorative);
+      const okId = (i) => altOkId(i.src, i.alt);
+      const pending = named.filter(i => !scanAltOk.has(okId(i)));
+      return `<div class="sc-evidence"><span class="sc-ev-k">${inv.imagesTotal} image${inv.imagesTotal === 1 ? '' : 's'}</span> ` +
+        `<span class="sc-ev-note">— ${named.length} with alt text, ${deco.length} marked decorative. Read each alt: does it say what the picture is FOR? Tick the ones that do${pending.length ? ` (${pending.length} unticked)` : ''}.</span>` +
+        (pending.length > 1 ? ` <button type="button" class="btn-outline btn-xs scan-alt-ok-all" data-alt-ids="${esc(pending.map(okId).join('\n'))}">✓ All ${pending.length} are right</button>` : '') +
+        `<ul class="sc-imgs">${inv.images.map(i => {
+          const approved = !i.decorative && i.alt && scanAltOk.has(okId(i));
+          const tick = i.decorative || !i.alt ? '' : approved
+            ? `<button type="button" class="scan-alt-ok on" data-alt-id="${esc(okId(i))}" title="Approved — click to take it back">✓ approved</button>`
+            : `<button type="button" class="scan-alt-ok" data-alt-id="${esc(okId(i))}" title="This alt says what the picture is for">approve</button>`;
+          return `<li${approved ? ' class="is-ok"' : ''} data-hl-sel="${esc(i.selector || '')}" data-hl-idx="${i.idx || 0}" title="Hover to see it on the page"><span class="sc-img-line"><code>${esc(i.src || i.selector)}</code> → ${i.decorative ? '<em>decorative (alt="")</em>' : i.alt ? `“${esc(i.alt)}”` : '<strong class="sc-bad">no alt</strong>'}</span>${tick}</li>`;
+        }).join('')}</ul></div>`;
+    }
+    case 'landmarks': {
+      const L = inv.landmarks || {};
+      const parts = [['main', L.main], ['nav', L.nav], ['header', L.header], ['footer', L.footer], ['search', L.search]]
+        .map(([k, n]) => k === 'search' && !n && L.searchUnmarked
+          ? `<span class="sc-lm sc-warnish" title="A search field is on the page but nothing carries role=search — name it with an aria-label mapping or add the role">search: found, not marked</span>`
+          : `<span class="sc-lm${n ? '' : ' sc-bad'}">${k}: ${n || 0}</span>`).join(' ');
+      return `<div class="sc-evidence"><span class="sc-ev-k">Landmarks</span> ${parts}</div>`;
+    }
+    case 'skipLink': {
+      const list = inv.skipLinks && inv.skipLinks.length ? inv.skipLinks : (inv.skipLink ? [{ text: inv.skipLink, href: '', lands: true }] : []);
+      if (!list.length) return '';
+      return `<div class="sc-evidence"><span class="sc-ev-k">${list.length} skip link${list.length === 1 ? '' : 's'}</span> <span class="sc-ev-note">— Tab once on a fresh load: do they appear, and does each land where it says?</span>` +
+        `<ul class="sc-imgs">${list.map(l => `<li${l.target ? ` data-hl-sel="${esc(l.target)}" data-hl-idx="0" title="Hover to see where it lands"` : ''}>“${esc(l.text)}” → <code>${esc(l.href)}</code> ${l.lands ? '<span class="sc-lm">lands</span>' : '<strong class="sc-bad">target missing</strong>'}</li>`).join('')}</ul></div>`;
+    }
+    case 'iframes':
+      return (inv.iframes && inv.iframes.length) ? `<div class="sc-evidence"><span class="sc-ev-k">${inv.iframes.length} iframe${inv.iframes.length === 1 ? '' : 's'}</span>` +
+        `<ul class="sc-imgs">${inv.iframes.map(f => `<li data-hl-sel="${esc(f.selector)}" data-hl-idx="${f.idx || 0}" title="Hover to see it on the page"><code>${esc(f.selector)}</code> → ${f.title ? `“${esc(f.title)}”` : '<strong class="sc-bad">no title</strong>'}</li>`).join('')}</ul></div>` : '';
+  }
+  return '';
+}
+
+function renderScanChecklist(wrap) {
+  const inv = scanInventory;
+  const { byCheck, rest } = scanChecklistBuckets();
+  const hasInv = !!inv;
+  const item = scanItemHtml;
+  const rows = SCAN_CHECKS.map(c => {
+    const allRows = byCheck.get(c.id) || [];
+    const ignoredHere = allRows.filter(isIgnored);
+    const rows = scanShowIgnored ? allRows : allRows.filter(r => !isIgnored(r));
+    const faults = rows.filter(r => !r.note && !r.resolved && !isIgnored(r));
+    const n = faults.length;
+    // "Nothing to check": the page holds none of the thing this asks about.
+    const none = hasInv && c.needs && !(Array.isArray(inv[c.needs]) ? inv[c.needs].length : inv[c.needs]);
+    // A question only the engine answers, on a scan where it did not run, is
+    // unanswered — not passed.
+    const unanswered = !n && c.engine && !scanEnginesRan.includes(c.engine);
+    // Notes (duplicate ids) are listed, not failed: nobody is blocked by them.
+    const state = n ? 'fail' : rows.some(r => r.note) ? 'note' : none ? 'none' : unanswered ? 'unknown' : 'pass';
+    const worst = faults.reduce((w, r) => (SEVERITY_RANK[r.severity] ?? 9) < (SEVERITY_RANK[w] ?? 9) ? r.severity : w, 'Low');
+    const badge = state === 'fail' ? `<span class="sc-state fail">✕ ${n} to fix</span>`
+                : state === 'note' ? `<span class="sc-state note">ⓘ ${rows.length} note${rows.length === 1 ? '' : 's'}</span>`
+                : state === 'none' ? `<span class="sc-state none">— none on page</span>`
+                : state === 'unknown' ? `<span class="sc-state none">? not checked</span>`
+                : `<span class="sc-state pass">✓ passed</span>`;
+    // Fix-all where a rule offers it, per rule present.
+    // Only what is still open: a "Fix all 39" under a row that reads
+    // "All 39 fixed" is the button that asks to be pressed again.
+    const ruleIds = [...new Set(faults.map(r => r.ruleId))];
+    const actions = (c.id === 'contrast' ? scanContrastActionsHtml(rows) : '') +
+      ruleIds.map(rid => scanRuleActionHtml(rid, faults.filter(r => r.ruleId === rid))).filter(Boolean).join('') +
+      scanMapAllHtml(rows);
+    const evidence = state !== 'none' ? scanEvidenceHtml(c, inv) : '';
+    const handled = scanCheckMappingsHtml(c);
+    const wcag = [...new Set(rows.map(r => r.wcag).filter(Boolean))];
+    return `
+      <details class="sc-row ${state}${state === 'fail' ? ' sev-' + worst.toLowerCase() : ''}" data-check="${c.id}"${scanOpenChecks.has(c.id) ? ' open' : ''}>
+        <summary>
+          ${badge}
+          <span class="sc-title">${escapeHtml(c.title)}</span>
+          <span class="sc-ask">${escapeHtml(c.ask)}</span>
+          ${wcag.length ? `<span class="wcag-chip">WCAG ${escapeHtml(wcag.join(', '))}</span>` : ''}
+        </summary>
+        ${evidence}
+        ${actions}
+        ${rows.length ? scanRowsHtml(rows) : ''}
+        ${ignoredHere.length ? `<div class="scan-ignored-note"><button type="button" class="btn-ghost btn-xs scan-show-ignored">${scanShowIgnored ? 'Hide' : 'Show'} ${ignoredHere.length} ignored</button></div>` : ''}
+        ${handled}
+      </details>`;
+  });
+  const restHtml = rest.length ? `
+      <details class="sc-row other" data-check="other">
+        <summary>
+          <span class="sc-state other">${rest.length} more</span>
+          <span class="sc-title">Other findings</span>
+          <span class="sc-ask">Outside the questions above — look when the list above is clean.</span>
+        </summary>
+        ${rest.map(item).join('')}
+      </details>` : '';
+  const faultsIn = (c) => (byCheck.get(c.id) || []).filter(r => !r.note && !r.resolved && !isIgnored(r)).length;
+  const passed = SCAN_CHECKS.filter(c => !faultsIn(c) && !(hasInv && c.needs && !(Array.isArray(inv[c.needs]) ? inv[c.needs].length : inv[c.needs])) && !(c.engine && !scanEnginesRan.includes(c.engine))).length;
+  const failed = SCAN_CHECKS.filter(c => faultsIn(c)).length;
+  wrap.innerHTML =
+    `<div class="sc-summary"><strong>${passed}</strong> passed · <strong>${failed}</strong> need work` +
+    (hasInv ? '' : ' · <span class="sc-ev-note">evidence (title, outline, alts) appears after a fresh scan</span>') + `</div>` +
+    rows.join('') + restHtml;
+}
+
+// Rules whose findings are one decision taken many times — forty new-tab
+// links, a dozen duplicate ids. One row, the elements listed inside it, one
+// fix for all of them. A row each was forty rows saying the same sentence.
+const SCAN_GROUPED = new Set(['link-newwindow', 'dup-ids', 'list-stray-br']);
+function scanRowsHtml(rows) {
+  const out = [];
+  const grouped = new Map();
+  for (const r of rows) {
+    if (SCAN_GROUPED.has(r.ruleId)) { if (!grouped.has(r.ruleId)) grouped.set(r.ruleId, []); grouped.get(r.ruleId).push(r); }
+    else out.push(scanItemHtml(r));
+  }
+  for (const [ruleId, list] of grouped) out.unshift(scanGroupedItemHtml(ruleId, list));
+  return out.join('');
+}
+function scanGroupedItemHtml(ruleId, rows) {
+  const live = rows.filter(r => !r.resolved && !isIgnored(r));
+  const r0 = rows[0];
+  const sev = (r0.note ? 'Note' : (r0.severity || '')).toLowerCase();
+  const li = (r) => {
+    const t = scanTargetOf(r);
+    const where = r.href || r.detail || '';
+    return `<li class="scan-el${r.resolved ? ' is-fixed' : ''}${r.stillAfterFix ? ' is-still' : ''}"${t.sel ? ` data-hl-sel="${escapeHtml(t.sel)}" data-hl-idx="${t.idx}" title="Hover to see it on the page"` : ''}>` +
+      `<span class="scan-el-state">${r.resolved ? '✓ fixed' : r.stillAfterFix ? '! still' : '•'}</span> ` +
+      `<span class="scan-el-text">${escapeHtml(r.text || r.selector || '(no text)')}</span>` +
+      (where ? ` <code class="scan-el-where">${escapeHtml(String(where).slice(0, 70))}</code>` : '') + `</li>`;
+  };
+  return `
+    <div class="scan-item scan-item-group sev-${escapeHtml(sev)}${r0.note ? ' is-note' : ''}${!live.length ? ' is-resolved' : ''}" data-scan-idx="${scanResults.indexOf(r0)}">
+      <div class="scan-item-main">
+        <span class="scan-sev-badge sev-${escapeHtml(sev)}">${escapeHtml(!live.length ? 'Fixed' : r0.note ? 'Note' : (r0.severity || ''))}</span>
+        <span class="scan-issue-title">${escapeHtml(r0.issue || '')} <span class="scan-group-n">${live.length}${live.length !== rows.length ? ` / ${rows.length}` : ''}</span></span>
+        ${r0.wcag ? `<span class="wcag-chip">WCAG ${escapeHtml(r0.wcag)}</span>` : ''}
+      </div>
+      <details class="scan-why" open>
+        <summary>${live.length ? `The ${live.length} element${live.length === 1 ? '' : 's'} — hover one to see it` : `All ${rows.length} fixed`}</summary>
+        <ul class="scan-els">${rows.map(li).join('')}</ul>
+        <div class="scan-why-body">
+          <div class="scan-why-line"><strong>Why:</strong> ${escapeHtml(r0.why || '')}</div>
+          <div class="scan-why-line"><strong>Fix:</strong> ${escapeHtml(r0.fix || '')}</div>
+        </div>
+      </details>
+    </div>`;
+}
+
+/** One finding row — shared by both views so the highlight click keeps working. */
+// The precise handle for THIS element on the page: axe's unique path when the
+// finding came with one, otherwise our short selector plus its index.
+function scanTargetOf(r) {
+  return r.target ? { sel: r.target, idx: 0 } : { sel: r.selector || '', idx: r.idx || 0 };
+}
+function scanItemHtml(r) {
+  const gi = scanResults.indexOf(r);
+  const t = scanTargetOf(r);
+  const hover = t.sel ? ` data-hl-sel="${escapeHtml(t.sel)}" data-hl-idx="${t.idx}" title="Hover to see it on the page"` : '';
+  const ignored = isIgnored(r);
+  return `
+    <div class="scan-item sev-${(r.severity || '').toLowerCase()}${r.note ? ' is-note' : ''}${r.resolved ? ' is-resolved' : ''}${ignored ? ' is-ignored' : ''}" data-scan-idx="${gi}"${hover}>
+      <div class="scan-item-main">
+        <span class="scan-sev-badge sev-${(r.severity || '').toLowerCase()}">${escapeHtml(ignored ? 'Ignored' : r.resolved ? 'Fixed' : r.note ? 'Note' : (r.severity || ''))}</span>
+        <span class="scan-issue-title">${escapeHtml(r.issue || '')}${t.sel ? ` <button class="scan-hl" title="Show it on the page" aria-label="Show it on the page">🔍</button>` : ''}</span>
+        ${r.wcag ? `<span class="wcag-chip">WCAG ${escapeHtml(r.wcag)}</span>` : ''}
+        <button class="btn-ghost btn-xs scan-ignore" title="${ignored ? 'Ignored on this site — click to bring it back' : 'Not mine to fix / a false alarm — hide it on this site'}">${ignored ? '↺ un-ignore' : '✕ ignore'}</button>
+      </div>
+      ${ignored ? '' : `<div class="scan-item-actions">${scanMapButtonHtml(r)}</div>`}
+      <div class="scan-context">${escapeHtml(r.cat)}${r.text ? ` · ${r.tag ? `${({ select: 'dropdown', a: 'link', button: 'button', input: 'field', img: 'image', h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading' })[r.tag] || '<' + escapeHtml(r.tag) + '>'} ` : ''}“${escapeHtml(r.text)}”` : ''}${r.detail ? ` <span class="scan-detail">(${escapeHtml(r.detail)})</span>` : ''}${r.href && !r.detail ? ` <span class="scan-detail">(${escapeHtml(String(r.href).slice(0, 70))})</span>` : ''}${r.data && r.data.fgColor ? ` <span class="scan-detail">— ${escapeHtml(r.data.fgColor)} on ${escapeHtml(r.data.bgColor || '?')}, ${escapeHtml(String(r.data.contrastRatio || '?'))}:1 (needs ${escapeHtml(String(r.data.expectedContrastRatio || '4.5:1').replace(/:1$/, ''))}:1)</span>` : ''}</div>
+      <details class="scan-why">
+        <summary>Why &amp; how to fix</summary>
+        <div class="scan-why-body">
+          <div class="scan-why-line"><strong>Why:</strong> ${escapeHtml(r.why || '')}</div>
+          <div class="scan-why-line"><strong>Fix:</strong> ${escapeHtml(r.fix || '')}</div>
+          ${r.selector ? `<div class="scan-why-line scan-sel"><strong>Selector:</strong> <code>${escapeHtml(r.selector)}</code></div>` : ''}
+          ${r.engineDetail ? `<div class="scan-why-line scan-sel"><strong>Markup:</strong> <code>${escapeHtml(r.engineDetail.slice(0, 200))}</code></div>` : ''}
+        </div>
+      </details>
+    </div>`;
+}
+
+// ── From a finding to its mapping, in one press ──────────────────────────────
+//
+// "No bulk fix — map the heading and give it the right level" is true and it
+// is a chore: read the selector, open the builder, pick heading, type the
+// level, save. The finding already knows all four. So the two findings that
+// ARE one mapping away get a button that makes it: a skipped heading level
+// becomes a heading mapping at the level the outline needs; a vague link
+// becomes the same aria-label mapping the AI route builds, its card heading
+// looked up the same way. Everything else still needs a person's words.
+function scanWantedLevel(r) {
+  const m = /H(\d)\s*→\s*H(\d)/.exec(r.detail || '');
+  return m ? Math.min(6, +m[1] + 1) : 0;
+}
+// Findings whose whole fix is a name: an aria-label mapping settles them.
+const SCAN_NAMEABLE = new Set(['select-name', 'input-nolabel', 'aria-input-field-name', 'button-noname']);
+function scanMapButtonHtml(r) {
+  if (!r.selector) return '';
+  if (r.resolved) return `<span class="scan-mapped">✓ mapped — gone from the page</span>`;
+  if (r.mapped) return `<span class="scan-mapped is-still">✓ mapped — still reads as a fault, check the mapping</span>`;
+  if (r.ruleId === 'heading-skip' && scanWantedLevel(r)) {
+    return `<button class="btn-primary btn-xs scan-map" data-map="heading" title="Save a heading mapping at H${scanWantedLevel(r)} and apply it">Map it → H${scanWantedLevel(r)}</button>`;
+  }
+  if (r.ruleId === 'link-generic') {
+    // Two ways to name it, because a mapping already exists for most of
+    // these: a card of "Learn More" links is usually one aria-label mapping
+    // per card, naming each link from ITS card's own heading selector — not
+    // literal text typed per link. That mapping is what "Map it -> name from
+    // card" saves (headingSelector, the same route the AI route and the
+    // "Read more" batch fix use). The free-text box beside it is for the one
+    // that has no card heading to borrow, where a person types the name
+    // directly. Neither is guessed at silently; both save a mapping and
+    // apply on the page.
+    return `<span class="scan-name-box">` +
+      `<button class="btn-primary btn-xs scan-map" data-map="aria-label" title="Name it after its card's heading -- the same mapping the AI route and the Read-more batch fix build">Map it → name from card</button>` +
+      `<span class="scan-name-or">or</span>` +
+      `<input type="text" class="scan-name-input" placeholder="Type what “${escapeHtml((r.text || 'this link').slice(0, 20))}” is about" spellcheck="false" title="No card heading to borrow -- type the name directly">` +
+      `<button class="btn-outline btn-xs scan-map" data-map="label">Save as mapping</button></span>`;
+  }
+  // A field, dropdown or button with no name: the same typed-name route the
+  // vague link has. The scan shows the element; the person says what it is
+  // for ("Language"), and that becomes an aria-label mapping — saved, applied
+  // now, re-applied on every load, exported. It had no button before, so the
+  // only way to fix it was to leave the scan and find it again in the Picker.
+  if (SCAN_NAMEABLE.has(r.ruleId)) {
+    return `<span class="scan-name-box">` +
+      `<input type="text" class="scan-name-input" placeholder="Type what this ${r.ruleId === 'button-noname' ? 'button does' : 'field is for'}" spellcheck="false" title="Becomes the element's aria-label">` +
+      `<button class="btn-primary btn-xs scan-map" data-map="label">Map it → name</button></span>`;
+  }
+  if (r.ruleId === 'img-alt-filename' && altOkIdOfFinding(r)) {
+    return `<button class="btn-outline btn-xs scan-alt-ok" data-alt-id="${escapeHtml(altOkIdOfFinding(r))}" title="The alt does say what the picture is for — drop this finding">✓ alt is right</button>`;
+  }
+  return '';
+}
+
+// Approving alts: the finding goes at once, the evidence list ticks, and the
+// question turns green the moment the last one is approved.
+document.getElementById('scanResults')?.addEventListener('click', async (e) => {
+  const one = e.target.closest('.scan-alt-ok');
+  const all = e.target.closest('.scan-alt-ok-all');
+  if (!one && !all) return;
+  e.preventDefault(); e.stopPropagation();
+  const ids = one ? [one.dataset.altId] : (all.dataset.altIds || '').split('\n').filter(Boolean);
+  const on = one ? !one.classList.contains('on') : true;
+  await setAltOk(ids, on);
+  if (on) scanResults = dropApprovedAlts(scanResults);
+  else await refreshScanAfterMapping();
+  renderScanFilters();
+  renderScanResults();
+}, true);
+
+/** "Map all N headings" — the same button, once, for every skipped level in the outline. */
+function scanMapAllHtml(rows) {
+  const todo = rows.filter(r => r.ruleId === 'heading-skip' && r.selector && !r.mapped && scanWantedLevel(r));
+  if (todo.length < 2) return '';
+  return `<div class="scan-group-fix"><button class="btn-primary btn-xs scan-map-all" data-map-all="heading">Map all ${todo.length} headings</button>` +
+    `<span class="scan-group-does">Save a heading mapping for each skipped level (${todo.map(r => 'H' + scanWantedLevel(r)).join(', ')}) and apply them — one press, then tick them in Mappings.</span></div>`;
+}
+
+/**
+ * Build and save the one mapping a finding is away from. Returns the template,
+ * or null when the user cancelled the save. Throws with a sentence for the
+ * notice when the element cannot be pinned down.
+ */
+async function scanMapCore(r, kind, tabId, opts) {
+  // The scan's selector is short on purpose (`h4`, `a.externalLink`) and can
+  // match more than this one element. Resolve THIS one — by its index, then by
+  // its text — and name it with the builder every other mapping's selector
+  // comes from.
+  const primary = await inPage(tabId, (sel, idx, text) => {
+    const S = window.__u1SelectorIntel;
+    let els = [];
+    try { els = Array.from(document.querySelectorAll(sel)); } catch (e) { return ''; }
+    if (!els.length) return '';
+    const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    const el = (text && els[idx] && norm(els[idx].textContent) === norm(text) ? els[idx] : null)
+      || els.find(e => norm(e.textContent) === norm(text)) || els[idx] || (els.length === 1 ? els[0] : null);
+    if (!el) return '';
+    const out = S.robustSelector(el);
+    return (out && S.isU1Valid(out)) ? out : '';
+  }, [r.selector, r.idx || 0, r.text || '']);
+  if (!primary) throw new Error(`Could not pin down "${r.text || r.selector}" on the page — map it from the Picker.`);
+
+  let tpl;
+  if (kind === 'heading') {
+    tpl = buildTemplate('heading', primary, {}, { level: scanWantedLevel(r) });
+  } else if (kind === 'label') {
+    const label = String((opts && opts.label) || '').trim();
+    if (!label) throw new Error('Type the name first — that text becomes its aria-label.');
+    tpl = buildTemplate('aria-label', primary, {}, { label });
+  } else {
+    const card = await inPage(tabId, (s) => {
+      const S = window.__u1SelectorIntel;
+      return S && S.cardHeadingFor ? S.cardHeadingFor(s) : null;
+    }, [primary]);
+    if (!card || !card.heading) throw new Error(`No heading found beside "${r.text}" — name this link by hand from the Picker (aria-label).`);
+    tpl = buildTemplate('aria-label', primary, {}, { middleText: 'about', headingSelector: card.heading });
+  }
+  const saved = await saveMappingEntry(tpl, { refreshUi: false });
+  if (saved && saved.cancelled) return null;
+  try {
+    const res = tpl.custom
+      ? await applyOne(tpl.type, tpl.firstArg || tpl.primary, tpl.config, tpl.custom, tpl)
+      : await applyMappingsBatch([{ type: tpl.type, primary: tpl.primary, firstArg: tpl.firstArg, config: tpl.config, overwriteRole: tpl.overwriteRole }]);
+    tpl.__applied = !!(res && (res.ok || (res.results && res.results.some(x => x && x.ok))));
+  } catch { tpl.__applied = false; }
+  // A heading level is two attributes; whatever the engine's gate did, they
+  // are on the element when this returns. Same rule the patch applies.
+  if (kind === 'heading') {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId }, world: 'MAIN',
+        func: (sel, n) => {
+          document.querySelectorAll(sel).forEach((el) => {
+            if (/^H[1-6]$/.test(el.tagName)) { if (+el.tagName.charAt(1) === n) el.removeAttribute('aria-level'); else el.setAttribute('aria-level', String(n)); }
+            else { el.setAttribute('role', 'heading'); el.setAttribute('aria-level', String(n)); }
+          });
+        },
+        args: [primary, scanWantedLevel(r)],
+      });
+      tpl.__applied = true;
+    } catch {}
+  }
+  r.mapped = true;
+  return tpl;
+}
+
+async function scanMapFinding(r, btn) {
+  const status = document.getElementById('scanStatus');
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot run on this page.', 'error', 4000); return; }
+  btn.disabled = true; btn.textContent = 'Mapping…';
+  try {
+    const input = btn.parentElement && btn.parentElement.querySelector('.scan-name-input');
+    const tpl = await scanMapCore(r, btn.dataset.map, tab.id, input ? { label: input.value } : undefined);
+    if (!tpl) { btn.disabled = false; btn.textContent = 'Map it'; return; }
+    loadMappingsList(); refreshExportInfo();
+    await refreshScanAfterMapping();
+    showNotice(status, `Saved ${tpl.type} ${tpl.primary}${tpl.__applied ? ' and applied on the page' : ''}. It is in Mappings now — tick it there once you have checked it.`, 'success', 8000);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Map it';
+    showNotice(status, e.message, 'error', 9000);
+  }
+}
+
+async function scanMapAll(btn) {
+  const status = document.getElementById('scanStatus');
+  const tab = await getTab();
+  if (!isInjectable(tab)) { showNotice(status, 'Cannot run on this page.', 'error', 4000); return; }
+  const todo = scanResults.filter(r => r.ruleId === 'heading-skip' && r.selector && !r.mapped && scanWantedLevel(r));
+  btn.disabled = true;
+  let done = 0; const failed = [];
+  for (const r of todo) {
+    btn.textContent = `Mapping ${done + 1}/${todo.length}…`;
+    try {
+      const tpl = await scanMapCore(r, 'heading', tab.id);
+      if (!tpl) break; // cancelled — stop, keep what was saved
+      done++;
+    } catch (e) { failed.push(`"${r.text || r.selector}"`); }
+  }
+  loadMappingsList(); refreshExportInfo();
+  await refreshScanAfterMapping();
+  const tail = failed.length ? ` Could not pin down ${failed.join(', ')} — map those from the Picker.` : '';
+  showNotice(status, `${done} heading mapping${done === 1 ? '' : 's'} saved and applied.${tail} Tick them in Mappings once you have checked them.`, failed.length ? 'warn' : 'success', 9000);
+}
+
+// ── Contrast: one darker shade per colour pair, for every element in it ────
+//
+// axe reports the pair behind each faint text; twelve "here"s on white are
+// one pair. The darkening keeps the hue and drops lightness until the pair
+// meets its required ratio; the person approves it once per pair and the
+// bundle ships it as a stylesheet rule on those exact elements.
+function hexToRgb(h) { const m = /^#?([0-9a-f]{6})$/i.exec(String(h || '').trim()); if (!m) return null; const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function rgbToHex([r, g, b]) { return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join(''); }
+function relLum([r, g, b]) { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }
+function contrastOf(a, b) { const x = relLum(a), y = relLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+function darkenToContrast(fgHex, bgHex, need) {
+  const fg = hexToRgb(fgHex), bg = hexToRgb(bgHex || '#ffffff');
+  if (!fg || !bg) return null;
+  const towardsDark = relLum(bg) > 0.4;
+  let c = fg.slice();
+  for (let i = 0; i < 40 && contrastOf(c, bg) < need; i++) c = c.map(v => towardsDark ? v * 0.92 : v + (255 - v) * 0.12);
+  return contrastOf(c, bg) >= need ? rgbToHex(c) : (towardsDark ? '#000000' : '#ffffff');
+}
+function scanContrastPairs(rows) {
+  const pairs = new Map();
+  for (const r of rows) {
+    if (!r.data || !r.data.fgColor || r.resolved) continue;
+    const k = `${r.data.fgColor}|${r.data.bgColor || ''}|${r.data.expectedContrastRatio || '4.5:1'}`;
+    if (!pairs.has(k)) pairs.set(k, { fg: r.data.fgColor, bg: r.data.bgColor || '#ffffff', need: parseFloat(String(r.data.expectedContrastRatio || '4.5')) || 4.5, rows: [] });
+    pairs.get(k).rows.push(r);
+  }
+  return [...pairs.values()];
+}
+function scanContrastActionsHtml(rows) {
+  // Colours are the site's to set. What the scan gives is the shade that
+  // would pass — same hue, darker — beside each colour pair, and the CSS to
+  // hand the developers. Nothing is applied.
+  const pairs = scanContrastPairs(rows.filter(r => conceptOfRule(r.ruleId) === 'contrast'));
+  if (!pairs.length) return '';
+  return pairs.map(p => {
+    const to = darkenToContrast(p.fg, p.bg, p.need);
+    const css = `/* ${p.rows.length} element${p.rows.length === 1 ? '' : 's'}: ${p.fg} on ${p.bg} is ${p.rows[0].data.contrastRatio || '?'}:1, needs ${p.need}:1 */\ncolor: ${to};`;
+    return `<div class="scan-group-fix is-manual scan-contrast-suggest">
+      <span class="scan-group-does"><span class="scan-swatch" style="background:${escapeHtml(p.fg)}"></span>${escapeHtml(p.fg)} on <span class="scan-swatch" style="background:${escapeHtml(p.bg)}"></span>${escapeHtml(p.bg)} — ${escapeHtml(String(p.rows[0].data.contrastRatio || '?'))}:1, needs ${p.need}:1 (${p.rows.length} element${p.rows.length === 1 ? '' : 's'}). <strong>Suggested:</strong> <span class="scan-swatch" style="background:${escapeHtml(to || '#000')}"></span><code>${escapeHtml(to || '')}</code> — same hue, passes. For the site's stylesheet; nothing is changed here.</span>
+      <button type="button" class="btn-ghost btn-xs scan-copy" data-copy="${escapeHtml(css)}" title="Copy the CSS for the developers">Copy CSS</button>
+    </div>`;
+  }).join('');
+}
+document.getElementById('scanResults')?.addEventListener('click', (e) => {
+  const b = e.target.closest('.scan-copy');
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  navigator.clipboard.writeText(b.dataset.copy || '').then(() => { const t = b.textContent; b.textContent = 'Copied'; setTimeout(() => { b.textContent = t; }, 1500); }).catch(() => {});
+}, true);
+
+/** The "Fix all N" control for a rule, or the reason there is none. */
+function scanRuleActionHtml(ruleId, rows) {
+  if (!rows.length) return '';
+  const fixable = STATIC_FIXABLE[ruleId];
+  const why = STATIC_WHY_NOT[ruleId];
+  if (fixable) {
+    return `<div class="scan-group-fix">
+           ${fixable.needsLang ? `<select class="scan-lang" aria-label="Page language">
+              ${['he', 'en', 'ar', 'ru', 'fr', 'es'].map((c) =>
+                `<option value="${c}"${c === (document.documentElement.lang || 'he') ? ' selected' : ''}>${c}</option>`).join('')}
+             </select>` : ''}
+           <button class="btn-primary btn-xs scan-fix-all" data-fix-rule="${escapeHtml(ruleId)}">
+             Fix all ${rows.length}
+           </button>
+           <span class="scan-group-does">${escapeHtml(fixable.does)}</span>
+         </div>`;
+  }
+  return why ? `<div class="scan-group-fix is-manual"><span class="scan-group-does">No bulk fix — ${escapeHtml(why)}.</span></div>` : '';
+}
+
 function renderScanResults() {
   const wrap = document.getElementById('scanResults');
   if (!wrap) return;
+  // The view switch sits with the filters; the checklist ignores them (it IS
+  // the filter) and says so by hiding them.
+  const filters = document.getElementById('scanFilters');
+  let sw = document.getElementById('scanViewSwitch');
+  if (!sw && filters) {
+    sw = document.createElement('div');
+    sw.id = 'scanViewSwitch';
+    sw.className = 'seg scan-view-switch';
+    sw.setAttribute('role', 'tablist');
+    filters.parentElement.insertBefore(sw, filters);
+  }
+  if (sw) {
+    sw.innerHTML = ['checklist', 'all'].map(v =>
+      `<button type="button" class="seg-btn${scanView === v ? ' active' : ''}" data-scan-view="${v}" role="tab" aria-selected="${scanView === v}">${v === 'checklist' ? '✓ Checklist' : `All findings (${scanResults.length})`}</button>`).join('');
+  }
+  if (filters) filters.style.display = scanView === 'checklist' ? 'none' : '';
+  if (scanView === 'checklist') { renderScanChecklist(wrap); return; }
+
   const list = scanFiltered();
   if (!list.length) { wrap.innerHTML = '<div class="empty-state">No issues match this filter. 🎉</div>'; return; }
 
@@ -15162,41 +16930,21 @@ function renderScanResults() {
     if (!groups.has(r.ruleId)) groups.set(r.ruleId, []);
     groups.get(r.ruleId).push(r);
   }
-  const item = (r) => {
-    const gi = scanResults.indexOf(r);
-    return `
-    <div class="scan-item sev-${(r.severity || '').toLowerCase()}" data-scan-idx="${gi}">
-      <div class="scan-item-main">
-        <span class="scan-sev-badge sev-${(r.severity || '').toLowerCase()}">${escapeHtml(r.severity || '')}</span>
-        <span class="scan-issue-title">${escapeHtml(r.issue || '')}</span>
-        ${r.wcag ? `<span class="wcag-chip">WCAG ${escapeHtml(r.wcag)}</span>` : ''}
-        ${(r.engines || []).map(e => `<span class="engine-chip engine-${e}">${escapeHtml(ENGINE_LABEL[e] || e)}</span>`).join('')}
-        ${r.selector ? `<button class="btn-ghost btn-xs scan-hl" title="Highlight on page">🔍</button>` : ''}
-      </div>
-      <div class="scan-context">${escapeHtml(r.cat)}${r.text ? ` · ${escapeHtml(r.text)}` : ''}${r.detail ? ` <span class="scan-detail">(${escapeHtml(r.detail)})</span>` : ''}</div>
-      <details class="scan-why">
-        <summary>Why &amp; how to fix</summary>
-        <div class="scan-why-body">
-          <div class="scan-why-line"><strong>Why:</strong> ${escapeHtml(r.why || '')}</div>
-          <div class="scan-why-line"><strong>Fix:</strong> ${escapeHtml(r.fix || '')}</div>
-          ${r.selector ? `<div class="scan-why-line scan-sel"><strong>Selector:</strong> <code>${escapeHtml(r.selector)}</code></div>` : ''}
-        </div>
-      </details>
-    </div>`;
-  };
+  const item = scanItemHtml;
 
   wrap.innerHTML = [...groups.entries()].map(([ruleId, rows]) => {
     const r0 = rows[0];
     const fixable = STATIC_FIXABLE[ruleId];
     const why = STATIC_WHY_NOT[ruleId];
-    const action = fixable
+    const open = rows.filter(r => !r.resolved && !isIgnored(r));
+    const action = (fixable && !open.length) ? '' : fixable
       ? `<div class="scan-group-fix">
            ${fixable.needsLang ? `<select class="scan-lang" aria-label="Page language">
               ${['he', 'en', 'ar', 'ru', 'fr', 'es'].map((c) =>
                 `<option value="${c}"${c === (document.documentElement.lang || 'he') ? ' selected' : ''}>${c}</option>`).join('')}
              </select>` : ''}
            <button class="btn-primary btn-xs scan-fix-all" data-fix-rule="${escapeHtml(ruleId)}">
-             Fix all ${rows.length}
+             Fix all ${open.length}
            </button>
            <span class="scan-group-does">${escapeHtml(fixable.does)}</span>
          </div>`
@@ -15216,7 +16964,7 @@ function renderScanResults() {
           <div class="scan-why-line"><strong>Why:</strong> ${escapeHtml(r0.why || '')}</div>
           <div class="scan-why-line"><strong>Fix:</strong> ${escapeHtml(r0.fix || '')}</div>
         </div>
-        ${rows.map(item).join('')}
+        ${scanRowsHtml(rows)}
       </details>`;
   }).join('');
 }
@@ -15255,6 +17003,65 @@ document.getElementById('scanResults')?.addEventListener('click', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Applying…';
   try {
+    // An unnamed form the ENGINE manages (a saved `form` mapping wrote its
+    // role="form") is named the engine's way: the mapping's own
+    // formLabelAbsolute, which U1 turns into aria-labelledby on every tick.
+    // An attribute we write there is an attribute the engine overwrites, and
+    // that is why "Fix all" on the search box looked like it did nothing. So
+    // the mapping is completed first; the static rule below covers the rest.
+    if (rule === 'landmark-noname') {
+      const tab = await getTab();
+      const key = storageKey('mappings', currentHostname);
+      const list = (await U1Store.get([key]))[key] || [];
+      const forms = list.filter(m => m && m.type === 'form' && m.primary && !((m.config || {}).selectors || {}).formLabelAbsolute);
+      if (forms.length && isInjectable(tab)) {
+        const found = await inPage(tab.id, (prims) => {
+          const S = window.__u1SelectorIntel;
+          return prims.map(p => {
+            let el = null; try { el = document.querySelector(p); } catch (e) {}
+            if (!el || el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return null;
+            const f = el.querySelector('input:not([type=hidden]),select,textarea');
+            let lab = f && f.id ? document.querySelector(`label[for="${CSS.escape(f.id)}"]`) : null;
+            if (!lab) lab = el.querySelector('label,legend,h1,h2,h3,h4,h5,h6');
+            if (!lab || !(lab.textContent || '').trim()) return null;
+            const sel = S && S.robustSelector ? S.robustSelector(lab) : (lab.id ? '#' + lab.id : (f && f.id ? `label[for="${f.id}"]` : ''));
+            return sel ? { primary: p, label: sel, text: (lab.textContent || '').trim().slice(0, 40) } : null;
+          });
+        }, [forms.map(m => m.primary)]).catch(() => null);
+        const named = [];
+        (found || []).forEach((hit, i) => {
+          if (!hit) return;
+          const m = forms[i];
+          m.config = m.config || {}; m.config.selectors = m.config.selectors || {};
+          m.config.selectors.formLabelAbsolute = hit.label;
+          if (m.code && typeof buildTemplate === 'function') { try { const t = buildTemplate('form', m.primary, m.config.selectors, m.config); if (t && t.code) m.code = t.code; } catch {} }
+          named.push({ m, text: hit.text });
+        });
+        if (named.length) {
+          await U1Store.set({ [key]: list });
+          try { await applyMappingsBatch(named.map(({ m }) => ({ type: m.type, primary: m.primary, firstArg: m.firstArg, config: m.config, overwriteRole: m.overwriteRole }))); } catch {}
+          // The engine will not re-run a fixer on a container it already
+          // processed this page load (u1st-avoid-change-detection), so the
+          // new formLabelAbsolute takes effect on the NEXT load. The name
+          // has to be on the element NOW as well — written directly, the
+          // same aria-labelledby the engine would write.
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id }, world: 'MAIN',
+              func: (pairs) => pairs.forEach(([p, labelSel]) => {
+                let el = null, lab = null;
+                try { el = document.querySelector(p); lab = document.querySelector(labelSel); } catch (e) {}
+                if (!el || !lab) return;
+                if (!lab.id) lab.id = 'u1-lbl-' + Math.random().toString(36).slice(2, 8);
+                el.setAttribute('aria-labelledby', lab.id);
+              }),
+              args: [named.map(({ m }) => [m.primary, m.config.selectors.formLabelAbsolute])],
+            });
+          } catch {}
+          showNotice(status, `${named.map(n => `form mapping ${n.m.id || n.m.primary} now named “${n.text}”`).join('; ')} — named on the page now, and by the engine on every load from here (formLabelAbsolute).`, 'success', 9000);
+        }
+      }
+    }
     // primary IS the rule name: one mapping per rule, so pressing twice
     // corrects the same entry rather than stacking duplicates.
     const tpl = { type: null, custom: 'staticFix', primary: rule, config, needsWork: true };
@@ -15263,12 +17070,62 @@ document.getElementById('scanResults')?.addEventListener('click', async (e) => {
     await applyStaticFixesToPage();
     await loadMappingsList();
     refreshExportInfo();
+    // Landmarks: name them NOW, directly, whatever the mapping path above and
+    // the corrector did — and then look again a second later, because the
+    // engine strips attributes it did not write on some containers. The
+    // notice says, per landmark, what was written and whether it held. Four
+    // presses of this button with nothing to show for them is what happens
+    // when the outcome is not read back.
+    let landmarkReport = '';
+    if (rule === 'landmark-noname') {
+      const tab = await getTab();
+      if (isInjectable(tab)) {
+        const nameNow = (probeOnly) => chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN',
+          func: (probe) => {
+            const SEARCHY = /search|חיפוש|بحث|поиск|buscar|recherche|suche/i;
+            const txt = (e) => (e && e.textContent || '').replace(/\s+/g, ' ').trim();
+            const out = [];
+            document.querySelectorAll('[role="form"],[role="region"]').forEach((el) => {
+              const named = () => el.getAttribute('aria-label') || (el.getAttribute('aria-labelledby') && document.getElementById(el.getAttribute('aria-labelledby').split(/\s+/)[0]));
+              const field = el.querySelector('input:not([type=hidden]),select,textarea');
+              const lab = field && field.id ? document.querySelector(`label[for="${CSS.escape(field.id)}"]`) : null;
+              const heading = el.querySelector('h1,h2,h3,h4,h5,h6,legend');
+              const name = (lab && txt(lab)) || (field && (field.getAttribute('aria-label') || field.getAttribute('placeholder'))) || (heading && txt(heading)) || '';
+              const engineOwned = el.hasAttribute('u1st-avoid-change-detection');
+              const rec = { about: name || txt(el).slice(0, 30), role: el.getAttribute('role'), engineOwned, wrote: '', now: '' };
+              if (!probe && !named() && name) {
+                const src = lab || heading;
+                if (src) { if (!src.id) src.id = 'u1-lbl-' + Math.random().toString(36).slice(2, 8); el.setAttribute('aria-labelledby', src.id); rec.wrote = `aria-labelledby → “${name}”`; }
+                else { el.setAttribute('aria-label', name); rec.wrote = `aria-label “${name}”`; }
+                const searchy = field && (field.type === 'search' || SEARCHY.test(field.name || '') || SEARCHY.test(field.id || '') || SEARCHY.test(name));
+                if (searchy && el.getAttribute('role') === 'form' && !engineOwned) { el.setAttribute('role', 'search'); rec.wrote += ', role=search'; }
+              }
+              rec.now = named() ? (el.getAttribute('aria-label') ? `aria-label “${el.getAttribute('aria-label')}”` : `aria-labelledby → “${txt(document.getElementById(el.getAttribute('aria-labelledby').split(/\s+/)[0]))}”`) : 'no name';
+              out.push(rec);
+            });
+            return out;
+          },
+          args: [!!probeOnly],
+        }).then(r => (r && r[0] && r[0].result) || []).catch(() => []);
+        const wrote = await nameNow(false);
+        await new Promise(r => setTimeout(r, 1200));
+        const after = await nameNow(true);
+        landmarkReport = wrote.map((w, i) => {
+          const a = after[i] || {};
+          const held = a.now && a.now !== 'no name';
+          return `${w.role} around “${w.about}”: ${w.wrote || 'already named'} → after 1s: ${held ? a.now + ' ✓' : 'STRIPPED — the engine removed it'}${w.engineOwned ? ' (engine-managed container)' : ''}`;
+        }).join(' · ');
+      }
+    }
     showNotice(status,
-      `${rule} — fixed for every element on the page, and for any the page adds later. ` +
-      `It is in Mappings and it exports.`, 'success', 8000);
-    // Re-scan so the count moves. A fix you cannot see land is a fix you will
-    // press again.
-    document.getElementById('scanBtn')?.click();
+      landmarkReport
+        ? `Landmarks: ${landmarkReport}. ${/STRIPPED/.test(landmarkReport) ? 'A stripped name can only come from the form mapping itself (formLabelAbsolute) — it is set; reload the page and the engine names it on load.' : ''}`
+        : `${rule} — fixed for every element on the page, and for any the page adds later. It is in Mappings and it exports.`,
+      /STRIPPED/.test(landmarkReport) ? 'warn' : 'success', landmarkReport ? 15000 : 8000);
+    // Re-read the page so the rows go at once, and say which did. A fix you
+    // cannot see land is a fix you will press again.
+    await refreshScanAfterMapping(rule);
   } catch (err) {
     showNotice(status, 'Could not apply it: ' + err.message, 'error', 8000);
   } finally {
@@ -15297,12 +17154,22 @@ async function applyStaticFixesToPage() {
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['u1-patch.js'] });
   } catch {}
-  await inPage(tab.id, (decl) => {
-    window.__u1Statics = decl;
-    // The correctors are registered; this is what makes them run now rather
-    // than at the next mutation.
-    if (window.__u1Patch && window.__u1Patch.schedule) window.__u1Patch.schedule();
-  }, [on]);
+  // MAIN world, and nothing else: the patch reads window.__u1Statics from the
+  // page's own window. This used to go through inPage — the ISOLATED world —
+  // so the declaration landed on a window the patch never sees, and every
+  // "Fix all" from the panel changed nothing on the page in front.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: (decl) => {
+        window.__u1Statics = decl;
+        // The correctors are registered; this is what makes them run now
+        // rather than at the next mutation.
+        if (window.__u1Patch && window.__u1Patch.schedule) window.__u1Patch.schedule();
+      },
+      args: [on],
+    });
+  } catch {}
 }
 
 // The filter-and-results pattern: find it, then make it announce itself.
@@ -15745,11 +17612,11 @@ document.getElementById('excludeTest')?.addEventListener('click', async () => {
 // Which page this scan is running on, and which of the three engines have
 // finished — asked for directly: a scan that just says "Scanning…" gives no
 // way to tell a slow page from a stuck one, or to know it moved on to the
-// engines that take real time (axe/IBM inject and run in the page).
-const SCAN_STEP_LABEL = { u1: 'U1 checks', axe: 'axe-core', ibm: 'IBM Equal Access' };
+// engine that takes real time (axe injects and runs in the page).
+const SCAN_STEP_LABEL = { u1: 'Structure, names and labels', axe: 'Colour contrast and ARIA' };
 function scanProgressHtml(tab, steps) {
   const title = (tab && (tab.title || tab.url)) || '';
-  const rows = ['u1', 'axe', 'ibm'].map((k) => {
+  const rows = ['u1', 'axe'].map((k) => {
     const s = steps[k] || 'pending'; // 'pending' | 'running' | 'done' | 'skipped'
     const icon = s === 'done' ? '✅' : s === 'running' ? '⏳' : s === 'skipped' ? '⚠️' : '⬜';
     return `<div class="scan-progress-step scan-progress-${s}">${icon} ${SCAN_STEP_LABEL[k]}</div>`;
@@ -15764,10 +17631,32 @@ function scanProgressHtml(tab, steps) {
 // 100 by severity, floored at 0. Meant to say "roughly how rough is this
 // page" at a glance across a list of pages — for the actual findings, open
 // the scan; the weights are not a WCAG scoring standard and don't claim to be.
-const SCAN_SCORE_WEIGHT = { Critical: 15, High: 8, Medium: 4, Low: 1 };
+// Scored by QUESTION, not by count. Sixty-five findings used to sum to a flat
+// 0% on every real page — a number that cannot move is not a score. Each
+// checklist question is worth one point; a question with findings loses the
+// weight of its worst one (Critical the whole point, High most of it, Medium
+// half, Low a quarter), a little more for many findings. Notes and rows already
+// resolved count nothing. Two pages with the same faults now differ by how
+// many of the twenty questions they fail, which is what a person means by
+// "how rough is it".
+const SCAN_Q_WEIGHT = { Critical: 1, High: 0.8, Medium: 0.5, Low: 0.25 };
 function computeScanScore(results) {
-  const penalty = (results || []).reduce((sum, r) => sum + (SCAN_SCORE_WEIGHT[r.severity] ?? 2), 0);
-  return Math.max(0, Math.round(100 - penalty));
+  const live = (results || []).filter(r => r && !r.note && !r.resolved && !isIgnored(r));
+  const byQ = new Map();
+  for (const r of live) {
+    const concept = conceptOfRule(r.ruleId);
+    const q = SCAN_CHECKS.find(c => c.rules.includes(concept) || c.rules.includes(r.ruleId));
+    const id = q ? q.id : 'other';
+    if (!byQ.has(id)) byQ.set(id, []);
+    byQ.get(id).push(r);
+  }
+  const total = SCAN_CHECKS.length;
+  let lost = 0;
+  for (const rows of byQ.values()) {
+    const worst = Math.max(...rows.map(r => SCAN_Q_WEIGHT[r.severity] ?? 0.5));
+    lost += Math.min(1, worst * (1 + Math.min(0.5, Math.log10(rows.length) * 0.25)));
+  }
+  return Math.max(0, Math.round(100 * (1 - lost / total)));
 }
 
 // Local-only (setLocalOnly, not the site-synced set() — see store.js's
@@ -15776,7 +17665,7 @@ function computeScanScore(results) {
 // mapping storage for the server's per-request size limit.
 function scanHistoryKey() { return 'scanHistory_' + currentHostname; }
 
-async function saveScanToHistory(tab, results, enginesRan) {
+async function saveScanToHistory(tab, results, enginesRan, inventory) {
   if (!tab || !tab.url) return;
   const key = scanHistoryKey();
   const stored = (await U1Store.get([key]))[key] || [];
@@ -15788,6 +17677,7 @@ async function saveScanToHistory(tab, results, enginesRan) {
     crit: results.filter(r => r.severity === 'Critical').length,
     high: results.filter(r => r.severity === 'High').length,
     results, enginesRan: enginesRan || [],
+    inventory: inventory || null,
   };
   // One entry per URL — re-scanning a page replaces its old record rather
   // than piling up duplicates of the same page.
@@ -15826,12 +17716,14 @@ function reopenScanHistory(entry) {
   if (!entry) return;
   scanResults = entry.results || [];
   scanEnginesRan = entry.enginesRan || [];
+  scanInventory = entry.inventory || null;
   scanActiveCat = '*'; scanActiveSev = '*';
   showOnlyScan('static');
   const crit = scanResults.filter(r => r.severity === 'Critical').length;
   const high = scanResults.filter(r => r.severity === 'High').length;
   document.getElementById('scanCount').textContent =
-    scanResults.length ? `${scanResults.length} issues${crit ? ` · ${crit} critical` : ''}${high ? ` · ${high} high` : ''} (saved ${new Date(entry.at).toLocaleString()})` : '';
+    scanResults.length ? `${entry.score}% · ${scanResults.length} issues${crit ? ` · ${crit} critical` : ''}${high ? ` · ${high} high` : ''} (saved ${new Date(entry.at).toLocaleString()})` : '';
+  Promise.all([loadAltOk(), loadIgnored(), loadScanMappingStatus()]).then(() => renderScanResults()).catch(() => {});
   document.getElementById('scanClearBtn').style.display = scanResults.length ? '' : 'none';
   document.getElementById('scanReportRow').style.display = scanResults.length ? 'flex' : 'none';
   renderScanFilters();
@@ -15843,7 +17735,7 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('scanBtn');
   const progress = document.getElementById('scanProgress');
   const tab = await getTab();
-  const steps = { u1: 'running', axe: 'pending', ibm: 'pending' };
+  const steps = { u1: 'running', axe: 'pending' };
   if (progress) { progress.style.display = ''; progress.innerHTML = scanProgressHtml(tab, steps); }
   btn.textContent = 'Scanning…';
   showNotice(status, 'Analyzing the page for accessibility faults…', 'info', 0);
@@ -15854,38 +17746,43 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
     showNotice(status, res.err, 'error', 4000);
     return;
   }
-  steps.u1 = 'done'; steps.axe = 'running'; steps.ibm = 'running';
+  steps.u1 = 'done'; steps.axe = 'running';
   if (progress) progress.innerHTML = scanProgressHtml(tab, steps);
 
-  btn.textContent = 'Running axe + IBM…';
+  btn.textContent = 'Checking colour contrast and ARIA…';
   const ext = tab ? await runScanEngines(tab.id) : { findings: [], ran: [] };
   btn.textContent = '🔎 Scan this page';
   steps.axe = (ext.ran || []).includes('axe') ? 'done' : 'skipped';
-  steps.ibm = (ext.ran || []).includes('ibm') ? 'done' : 'skipped';
   if (progress) progress.innerHTML = scanProgressHtml(tab, steps);
 
   // Enrich each raw finding with its catalog rule (title/why/fix/severity/wcag/category).
-  const ours = (res.results || []).map(f => {
-    const rule = SCAN_RULES[f.ruleId] || {};
-    return {
-      engine: 'u1',
-      ruleId: f.ruleId, selector: f.selector, text: f.text, detail: f.detail,
-      issue: rule.title || f.ruleId, why: rule.why || '', fix: rule.fix || '',
-      severity: rule.severity || 'Medium', wcag: rule.wcag || '', cat: rule.category || 'Other',
-    };
-  });
-  const theirs = (ext.findings || []).map(f => ({
-    engine: f.engine, ruleId: f.ruleId, selector: f.selector, text: '', detail: f.detail,
-    issue: f.issue, why: f.why, fix: f.fix, severity: f.severity, wcag: f.wcag,
-    cat: f.engine === 'axe' ? 'axe-core' : 'IBM Equal Access', helpUrl: f.helpUrl,
-  }));
+  await loadAltOk();
+  await loadIgnored();
+  await loadScanMappingStatus();
+  const ours = dropApprovedAlts(enrichOurFindings(res.results));
+  // Every engine finding is shown in OUR words: the catalog entry it translates
+  // to (AXE_RULES), under the same question, with the same severity scale.
+  // What the engine wrote is kept underneath for the record.
+  const theirs = [];
+  for (const f of (ext.findings || [])) {
+    const c = axeCatalog(f.ruleId);
+    if (c === null) continue; // deliberately skipped (AXE_SKIP)
+    theirs.push({
+      engine: f.engine, ruleId: c ? c.ruleId : f.ruleId, selector: f.selector, idx: f.idx || 0, target: f.target || '',
+      text: f.text || '', tag: f.tag || '', detail: c ? '' : f.detail, engineDetail: f.detail, engineSaid: f.fix, href: f.href || '', data: f.data || null,
+      issue: c ? c.title : f.issue, why: c ? c.why : f.why, fix: c ? c.fix : f.fix,
+      severity: c ? c.severity : f.severity, wcag: c ? (c.wcag || f.wcag) : f.wcag,
+      cat: c ? c.category : 'Other', note: !!(c && c.note), helpUrl: f.helpUrl,
+    });
+  }
   // Ours first, so that where an engine agrees with a rule we wrote, the wording
   // the client reads is the one written for them.
   scanResults = mergeScanFindings([...ours, ...theirs])
     .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9));
   scanEnginesRan = ext.ran || [];
+  scanInventory = res.inventory || null;
   scanActiveCat = '*'; scanActiveSev = '*';
-  saveScanToHistory(tab, scanResults, scanEnginesRan).catch(() => {});
+  saveScanToHistory(tab, scanResults, scanEnginesRan, scanInventory).catch(() => {});
   status.style.display = 'none';
   document.getElementById('scanClearBtn').style.display = scanResults.length ? '' : 'none';
   // One scan on screen at a time.
@@ -15899,18 +17796,17 @@ document.getElementById('scanBtn')?.addEventListener('click', async () => {
   const crit = scanResults.filter(r => r.severity === 'Critical').length;
   const high = scanResults.filter(r => r.severity === 'High').length;
   document.getElementById('scanCount').textContent =
-    scanResults.length ? `${scanResults.length} issues${crit ? ` · ${crit} critical` : ''}${high ? ` · ${high} high` : ''}` : '';
+    scanResults.length ? `${computeScanScore(scanResults)}% · ${scanResults.length} issues${crit ? ` · ${crit} critical` : ''}${high ? ` · ${high} high` : ''}` : '';
   document.getElementById('scanReportRow').style.display = scanResults.length ? 'flex' : 'none';
   if (!scanResults.length) {
     // Which engines answered, not just the count. "No faults" from one engine
     // and "no faults" from three are different claims, and the difference is
     // invisible unless it is written down.
-    const ran = ['U1'].concat(scanEnginesRan.map(e => ENGINE_LABEL[e] || e));
-    showNotice(status, `No automatic faults found on this page (${ran.join(' + ')}). 🎉`, 'success', 5000);
-  } else if (scanEnginesRan.length < 2) {
-    const missing = ['axe', 'ibm'].filter(e => !scanEnginesRan.includes(e)).map(e => ENGINE_LABEL[e]);
-    showNotice(status, `${missing.join(' and ')} could not run on this page — these results are from ${
-      ['U1'].concat(scanEnginesRan.map(e => ENGINE_LABEL[e] || e)).join(' + ')} only.`, 'warn', 8000);
+    showNotice(status, scanEnginesRan.includes('axe')
+      ? 'No automatic faults found on this page. 🎉'
+      : 'No faults found in structure, names and labels — colour contrast and ARIA could not be checked on this page.', 'success', 5000);
+  } else if (!scanEnginesRan.includes('axe')) {
+    showNotice(status, 'Colour contrast and the ARIA checks could not run on this page — these results cover structure, names and labels only.', 'warn', 8000);
   }
   renderScanFilters();
   renderScanResults();
@@ -15953,6 +17849,13 @@ document.getElementById('scanClearBtn')?.addEventListener('click', () => {
   if (progress) progress.style.display = 'none';
 });
 
+document.getElementById('scanResultsSection')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-scan-view]');
+  if (!b) return;
+  scanView = b.dataset.scanView;
+  renderScanResults();
+});
+
 document.getElementById('scanFilters')?.addEventListener('click', (e) => {
   const sevChip = e.target.closest('[data-scan-sev]');
   const catChip = e.target.closest('[data-scan-cat]');
@@ -15963,19 +17866,87 @@ document.getElementById('scanFilters')?.addEventListener('click', (e) => {
   renderScanResults();
 });
 
+document.getElementById('scanResults')?.addEventListener('focusin', (e) => {
+  const inp = e.target.closest('.scan-name-input');
+  if (!inp) return;
+  const item = inp.closest('.scan-item');
+  const r = item && scanResults[Number(item.dataset.scanIdx)];
+  if (!r) return;
+  const t = scanTargetOf(r);
+  highlightMatch(t.sel, t.idx, true).catch(() => {});
+});
+document.getElementById('scanResults')?.addEventListener('keydown', (e) => {
+  const inp = e.target.closest('.scan-name-input');
+  if (!inp) return;
+  if (e.key === 'Enter') { e.preventDefault(); inp.parentElement.querySelector('.scan-map')?.click(); }
+});
 document.getElementById('scanResults')?.addEventListener('click', async (e) => {
+  if (e.target.closest('.scan-name-input')) { e.stopPropagation(); return; }
+  const ign = e.target.closest('.scan-ignore');
+  if (ign) {
+    e.stopPropagation();
+    const item = ign.closest('.scan-item');
+    const r = item && scanResults[Number(item.dataset.scanIdx)];
+    if (!r) return;
+    await setIgnored(r, !isIgnored(r));
+    renderScanFilters(); renderScanResults();
+    return;
+  }
+  const showIgn = e.target.closest('.scan-show-ignored');
+  if (showIgn) { e.stopPropagation(); scanShowIgnored = !scanShowIgnored; renderScanResults(); return; }
+  const mapAll = e.target.closest('.scan-map-all');
+  if (mapAll) { e.stopPropagation(); scanMapAll(mapAll); return; }
+  const mapBtn = e.target.closest('.scan-map');
+  if (mapBtn) {
+    e.stopPropagation();
+    const item = mapBtn.closest('.scan-item');
+    const r = item && scanResults[Number(item.dataset.scanIdx)];
+    if (r) scanMapFinding(r, mapBtn);
+    return;
+  }
   // Clicking the "Why & how to fix" accordion should just toggle it.
   if (e.target.closest('.scan-why')) return;
   const item = e.target.closest('.scan-item');
   if (!item) return;
   const r = scanResults[Number(item.dataset.scanIdx)];
   if (!r || !r.selector) return;
-  // Highlight + scroll the element into view on the page; if it no longer matches
-  // (e.g. it was inside something now removed), tell the user instead of silence.
-  const found = await highlightMatch(r.selector, 0, true);
-  if (found === false) { showNotice(document.getElementById('scanStatus'), `Couldn't find "${r.selector}" on the page right now.`, 'warn', 3000); return; }
-  setTimeout(() => highlightMatch(r.selector, 0, false), 3000);
+  // Highlight + scroll THIS element into view — the Nth match of the short
+  // selector, not the first one (`a.externalLink` is every external link on
+  // the page; the finding was about one of them). If it no longer matches
+  // (e.g. it was inside something now removed), say so instead of silence.
+  const t = scanTargetOf(r);
+  const found = await highlightMatch(t.sel, t.idx, true);
+  if (found === false) { showNotice(document.getElementById('scanStatus'), `Couldn't find "${r.text || r.selector}" on the page right now.`, 'warn', 3000); return; }
+  setTimeout(() => highlightMatch(t.sel, t.idx, false), 3000);
 });
+
+// Hover a picture or a heading in the evidence list, see it on the page —
+// the list says `icon_pdf.png → "download arrow"`, and which of the two
+// identical icons that is cannot be read off the text.
+{
+  const host = document.getElementById('scanResults');
+  let hoverTimer = null, hoverKey = '';
+  const stop = () => {
+    clearTimeout(hoverTimer);
+    if (!hoverKey) return;
+    hoverKey = '';
+    highlightMatch('*', 0, false).catch(() => {});
+  };
+  host?.addEventListener('mouseover', (e) => {
+    const li = e.target.closest('[data-hl-sel]');
+    if (!li || !li.dataset.hlSel) return;
+    const key = li.dataset.hlSel + '#' + li.dataset.hlIdx;
+    if (key === hoverKey) return;
+    hoverKey = key;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => highlightMatch(li.dataset.hlSel, Number(li.dataset.hlIdx) || 0, true).catch(() => {}), 150);
+  });
+  host?.addEventListener('mouseout', (e) => {
+    const li = e.target.closest('[data-hl-sel]');
+    if (li && !li.contains(e.relatedTarget)) stop();
+  });
+  host?.addEventListener('mouseleave', stop);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Element scan — the 🧪 test, run over every saved mapping
@@ -15991,6 +17962,9 @@ document.getElementById('scanResults')?.addEventListener('click', async (e) => {
 
 let elemScanResults = [];
 let elemScanActiveStatus = '*';
+// 'here' shows only the page in front; 'all' every page the run drove. Here
+// first: the person is looking at one page and wants to work it, then move on.
+let elemScanPageFilter = 'here';
 let elemScanRunning = false;
 let elemScanAbort = false;
 
@@ -15999,53 +17973,62 @@ const ELEM_STATUS_META = {
   fail:    { label: 'Failed',      chip: 'sev-critical' },
   warn:    { label: 'Warnings',    chip: 'sev-medium' },
   pass:    { label: 'Passed',      chip: 'sev-low' },
+  notapplied: { label: 'Not applied here', chip: 'sev-medium' },
   absent:  { label: 'Not on page', chip: '' },
   skipped: { label: 'Skipped',     chip: '' },
   error:   { label: 'Errors',      chip: 'sev-high' },
 };
 
-function elemScanFiltered() {
-  return elemScanResults.filter(r => elemScanActiveStatus === '*' || r.status === elemScanActiveStatus);
-}
 
 function renderElemScanFilters() {
   const el = document.getElementById('elemScanFilters');
   if (!el) return;
+  const hereUrl = cleanPageUrl(elemScanHereUrl);
+  const onHere = (r) => !r.pageUrl || !hereUrl || cleanPageUrl(r.pageUrl) === hereUrl;
+  const pool = elemScanPageFilter === 'here' ? elemScanResults.filter(onHere) : elemScanResults;
+  const others = elemScanResults.length - elemScanResults.filter(onHere).length;
   const counts = {};
-  for (const r of elemScanResults) counts[r.status] = (counts[r.status] || 0) + 1;
+  for (const r of pool) counts[r.status] = (counts[r.status] || 0) + 1;
   const chip = (s, label, n) =>
     `<button class="scan-chip ${s === '*' ? '' : (ELEM_STATUS_META[s]?.chip || '')} ${elemScanActiveStatus === s ? 'active' : ''}" data-elem-status="${escapeHtml(s)}">${escapeHtml(label)} <span class="n">${n}</span></button>`;
   const chips = Object.keys(ELEM_STATUS_META)
     .filter(s => counts[s])
     .map(s => chip(s, ELEM_STATUS_META[s].label, counts[s]))
     .join('');
-  el.innerHTML = `<div class="scan-filter-row">${chip('*', 'All', elemScanResults.length)}${chips}</div>`;
+  const pageRow = others > 0 || elemScanPageFilter === 'all'
+    ? `<div class="scan-filter-row scan-page-row">
+        <button class="scan-chip ${elemScanPageFilter === 'here' ? 'active' : ''}" data-elem-page="here">This page <span class="n">${elemScanResults.filter(onHere).length}</span></button>
+        <button class="scan-chip ${elemScanPageFilter === 'all' ? 'active' : ''}" data-elem-page="all">All pages <span class="n">${elemScanResults.length}</span></button>
+       </div>` : '';
+  el.innerHTML = pageRow + `<div class="scan-filter-row">${chip('*', 'All', pool.length)}${chips}</div>`;
+}
+// The page the results are looked at from — the tab's URL when the run ended
+// (or was reopened), so "this page" means the one in front, not the one the
+// run happened to start on.
+let elemScanHereUrl = '';
+function elemScanFiltered() {
+  const hereUrl = cleanPageUrl(elemScanHereUrl);
+  return elemScanResults.filter(r =>
+    (elemScanActiveStatus === '*' || r.status === elemScanActiveStatus) &&
+    (elemScanPageFilter === 'all' || !r.pageUrl || !hereUrl || cleanPageUrl(r.pageUrl) === hereUrl));
 }
 
-function renderElemScanResults() {
-  const wrap = document.getElementById('elemScanResults');
-  if (!wrap) return;
-  const list = elemScanFiltered();
-  if (!list.length) { wrap.innerHTML = '<div class="empty-state">Nothing matches this filter.</div>'; return; }
-  wrap.innerHTML = list.map(r => {
-    const gi = elemScanResults.indexOf(r);
-    const meta = ELEM_STATUS_META[r.status] || { label: r.status, chip: '' };
-    const testable = r.status === 'pass' || r.status === 'warn' || r.status === 'fail';
-    return `
-    <div class="scan-item ${meta.chip}" data-elem-idx="${gi}">
+/** One mapping's result card — the list, the dialog and the live table share it. */
+function elemResultItemHtml(r, open) {
+  const gi = elemScanResults.indexOf(r);
+  const meta = ELEM_STATUS_META[r.status] || { label: r.status, chip: '' };
+  const testable = r.status === 'pass' || r.status === 'warn' || r.status === 'fail';
+  return `
+    <div class="scan-item elem-result ${meta.chip}" data-elem-idx="${gi}" data-elem-key="${escapeHtml(r.key || '')}">
       <div class="scan-item-main">
         <span class="scan-sev-badge ${meta.chip}">${escapeHtml(meta.label)}</span>
-        <span class="scan-issue-title">Fix #${escapeHtml(String(r.fixNo ?? '—'))} · ${escapeHtml(r.label || r.type)}</span>
-        <code>u1.fix.${escapeHtml(r.type)}</code>
-        ${r.primary ? `<button class="btn-ghost btn-xs scan-hl" title="Highlight on page">🔍</button>` : ''}
+        <span class="scan-issue-title" title="u1.fix.${escapeHtml(r.type)}">${r.fixNo != null ? `Fix #${escapeHtml(String(r.fixNo))} · ` : ''}${escapeHtml(r.label || r.type)}</span>
+        ${testable ? `<span class="pills">${testPillsHtml([...r.staticSteps, ...r.keyboardSteps])}</span>` : ''}
       </div>
-      <div class="scan-context">
-        ${escapeHtml(r.primary || '')}
-        ${testable ? ` · <span class="pills">${testPillsHtml([...r.staticSteps, ...r.keyboardSteps])}</span>` : ''}
-      </div>
+      ${r.primary ? `<div class="scan-context elem-sel"><code class="scan-detail">${escapeHtml(r.primary)}</code><button class="btn-ghost btn-xs scan-hl" title="Show it on the page" aria-label="Show it on the page">🔍</button></div>` : ''}
       ${r.reason ? `<div class="scan-context">${escapeHtml(r.reason)}</div>` : ''}
       ${testable ? `
-      <details class="scan-why">
+      <details class="scan-why"${open ? ' open' : ''}>
         <summary>What was tested</summary>
         <div class="test-section-title">🏷️ Accessibility (code) <span class="pills">${testPillsHtml(r.staticSteps)}</span></div>
         <ul class="test-steps">${testStepListHtml(r.staticSteps)}</ul>
@@ -16053,7 +18036,114 @@ function renderElemScanResults() {
         <ul class="test-steps">${testStepListHtml(r.keyboardSteps)}</ul>
       </details>` : ''}
     </div>`;
-  }).join('');
+}
+
+// ── The saved-mappings table, live ────────────────────────────────────────────
+//
+// Each row's verdict chip moves as its mapping is driven — "testing…" while it
+// is, the verdict the moment it is done — so the table is the place to watch
+// a run, and, when the run is over, the place to open any one result: the
+// chip is a button and opens the result in a dialog.
+const ELEM_CHIP = { pass: '✓ pass', warn: '! warn', fail: '✕ fail', error: '? error', notapplied: '– not applied', skipped: '– skipped', absent: '– not on page', testing: '⏳ testing…' };
+function elemTableMark(key, status) {
+  const row = document.querySelector(`.saved-mappings-row[data-key="${CSS.escape(key)}"]`);
+  if (!row) return;
+  const cell = row.querySelector('.sm-actions');
+  if (!cell) return;
+  let chip = cell.querySelector('.sm-test');
+  if (!chip) { chip = document.createElement('button'); chip.type = 'button'; cell.prepend(chip); }
+  chip.className = `sm-test ${status}`;
+  chip.dataset.openResult = key;
+  chip.title = status === 'testing' ? 'Being driven right now' : 'Open this result';
+  chip.textContent = ELEM_CHIP[status] || status;
+  row.classList.toggle('is-testing', status === 'testing');
+  if (status === 'testing') { try { row.scrollIntoView({ block: 'nearest' }); } catch {} }
+}
+async function openElemResultDialog(key) {
+  let r = elemScanResults.find(x => x.key === key);
+  if (!r) { const run = await loadElemLastRun(); r = run && run.results ? run.results.find(x => x.key === key) : null; }
+  document.getElementById('elemResultDialog')?.remove();
+  const dlg = document.createElement('div');
+  dlg.id = 'elemResultDialog';
+  dlg.className = 'elem-modal';
+  dlg.innerHTML = `<div class="elem-modal-box" role="dialog" aria-modal="true" aria-label="Mapping test result">
+      <button type="button" class="elem-modal-close" aria-label="Close">✕</button>
+      ${r ? elemResultItemHtml(r, true) : '<div class="empty-state">No result for this mapping yet — run the test.</div>'}
+      ${r && r.pageTitle ? `<div class="scan-context">Tested on: ${escapeHtml(r.pageTitle)}${r.pageUrl ? ` <a href="${escapeHtml(r.pageUrl)}" class="elem-page-link" data-goto="${escapeHtml(r.pageUrl)}">↗</a>` : ''}</div>` : ''}
+    </div>`;
+  document.body.appendChild(dlg);
+  const close = () => dlg.remove();
+  dlg.addEventListener('click', (e) => { if (e.target === dlg || e.target.closest('.elem-modal-close')) close(); });
+  document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } });
+  dlg.querySelector('.elem-modal-close')?.focus();
+}
+document.addEventListener('click', (e) => {
+  const chip = e.target.closest('#elemScanSaved .sm-test[data-open-result]');
+  if (!chip) return;
+  e.preventDefault(); e.stopPropagation();
+  openElemResultDialog(chip.dataset.openResult);
+}, true);
+
+function renderElemScanResults() {
+  const wrap = document.getElementById('elemScanResults');
+  if (!wrap) return;
+  let list = elemScanFiltered();
+  // The scan tests what is on THIS page. Mappings that belong to other pages
+  // are not results — one line says how many, and the "Not on page" chip
+  // lists them for whoever wants to know which.
+  let absentNote = '';
+  if (elemScanActiveStatus === '*') {
+    const absent = list.filter(r => r.status === 'absent');
+    if (absent.length) {
+      list = list.filter(r => r.status !== 'absent');
+      absentNote = `<div class="elem-absent-note">${absent.length} mapping${absent.length === 1 ? ' belongs' : 's belong'} to other pages — not tested here. Open those pages and run the scan there.</div>`;
+    }
+  }
+  if (!list.length) {
+    const others = elemScanPageFilter === 'here' ? elemScanResults.filter(r => r.pageUrl && cleanPageUrl(r.pageUrl) !== cleanPageUrl(elemScanHereUrl)).length : 0;
+    wrap.innerHTML = absentNote || (others
+      ? `<div class="empty-state">Nothing was tested on this page. ${others} result${others === 1 ? '' : 's'} on other pages — switch to “All pages” above.</div>`
+      : '<div class="empty-state">Nothing matches this filter.</div>');
+    return;
+  }
+  const item = (r) => elemResultItemHtml(r);
+  // Skipped rows say the same sentence each — "custom mapping, nothing to
+  // drive", "legacy, re-add it". One folded line at the end holds them all;
+  // the "Skipped" chip above still lists them on their own.
+  let skippedNote = '';
+  if (elemScanActiveStatus === '*') {
+    const sk = list.filter(r => r.status === 'skipped');
+    if (sk.length) {
+      list = list.filter(r => r.status !== 'skipped');
+      skippedNote = `<details class="elem-skipped"><summary>${sk.length} not tested — custom or legacy mappings the keyboard test cannot drive</summary>${sk.map(item).join('')}</details>`;
+    }
+  }
+  if (!list.length && skippedNote) { wrap.innerHTML = absentNote + skippedNote; return; }
+  // One accordion per page the run drove — the page's title as the heading,
+  // its address one click away, the mappings tested there inside. A run that
+  // stayed on one page is one flat list, as before.
+  const pages = new Map();
+  for (const r of list) {
+    const k = r.pageUrl ? cleanPageUrl(r.pageUrl) : '';
+    if (!pages.has(k)) pages.set(k, { url: r.pageUrl || '', title: r.pageTitle || '', rows: [] });
+    pages.get(k).rows.push(r);
+  }
+  if (pages.size <= 1) { wrap.innerHTML = absentNote + list.map(item).join('') + skippedNote; return; }
+  const pathOf = (u) => { try { const x = new URL(u); return (x.pathname + x.search) || '/'; } catch { return u; } };
+  wrap.innerHTML = absentNote + [...pages.values()].map((pg, i) => {
+    const failed = pg.rows.filter(r => r.status === 'fail').length;
+    const warned = pg.rows.filter(r => r.status === 'warn').length;
+    const passed = pg.rows.filter(r => r.status === 'pass').length;
+    return `
+    <details class="elem-page${failed ? ' has-fail' : ''}" ${i === 0 || failed ? 'open' : ''}>
+      <summary>
+        <span class="elem-page-title">${escapeHtml(pg.title || pathOf(pg.url) || 'this page')}</span>
+        <span class="pills">${passed ? `<span class="pill pass">${passed}✓</span>` : ''}${failed ? `<span class="pill fail">${failed}✕</span>` : ''}${warned ? `<span class="pill warn">${warned}⚠</span>` : ''}</span>
+        ${pg.url ? `<a class="elem-page-link" href="${escapeHtml(pg.url)}" data-goto="${escapeHtml(pg.url)}" title="${escapeHtml(pg.url)}">↗ ${escapeHtml(pathOf(pg.url).slice(0, 40))}${pathOf(pg.url).length > 40 ? '…' : ''}</a>` : ''}
+      </summary>
+      ${pg.rows.map(item).join('')}
+    </details>`;
+  }).join('') + skippedNote;
 }
 
 // The engine streams a step the moment it happens. A run of eleven mappings is
@@ -16087,9 +18177,160 @@ function elemScanProgressHtml(n, total, m) {
  *   same report in the same place instead of two different kinds of answer in
  *   two different tabs.
  */
-async function runElementScan(onlyKey) {
+// Send a tab back to `url` and wait until it is really there — `complete`, AND
+// on that URL. A fixed sleep is too short on a slow site and wasted on a fast
+// one, so it is polled, and capped, because a page that never comes back must
+// not hold a run forever. Returns whether it made it.
+async function returnTabTo(tabId, url) {
+  try { await chrome.tabs.update(tabId, { url }); } catch { return false; }
+  const want = cleanPageUrl(url);
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    if (t && t.status === 'complete' && cleanPageUrl(t.url) === want) return true;
+  }
+  return false;
+}
+
+/**
+ * The page LEFT mid-run. Get back to `url`, then wait until the page is
+ * really ready to be tested again — not just loaded, but with U1 and the
+ * mappings re-applied — before the next mapping is driven.
+ *
+ * Three steps, gentlest first:
+ *   1. history back — the same as the person pressing Back, no reload of
+ *      the page's state beyond what the site does itself;
+ *   2. wait for the person — "come back to the page and the test carries
+ *      on"; a long, live countdown, and Stop still works;
+ *   3. a hard re-navigation as the last resort, as before.
+ * Whichever brought it back, the run then waits for the patch and the
+ * library to be present on the page again, because testing a mapping half
+ * a second after `complete` — before auto-apply has run — fails it for the
+ * wrong reason.
+ */
+async function awaitReturn(tabId, url, status) {
+  const want = cleanPageUrl(url);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const there = async () => {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    return !!(t && t.status === 'complete' && cleanPageUrl(t.url) === want);
+  };
+  // By itself: Back in the history, and if that did not land within a few
+  // seconds, a plain navigation to the page — no waiting on the person. (It
+  // used to hold for three minutes asking them to come back; a run that
+  // stops to ask is a run nobody finishes.)
+  let back = false;
+  try { await chrome.tabs.goBack(tabId); } catch {}
+  for (let i = 0; i < 16 && !back && !elemScanAbort; i++) { await sleep(250); back = await there(); }
+  if (!back && !elemScanAbort) {
+    showNotice(status, `The page moved to somewhere else — bringing it back to ${want}…`, 'warn', 0);
+    back = await returnTabTo(tabId, url);
+  }
+  if (!back) return false;
+  // Ready to test: the patch and the library are on the page again.
+  for (let i = 0; i < 32; i++) {
+    const ok = await inPage(tabId, () => !!(window.__u1Patch && (window.u1 || window.U1 || window.user1st))).catch(() => false);
+    if (ok) break;
+    await sleep(250);
+  }
+  await sleep(700);
+  return true;
+}
+
+/** Navigate the tab to `url` and wait until it is loaded AND the patch + library are on it. */
+async function gotoPageReady(tabId, url) {
+  const want = cleanPageUrl(url);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try { await chrome.tabs.update(tabId, { url }); } catch { return false; }
+  let there = false;
+  for (let i = 0; i < 120 && !there; i++) {
+    await sleep(250);
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    there = !!(t && t.status === 'complete' && cleanPageUrl(t.url) === want);
+    if (elemScanAbort) return false;
+  }
+  if (!there) return false;
+  for (let i = 0; i < 32; i++) {
+    const ok = await inPage(tabId, () => !!(window.__u1Patch && (window.u1 || window.U1 || window.user1st))).catch(() => false);
+    if (ok) break;
+    await sleep(250);
+  }
+  await sleep(700);
+  return true;
+}
+
+// ── What the last dynamic scan said about each mapping ──────────────────────
+//
+// Kept locally (private prefix: never synced, never exported), keyed by the
+// mapping key, so the Mappings drawer and the saved-mappings table can say
+// "passed" / "failed" on the row itself without the Scan tab open.
+const elemTestStoreKey = (host) => (U1Store.PRIVATE_PREFIX || '__') + 'elemTest_' + (host || currentHostname);
+async function loadElemTested() {
+  try {
+    const k = elemTestStoreKey();
+    const v = (await U1Store.get([k]))[k];
+    return new Map(Object.entries(v && typeof v === 'object' ? v : {}));
+  } catch { return new Map(); }
+}
+// The whole last run (steps and all), so the Dynamic pane reopens on it and
+// a drawer row's verdict can be clicked through to the result it came from.
+const elemLastRunKey = (host) => (U1Store.PRIVATE_PREFIX || '__') + 'elemLastRun_' + (host || currentHostname);
+async function loadElemLastRun() {
+  try { const k = elemLastRunKey(); const v = (await U1Store.get([k]))[k]; return v && Array.isArray(v.results) ? v : null; }
+  catch { return null; }
+}
+async function rememberElemLastRun(results) {
+  try {
+    const slim = (results || []).map(r => ({ ...r, screenshot: undefined, inspect: undefined }));
+    await U1Store.setLocalOnly({ [elemLastRunKey()]: { at: Date.now(), results: slim } });
+  } catch {}
+}
+/** From a mapping row to the result the last dynamic scan gave it. */
+async function openElemResultFor(key) {
+  document.querySelector('.tab-btn[data-tab="scan"]')?.click();
+  if (!elemScanResults.length) {
+    const run = await loadElemLastRun();
+    if (run && run.results) { elemScanResults = run.results; elemScanActiveStatus = '*'; }
+  }
+  { const t = await getTab().catch(() => null); elemScanHereUrl = (t && t.url) || ''; }
+  if (!elemScanResults.some(r => r.key === key)) elemScanActiveStatus = '*';
+  // The row may be on another page; show all pages so it can be found.
+  const hit = elemScanResults.find(r => r.key === key);
+  elemScanPageFilter = (hit && hit.pageUrl && cleanPageUrl(hit.pageUrl) !== cleanPageUrl(elemScanHereUrl)) ? 'all' : 'here';
+  showOnlyScan('mappings');
+  document.getElementById('elemScanCount').textContent = elemRunCountText(elemScanResults);
+  renderElemScanFilters(); renderElemScanResults();
+  document.getElementById('elemScanClearBtn').style.display = elemScanResults.length ? '' : 'none';
+  document.getElementById('elemScanReportRow').style.display = elemScanResults.length ? '' : 'none';
+  const row = document.querySelector(`#elemScanResults .scan-item[data-elem-key="${CSS.escape(key)}"]`);
+  if (!row) return;
+  const group = row.closest('details'); if (group) group.open = true;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('located');
+  setTimeout(() => row.classList.remove('located'), 2600);
+}
+
+async function rememberElemTested(results) {
+  try {
+    const have = await loadElemTested();
+    const at = Date.now();
+    for (const r of results || []) {
+      if (!r || !r.key || !['pass', 'warn', 'fail', 'error'].includes(r.status)) continue;
+      have.set(r.key, { status: r.status, at, fail: (r.counts && r.counts.fail) || 0, warn: (r.counts && r.counts.warn) || 0 });
+    }
+    const obj = {};
+    for (const [k, v] of [...have.entries()].slice(-800)) obj[k] = v;
+    await U1Store.setLocalOnly({ [elemTestStoreKey()]: obj });
+  } catch {}
+}
+
+async function runElementScan(onlyKey, opts) {
+  // onlyHere: the page in front and nothing else — no travelling. The default
+  // "Test this page" button; "Test all pages" is the one that walks the site.
+  const onlyHere = !!(opts && opts.onlyHere);
   const status = document.getElementById('elemScanStatus');
   const btn = document.getElementById('elemScanBtn');
+  const hereBtn = document.getElementById('elemScanHereBtn');
   const stopBtn = document.getElementById('elemScanStopBtn');
   const progress = document.getElementById('elemScanProgress');
   const tab = await getTab();
@@ -16114,11 +18355,17 @@ async function runElementScan(onlyKey) {
   const results = [];
   const candidates = [];
   for (const m of all) {
+    // Grouped by page below (renderElemScanResults): every row needs a real
+    // page name, or the group falls back to a placeholder title. These are
+    // reported without ever being driven, so they carry the page they were
+    // captured on if there is one, and this page otherwise — never blank.
+    const ownPage = (typeof m === 'object' && m.pageUrl) ? { pageUrl: m.pageUrl, pageTitle: m.pageTitle || '' }
+      : { pageUrl: tab.url, pageTitle: tab.title || '' };
     if (typeof m !== 'object' || !m.type) {
-      results.push({ type: 'legacy', primary: String(m), status: 'skipped',
+      results.push({ type: 'legacy', primary: typeof m === 'string' ? m : (m && (m.primary || m.firstArg)) || '(no selector saved)', status: 'skipped', ...ownPage,
         reason: 'Legacy mapping — re-add it to test it.', staticSteps: [], keyboardSteps: [] });
     } else if (m.custom) {
-      results.push({ ...pickMappingFields(m), status: 'skipped',
+      results.push({ ...pickMappingFields(m), status: 'skipped', ...ownPage,
         reason: 'Custom mapping — nothing for the keyboard test to drive.', staticSteps: [], keyboardSteps: [] });
     } else {
       candidates.push(m);
@@ -16136,31 +18383,107 @@ async function runElementScan(onlyKey) {
   const present = await selectorsPresentOnPage(candidates.map(m => m.primary || m.firstArg || ''));
   const hereUrl = cleanPageUrl(tab && tab.url);
   const toTest = [];
+  // "Test everything": a mapping that is not on this page but was captured
+  // on a known page is tested THERE — the run visits each such page in turn
+  // and comes back. Only the all-mappings run travels; the 🧪 on one row
+  // tests it where you stand.
+  const elsewhere = new Map(); // cleanPageUrl → { url, title, list }
   for (const m of candidates) {
-    if (!mappingOnPage(m, present, hereUrl)) {
-      results.push({ ...pickMappingFields(m), status: 'absent',
-        reason: 'Not on this page right now — open the page or the dialog it belongs to, then run this again.',
-        staticSteps: [], keyboardSteps: [] });
-    } else {
-      toTest.push(m);
+    if (mappingOnPage(m, present, hereUrl)) { toTest.push(m); continue; }
+    const pu = (m.pageUrl && sameSiteUrl(m.pageUrl)) ? cleanPageUrl(m.pageUrl) : '';
+    if (!onlyKey && !onlyHere && pu && pu !== hereUrl) {
+      if (!elsewhere.has(pu)) elsewhere.set(pu, { url: m.pageUrl, title: m.pageTitle || '', list: [] });
+      elsewhere.get(pu).list.push(m);
+      continue;
     }
+    // A this-page run does not carry the other pages' mappings as rows at all —
+    // they are not "absent", they were simply not asked about.
+    if (onlyHere && pu && pu !== hereUrl) continue;
+    results.push({ ...pickMappingFields(m), status: 'absent', pageUrl: m.pageUrl || tab.url, pageTitle: m.pageTitle || tab.title || '',
+      reason: 'Not on this page right now — open the page or the dialog it belongs to, then run this again.',
+      staticSteps: [], keyboardSteps: [] });
   }
 
   elemScanRunning = true;
   elemScanAbort = false;
   btn.disabled = true;
+  if (hereBtn) hereBtn.disabled = true;
   stopBtn.style.display = '';
   showOnlyScan('mappings');
   document.getElementById('elemScanReportRow').style.display = 'none';
-  progress.style.display = toTest.length ? 'block' : 'none';
+  progress.style.display = (toTest.length || elsewhere.size) ? 'block' : 'none';
+  // A run starting must not sit ALONGSIDE the previous one's finished summary
+  // and result list — "37 tested · 4 failing (saved …)" above a brand new
+  // "Testing 1 of 40" reads as two runs at once. Cleared here, before the
+  // first mapping is driven; the real numbers return when this run ends.
+  {
+    const cnt = document.getElementById('elemScanCount');
+    if (cnt) cnt.textContent = 'Running…';
+    const resBox = document.getElementById('elemScanResults');
+    if (resBox) resBox.innerHTML = '';
+    const filt = document.getElementById('elemScanFilters');
+    if (filt) filt.innerHTML = '';
+    document.getElementById('elemScanClearBtn').style.display = 'none';
+  }
 
+  const pagesTotal = 1 + elsewhere.size;
+  let pageNo = 1;
+  let travelled = false;
+  const grandTotal = toTest.length + [...elsewhere.values()].reduce((n, p) => n + p.list.length, 0);
+  let done = 0;
   try {
-    for (let i = 0; i < toTest.length; i++) {
+   // One page's batch. `pageUrl` is where these belong; a navigation away
+   // from it mid-batch is put back before the next mapping.
+   const runBatch = async (batch, pageUrl, pageTitle) => {
+    const urlBefore = cleanPageUrl(pageUrl);
+    // Applied BEFORE they are tested — but only the ones that need it. A page
+    // loaded before the mappings were saved, or with auto-apply off, has
+    // undecorated widgets, and testing those reported a working mapping as
+    // five keyboard failures. Re-applying EVERY mapping on EVERY run was the
+    // over-correction: most of them are already live (auto-apply put them
+    // there), so re-running all twenty took as long as testing them and did
+    // nothing to eighteen of them. One cheap read decides which — the same
+    // "does it carry U1's marks" check the drawer already uses to show ✓/saved.
+    const nonCustom = batch.filter(m => !m.custom);
+    if (nonCustom.length && isInjectable(tab)) {
+      let needApply = nonCustom;
+      try {
+        const [chk] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN',
+          // ANY copy of the selector's matches, or the trigger, wearing a mark
+          // counts. querySelector's first match was the hidden mobile copy on
+          // the very pages that have two, and a listbox decorates its trigger
+          // long before its list — both read "not applied" and were re-applied
+          // every run, for nothing.
+          func: (items) => items.map(([sel, trig]) => {
+            const marked = (el) => !!el && (Array.from(el.attributes).some(a => /^(role|tabindex)$|^aria-|^u1st-/.test(a.name)) || !!el.querySelector('[role],[aria-haspopup],[aria-expanded],[u1st-avoid-change-detection]'));
+            let els = []; try { els = Array.from(document.querySelectorAll(sel)); } catch (e) {}
+            if (!els.length) return true; // not found — let applyMappingsBatch report that properly
+            if (els.some(marked)) return false;
+            let trigs = []; try { trigs = trig ? Array.from(document.querySelectorAll(trig)) : []; } catch (e) {}
+            return !trigs.some(marked);
+          }),
+          args: [nonCustom.map(m => [m.primary || m.firstArg || '', ((m.config || {}).selectors || {}).trigger || ''])],
+        });
+        const need = (chk && chk.result) || nonCustom.map(() => true);
+        needApply = nonCustom.filter((_, i) => need[i]);
+      } catch { /* couldn't tell — apply all, the safe direction */ }
+      if (needApply.length) {
+        showNotice(status, `Applying ${needApply.length} of ${nonCustom.length} mapping${nonCustom.length === 1 ? '' : 's'} not yet on this page…`, 'warn', 0);
+        try {
+          await applyMappingsBatch(needApply.map(m => ({ type: m.type, primary: m.primary, firstArg: m.firstArg, config: m.config, overwriteRole: m.overwriteRole })));
+        } catch {}
+        await new Promise(r => setTimeout(r, 900));
+      }
+    }
+    for (let i = 0; i < batch.length; i++) {
       if (elemScanAbort) break;
-      const m = toTest[i];
-      progress.innerHTML = elemScanProgressHtml(i + 1, toTest.length, m);
-      showNotice(status, `Testing ${i + 1} of ${toTest.length} — watch the page.`, 'warn', 0);
+      const m = batch[i];
+      done++;
+      progress.innerHTML = (pagesTotal > 1 ? `<div class="test-head"><strong>Page ${pageNo} of ${pagesTotal}</strong> <span class="test-live-tag">${escapeHtml(pageTitle || cleanPageUrl(pageUrl))}</span></div>` : '') + elemScanProgressHtml(done, grandTotal, m);
+      showNotice(status, `Testing ${done} of ${grandTotal}${pagesTotal > 1 ? ` (page ${pageNo} of ${pagesTotal})` : ''} — watch the page.`, 'warn', 0);
 
+      elemTableMark(mappingKey(m), 'testing');
       const t0 = Date.now();
       let res = null;
       let errMsg = '';
@@ -16170,18 +18493,18 @@ async function runElementScan(onlyKey) {
         res = await Promise.race([
           callTestEngine('runTest', [m.type, m.primary || m.firstArg || '',
             (m.config && typeof m.config === 'object') ? m.config : { selectors: {} }], tab),
-          new Promise(r => setTimeout(() => r({ __timeout: true }), 30000)),
+          new Promise(r => setTimeout(() => r({ __timeout: true }), 15000)),
         ]);
       } catch (e) {
         errMsg = e?.message || String(e);
       }
 
       if (res && res.__timeout) {
-        results.push({ ...pickMappingFields(m), status: 'error', reason: 'Timed out after 30 seconds.',
+        results.push({ ...pickMappingFields(m), status: 'error', reason: 'Timed out after 15 seconds.',
           staticSteps: [], keyboardSteps: [], ms: Date.now() - t0 });
       } else if (!res || !res.static) {
         results.push({ ...pickMappingFields(m), status: 'error',
-          reason: errMsg || 'Could not run the test — the page may have changed while testing.',
+          reason: (res && res.__err) ? `Could not run the test: ${res.__err}.` : (errMsg || 'Could not run the test — the page may have changed while testing.'),
           staticSteps: [], keyboardSteps: [], ms: Date.now() - t0 });
       } else {
         const staticSteps = res.static.steps || [];
@@ -16189,13 +18512,46 @@ async function runElementScan(onlyKey) {
         const all2 = [...staticSteps, ...keyboardSteps];
         const fail = all2.filter(s => s.status === 'fail').length;
         const warn = all2.filter(s => s.status === 'warn').length;
+        const closed = !!(res.keyboard && res.keyboard.closed);
         results.push({
           ...pickMappingFields(m),
-          status: fail ? 'fail' : warn ? 'warn' : 'pass',
-          reason: '', staticSteps, keyboardSteps, inspect: res.inspect,
+          status: closed ? 'skipped' : res.notApplied ? 'notapplied' : fail ? 'fail' : warn ? 'warn' : 'pass',
+          reason: closed ? 'Open this dialog on the page, then test it — it has no trigger the test can press, so it can only be checked while open.'
+            : res.notApplied ? (res.notApplied === 'missing' ? 'Nothing matches its selector on this page right now.' : 'The engine has not decorated it on this page — the roles are missing. Not a keyboard failure; the fix did not take here.') : '',
+          staticSteps, keyboardSteps, inspect: res.inspect,
           counts: { pass: all2.length - fail - warn, fail, warn },
           ms: Date.now() - t0,
         });
+      }
+
+      // Pressed, and the page LEFT — put it back and WAIT for it before the next
+      // mapping, or everything after this one is tested against the wrong page.
+      // Reported on the mapping that did it: a component that navigates the
+      // site when driven is itself a finding, not just an inconvenience.
+      // Stamp the page this was tested on — the results group by it.
+      { const last = results[results.length - 1]; if (last && !last.pageUrl) { last.pageUrl = pageUrl; last.pageTitle = pageTitle; } }
+      // And the table row moves with it, now, so the run can be watched there.
+      { const last = results[results.length - 1]; if (last) elemTableMark(mappingKey(m), last.status); }
+
+      const nowTab = await chrome.tabs.get(tab.id).catch(() => null);
+      const urlNow = cleanPageUrl(nowTab && nowTab.url);
+      if (urlBefore && urlNow && urlNow !== urlBefore) {
+        const last = results[results.length - 1];
+        const note = `Driving this mapping navigated the page to ${urlNow} — it was put back before the next one.`;
+        if (last) last.reason = last.reason ? `${last.reason} ${note}` : note;
+        showNotice(status, `The page went to ${urlNow} — going back before continuing.`, 'warn', 0);
+        const back = await awaitReturn(tab.id, pageUrl, status);
+        if (!back) {
+          // Could not get back within the cap. Going on would measure every
+          // remaining mapping against a page they were never on; say so for
+          // each rather than let them show as tested.
+          for (const rest of batch.slice(i + 1)) {
+            results.push({ ...pickMappingFields(rest), status: 'error', pageUrl, pageTitle,
+              reason: `Not tested — the page had navigated to ${urlNow} and could not be brought back to ${urlBefore}.`,
+              staticSteps: [], keyboardSteps: [] });
+          }
+          break;
+        }
       }
 
       // Leave the page as we found it before the next mapping. The dialog branch
@@ -16211,10 +18567,43 @@ async function runElementScan(onlyKey) {
       }).catch(() => {});
       await new Promise(r => setTimeout(r, 200));
     }
+   };
+
+   await runBatch(toTest, tab.url, tab.title || '');
+
+   // The other pages, one at a time.
+   for (const pg of elsewhere.values()) {
+     if (elemScanAbort) break;
+     pageNo++;
+     travelled = true;
+     showNotice(status, `Opening ${pg.title || cleanPageUrl(pg.url)} to test ${pg.list.length} mapping${pg.list.length === 1 ? '' : 's'} that belong${pg.list.length === 1 ? 's' : ''} there…`, 'warn', 0);
+     progress.innerHTML = `<div class="test-head"><strong>Page ${pageNo} of ${pagesTotal}</strong> <span class="test-live-tag">${escapeHtml(pg.title || cleanPageUrl(pg.url))}</span></div><ul class="test-steps"><li>Opening the page…</li></ul>`;
+     const ready = await gotoPageReady(tab.id, pg.url);
+     if (!ready) {
+       for (const m of pg.list) results.push({ ...pickMappingFields(m), status: 'error', pageUrl: pg.url, pageTitle: pg.title,
+         reason: `Not tested — ${cleanPageUrl(pg.url)} did not finish loading.`, staticSteps: [], keyboardSteps: [] });
+       continue;
+     }
+     // What is really there, now that we are on it.
+     const there = await selectorsPresentOnPage(pg.list.map(m => m.primary || m.firstArg || ''));
+     const here2 = cleanPageUrl(pg.url);
+     const batch = [];
+     for (const m of pg.list) {
+       if (mappingOnPage(m, there, here2)) batch.push(m);
+       else results.push({ ...pickMappingFields(m), status: 'absent', pageUrl: pg.url, pageTitle: pg.title,
+         reason: 'Not found on the page it was captured on — the page changed, or the element only exists in a state the scan cannot reach.', staticSteps: [], keyboardSteps: [] });
+     }
+     await runBatch(batch, pg.url, pg.title || '');
+   }
+   if (travelled) {
+     showNotice(status, `Coming back to ${cleanPageUrl(tab.url)}…`, 'warn', 0);
+     await gotoPageReady(tab.id, tab.url);
+   }
   } finally {
     elemScanRunning = false;
     elemScanAbort = false;
     btn.disabled = false;
+    if (hereBtn) hereBtn.disabled = false;
     stopBtn.style.display = 'none';
     stopBtn.disabled = false;
     stopBtn.textContent = '■ Stop';
@@ -16225,10 +18614,13 @@ async function runElementScan(onlyKey) {
 
   elemScanResults = results;
   elemScanActiveStatus = '*';
+  elemScanPageFilter = 'here';
+  elemScanHereUrl = tab.url || '';
+  rememberElemTested(results).then(() => { loadMappingsList().catch(() => {}); }).catch(() => {});
+  rememberElemLastRun(results).catch(() => {});
   const tested = results.filter(r => ['pass', 'warn', 'fail'].includes(r.status)).length;
   const failed = results.filter(r => r.status === 'fail').length;
-  document.getElementById('elemScanCount').textContent =
-    `${tested} tested · ${failed} failing`;
+  document.getElementById('elemScanCount').textContent = elemRunCountText(results);
   renderElemScanFilters();
   renderElemScanResults();
   document.getElementById('elemScanClearBtn').style.display = '';
@@ -16254,6 +18646,12 @@ function pickMappingFields(m) {
   };
 }
 
+document.getElementById('elemScanHereBtn')?.addEventListener('click', () => {
+  runElementScan(null, { onlyHere: true }).catch(err => {
+    elemScanRunning = false;
+    showNotice(document.getElementById('elemScanStatus'), 'Failed: ' + err.message, 'error', 6000);
+  });
+});
 document.getElementById('elemScanBtn')?.addEventListener('click', () => {
   runElementScan().catch(err => {
     elemScanRunning = false;
@@ -16275,6 +18673,8 @@ document.getElementById('elemScanClearBtn')?.addEventListener('click', () => {
 });
 
 document.getElementById('elemScanFilters')?.addEventListener('click', (e) => {
+  const page = e.target.closest('[data-elem-page]');
+  if (page) { elemScanPageFilter = page.dataset.elemPage; elemScanActiveStatus = '*'; renderElemScanFilters(); renderElemScanResults(); return; }
   const chip = e.target.closest('[data-elem-status]');
   if (!chip) return;
   elemScanActiveStatus = chip.dataset.elemStatus;
@@ -16283,6 +18683,14 @@ document.getElementById('elemScanFilters')?.addEventListener('click', (e) => {
 });
 
 document.getElementById('elemScanResults')?.addEventListener('click', async (e) => {
+  // The page heading's link: go there in THIS tab, so the panel stays on the site.
+  const goto = e.target.closest('.elem-page-link');
+  if (goto) {
+    e.preventDefault(); e.stopPropagation();
+    const t = await getTab().catch(() => null);
+    if (t) chrome.tabs.update(t.id, { url: goto.dataset.goto }).catch(() => {});
+    return;
+  }
   if (e.target.closest('.scan-why')) return;
   const item = e.target.closest('.scan-item');
   if (!item) return;
@@ -16807,6 +19215,26 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     }
   }
 
+  // aria-label is a custom script, so the u1.fix guard below skips it — and
+  // its required half lives on the config root, not in selectors. Refused
+  // here for the same reason as the rest: saved without a heading it writes
+  // "Read more about" and calls that a name.
+  if (template && template.custom === 'focusOrder') {
+    const n = String((template.config && template.config.order) || '').split(';').map((x) => x.trim()).filter(Boolean).length;
+    if (n < 2) {
+      throw new Error('A focus-order mapping needs at least two selectors in "Tab order", separated by semicolons — one element has no order to be in.');
+    }
+  }
+  if (template && template.custom === 'ariaLabel') {
+    const h = template.config && template.config.headingSelector;
+    if (!h || !String(h).trim()) {
+      throw new Error(
+        'An aria-label mapping needs the heading whose text finishes the name — that is the whole ' +
+        'point of it. Without one the button keeps saying "Read more". Point "Heading whose text is ' +
+        'added at the end" at the card\'s heading.');
+    }
+  }
+
   if (template && template.type && !template.custom) {
     const sc = COMPONENT_SCHEMAS[template.type];
     if (sc) {
@@ -16825,6 +19253,64 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     }
   }
 
+  // ── A listbox trigger nobody can reach ────────────────────────────────────
+  //
+  // The trigger is what U1 waits for, decorates as the button, and hangs the
+  // open/close keys on. Every count check passes on a hidden one: it IS in the
+  // DOM. It is just unreachable — the original <select> that a dropdown
+  // plugin (msDropDown on molinahealthcare.com) parks in a zero-height
+  // overflow:hidden holder next to the widget it painted instead. Mapped that
+  // way the list is marked handled and nothing on the page opens it.
+  //
+  // Repaired first, refused second: the list's own wrapper is asked what its
+  // trigger is (listboxShape, walking up a few levels), and only a shape that
+  // names THIS list with a reachable trigger is accepted. What cannot be
+  // repaired is refused here, in the one save path, like the other refusals.
+  if (template.type === 'listbox' && template.firstArg && template.firstArg !== template.primary) {
+    const usable = await triggersUsableOnPage([template.firstArg]);
+    if (usable && usable[template.firstArg] === false) {
+      const tb = await getTab();
+      let fixedTrigger = '';
+      if (isInjectable(tb)) {
+        try {
+          fixedTrigger = await inPage(tb.id, (listSel) => {
+            const S = window.__u1SelectorIntel;
+            let el = null;
+            try { el = document.querySelector(listSel); } catch (e) { return ''; }
+            if (!el) return '';
+            const same = (sel) => { try { return document.querySelector(sel) === el; } catch (e) { return false; } };
+            let node = el.parentElement;
+            for (let hops = 0; node && node !== document.body && hops < 4; hops++, node = node.parentElement) {
+              let sh = null;
+              try { sh = S.listboxShape(S.robustSelector(node)); } catch (e) { sh = null; }
+              if (!sh || !sh.trigger || !same(sh.listbox)) continue;
+              const t = document.querySelector(sh.trigger);
+              const r = t && t.getBoundingClientRect();
+              if (r && r.width > 0 && r.height > 0 && !el.contains(t)) return sh.trigger;
+            }
+            return '';
+          }, [template.primary]);
+        } catch { fixedTrigger = ''; }
+      }
+      if (fixedTrigger && isU1ValidSelector(fixedTrigger)) {
+        const was = template.firstArg;
+        template.firstArg = fixedTrigger;
+        template.config = template.config || {};
+        template.config.selectors = template.config.selectors || {};
+        template.config.selectors.trigger = fixedTrigger;
+        template.code = mappingToCode(template);
+        template.note = (template.note ? template.note + ' ' : '') +
+          `Trigger ${was} is not reachable on the page (hidden or clipped away); replaced with ${fixedTrigger}.`;
+      } else {
+        throw new Error(
+          `The trigger ${template.firstArg} is in the DOM but nobody can reach it — it is hidden, or ` +
+          `sits in a zero-size clipped holder (a dropdown plugin's original <select>, typically). ` +
+          `U1 would mark ${template.primary} handled and nothing on the page would open it. ` +
+          `Point "trigger" at the element a person actually presses.`);
+      }
+    }
+  }
+
   // A selector wider than the container it belongs to is repaired here, before
   // anything is stored — so the mapping, its code, and the exported client file
   // all carry the narrowed form. Every route saves through this function, which
@@ -16837,6 +19323,33 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   const newKey = mappingKey(template);
   let existingIdx = editingKey ? list.findIndex(m => mappingKey(m) === editingKey) : -1;
   if (existingIdx < 0) existingIdx = list.findIndex(m => mappingKey(m) === newKey);
+
+  // Same container, different trigger: that is the same mapping, not a second
+  // one (see containerKey). The one with the reachable trigger stays; when the
+  // stored one is that mapping, nothing is overwritten and the caller is told
+  // which trigger won.
+  let merged = null;
+  if (existingIdx < 0) {
+    const ck = containerKey(template);
+    const twinIdx = ck ? list.findIndex(m => containerKey(m) === ck) : -1;
+    if (twinIdx >= 0) {
+      const twin = list[twinIdx];
+      const usable = await triggersUsableOnPage(
+        Array.from(new Set([twin.firstArg || twin.primary, template.firstArg || template.primary])));
+      const winner = pickContainerSurvivor(
+        [twin, { ...template, capturedAt: Date.now() }], usable);
+      merged = {
+        kept: winner === twin ? (twin.firstArg || twin.primary) : (template.firstArg || template.primary),
+        dropped: winner === twin ? (template.firstArg || template.primary) : (twin.firstArg || twin.primary),
+        usable: usable || {},
+      };
+      if (winner === twin) {
+        if (refreshUi) { loadMappingsList(); refreshExportInfo(); }
+        return { updated: true, narrowed, merged };
+      }
+      existingIdx = twinIdx;
+    }
+  }
 
   const tab = await getTab();
   const screenshot = await captureElementScreenshot(template.primary, template.firstArg, { reveal: true });
@@ -16860,8 +19373,9 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     parent: template.parent || (prev && prev.parent) || null,
     // Keep the previous screenshot if a fresh capture wasn't possible.
     screenshot: screenshot || (prev && prev.screenshot) || null,
-    pageUrl: tab?.url || (prev && prev.pageUrl) || '',
-    pageTitle: tab?.title || (prev && prev.pageTitle) || '',
+    // Only a page of THIS site can be where a mapping of this site was made.
+    pageUrl: (tab && sameSiteUrl(tab.url)) ? tab.url : ((prev && sameSiteUrl(prev.pageUrl)) ? prev.pageUrl : ''),
+    pageTitle: (tab && sameSiteUrl(tab.url)) ? (tab.title || '') : ((prev && sameSiteUrl(prev.pageUrl)) ? (prev.pageTitle || '') : ''),
     capturedAt: Date.now(),
     // Stable chronological "Fix #N" shown in the UI, the exported script and the
     // close-out report. Assigned once and kept across edits so the number a
@@ -16874,12 +19388,15 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   if (existingIdx >= 0) list[existingIdx] = entry;
   else list.push(entry);
   await U1Store.set({ [key]: list });
+  // What was reviewed was the OLD row. A rewrite — by hand, by the AI, by a
+  // trigger merge — is a new thing to look at.
+  if (existingIdx >= 0) { try { await setReviewed([reviewIdOf(entry)], false); } catch {} }
 
   if (refreshUi) {
     loadMappingsList();
     refreshExportInfo();
   }
-  return { updated: existingIdx >= 0, narrowed };
+  return { updated: existingIdx >= 0, narrowed, merged };
 }
 
 document.getElementById('addMappingBtn').addEventListener('click', async () => {
@@ -16894,9 +19411,9 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   }
   const btn = document.getElementById('addMappingBtn');
   btn.textContent = 'Capturing…';
-  let updated, cancelled, narrowed;
+  let updated, cancelled, narrowed, merged;
   try {
-    ({ updated, cancelled, narrowed } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey }));
+    ({ updated, cancelled, narrowed, merged } = await saveMappingEntry(currentTemplate, { editingKey: editingMappingKey }));
     if (cancelled) { btn.textContent = 'Add to Mapping'; return; }
   } catch (e) {
     // A failed write used to travel up as an unhandled rejection: the button
@@ -16946,6 +19463,12 @@ document.getElementById('addMappingBtn').addEventListener('click', async () => {
   // Say it. A selector rewritten behind your back is worse than one left wrong,
   // however good the rewrite.
   if (narrowed && narrowed.length) showNarrowed(listStatus, narrowed);
+  if (merged) {
+    showNotice(listStatus,
+      `${saved.type} ${saved.primary} was already mapped with trigger ${merged.dropped === (saved.firstArg || saved.primary) ? merged.kept : merged.dropped}. ` +
+      `One container is one mapping (U1 handles it once per page load), so the trigger that is reachable on the page was kept: ${merged.kept}.`,
+      'warn', 14000);
+  }
 });
 
 /** What was narrowed, and why it had to be. */
@@ -17171,6 +19694,13 @@ document.getElementById('applyAllBtn').addEventListener('click', async (e) => {
 // not currently looking at. Rather than merging hostnames automatically —
 // which would fuse unrelated tenants on shared domains like *.railway.app —
 // find the likely siblings and offer to move the work.
+// A page URL belongs to THIS site: same host, or a related one. A mapping
+// saved while another tab was in front recorded a Gemini page as the place it
+// was captured — and "Test all pages" then set off to test it there.
+function sameSiteUrl(u) {
+  try { const h = new URL(u).hostname; return !!h && (h === currentHostname || !!hostRelation(h, currentHostname)); }
+  catch { return false; }
+}
 function hostRelation(a, b) {
   if (!a || !b || a === b) return null;
   // One is a subdomain of the other: member.molina.com ↔ molina.com.
@@ -17565,7 +20095,9 @@ async function getPatchSource(types) {
     const res = await fetch(chrome.runtime.getURL('u1-patch.js'));
     const src = await res.text();
 
-    const wanted = new Set(['core']);
+    // `focus` too: the focus-ring corrections are not tied to any component —
+    // a logo link is on every page whether or not anything is mapped.
+    const wanted = new Set(['core', 'focus']);
     (types || []).forEach((t) => wanted.add(t));
     // The popup a combobox opens IS a listbox, and the corrections for the open
     // list live with the role rather than with one of its two callers. Without
@@ -17642,7 +20174,7 @@ function qaCheckFor(m) {
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
   const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [],
-        linkLists = [], crumbs = [], statics = [];
+        linkLists = [], crumbs = [], statics = [], hides = [], orders = [];
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
@@ -17666,6 +20198,9 @@ async function buildDeployableCode(list, hostname) {
     if (!m || typeof m !== 'object') continue;
     if (m.custom === 'keyboardGrid') grids.push(m);
     else if (m.custom === 'keyboardClickable') clickables.push(m);
+    // Engine-carrying too: each call is nothing without its region.
+    else if (m.custom === 'hideElement') hides.push(m);
+    else if (m.custom === 'focusOrder') orders.push(m);
     // Must sit in an engine-carrying bucket, not with the plain customs: its
     // call is meaningless without the engine source shipped alongside it.
     else if (m.custom === 'keyboardTabs') tabStrips.push(m);
@@ -17738,11 +20273,13 @@ async function buildDeployableCode(list, hostname) {
     fixesParts.push(`/* ---- Accessible names ---- */\n` +
       `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1ApplyNames();`);
   }
-  if (grids.length || clickables.length || tabStrips.length || linkLists.length || crumbs.length) {
+  if (grids.length || clickables.length || tabStrips.length || linkLists.length || crumbs.length || hides.length || orders.length) {
     // Only the engines these mappings actually call.
     const kinds = [];
     if (grids.length) kinds.push('grid');
     if (clickables.length) kinds.push('clickable');
+    if (hides.length) kinds.push('hide');
+    if (orders.length) kinds.push('focusorder');
     if (tabStrips.length) kinds.push('tabs');
     if (linkLists.length) kinds.push('linklist');
     if (crumbs.length) kinds.push('breadcrumb');
@@ -17761,6 +20298,10 @@ async function buildDeployableCode(list, hostname) {
       header(l) + `\nwindow.__u1FixLinkListFromMapping(${JSON.stringify(l.primary)}, ${JSON.stringify(l.config, null, 2)});`
     )).concat(crumbs.map(b =>
       header(b) + `\nwindow.__u1InstallBreadcrumbFromMapping(${JSON.stringify(b.primary)}, ${JSON.stringify(b.config, null, 2)});`
+    )).concat(hides.map(h =>
+      header(h) + `\nwindow.__u1HideFromAll(${JSON.stringify({ selector: h.primary }, null, 2)});`
+    )).concat(orders.map(o =>
+      header(o) + `\nwindow.__u1FocusOrderFromMapping(${JSON.stringify(o.primary)}, ${JSON.stringify({ order: (o.config && o.config.order) || '' }, null, 2)});`
     )).join('\n\n');
     fixesParts.push(
       `/* ---- Engines (grid / clickable / tab strip / breadcrumb) ----\n` +
@@ -17900,6 +20441,8 @@ function testStepRowHtml(step) {
 }
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'u1-locate') { jumpToMapping(msg); return; }
+  if (msg.type === 'u1-locate-off') { setLocateButton(false); return; }
   // During an element scan the specialist is looking at the Scan tab, and
   // #testResults lives in Picker where they cannot see it. Send the live steps
   // where they are actually watching.
@@ -18035,9 +20578,17 @@ async function renderElemScanSaved(list) {
   if (!box) return;
   const real = list.filter(m => m && typeof m === 'object' && m.type);
   const testAllBtn = document.getElementById('elemScanBtn');
-  if (testAllBtn) testAllBtn.textContent = real.length ? `🧪 Test all mappings (${real.length})` : '🧪 Test every mapping';
+  if (testAllBtn) testAllBtn.textContent = real.length ? `Test all pages (${real.length})` : 'Test all pages';
   if (!real.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
   box.style.display = '';
+  const testedAll = await loadElemTested();
+  // Verdicts from the LAST run only. The per-key store keeps every mapping's
+  // most recent verdict for ever, so a ✕ from a run three engine fixes ago sat
+  // on the row as if it were today's. Anything older than the last run is
+  // shown dimmed as "earlier" and counted as untested on the page's scoreboard.
+  const lastRun = await loadElemLastRun();
+  const freshSince = lastRun ? lastRun.at - 120000 : 0;
+  const testedMap = new Map([...testedAll.entries()].map(([k, v]) => [k, { ...v, stale: !!(v && v.at && v.at < freshSince) }]));
   // Named exactly as the Mappings drawer names them — the same id badge, the
   // same type pill, the same selector, in the same order. A mapping you are
   // looking for here is one you already recognise from down there, and
@@ -18052,17 +20603,70 @@ async function renderElemScanSaved(list) {
       <td><span class="mh-type">${escapeHtml(m.type)}</span></td>
       <td class="sm-status" data-status-for="${escapeHtml(mk)}"><span class="sm-status-dot checking"></span><span class="mh-sel">${escapeHtml(sel)}</span></td>
       <td class="sm-actions">
+        ${(() => { const tv = testedMap.get(mk); return tv ? `<button type="button" class="sm-test ${escapeHtml(tv.status)}${tv.stale ? ' stale' : ''}" data-open-result="${escapeHtml(mk)}" title="${tv.stale ? 'From an EARLIER run' : 'Last run'}: ${escapeHtml(tv.status)} · ${new Date(tv.at).toLocaleString()} — click for the result">${escapeHtml(ELEM_CHIP[tv.status] || tv.status)}${tv.stale ? ' (earlier)' : ''}</button>` : `<span class="sm-test untested" title="Not tested yet">– untested</span>`; })()}
         <button class="btn-ghost btn-xs" data-testone="${escapeHtml(mk)}" title="Run the keyboard test on this one">🧪</button>
         <button class="btn-ghost btn-xs" data-editone="${escapeHtml(mk)}" title="Edit this mapping">✎</button>
         <button class="btn-ghost btn-xs" data-delone="${escapeHtml(mk)}" title="Remove">✕</button>
       </td>
     </tr>`;
   }).join('');
-  box.innerHTML =
-    `<table class="saved-mappings-table">
-      <thead><tr><th>ID</th><th>Type</th><th>Selector</th><th></th></tr></thead>
-      <tbody>${rowsHtml}</tbody>
-    </table>`;
+  // One accordion per page, this page first and open — the same shape the
+  // results and the drawer use, so "which page is this on" is answered by
+  // where the row sits, not by reading a URL.
+  const tabNow = await getTab().catch(() => null);
+  const hereUrl = cleanPageUrl(tabNow && tabNow.url);
+  const perRow = real.map(m => {
+    const mk = mappingKey(m);
+    const start = rowsHtml.indexOf(`data-key="${escapeHtml(mk)}"`);
+    if (start === -1) return { m, html: '' };
+    const trStart = rowsHtml.lastIndexOf('<tr ', start);
+    const trEnd = rowsHtml.indexOf('</tr>', start) + 5;
+    return { m, html: rowsHtml.slice(trStart, trEnd) };
+  });
+  const groups = new Map();
+  for (const { m, html } of perRow) {
+    const k = (m.pageUrl && sameSiteUrl(m.pageUrl)) ? cleanPageUrl(m.pageUrl) : '__unknown';
+    if (!groups.has(k)) groups.set(k, { k, url: m.pageUrl || '', title: m.pageTitle || '', rows: [], keys: [] });
+    groups.get(k).rows.push(html);
+    groups.get(k).keys.push(mappingKey(m));
+  }
+  // The page's own scoreboard, on its heading: how many mappings, how many of
+  // them were ever tested, and how those came out.
+  const pagePills = (g) => {
+    const st = g.keys.map(k => { const v = testedMap.get(k); return v && !v.stale ? v.status : null; }).filter(Boolean);
+    const n = (x) => st.filter(v => v === x).length;
+    const tested = st.filter(v => ['pass', 'warn', 'fail'].includes(v)).length;
+    return `<span class="pills sm-page-pills" title="${g.keys.length} mappings · ${tested} tested">` +
+      `<span class="pill">${g.keys.length} mapped</span>` +
+      (tested ? `<span class="pill">${tested} tested</span>` : `<span class="pill">untested</span>`) +
+      (n('pass') ? `<span class="pill pass" title="passed">✓ ${n('pass')}</span>` : '') +
+      (n('fail') ? `<span class="pill fail" title="failed">✕ ${n('fail')}</span>` : '') +
+      (n('warn') ? `<span class="pill warn" title="warnings">⚠ ${n('warn')}</span>` : '') +
+      (n('error') ? `<span class="pill fail" title="could not run">? ${n('error')}</span>` : '') +
+      (n('notapplied') ? `<span class="pill warn" title="not applied on that page">${n('notapplied')} not applied</span>` : '') +
+      `</span>`;
+  };
+  const pathOf = (u) => { try { const x = new URL(u); return (x.pathname + x.search) || '/'; } catch { return u; } };
+  const order = [...groups.values()].sort((a, b) => {
+    const rank = (g) => g.k === hereUrl ? 0 : g.k === '__unknown' ? 2 : 1;
+    return rank(a) - rank(b) || (a.title || a.url).localeCompare(b.title || b.url);
+  });
+  const table = (rows) => `<div class="sm-scroll"><table class="saved-mappings-table"><thead><tr><th>ID</th><th>Type</th><th>Selector</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+  box.innerHTML = order.length <= 1
+    ? table(order.length ? order[0].rows : [])
+    : order.map((g) => {
+        const isHere = g.k === hereUrl;
+        const name = g.k === '__unknown' ? 'Older mappings — no page recorded; tested on whichever page has them' : (g.title || pathOf(g.url));
+        return `<details class="mapping-page elem-page${isHere ? ' is-here' : ''}"${isHere ? ' open' : ''}>
+          <summary><span class="elem-page-title">${escapeHtml(name)}${isHere ? ' <span class="sc-ev-note">— this page</span>' : ''}</span>${pagePills(g)}${g.url && !isHere ? `<a class="elem-page-link" href="${escapeHtml(g.url)}" data-goto="${escapeHtml(g.url)}" title="${escapeHtml(g.url)}">↗ ${escapeHtml(pathOf(g.url).slice(0, 32))}</a>` : ''}</summary>
+          ${table(g.rows)}
+        </details>`;
+      }).join('');
+  box.querySelectorAll('.elem-page-link').forEach(a => a.addEventListener('click', async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const t = await getTab().catch(() => null);
+    if (t) chrome.tabs.update(t.id, { url: a.dataset.goto }).catch(() => {});
+  }));
 
   box.querySelectorAll('[data-testone]').forEach(b => {
     b.addEventListener('click', () => runElementScan(b.dataset.testone));
@@ -18079,6 +20683,53 @@ async function renderElemScanSaved(list) {
   box.querySelectorAll('[data-delone]').forEach(b => {
     b.addEventListener('click', () => deleteSavedMapping(b.dataset.delone));
   });
+
+  // Hover a row, see the element outlined on the page — the same affordance
+  // the Mappings drawer has, for the same reason: a selector string tells you
+  // nothing about WHICH thing on screen it is. Same debounce, same fallback:
+  // when the primary is a widget that's hidden while closed (a listbox's list,
+  // a dialog's box), it has no box to outline, so the trigger (firstArg) is
+  // lit instead. Marks are cleared on leaving the row or the table.
+  let hoverTimer = null;
+  let hoverSel = '';
+  const stopHover = () => {
+    clearTimeout(hoverTimer);
+    hoverSel = '';
+    getTab().then((t) => {
+      if (t && isInjectable(t)) inPage(t.id, () => window.__u1SelectorIntel.clearMarks());
+    }).catch(() => {});
+  };
+  box.querySelectorAll('.saved-mappings-row').forEach(row => {
+    row.addEventListener('mouseenter', () => {
+      const m = real.find(m2 => mappingKey(m2) === row.dataset.key);
+      const sel = m ? (m.primary || m.firstArg || '') : '';
+      if (!sel || sel === hoverSel) return;
+      const alt = (m && m.firstArg && m.firstArg !== sel) ? m.firstArg : '';
+      hoverSel = sel;
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(async () => {
+        try {
+          const tab = await getTab();
+          if (!tab || !isInjectable(tab)) return;
+          await inPage(tab.id, (s, a) => {
+            const S = window.__u1SelectorIntel;
+            const shown = (x) => {
+              try {
+                const el = document.querySelector(x);
+                if (!el) return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+              } catch { return false; }
+            };
+            if (!shown(s) && a && shown(a)) return S.highlightSelector(a);
+            return S.highlightSelector(s);
+          }, [sel, alt]);
+        } catch { /* the page went away or turned restricted mid-hover */ }
+      }, 180);
+    });
+    row.addEventListener('mouseleave', stopHover);
+  });
+  box.addEventListener('mouseleave', stopHover);
 
   // Whether each one matches something actually on the current page — real,
   // measured status (the same check the Mappings drawer's "On this page"
@@ -18288,6 +20939,34 @@ async function rememberDeclinedFixes(keys) {
  * nothing is declined on anyone's behalf, and a page reload clears the
  * leftover itself.
  */
+// ─────────────────────────────────────────────────────────────────────────────
+//  "I went over this one" — the reviewer's own tick on a mapping
+//
+//  After an AI run the list is full of rows nobody has looked at. The tick is
+//  a reading aid for that pass: which ones are checked, which still need a
+//  look. It is about the person, not the mapping, so it lives OUTSIDE the
+//  mapping record — a private-prefixed key (see store.js: stripped from
+//  backups, refused on import, never synced), keyed by the mapping's durable
+//  id. Nothing in the export, the report or the server ever sees it.
+// ─────────────────────────────────────────────────────────────────────────────
+const reviewedStoreKey = (host) => (U1Store.PRIVATE_PREFIX || '__') + 'reviewed_' + (host || currentHostname);
+const reviewIdOf = (m) => (m && typeof m === 'object' && m.id) ? m.id : mappingKey(m);
+
+async function loadReviewed() {
+  try {
+    const k = reviewedStoreKey();
+    const v = (await U1Store.get([k]))[k];
+    return new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  } catch { return new Set(); }
+}
+
+async function setReviewed(ids, on) {
+  const have = await loadReviewed();
+  for (const id of ids || []) { if (!id) continue; if (on) have.add(id); else have.delete(id); }
+  try { await U1Store.setLocalOnly({ [reviewedStoreKey()]: [...have] }); } catch {}
+  return have;
+}
+
 async function selfAppliedKeys() {
   try {
     const key = '__selfApplied_' + currentHostname;
@@ -18377,6 +21056,7 @@ async function deleteSavedMapping(mk) {
   const gone = list[i];
   list.splice(i, 1);
   await U1Store.set({ [key]: list });
+  try { await setReviewed([reviewIdOf(gone)], false); } catch {}
 
   // Deleted means deleted EVERYWHERE — including from the standing declines.
   // The page still runs what U1 already wrote, and that leftover used to be
@@ -18413,10 +21093,204 @@ async function deleteSavedMapping(mk) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  🎯 Find on page — from the element to its row
+//
+//  The list says `.landing-module>div>a`; the page shows a "Learn more". Going
+//  from the second to the first meant reading selectors off thirty rows. So:
+//  arm, click the thing on the page, and its row opens here — or the panel
+//  says there is no mapping for it, which is an answer too.
+//
+//  The match is made IN the page, by element: the nearest mapped ancestor
+//  (or the element itself), else the smallest mapped thing inside what was
+//  clicked (a card holding a mapped link). Selector strings never compare.
+// ─────────────────────────────────────────────────────────────────────────────
+let locateArmed = false;
+
+function setLocateButton(on) {
+  locateArmed = on;
+  const b = document.getElementById('locateMappingBtn');
+  if (!b) return;
+  b.classList.toggle('on', on);
+  b.textContent = on ? '■ Click an element on the page… (Esc to stop)' : '🎯 Find on page';
+}
+
+async function armLocateOnPage() {
+  const tab = await getTab();
+  if (!isInjectable(tab)) {
+    showNotice(document.getElementById('mappingsStatus'), 'Cannot run on this page.', 'error', 4000);
+    return;
+  }
+  const key = storageKey('mappings', currentHostname);
+  const list = (await U1Store.get([key]))[key] || [];
+  const owned = [];
+  list.forEach((m) => {
+    if (!m || typeof m !== 'object' || !m.type) return;
+    for (const sel of new Set([m.primary, m.firstArg].filter(Boolean))) owned.push({ key: mappingKey(m), type: m.type, sel });
+  });
+  await inPage(tab.id, (owned, on) => {
+    const W = window;
+    if (W.__u1Locate) { W.__u1Locate.off(); W.__u1Locate = null; }
+    if (!on) return;
+    const q = (s) => { try { return Array.from(document.querySelectorAll(s)); } catch { return []; } };
+    const own = owned.map(o => ({ ...o, els: q(o.sel) })).filter(o => o.els.length);
+    const S = W.__u1SelectorIntel;
+    const box = document.createElement('div');
+    box.setAttribute('data-u1-locate', '');
+    box.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;border:2px solid #6c4cf1;background:rgba(108,76,241,.12);border-radius:3px;transition:all .06s;display:none';
+    document.documentElement.appendChild(box);
+    const prevCursor = document.documentElement.style.cursor;
+    document.documentElement.style.cursor = 'crosshair';
+    const direct = (el) => {
+      // Nearest mapped ancestor-or-self.
+      for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+        const o = own.find(o => o.els.includes(n));
+        if (o) return o;
+      }
+      // Else the smallest mapped thing inside.
+      let best = null, bestArea = Infinity;
+      for (const o of own) for (const e of o.els) {
+        if (!el.contains(e)) continue;
+        const r = e.getBoundingClientRect(), a = r.width * r.height;
+        if (a < bestArea) { best = o; bestArea = a; }
+      }
+      return best;
+    };
+    // What the clicked thing OPENS. A hamburger button is not inside the menu
+    // and the menu is not inside it — the button toggles #navbarCollapse and
+    // the mapped <ul> lives there. The markup says so (aria-controls,
+    // Bootstrap's data-target / data-bs-target, an in-page href), so follow it.
+    const opens = (el) => {
+      for (let n = el, hops = 0; n && n !== document.documentElement && hops < 3; n = n.parentElement, hops++) {
+        const ref = n.getAttribute('aria-controls') || n.getAttribute('data-bs-target') ||
+                    n.getAttribute('data-target') || ((n.getAttribute('href') || '').startsWith('#') ? n.getAttribute('href') : '');
+        if (!ref) continue;
+        const id = ref.replace(/^#/, '').split(/\s+/)[0];
+        const t = id && document.getElementById(id);
+        if (t && t !== n && !t.contains(n)) return t;
+      }
+      return null;
+    };
+    const hitFor = (el) => {
+      const d = direct(el);
+      if (d) return d;
+      const t = opens(el);
+      if (!t) return null;
+      const o = direct(t);
+      return o ? Object.assign({}, o, { via: 'opens', viaSel: '#' + t.id }) : null;
+    };
+    const move = (e) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (!el || el === box) { box.style.display = 'none'; return; }
+      const hit = hitFor(el);
+      const target = hit ? (hit.els.find(x => x === el || x.contains(el) || el.contains(x)) || el) : el;
+      const r = target.getBoundingClientRect();
+      box.style.display = 'block';
+      box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+      box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
+      box.style.borderColor = hit ? '#22c55e' : '#d97706';
+      box.style.background = hit ? 'rgba(34,197,94,.12)' : 'rgba(217,119,6,.10)';
+    };
+    const click = (e) => {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (!el) return;
+      const hit = hitFor(el);
+      let sel = '';
+      try { sel = S && S.robustSelector ? (S.robustSelector(el) || '') : ''; } catch {}
+      chrome.runtime.sendMessage({
+        type: 'u1-locate', key: hit ? hit.key : '', mtype: hit ? hit.type : '', msel: hit ? hit.sel : '',
+        via: hit && hit.via ? hit.via : '', viaSel: hit && hit.viaSel ? hit.viaSel : '',
+        sel, tag: el.tagName.toLowerCase(), text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+      });
+    };
+    const keyd = (e) => { if (e.key === 'Escape') { e.preventDefault(); off(); chrome.runtime.sendMessage({ type: 'u1-locate-off' }); } };
+    const off = () => {
+      document.removeEventListener('mousemove', move, true);
+      document.removeEventListener('click', click, true);
+      document.removeEventListener('mousedown', swallow, true);
+      document.removeEventListener('mouseup', swallow, true);
+      document.removeEventListener('keydown', keyd, true);
+      document.documentElement.style.cursor = prevCursor;
+      box.remove();
+      W.__u1Locate = null;
+    };
+    const swallow = (e) => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); };
+    document.addEventListener('mousemove', move, true);
+    document.addEventListener('click', click, true);
+    document.addEventListener('mousedown', swallow, true);
+    document.addEventListener('mouseup', swallow, true);
+    document.addEventListener('keydown', keyd, true);
+    W.__u1Locate = { off };
+  }, [owned, !locateArmed]);
+  setLocateButton(!locateArmed);
+}
+
+document.getElementById('locateMappingBtn')?.addEventListener('click', () => { armLocateOnPage().catch(() => {}); });
+
+/** A page click came back: open that row, or say there is none. */
+async function jumpToMapping(msg) {
+  const status = document.getElementById('mappingsStatus');
+  const what = `<${msg.tag}>${msg.text ? ` “${msg.text}”` : ''}${msg.sel ? ` (${msg.sel})` : ''}`;
+  if (typeof setPickerPane === 'function') setPickerPane('mappings');
+  if (!msg.key) {
+    showNotice(status, `No mapping for ${what}. Still armed — click something else, or Esc to stop.`, 'warn', 6000);
+    return;
+  }
+  const key = storageKey('mappings', currentHostname);
+  const list = (await U1Store.get([key]))[key] || [];
+  const idx = list.findIndex(m => mappingKey(m) === msg.key);
+  if (idx < 0) { showNotice(status, `That mapping is no longer in the list.`, 'error', 5000); return; }
+  const container = document.getElementById('mappingsList');
+  let row = container && container.querySelector(`.mapping-item[data-idx="${idx}"]`);
+  if (!row) {
+    // Hidden by the filter (another page, or already reviewed): widen to All.
+    setMappingsFilter('all');
+    await loadMappingsList();
+    row = container && container.querySelector(`.mapping-item[data-idx="${idx}"]`);
+  }
+  if (!row) return;
+  // A row nested inside a dialog's row is only reachable once its parent opens.
+  const parentRow = row.parentElement && row.parentElement.closest('.mapping-item');
+  for (const r of [parentRow, row]) {
+    if (!r) continue;
+    const head = r.querySelector(':scope > .mapping-head');
+    if (head && head.getAttribute('aria-expanded') !== 'true') head.click();
+  }
+  container.querySelectorAll('.mapping-item.located').forEach(r => r.classList.remove('located'));
+  row.classList.add('located');
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => row.classList.remove('located'), 2600);
+  showNotice(status, msg.via === 'opens'
+    ? `${what} is not mapped itself — it opens ${msg.viaSel}, and the mapping in there is ${msg.mtype} ${msg.msel}. ` +
+      `The toggle is a native <button> with aria-expanded and aria-controls, so it needs no mapping of its own.`
+    : `${msg.mtype} ${msg.msel} — that is the mapping for ${what}.`, 'success', 9000);
+}
+
 async function loadMappingsList() {
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const list = stored[key] || [];
+  // A mapping filed under another site's page (the tab in front at save time
+  // was somewhere else) is corrected here: the page is forgotten, the mapping
+  // kept. Silent, and said in the console — the record was wrong, not the work.
+  {
+    const wrong = list.filter(m => m && typeof m === 'object' && m.pageUrl && !sameSiteUrl(m.pageUrl));
+    if (wrong.length) {
+      wrong.forEach(m => { console.info('[U1 Studio] mapping', m.id || m.primary, 'was recorded on', m.pageUrl, '— not this site; page forgotten'); m.pageUrl = ''; m.pageTitle = ''; });
+      try { await U1Store.set({ [key]: list }); } catch {}
+    }
+  }
+  // Two mappings on one container are one mapping (containerKey). Healed here,
+  // before either list renders, so what was stored before the save path
+  // refused it does not keep blocking the good one on every Apply All.
+  try {
+    const collapsed = await collapseContainerDuplicates(list, key);
+    if (collapsed.length) {
+      const el = document.getElementById('mappingsStatus');
+      if (el) showNotice(el, describeCollapse(collapsed), 'warn', 20000);
+    }
+  } catch {}
   renderElemScanSaved(list);
   const container = document.getElementById('mappingsList');
   const applyAllRow = document.getElementById('applyAllRow');
@@ -18489,12 +21363,35 @@ async function loadMappingsList() {
   const tab = await getTab();
   const hereUrl = cleanPageUrl(tab && tab.url);
   const onPage = (m) => mappingOnPage(m, present, hereUrl);
+  const testedMap = await loadElemTested();
   const onPageCount = list.filter(onPage).length;
   // Show how many mappings each tab holds, so it's obvious when something is hidden.
   const onPageBtn = document.getElementById('filterOnPage');
   const allBtn    = document.getElementById('filterAll');
   if (onPageBtn) onPageBtn.textContent = `On this page (${onPageCount})`;
   if (allBtn)    allBtn.textContent    = `All (${list.length})`;
+
+  // The reviewer's ticks. Pruned to what still exists, so a deleted or
+  // collapsed row does not keep counting as reviewed.
+  const reviewed = await loadReviewed();
+  const liveIds = new Set(list.map(reviewIdOf));
+  const isReviewed = (m) => reviewed.has(reviewIdOf(m));
+  const reviewedN = list.filter(isReviewed).length;
+  const toReviewN = list.length - reviewedN;
+  {
+    const stale = [...reviewed].filter((id) => !liveIds.has(id));
+    if (stale.length) setReviewed(stale, false);
+    const btn = document.getElementById('filterToReview');
+    if (btn) btn.textContent = `To review (${toReviewN})`;
+    const cnt = document.getElementById('reviewCount');
+    if (cnt) {
+      cnt.textContent = toReviewN === 0
+        ? `✓ All ${list.length} reviewed`
+        : `Reviewed ${reviewedN} of ${list.length} · ${toReviewN} to review`;
+      cnt.classList.toggle('done', toReviewN === 0);
+      cnt.title = 'Your own pass over the list. Kept in this extension only — never in the export, the report or on the server.';
+    }
+  }
   // The count on the Mappings pane's tab, so the drawer says how full it is
   // from the other pane.
   const paneN = document.getElementById('pickerMappingsCount');
@@ -18505,8 +21402,14 @@ async function loadMappingsList() {
     const legacy = typeof m === 'string';
     const shot = m && typeof m === 'object' ? safeImg(m.screenshot) : '';
     const hasShot = !!shot;
-    const type = (m && typeof m === 'object' && m.type) ? m.type : 'mapping';
-    const primary = (m && typeof m === 'object') ? (m.primary || m.firstArg || '') : String(m).slice(0, 40);
+    const isStatic = m && typeof m === 'object' && m.custom === 'staticFix';
+    const type = isStatic ? 'static fix' : (m && typeof m === 'object' && m.type) ? m.type : 'mapping';
+    // A static fix is a rule, not an element: the row says what the rule does,
+    // in the scan's own words, instead of "window.__u1Statics[...] = {}".
+    const staticRule = isStatic ? (SCAN_RULES[m.primary] || {}) : null;
+    const primary = isStatic
+      ? (staticRule.title || ({ contrast: 'Text too faint — darker shade on the flagged elements', exclude: 'Not reachable at all' })[m.primary] || m.primary)
+      : (m && typeof m === 'object') ? (m.primary || m.firstArg || '') : String(m).slice(0, 40);
     // A menu's focus-opens-submenu switch is behaviour you cannot see in the
     // selector line, and the code below is folded — so the header says it,
     // on or off, for every menu. Read from the saved config, which is what
@@ -18521,40 +21424,92 @@ async function loadMappingsList() {
     // toggle for everything rendered after this chip. role="button" gives it
     // the same semantics and keyboard behaviour without the nesting problem —
     // the same shape .mh-thumb already uses for its own click-to-view.
+    // The reviewer's tick. Same nested-role="button" shape as the focus-open
+    // chip, for the same reason (a <button> may not hold a <button>).
+    const rv = !legacy && isReviewed(m);
+    const reviewChip = legacy ? '' :
+      `<span class="mh-flag mh-flag-toggle mh-review ${rv ? 'on' : 'off'}" data-review="${idx}" role="button" tabindex="0" aria-pressed="${rv ? 'true' : 'false'}" title="${rv
+          ? 'Reviewed — you went over this one. Click to clear.'
+          : 'Not reviewed yet. Click once you have gone over it. Kept in this extension only.'}">${rv ? '✓ reviewed' : '○ review'}</span>`;
+    // Where it was captured, one click away. The same navigation the Scan
+    // table's "go there" makes — in THIS tab, so the panel stays on the site.
+    // Dim when you are already there, so the eye is not sent nowhere.
+    const pageUrl = (m && typeof m === 'object' && m.pageUrl) ? m.pageUrl : '';
+    const here = pageUrl && cleanPageUrl(pageUrl) === hereUrl;
+    const pathOf = (u) => { try { const x = new URL(u); return x.pathname + x.search || '/'; } catch { return u; } };
+    const gotoChip = pageUrl
+      ? `<span class="mh-flag mh-goto${here ? ' here' : ''}" data-goto="${escapeHtml(pageUrl)}" role="${here ? 'note' : 'button'}" tabindex="${here ? '-1' : '0'}" title="${escapeHtml(here
+            ? 'Captured on this page: ' + pageUrl
+            : 'Open the page this was captured on: ' + (m.pageTitle ? m.pageTitle + ' — ' : '') + pageUrl)}">↗ ${escapeHtml(here ? 'this page' : pathOf(pageUrl).slice(0, 28) + (pathOf(pageUrl).length > 28 ? '…' : ''))}</span>`
+      : '';
     const focusChip = type === 'menu'
       ? `<span class="mh-flag mh-flag-toggle ${focusOpen ? 'on' : 'off'}" data-toggle-focusopen="${idx}" role="button" tabindex="0" aria-pressed="${focusOpen ? 'true' : 'false'}" title="${focusOpen
             ? 'Focus opens submenu: ON — Tab/focus on a trigger opens its submenu, Enter/Space does what click does. Click to turn off.'
             : 'Focus opens submenu: off. Click to turn on — Tab/focus on a trigger will open its submenu the way hover does.'}">⌨ focus-open ${focusOpen ? 'ON' : 'off'}</span>`
       : '';
-    // Collapsed accordion: header shows type + selector; body holds code + actions.
-    return `
-      <div class="mapping-item${legacy ? ' legacy' : ''}" data-idx="${idx}">
-        <button class="mapping-head" aria-expanded="false" data-idx="${idx}">
-          <span class="mh-caret">▸</span>
-          ${m && m.id ? `<span class="mh-id" title="Stable id — how the daily monitor reports this mapping if its selector breaks">${escapeHtml(m.id)}</span>` : ''}
-          <span class="mh-type">${escapeHtml(type)}</span>
-          ${focusChip}
-          <span class="mh-sel">${escapeHtml(primary)}</span>
-          ${childCount ? `<span class="mh-kids" title="Mappings for elements inside this dialog — open the row to see them">▸ ${childCount} inside</span>` : ''}
-          ${m && m.note ? `<span class="mh-note" title="${escapeHtml(m.note)}">${escapeHtml(m.note)}</span>` : ''}
-          ${hasShot ? `<span class="mh-thumb" data-idx="${idx}" title="Click to view full image">
+    // A listbox's "only Enter picks" switch — the same kind of behaviour you
+    // cannot read off the selector line.
+    const enterSel = type === 'listbox' && m && m.config
+      ? (m.config.enterSelects === true || m.config.enterSelects === 'true') : null;
+    const enterChip = type === 'listbox'
+      ? `<span class="mh-flag mh-flag-toggle ${enterSel ? 'on' : 'off'}" data-toggle-cfg="enterSelects" data-toggle-idx="${idx}" role="button" tabindex="0" aria-pressed="${enterSel ? 'true' : 'false'}" title="${enterSel
+            ? 'Enter selects: ON — arrows only move the highlight, focus stays on the list, Enter/Space picks. Click to turn off.'
+            : 'Enter selects: off. Click to turn on when an option acts as soon as it is focused (arrowing navigates the page).'}">↵ enter-selects ${enterSel ? 'ON' : 'off'}</span>`
+      : '';
+    // The last dynamic-scan verdict for this mapping, so the drawer says what
+    // passed without opening the Scan tab.
+    const tv = testedMap.get(mappingKey(m));
+    const testChip = tv && ['pass', 'warn', 'fail', 'error'].includes(tv.status)
+      ? `<span class="mh-flag mh-flag-toggle mh-test ${tv.status}" data-open-result="${escapeHtml(mappingKey(m))}" role="button" tabindex="0" title="Open this result in the Dynamic scan · ${new Date(tv.at).toLocaleString()}: ${tv.status}${tv.fail ? ` · ${tv.fail} failing step${tv.fail === 1 ? '' : 's'}` : ''}${tv.warn ? ` · ${tv.warn} warning${tv.warn === 1 ? '' : 's'}` : ''}">${tv.status === 'pass' ? '✓ passed' : tv.status === 'warn' ? '! warnings' : tv.status === 'fail' ? '✕ failed' : '? error'}</span>`
+      : '';
+    // Collapsed accordion: the header carries only what tells rows apart —
+    // type, the full selector, and the EXCEPTIONS: a test that did not pass,
+    // a switch that is not at its default, a row still to review, mappings
+    // nested inside. Everything that is the same on every row (a green
+    // "reviewed" on 42 of 45, "enter-selects off", the stable id, the page
+    // path on the page you are on, the thumbnail) moved into the body,
+    // where it is one click away and no longer costs the eye anything.
+    // `reviewed` and `passed` stay two things: one is a person's tick, the
+    // other the dynamic scan's verdict, and neither stands in for the other.
+    const idChip = m && m.id ? `<span class="mh-id" title="Stable id — how the daily monitor reports this mapping if its selector breaks">${escapeHtml(m.id)}</span>` : '';
+    const thumbHtml = hasShot ? `<span class="mh-thumb" data-idx="${idx}" title="Click to view full image">
             <img class="mh-img" src="${shot}" alt="Element preview">
             <img class="mh-preview" src="${shot}" alt="">
-          </span>` : ''}
+          </span>` : '';
+    const noteHtml = m && m.note ? `<span class="mh-note" title="${escapeHtml(m.note)}">${escapeHtml(m.note)}</span>` : '';
+    const headTest = tv && tv.status !== 'pass' ? testChip : '';
+    const headFocus = focusOpen ? focusChip : '';
+    const headEnter = enterSel ? enterChip : '';
+    const headReview = rv ? '' : reviewChip;
+    const headGoto = here ? '' : gotoChip;
+    return `
+      <div class="mapping-item${legacy ? ' legacy' : ''}${rv ? ' reviewed' : ''}" data-idx="${idx}">
+        <button class="mapping-head" aria-expanded="false" data-idx="${idx}">
+          <span class="mh-caret">▸</span>
+          <span class="mh-type">${escapeHtml(type)}</span>
+          <span class="mh-sel">${escapeHtml(primary)}</span>
+          ${headTest}${headFocus}${headEnter}${headReview}
+          ${childCount ? `<span class="mh-kids" title="Mappings for elements inside this dialog — open the row to see them">▸ ${childCount} inside</span>` : ''}
+          ${headGoto}
         </button>
         <div class="mapping-body" style="display:none">
+          <div class="mapping-meta">
+            ${headReview ? '' : reviewChip}${headTest ? '' : testChip}${headFocus ? '' : focusChip}${headEnter ? '' : enterChip}${idChip}${headGoto ? '' : gotoChip}${thumbHtml}
+          </div>
+          ${noteHtml ? `<div class="mapping-meta-note">${noteHtml}</div>` : ''}
           ${childrenHtml ? `<div class="mapping-children">${childrenHtml}</div>` : ''}
           ${type === 'dialog' && primary ? `<button type="button" class="btn-outline btn-xs mapping-add-inside" data-scope="${escapeHtml(primary)}"
               title="Open it on the page, then scan just this dialog — whatever is built nests under this row">+ Add a mapping inside this dialog</button>` : ''}
-          <pre>${escapeHtml(code)}</pre>
+          ${isStatic ? `<div class="map-mode-hint static-fix-what"><strong>What it does:</strong> ${escapeHtml((STATIC_FIXABLE[m.primary] || {}).does || (m.primary === 'contrast' ? `Sets a darker text colour on ${((m.config || {}).rules || []).reduce((n, r) => n + ((r.selectors || []).length), 0)} elements the scan found too faint, as one stylesheet rule.` : m.primary === 'exclude' ? `Takes ${escapeHtml((m.config || {}).selector || '')} out of the tab order and out of the screen reader.` : 'A rule applied to every matching element on every page.'))} Applies on every page of the site, now and in the export — it is a rule, not one element.</div>` : ''}
+          <details class="mapping-code"><summary>Code</summary><pre>${escapeHtml(code)}</pre></details>
           <div class="mapping-actions">
-            <button class="apply-btn" data-idx="${idx}" data-tip="${legacy ? 'Legacy — re-add' : 'Apply on page'}" title="${legacy ? 'Legacy string — cannot auto-apply, please re-add' : 'Apply on page'}"${legacy ? ' disabled' : ''}>▶</button>
-            <button class="test-btn" data-idx="${idx}" data-tip="Test" title="Test accessibility + keyboard navigation"${legacy ? ' disabled' : ''}>🧪</button>
-            <button class="edit-btn" data-idx="${idx}" data-tip="Edit" title="Edit this mapping"${legacy ? ' disabled' : ''}>✎</button>
-            <button class="shot-btn" data-idx="${idx}" data-tip="Screenshot" title="Capture/refresh screenshot (open the element's page first)"${legacy ? ' disabled' : ''}>📷</button>
-            <button class="img-btn" data-idx="${idx}" data-tip="Upload image" title="Upload your own image"${legacy ? ' disabled' : ''}>🖼️</button>
-            <button class="ask-btn" data-idx="${idx}" data-tip="Ask AI" title="Ask AI about this mapping — why it isn't working, or change it in your own words"${legacy ? ' disabled' : ''}>✨</button>
-            <button class="del-btn" data-idx="${idx}" data-tip="Remove" title="Remove">✕</button>
+            <button class="apply-btn" data-idx="${idx}" title="${legacy ? 'Legacy string — cannot auto-apply, please re-add' : 'Apply on page'}"${legacy ? ' disabled' : ''}><span class="ai">▶</span><span class="al">${legacy ? 'Re-add' : 'Apply'}</span></button>
+            <button class="test-btn" data-idx="${idx}" title="Test accessibility + keyboard navigation"${legacy ? ' disabled' : ''}><span class="ai">🧪</span><span class="al">Test</span></button>
+            <button class="edit-btn" data-idx="${idx}" title="Edit this mapping"${legacy ? ' disabled' : ''}><span class="ai">✎</span><span class="al">Edit</span></button>
+            <button class="ask-btn" data-idx="${idx}" title="Ask AI about this mapping — why it isn't working, or change it in your own words"${legacy ? ' disabled' : ''}><span class="ai">✨</span><span class="al">Ask AI</span></button>
+            <button class="shot-btn" data-idx="${idx}" title="Capture/refresh screenshot (open the element's page first)"${legacy ? ' disabled' : ''}><span class="ai">📷</span><span class="al">Screenshot</span></button>
+            <button class="img-btn" data-idx="${idx}" title="Upload your own image"${legacy ? ' disabled' : ''}><span class="ai">🖼️</span><span class="al">Image</span></button>
+            <button class="del-btn" data-idx="${idx}" title="Remove this mapping"><span class="ai">✕</span><span class="al">Remove</span></button>
           </div>
         </div>
       </div>
@@ -18566,8 +21521,21 @@ async function loadMappingsList() {
   // can differ from the chronological numbering, which made numbers look shuffled.
   // idx stays the original storage index so the row buttons still target the right one.
   const entries = [];
-  list.forEach((m, idx) => { if (mappingsFilter === 'all' || onPage(m)) entries.push({ m, idx }); });
-  entries.sort((a, b) => (((a.m && a.m.fixNo) || 1e9) - ((b.m && b.m.fixNo) || 1e9)));
+  list.forEach((m, idx) => {
+    const show = mappingsFilter === 'all' ? true
+               : mappingsFilter === 'review' ? !isReviewed(m)
+               : onPage(m);
+    if (show) entries.push({ m, idx });
+  });
+  // What needs a hand first: a failing or warning test, then a row nobody has
+  // reviewed, then the Fix # order the list has always read in. A failed
+  // listbox at the bottom of 18 green rows is the one that got missed.
+  const urgency = (m) => {
+    const tv = testedMap.get(mappingKey(m));
+    const st = tv && tv.status;
+    return st === 'fail' || st === 'error' ? 0 : st === 'warn' ? 1 : (!isReviewed(m) ? 2 : 3);
+  };
+  entries.sort((a, b) => (urgency(a.m) - urgency(b.m)) || (((a.m && a.m.fixNo) || 1e9) - ((b.m && b.m.fixNo) || 1e9)));
 
   // A mapping born INSIDE a dialog files under that dialog's row — the row
   // opens like an accordion and its interior mappings sit in it. Two ways in:
@@ -18595,16 +21563,45 @@ async function loadMappingsList() {
   }
 
   if (entries.length === 0) {
-    container.innerHTML = '<div class="empty-state">No mappings match an element on this page. Switch to “All” to see the rest.</div>';
+    container.innerHTML = mappingsFilter === 'review'
+      ? '<div class="empty-state">✓ Nothing left to review — every mapping carries your tick.</div>'
+      : '<div class="empty-state">No mappings match an element on this page. Switch to “All” to see the rest.</div>';
     if (applyAllRow) applyAllRow.style.display = 'flex';
     return;
   }
 
-  container.innerHTML = top.map((e) => {
+  const rowOf = (e) => {
     const ch = kids.get(e) || [];
     return itemHtml(e.m, e.idx,
       ch.length ? ch.map((c) => itemHtml(c.m, c.idx)).join('') : '', ch.length);
-  }).join('');
+  };
+  // "All": one accordion per page the work was done on — this page first and
+  // open, the rest by title, folded. Site-wide rules (static fixes) sit in
+  // their own group at the top. The other two filters are one page anyway.
+  if (mappingsFilter === 'all') {
+    const groups = new Map();
+    for (const e of top) {
+      const m = e.m || {};
+      const k = m.custom === 'staticFix' ? '__site' : ((m.pageUrl && sameSiteUrl(m.pageUrl)) ? cleanPageUrl(m.pageUrl) : '__unknown');
+      if (!groups.has(k)) groups.set(k, { k, url: m.pageUrl || '', title: m.pageTitle || '', rows: [] });
+      groups.get(k).rows.push(e);
+    }
+    const order = [...groups.values()].sort((a, b) => {
+      const rank = (g) => g.k === '__site' ? 0 : g.k === hereUrl ? 1 : g.k === '__unknown' ? 3 : 2;
+      return rank(a) - rank(b) || (a.title || a.url).localeCompare(b.title || b.url);
+    });
+    const pathOf = (u) => { try { const x = new URL(u); return (x.pathname + x.search) || '/'; } catch { return u; } };
+    container.innerHTML = order.map((g) => {
+      const isHere = g.k === hereUrl;
+      const name = g.k === '__site' ? 'Whole site — rules' : g.k === '__unknown' ? 'Older mappings — no page recorded' : (g.title || pathOf(g.url));
+      return `<details class="mapping-page${isHere ? ' is-here' : ''}"${isHere || g.k === '__site' ? ' open' : ''}>
+        <summary><span class="elem-page-title">${escapeHtml(name)}</span><span class="mh-kids">${g.rows.length}</span>${g.url && g.k !== '__site' ? `<span class="mh-flag mh-goto${isHere ? ' here' : ''}" data-goto="${escapeHtml(g.url)}" role="${isHere ? 'note' : 'button'}" tabindex="${isHere ? '-1' : '0'}" title="${escapeHtml(g.url)}">↗ ${escapeHtml(isHere ? 'this page' : pathOf(g.url).slice(0, 32))}</span>` : ''}</summary>
+        ${g.rows.map(rowOf).join('')}
+      </details>`;
+    }).join('');
+  } else {
+    container.innerHTML = top.map(rowOf).join('');
+  }
 
   if (applyAllRow) applyAllRow.style.display = 'flex';
   // Whatever the site is running that this list does not have. Not awaited —
@@ -18703,7 +21700,65 @@ async function loadMappingsList() {
   // find the checkbox in the edit form. Saves, re-applies on the page so the
   // behaviour actually changes rather than just the label, and redraws so the
   // chip reflects what is now really saved.
-  container.querySelectorAll('.mh-flag-toggle').forEach(chip => {
+  // The reviewer's tick: stored, then the row and the counter redraw. No
+  // apply — it changes nothing on the page, by design.
+  container.querySelectorAll('.mh-review').forEach(chip => {
+    const toggle = async (e) => {
+      e.stopPropagation();
+      const m = list[parseInt(chip.dataset.review, 10)];
+      if (!m) return;
+      chip.setAttribute('aria-disabled', 'true');
+      await setReviewed([reviewIdOf(m)], !isReviewed(m));
+      loadMappingsList();
+    };
+    chip.addEventListener('click', toggle);
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+    });
+  });
+
+  // ↗ page: go where the mapping was captured, in this tab.
+  container.querySelectorAll('.mh-goto:not(.here)').forEach(chip => {
+    const go = async (e) => {
+      e.stopPropagation();
+      const url = chip.dataset.goto;
+      if (!url) return;
+      const t = await getTab();
+      if (t) await chrome.tabs.update(t.id, { url });
+    };
+    chip.addEventListener('click', go);
+    chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } });
+  });
+
+  container.querySelectorAll('.mh-test[data-open-result]').forEach(chip => {
+    const go = (e) => { e.stopPropagation(); openElemResultFor(chip.dataset.openResult); };
+    chip.addEventListener('click', go);
+    chip.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e); } });
+  });
+
+  container.querySelectorAll('.mh-flag-toggle[data-toggle-cfg]').forEach(chip => {
+    const toggle = async (e) => {
+      e.stopPropagation();
+      const idx = parseInt(chip.dataset.toggleIdx, 10);
+      const k = chip.dataset.toggleCfg;
+      const m = list[idx];
+      if (!m || typeof m !== 'object' || !k) return;
+      chip.setAttribute('aria-disabled', 'true');
+      m.config = m.config || {};
+      m.config[k] = !(m.config[k] === true || m.config[k] === 'true');
+      await U1Store.set({ [key]: list });
+      try {
+        await applyMappingsBatch([{ type: m.type, primary: m.primary, firstArg: m.firstArg, config: m.config, overwriteRole: m.overwriteRole }]);
+      } catch {}
+      loadMappingsList();
+    };
+    chip.addEventListener('click', toggle);
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+    });
+  });
+
+  container.querySelectorAll('.mh-flag-toggle[data-toggle-focusopen]').forEach(chip => {
     const toggle = async (e) => {
       e.stopPropagation();
       const idx = parseInt(chip.dataset.toggleFocusopen, 10);
@@ -19746,6 +22801,17 @@ async function onTabChanged(tab) {
     // made "I changed tab and it did not come back" survive the first fix.
     unparkAiWorkspaceFor(newHostname);
   }
+
+  // Same host, different page: the mappings list has "is it on THIS page"
+  // baked into it — the drawer's On-this-page count and the Scan tab's
+  // saved-mappings status dots are both computed at render time from what
+  // the current page holds. loadMappingsList() only ran in the
+  // hostnameChanged branch above, so walking to another page of the same
+  // site (including via a mapping's own "go there" link) left both showing
+  // the PREVIOUS page's answer — a dot stayed red on the very page the
+  // widget lives on. Not awaited, same as renderExistingFixes below: one
+  // storage read and one presence probe, and nothing else here waits on it.
+  if (!hostnameChanged) loadMappingsList();
 
   // Run detection immediately and again after a short delay to catch async U1 init
   await refreshSetupTab(tab);

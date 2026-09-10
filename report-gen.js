@@ -297,6 +297,21 @@ function reportDescribe(m) {
       entries: reportFlattenSelectors(sel),
     };
   }
+  if (m && m.custom === 'hideElement') {
+    return {
+      label: 'Hidden from keyboard and screen readers',
+      desc: 'Removed from the keyboard tab order and from what screen readers announce (a duplicate or decorative control). Mouse behaviour unchanged.',
+      primary, entries: [],
+    };
+  }
+  if (m && m.custom === 'focusOrder') {
+    const order = String((m.config && m.config.order) || '').split(';').map((x) => x.trim()).filter(Boolean);
+    return {
+      label: 'Focus order',
+      desc: 'The keyboard tab order inside this block now follows the visual reading order, without changing the markup.',
+      primary, entries: order.map((sel, i) => [`${i + 1}.`, sel]),
+    };
+  }
   if (m && m.custom === 'keyboardClickable') {
     const role = (m.config && m.config.role) || 'button';
     return {
