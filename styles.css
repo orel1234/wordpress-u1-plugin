@@ -819,6 +819,9 @@ button {
 }
 
 .skiplink-row .row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.5px;
@@ -833,6 +836,9 @@ button {
 }
 
 .skip-remove-btn {
+  flex: 0 0 auto;
+  width: auto;
+  margin-left: auto;
   color: var(--u1-text-muted);
 }
 .skip-remove-btn:hover {
