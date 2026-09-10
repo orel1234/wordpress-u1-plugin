@@ -3866,7 +3866,13 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
   margin-bottom: 12px;
 }
 
-.btn-ghost {
+/* The gate's "Sign out" — a full-width underlined link under the request
+   box. This used to be a bare `.btn-ghost` rule and, sitting later in the
+   file than the ghost buttons' own rules, its width:100% won on every ghost
+   button in the panel: the ✕ on a skip-link row and the 🔍 on a test result
+   stretched across their rows and pushed the text beside them to one
+   character a line. Scoped to the one button it was written for. */
+#gateSignOutBlocked {
   background: transparent;
   border: none;
   color: var(--u1-text-dim);
@@ -3876,7 +3882,7 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
   padding: 12px 0 0;
 }
 
-.btn-ghost:hover {
+#gateSignOutBlocked:hover {
   color: var(--u1-text-muted);
 }
 
