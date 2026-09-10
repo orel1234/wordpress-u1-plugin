@@ -17972,7 +17972,7 @@ let elemScanAbort = false;
 const ELEM_STATUS_META = {
   fail:    { label: 'Failed',      chip: 'sev-critical' },
   warn:    { label: 'Warnings',    chip: 'sev-medium' },
-  pass:    { label: 'Passed',      chip: 'sev-low' },
+  pass:    { label: 'Passed',      chip: 'sev-pass' },
   notapplied: { label: 'Not applied here', chip: 'sev-medium' },
   absent:  { label: 'Not on page', chip: '' },
   skipped: { label: 'Skipped',     chip: '' },

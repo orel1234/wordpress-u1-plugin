@@ -3447,6 +3447,8 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
 .scan-chip.sev-high { border-color: rgba(224,138,0,0.5); color: var(--u1-orange); }
 .scan-chip.sev-medium { border-color: rgba(224,165,0,0.4); color: var(--u1-amber); }
 .scan-chip.sev-low { border-color: var(--u1-border); color: var(--u1-text-muted); }
+/* A pass is green, not the grey of a low-severity finding. */
+.scan-chip.sev-pass { border-color: #22c55e88; color: var(--u1-green); }
 .scan-chip.sev-critical.active { background: rgba(229,72,77,0.15); }
 .scan-chip.sev-high.active { background: rgba(255,157,46,0.15); }
 .scan-chip.sev-medium.active { background: rgba(224,165,0,0.15); }
@@ -3466,6 +3468,7 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
 .scan-item.sev-high { border-left-color: #ff9d2e; }
 .scan-item.sev-medium { border-left-color: #e0a500; }
 .scan-item.sev-low { border-left-color: #6b7280; }
+.scan-item.sev-pass { border-left-color: #22c55e; }
 
 .scan-item-main {
   display: flex;
@@ -3487,6 +3490,7 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
 .scan-sev-badge.sev-high { background: #ff9d2e; color: #3d2600; }
 .scan-sev-badge.sev-medium { background: #e0a500; color: #3d2f00; }
 .scan-sev-badge.sev-low { background: #6b7280; }
+.scan-sev-badge.sev-pass { background: #22c55e; color: #fff; }
 .scan-issue-title { font-size: 12.5px; font-weight: 600; color: var(--u1-text); flex: 1; min-width: 0; }
 /* The magnifier: a small icon at the end of the title, in the flow — not a
    full button that wrapped to its own centred line. */
