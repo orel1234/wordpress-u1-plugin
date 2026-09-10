@@ -3508,12 +3508,10 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
 /* A test result: verdict, name and the pass/fail pills on one line; the
    selector with its locate button on the next; nothing floating on its own. */
 .elem-result .scan-item-main .pills { margin-left: auto; }
-.elem-result .elem-sel { display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
-/* The selector takes the line; the locate button sits right after it, not
-   centred in whatever was left. word-break on the parent had let the flex
-   item shrink to one character a line. */
-.elem-result .elem-sel .scan-detail { flex: 0 1 auto; min-width: 0; word-break: normal; overflow-wrap: anywhere; }
-.elem-result .elem-sel .scan-hl { flex: 0 0 auto; margin: 0; padding: 0 4px; line-height: 1; }
+/* The locate button lives in the header, between the name and the verdict
+   pills; the selector line under it is plain text that wraps like text. */
+.elem-result .scan-item-main .scan-hl { flex: 0 0 auto; width: auto; margin: 0; padding: 0 4px; line-height: 1; }
+.elem-result .elem-sel { display: block; word-break: normal; overflow-wrap: anywhere; }
 .elem-skipped { margin-top: 8px; }
 .elem-skipped > summary { cursor: pointer; font-size: 11px; color: var(--u1-text-muted); list-style: none; }
 .elem-skipped > summary::before { content: "▸ "; }

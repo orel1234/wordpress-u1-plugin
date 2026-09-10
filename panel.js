@@ -18023,9 +18023,10 @@ function elemResultItemHtml(r, open) {
       <div class="scan-item-main">
         <span class="scan-sev-badge ${meta.chip}">${escapeHtml(meta.label)}</span>
         <span class="scan-issue-title" title="u1.fix.${escapeHtml(r.type)}">${r.fixNo != null ? `Fix #${escapeHtml(String(r.fixNo))} · ` : ''}${escapeHtml(r.label || r.type)}</span>
+        ${r.primary ? `<button class="btn-ghost btn-xs scan-hl" title="Show it on the page" aria-label="Show it on the page">🔍</button>` : ''}
         ${testable ? `<span class="pills">${testPillsHtml([...r.staticSteps, ...r.keyboardSteps])}</span>` : ''}
       </div>
-      ${r.primary ? `<div class="scan-context elem-sel"><code class="scan-detail">${escapeHtml(r.primary)}</code><button class="btn-ghost btn-xs scan-hl" title="Show it on the page" aria-label="Show it on the page">🔍</button></div>` : ''}
+      ${r.primary ? `<div class="scan-context elem-sel"><code class="scan-detail">${escapeHtml(r.primary)}</code></div>` : ''}
       ${r.reason ? `<div class="scan-context">${escapeHtml(r.reason)}</div>` : ''}
       ${testable ? `
       <details class="scan-why"${open ? ' open' : ''}>
