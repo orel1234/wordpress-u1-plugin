@@ -22241,6 +22241,44 @@ document.getElementById('finishProjectBtn')?.addEventListener('click', async () 
   }
 });
 
+// Standalone from Finish project on purpose: the email only needs to say
+// what's in the handover, not actually build the docx/PDF/zip bytes, so it
+// works even before Finish project has been run once.
+document.getElementById('copyClientEmailBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('copyClientEmailBtn');
+  const status = document.getElementById('finishStatus');
+  const label = btn.textContent;
+  try {
+    const mKey = storageKey('mappings', currentHostname);
+    const cKey = storageKey('config', currentHostname);
+    const sKey = storageKey('skipLinks', currentHostname);
+    const stored = await U1Store.get([mKey, cKey, sKey]);
+    const mappings = stored[mKey] || [];
+    const platform = document.getElementById('platformSelect').value || 'wordpress';
+    const built = await buildDeployableCode(mappings, currentHostname);
+    const configContent = buildConfigFileContent(
+      stored[cKey] || buildConfigObject(stored[sKey] || []), stored[sKey] || [], platform);
+    const has = {
+      config: !!configContent,
+      patch: !!(built && built.patch),
+      fixes: !!(built && built.fixes),
+      monitoring: !!(built && built.monitoring),
+    };
+    // closeOutPdfBytes needs at least one mapping's screenshots to produce a
+    // PDF at all — mirrored here rather than actually rendering one just to
+    // decide whether the email should mention it.
+    const hasPdf = mappings.length > 0;
+    const text = buildClientEmailText(currentHostname, has, mappings.length, platform, hasPdf);
+    await navigator.clipboard.writeText(text);
+    btn.textContent = 'Copied!';
+    showNotice(status, 'Email copied — paste it into your mail client.', 'success', 4000);
+  } catch (err) {
+    showNotice(status, 'Error: ' + err.message, 'error', 5000);
+  } finally {
+    setTimeout(() => { btn.textContent = label; }, 1500);
+  }
+});
+
 document.getElementById('closeOutBtn').addEventListener('click', async () => {
   const status = document.getElementById('closeOutStatus');
   showNotice(status, 'Building report…', 'warn', 0);

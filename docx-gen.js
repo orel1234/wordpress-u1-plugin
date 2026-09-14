@@ -1138,6 +1138,59 @@ function buildHandoverZip(hostname, cssLink, jsLink, built, skipLinks, config, s
   return { bytes: pkg.toUint8Array(), name: `U1-Handover-${safeHost}.zip` };
 }
 
+// The email a specialist sends the client alongside the handover — written in
+// English regardless of the panel's own language, because the client on the
+// other end is not who the panel is localized for, and a template nobody can
+// paste as-is gets rewritten by hand every time instead of used. Names and
+// order match buildHandoverFiles exactly, and a file only gets a paragraph
+// when `has` says it was actually produced — an email describing a file that
+// is not in the folder is worse than no email.
+function buildClientEmailText(hostname, has, mappingsCount, siteType, hasPdf) {
+  const type = siteType || 'wordpress';
+  const safeHost = safeFilenamePart(hostname);
+  const lines = [
+    `Subject: Accessibility implementation files — ${hostname}`,
+    '',
+    'Hi,',
+    '',
+    `Here are the accessibility implementation files for ${hostname}. Below is what each one is for.`,
+    '',
+    `U1-Implementation-Guide-${type}-${safeHost}.docx`,
+    '  Step-by-step instructions for installing the library and adding the files below to the site, plus the skip-links setup.',
+  ];
+  if (has.config) {
+    lines.push('', 'u1-config.js',
+      '  Site-wide accessibility settings — visual focus style, language and text direction. Load this before u1-patch.js.');
+  }
+  if (has.patch) {
+    lines.push('', 'u1-patch.js',
+      '  The runtime extensions the fixes in u1-fixes.js depend on. Required — load it before u1-fixes.js.');
+  }
+  if (has.fixes) {
+    lines.push('', 'u1-fixes.js',
+      `  The ${mappingsCount} accessibility fix${mappingsCount === 1 ? '' : 'es'} generated for this site.`);
+  }
+  if (has.monitoring) {
+    lines.push('', 'u1-monitoring.js',
+      '  A monitoring hook used only for QA — inert unless the page is loaded with ?u1qa=1. Safe to leave on the live site.');
+    lines.push('', `U1-Monitoring-${safeHost}.docx`,
+      '  How to install the monitoring hook, and the firewall addresses to allowlist. For whoever manages your firewall/WAF.');
+  }
+  if (hasPdf) {
+    lines.push('', `U1-CloseOut-Report-${safeHost}.pdf`,
+      '  A report of every accessibility fix on the site, each one explained beside a screenshot.');
+  }
+  lines.push(
+    '',
+    'Load order on the page: u1-config.js, then u1-patch.js, then u1-fixes.js (u1-monitoring.js only if you want the QA hook active).',
+    '',
+    "Please follow the guide for where to add these on your platform. Let me know if anything doesn't apply, or if you run into any issues.",
+    '',
+    'Best regards,'
+  );
+  return lines.join('\n');
+}
+
 function generateAndDownloadPackage(hostname, cssLink, jsLink, built, skipLinks, config, siteType) {
   const type = siteType || 'wordpress';
   const safeHost = safeFilenamePart(hostname);
