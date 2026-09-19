@@ -254,6 +254,7 @@ SELECTOR RULES — these are the engine's, not preferences. A selector that brea
 - ONLY compound simple selectors joined by > + ~ , — for example ".nav>li", ".a,.b", "#id>button".
 - NO descendant spaces (".nav li" is rejected), NO :pseudo-classes, NO :nth-child, NO attribute operators beyond plain =.
 - Build only from classes, ids and attributes that actually appear in the markup you were shown. Never invent a class name.
+- When an element carries a test hook — data-testid, data-test, data-test-id, data-qa, data-cy, data-e2e, data-automation-id — build on THAT (the "interactive" list repeats it as "hook"), never on its classes. Sites rewrite their class names on every release and keep these because their own tests depend on them; a hook is the only selector that survives a deploy.
 - Never build on a generated id: u1st-…, mat-…, cdk-…, ng-…, or a bare uuid. They change on every page load.
 - A field meant to match MANY elements (items, options, submenus, triggers, rows, cells) should match all of them — use a comma group like ".main-nav__link,.main-nav__dropdown-link" when one class does not cover them all.
 - A field meant to match ONE element (container, trigger, closeBtn, heading) must match exactly one.

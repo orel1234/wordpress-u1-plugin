@@ -832,6 +832,70 @@ let dupIdDistinct = false, dupIdResolves = false, uniqueIdKept = false;
   uniqueIdKept = S.robustSelector(w.document.getElementById('onlyOne')) === '#onlyOne';
 }
 
+// ── A test hook outranks every class, and every hook name counts ───────────
+//
+// vio.com (and goseek, etrip, dealbase, hotels.kiwi, hotell.finn, hotelix —
+// one platform): "CSS selectors change upon every release, DOM structure does
+// not", and they already stamp data-* hooks for their own tests. A mapping
+// built on their classes dies at the next deploy; one built on the hook does
+// not. The engine knew data-testid and data-test only — and emitted the
+// second under the FIRST's name, `[data-testid="…"]` for an element that has
+// no data-testid, a selector that matches nothing. data-qa, data-cy,
+// data-test-id and the rest were graded like any attribute and never chosen.
+let hookGraded = false, hookStateNotGraded = false, hookOverClass = false, hookRightName = false,
+    hookScoped = false, hookItems = false, hookItemsEach = false, hookOverHashedClass = false;
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="css-1x2y3z" data-qa="search-form">
+      <button class="css-9k8j7h btn-primary" data-test="submit">Go</button>
+    </div>
+    <div class="css-4r5t6y" data-testid="tabs">
+      <button class="css-a1b2c3" data-testid="tab">One</button>
+      <button class="css-a1b2c3" data-testid="tab">Two</button>
+    </div>
+    <ul class="css-q1w2e3" data-test-id="menu">
+      <li class="css-z9x8c7" data-test-id="menu-home">Home</li>
+      <li class="css-z9x8c7" data-test-id="menu-deals">Deals</li>
+      <li class="css-z9x8c7" data-test-id="menu-help">Help</li>
+    </ul>
+    <div class="css-4r5t6y" data-testid="tabs">
+      <button class="css-a1b2c3" data-testid="tab">Three</button>
+    </div>
+    <p><a class="Ab12Cd34Ef56 btn-link" href="#">Terms</a></p></body>`,
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  const w = dom.window;
+  w.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  w.eval(INTEL);
+  const S = w.__u1SelectorIntel;
+  const level = (s) => S.selectorStrength(s).level;
+  hookGraded = ['[data-testid="x"]', '[data-test="x"]', '[data-test-id="x"]', '[data-qa="x"]',
+                '[data-cy="x"]', '[data-e2e="x"]', '[data-automation-id="x"]', 'button[data-qa-id="x"]']
+    .every((s) => level(s) === 'strong');
+  // A moment, not an identity: the mapping must not follow the state around.
+  hookStateNotGraded = ['[data-state="open"]', '[data-index="2"]', '[data-open]']
+    .every((s) => level(s) === 'medium');
+  const doc = w.document;
+  hookOverClass = S.robustSelector(doc.querySelector('[data-qa="search-form"]')) === '[data-qa="search-form"]';
+  hookRightName = S.robustSelector(doc.querySelector('[data-test="submit"]')) === '[data-test="submit"]';
+  // Shared by siblings AND repeated in another strip: scoped through the
+  // nearest hook that is unique, never through a hashed class.
+  const tab2 = doc.querySelectorAll('[data-testid="tab"]')[2];
+  const sTab = S.robustSelector(tab2);
+  hookScoped = !/css-/.test(sTab) && doc.querySelectorAll(sTab).length === 1 && doc.querySelector(sTab) === tab2;
+  const tabs = doc.querySelector('[data-testid="tabs"]');
+  const r1 = S.commonSelectorFor(tabs, [...tabs.children], S.robustSelector(tabs));
+  hookItems = !!r1 && r1.exact && !/css-/.test(r1.selector) &&
+              /\[data-testid="tab"\]/.test(r1.selector) && [...doc.querySelectorAll(r1.selector)].length === 2;
+  const menu = doc.querySelector('[data-test-id="menu"]');
+  const r2 = S.commonSelectorFor(menu, [...menu.children], '[data-test-id="menu"]');
+  hookItemsEach = !!r2 && r2.exact && !/css-/.test(r2.selector) && r2.count === 3;
+  // And with no hook at all, a hand-written class still beats a hashed one.
+  const r3 = S.commonSelectorFor(doc.body, [doc.querySelector('.btn-link')], 'body');
+  hookOverHashedClass = !!r3 && r3.selector === '.btn-link';
+}
+
 // ── The accordion: detection has to hand the mapping the right inputs ───────
 //
 // The CASES entry above proves the mapping machinery has always handled an
@@ -1681,6 +1745,22 @@ console.log(`  ${dupIdResolves ? '✅' : '❌'} …each copy gets its own select
 if (!dupIdResolves) failed++;
 console.log(`  ${uniqueIdKept ? '✅' : '❌'} …while a genuinely unique id is still preferred over everything else`);
 if (!uniqueIdKept) failed++;
+console.log(`  ${hookGraded ? '✅' : '❌'} a test hook (data-testid, data-test-id, data-qa, data-cy, data-e2e, …) is graded Strong, like an id`);
+if (!hookGraded) failed++;
+console.log(`  ${hookStateNotGraded ? '✅' : '❌'} …while data-state / data-index / data-open stay ordinary attributes`);
+if (!hookStateNotGraded) failed++;
+console.log(`  ${hookOverClass ? '✅' : '❌'} a selector built for an element with a hook is the hook, not its class`);
+if (!hookOverClass) failed++;
+console.log(`  ${hookRightName ? '✅' : '❌'} …under the hook's OWN name (data-test was emitted as data-testid and matched nothing)`);
+if (!hookRightName) failed++;
+console.log(`  ${hookScoped ? '✅' : '❌'} …and a hook shared by siblings is scoped through a unique hook, never a hashed class`);
+if (!hookScoped) failed++;
+console.log(`  ${hookItems ? '✅' : '❌'} auto-fill names items by the hook they share`);
+if (!hookItems) failed++;
+console.log(`  ${hookItemsEach ? '✅' : '❌'} …or by a comma group of each one's hook when every item has its own`);
+if (!hookItemsEach) failed++;
+console.log(`  ${hookOverHashedClass ? '✅' : '❌'} …and with no hook, a hand-written class is chosen before a build-generated one`);
+if (!hookOverHashedClass) failed++;
 console.log(`  ${accHeader ? '✅' : '❌'} an accordion is rooted on its HEADER, not the container it was found by`);
 if (!accHeader) failed++;
 console.log(`  ${accContent ? '✅' : '❌'} …and the required contentSelector is read from what the header controls`);
@@ -1823,6 +1903,6 @@ if (!auditReports) failed++;
 console.log(`  ${descFromPage ? '✅' : '❌'} a description is taken from the page's own words, not composed`);
 if (!descFromPage) failed++;
 
-const total = results.length + 122;
+const total = results.length + 130;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

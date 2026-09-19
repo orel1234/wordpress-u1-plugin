@@ -65,6 +65,33 @@
   // #u1p-listbox-wcvryke, one mapping per name for one widget (2026-09-02).
   const VOLATILE_ID = /^(u1st-|u1p?-|cdk-|mat-(input|select|error|hint|option|autocomplete|dialog|tooltip|mdc|tab|expansion|checkbox|radio|menu|chip)|ng-|ember\d|react-|:r[0-9a-z]+:)|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
+  // HOOK attributes — data-* names a developer puts on an element so that
+  // something outside the page can address it: test ids, QA and automation
+  // hooks. They are the one thing in a client's markup that survives a
+  // release. A site built with CSS modules or a design-system pipeline
+  // rewrites its class names on every deploy (vio.com: "CSS selectors change
+  // upon every release, DOM structure does not", 2026-09) and keeps these
+  // exactly because its own tests would break otherwise. So a hook is graded
+  // like an id and, when a selector is built, preferred over any class.
+  //
+  // Only identifier-shaped names. data-state, data-index, data-open and their
+  // like describe a MOMENT in the element's life, not the element, and a
+  // mapping built on one follows the state around. A client asked to add a
+  // hook for us is asked for data-testid — the one every test runner already
+  // reads — and the rest are here because sites already carry them.
+  const HOOK_ATTR_RE = /^data-(?:(?:test|qa|e2e|automation|a11y)(?:-?id)?|cy|tid)$/i;
+  // A value that can sit inside [attr="…"] unescaped. U1_COMPOUND_RE cannot
+  // see past a `]`, and a quote would end the string early.
+  const hookValueOk = (v) => !!v && !/["\\\]]/.test(v) && v.length <= 80;
+  // `[data-testid="x"]` for the first hook on `node`, or ''.
+  function hookSelector(node) {
+    if (!node || node.nodeType !== 1 || !node.attributes) return '';
+    for (const a of Array.from(node.attributes)) {
+      if (HOOK_ATTR_RE.test(a.name) && hookValueOk(a.value)) return `[${a.name.toLowerCase()}="${a.value}"]`;
+    }
+    return '';
+  }
+
   // Which pseudo-classes may appear in a mapping.
   //
   // U1 resolves selectors through jQuery 3.7.1, so a great deal parses that
@@ -120,7 +147,9 @@
     if (/^#[\w-]+$/.test(seg)) return 'strong';
     // (0,1,0) by specificity, but these are identifiers a developer chose so the
     // element could be addressed, so they are as dependable as an id.
-    if (/\[(data-testid|data-test|data-cy|data-qa|id|name)\s*[=~|^$*]?=?/.test(seg)) return 'strong';
+    for (const m of seg.matchAll(/\[([\w-]+)\s*[=~|^$*]?=?/g)) {
+      if (HOOK_ATTR_RE.test(m[1]) || /^(id|name)$/i.test(m[1])) return 'strong';
+    }
     // Also (0,1,0), and this is where specificity and durability part company.
     // aria-label is USER-FACING TEXT, not an identifier. It gets translated, a
     // copywriter rewrites it, and on a multilingual site the same button reads
@@ -269,8 +298,11 @@
     // second element, and pointed at the first it may be decorating the copy
     // that is display:none at this breakpoint.
     if (node.id && idOk(node.id) && countOf('#' + node.id) === 1) return '#' + node.id;
-    const testId = node.getAttribute('data-testid') || node.getAttribute('data-test');
-    if (testId) return `[data-testid="${testId}"]`;
+    // A hook the developer put there to be found by. Unique → done; shared
+    // by siblings (every tab says data-testid="tab") it still beats a class
+    // below, and robustSelector scopes it through an ancestor.
+    const hook = hookSelector(node);
+    if (hook && uniqueOnPage(hook)) return hook;
     const tag = node.tagName.toLowerCase();
 
     // Classes a person named, generated ones only if that is genuinely all
@@ -292,6 +324,7 @@
     for (const c of handWritten) {
       try { if (document.getElementsByClassName(c).length === 1) return '.' + c; } catch {}
     }
+    if (hook) return hook;
 
     const al = node.getAttribute('aria-label');
     if (al && al.length < 40 && !al.includes('"')) return `${tag}[aria-label="${al}"]`;
@@ -398,16 +431,29 @@
       return { extra: got.length - (els.length - missing), missing, total: got.length };
     };
 
-    // Candidate tokens, cheapest first: a shared class, then tag, then attribute.
+    // Candidate tokens, steadiest first: a hook attribute the targets carry,
+    // then a shared class, then tag.
     const tokens = [];
+    // One value on every target → `[data-testid="tab"]`. One value EACH
+    // (tab-home, tab-flights, …) → a comma group of them; long groups are
+    // left to the class path, which reads better when it exists at all.
+    for (const a of Array.from(els[0].attributes || [])) {
+      if (!HOOK_ATTR_RE.test(a.name)) continue;
+      const name = a.name.toLowerCase();
+      const vals = els.map(e => e.getAttribute(name));
+      if (!vals.every(hookValueOk)) continue;
+      const distinct = [...new Set(vals)];
+      if (distinct.length <= 8) tokens.push(distinct.map(v => `[${name}="${v}"]`).join(','));
+    }
     const classCount = new Map();
     for (const e of els) for (const c of new Set(classesOf(e))) classCount.set(c, (classCount.get(c) || 0) + 1);
-    // Prefer a class ALL targets share, and prefer non-noise, longer (more
-    // specific) names — `.main-nav__dropdown-link` over `.link`.
+    // Prefer a class ALL targets share, and prefer non-noise, hand-written,
+    // longer (more specific) names — `.main-nav__dropdown-link` over `.link`,
+    // and either over the `css-1x2y3z` a build tool will rename next deploy.
     const shared = [...classCount.entries()]
       .filter(([c, n]) => n === els.length && !NOISE.test(c))
       .map(([c]) => c)
-      .sort((a, b) => b.length - a.length);
+      .sort((a, b) => (looksGenerated(a) - looksGenerated(b)) || (b.length - a.length));
     for (const c of shared) tokens.push('.' + c);
 
     const tags = new Set(els.map(e => e.tagName.toLowerCase()));
@@ -3571,6 +3617,7 @@
       interactive.push({
         tag: el.tagName.toLowerCase(),
         classes: classesOf(el),
+        hook: hookSelector(el) || undefined,
         role: el.getAttribute('role') || '',
         text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30),
         signals: sig.signals,
@@ -5513,7 +5560,7 @@
 
   const api = {
     // pure
-    selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
+    selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID, HOOK_ATTR_RE, hookSelector,
     // menu root correction
     menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
     formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, menuShape, tableShape, carouselShape, paginationShape, componentWording,
