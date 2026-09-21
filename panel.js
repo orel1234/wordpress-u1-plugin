@@ -21007,6 +21007,94 @@ async function forgetDeclinedFixes(keys) {
   } catch {}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  data-a11y-* — a site that names its own components is mapped on sight
+//
+//  A client whose class names are rebuilt on every release (vio.com and its
+//  sister hotel sites, 2026-09) cannot be mapped by class, and offered the one
+//  thing it could: any data-* attribute, in the markup, for good. So the
+//  contract is a fixed vocabulary — data-a11y-menu on the menu, data-a11y-
+//  menu-item on each item, and so on for every fix type (A11Y_COMPONENTS in
+//  selector-intel.js; A11Y-HOOKS.md is the copy the client gets) — and a page
+//  that carries it is mapped without a scan, a card or an approval. Owner
+//  decision (2026-09-21): a site that has gone to the trouble of naming its
+//  components has already answered everything a review would ask.
+//
+//  Runs on every page load, and leaves alone what is already there: a
+//  container with a mapping of its type (same primary) is skipped, so a
+//  specialist's edit of a hooked mapping survives the next visit, and a
+//  mapping saved or refused once in this session is not re-tried on every
+//  page of the site. Options that are not selectors (menubar, headingLevel,
+//  closeOnSelect) take the schema's defaults; they are edited in the drawer
+//  like any other mapping's.
+const hookedSeen = new Set();
+let hookedRunning = false;
+async function autoMapHooked(tab) {
+  if (hookedRunning || !tab || !isInjectable(tab)) return;
+  hookedRunning = true;
+  const host = currentHostname;
+  try {
+    let found = [];
+    try { found = (await inPage(tab.id, () => window.__u1SelectorIntel.hookedComponents())) || []; }
+    catch { return; }
+    // The panel moved on to another site while the page was being read.
+    if (!found.length || host !== currentHostname) return;
+    const key = storageKey('mappings', host);
+    const have = ((await U1Store.get([key]))[key] || []).filter((m) => m && typeof m === 'object');
+    const mapped = [], refused = [];
+    for (const h of found) {
+      const seenKey = `${host}|${h.type}::${h.primary || h.container}`;
+      if (hookedSeen.has(seenKey)) continue;
+      if (!h.primary) {
+        hookedSeen.add(seenKey);
+        refused.push(`${h.type} ${h.container} — nothing carries ${h.missing}, which is what fix.${h.type} is addressed by`);
+        continue;
+      }
+      let tpl = null;
+      try { tpl = buildTemplate(h.type, h.primary, h.fields, {}); } catch { tpl = null; }
+      if (!tpl) continue;
+      // Same container, any trigger (a dialog's included): already mapped,
+      // possibly edited by hand — not ours to redo.
+      const mk = mappingKey(tpl);
+      if (have.some((m) => mappingKey(m) === mk || (m.type === tpl.type && m.primary === tpl.primary))) { hookedSeen.add(seenKey); continue; }
+      hookedSeen.add(seenKey);
+      try {
+        const r = await saveMappingEntry(tpl, { refreshUi: false });
+        if (r && r.cancelled) continue;
+        mapped.push(tpl);
+      } catch (e) {
+        refused.push(`${h.type} ${h.container} — ${e.message}`);
+      }
+    }
+    if (!mapped.length && !refused.length) return;
+    if (mapped.length) {
+      const fixes = mapped.filter((t) => !t.custom)
+        .map((t) => ({ type: t.type, primary: t.primary, firstArg: t.firstArg, config: t.config, overwriteRole: t.overwriteRole }));
+      // U1 may still be initialising at `complete`; a fix that misses it here
+      // is saved, and background.js applies every saved mapping on the next
+      // load anyway.
+      try { if (fixes.length) await applyMappingsBatch(fixes, tab); } catch {}
+      for (const t of mapped.filter((x) => x.custom)) {
+        try { await applyOne(t.type, t.firstArg || t.primary, t.config, t.custom, t); } catch {}
+      }
+      loadMappingsList();
+      refreshExportInfo();
+    }
+    const status = document.getElementById('applyAllStatus');
+    const lines = [];
+    if (mapped.length) {
+      lines.push(`Mapped ${mapped.length} component${mapped.length === 1 ? '' : 's'} the page names with data-a11y-*: ` +
+        mapped.map((t) => `${t.type} ${t.primary}`).join(' · ') + '.');
+    }
+    if (refused.length) {
+      lines.push(`Not mapped: ${refused.join(' · ')}.`);
+    }
+    showNotice(status, lines.join(' '), mapped.length ? 'success' : 'error', 14000);
+  } finally {
+    hookedRunning = false;
+  }
+}
+
 async function renderExistingFixes() {
   // Owner decision (2026-09-02): this offer does not exist. The panel used to
   // read the site's own deployed u1.fix.* calls off the live page and offer
@@ -22843,6 +22931,14 @@ async function onTabChanged(tab) {
     const freshTab = await getTab();
     if (freshTab && freshTab.id === tab.id) renderExistingFixes();
   }, 2000);
+
+  // A page that names its own components (data-a11y-*) is mapped now. After
+  // the same settle as above: the apply that follows the save wants U1 up,
+  // and a framework that stamps the attributes on hydration wants a moment.
+  setTimeout(async () => {
+    const freshTab = await getTab();
+    if (freshTab && freshTab.id === tab.id && getHostname(freshTab) === currentHostname) autoMapHooked(freshTab);
+  }, 1500);
 }
 
 // Full page navigation (including regular links and form submissions)

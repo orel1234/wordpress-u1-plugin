@@ -896,6 +896,88 @@ let hookGraded = false, hookStateNotGraded = false, hookOverClass = false, hookR
   hookOverHashedClass = !!r3 && r3.selector === '.btn-link';
 }
 
+// ── A site that names its own components is mapped on sight ────────────────
+//
+// The contract handed to a client whose classes cannot be relied on
+// (A11Y-HOOKS.md): data-a11y-<type> on the container, data-a11y-<type>-<part>
+// on each part, a value only when a page carries two of the same type. The
+// page-side reader has to turn that into exactly what buildTemplate wants,
+// and the panel has to save it through the one door every route uses — with
+// no card and no question — and leave alone what is already mapped.
+let hookedMenu = false, hookedNamedDialogs = false, hookedOutsidePart = false, hookedPrimaryFromPart = false,
+    hookedMissingSaid = false, hookedPanelOutside = false, hookedAllStrong = false, hookedBuilds = false,
+    hookedWired = false, hookedOneDoor = false;
+{
+  const INTEL = readFileSync(join(ROOT, 'selector-intel.js'), 'utf8');
+  const dom = new JSDOM(`<!doctype html><body>
+    <nav class="css-1a2b3c" data-a11y-menu><ul>
+      <li><a href="/a" class="css-9z8y7x" data-a11y-menu-item>Hotels</a></li>
+      <li><button class="css-9z8y7x" data-a11y-menu-item data-a11y-menu-trigger>Deals</button>
+        <div class="css-4d5e6f" data-a11y-menu-submenu><a href="/b" class="css-9z8y7x" data-a11y-menu-item>Weekend</a></div></li>
+    </ul></nav>
+    <button class="css-0q9w8e" data-a11y-dialog-trigger="signin">Sign in</button>
+    <div class="css-7r6t5y" data-a11y-dialog="signin"><h2 data-a11y-dialog-heading="signin">Sign in</h2><button data-a11y-dialog-close="signin">x</button></div>
+    <div class="css-7r6t5y" data-a11y-dialog="filters"><button data-a11y-dialog-close="filters">x</button></div>
+    <div data-a11y-accordion="faq">
+      <h3><button data-a11y-accordion-header>Q1</button></h3><div data-a11y-accordion-content>A1</div>
+      <h3><button data-a11y-accordion-header>Q2</button></h3><div data-a11y-accordion-content>A2</div>
+    </div>
+    <div data-a11y-accordion="empty"><p>nothing marked inside</p></div>
+    <div data-a11y-tabs><div data-a11y-tabs-list><button data-a11y-tabs-tab>T1</button><button data-a11y-tabs-tab>T2</button></div></div>
+    <section data-a11y-tabs-panel>P1</section><section data-a11y-tabs-panel>P2</section>
+  </body>`, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+  const w = dom.window;
+  w.HTMLElement.prototype.getBoundingClientRect =
+    () => ({ width: 300, height: 40, top: 20, left: 10, bottom: 60, right: 310 });
+  w.eval(INTEL);
+  const S = w.__u1SelectorIntel;
+  const got = S.hookedComponents();
+  const one = (type, primary) => got.find((h) => h.type === type && (primary == null || h.primary === primary));
+  const doc = w.document;
+  const n = (sel) => doc.querySelectorAll(sel).length;
+
+  const menu = one('menu', '[data-a11y-menu]');
+  hookedMenu = !!menu && menu.fields.items === '[data-a11y-menu-item]' && n(menu.fields.items) === 3 &&
+    menu.fields.triggers === '[data-a11y-menu-trigger]' && menu.fields.submenus === '[data-a11y-menu-submenu]' &&
+    !JSON.stringify(menu).includes('css-');
+  const signin = one('dialog', '[data-a11y-dialog="signin"]');
+  const filters = one('dialog', '[data-a11y-dialog="filters"]');
+  hookedNamedDialogs = !!signin && !!filters &&
+    signin.fields.closeBtn === '[data-a11y-dialog-close="signin"]' && signin.fields.heading === '[data-a11y-dialog-heading="signin"]' &&
+    filters.fields.closeBtn === '[data-a11y-dialog-close="filters"]' && !filters.fields.trigger;
+  // The trigger sits OUTSIDE its dialog; its value says whose it is.
+  hookedOutsidePart = !!signin && signin.fields.trigger === '[data-a11y-dialog-trigger="signin"]';
+  // fix.accordion is addressed by its headers, not the wrapper.
+  const faq = one('accordion', '[data-a11y-accordion-header]');
+  hookedPrimaryFromPart = !!faq && faq.container === '[data-a11y-accordion="faq"]' &&
+    faq.fields.contentSelector === '[data-a11y-accordion-content]' && !('headerSelector' in faq.fields);
+  const empty = got.find((h) => h.type === 'accordion' && h.container === '[data-a11y-accordion="empty"]');
+  hookedMissingSaid = !!empty && empty.primary === '' && empty.missing === 'data-a11y-accordion-header';
+  // One tab strip on the page: its panels are found outside it with no value.
+  const tabs = one('tabs', '[data-a11y-tabs]');
+  hookedPanelOutside = !!tabs && tabs.fields.tabList === '[data-a11y-tabs-list]' && tabs.fields.tab === '[data-a11y-tabs-tab]' &&
+    tabs.fields.tabPanel === '[data-a11y-tabs-panel]' && n(tabs.fields.tabPanel) === 2;
+  const every = got.filter((h) => h.primary).flatMap((h) => [h.primary, ...Object.values(h.fields)]);
+  hookedAllStrong = every.length > 8 && every.every((s) => S.isU1Valid(s) && S.selectorStrength(s).level === 'strong');
+  // And the builder takes it as it comes: the dialog's trigger is the fix's first argument.
+  const tpls = got.filter((h) => h.primary).map((h) => buildTemplate(h.type, h.primary, h.fields, {}));
+  hookedBuilds = tpls.length === got.length - 1 && tpls.every((t) => t && t.type && t.primary && t.code) &&
+    tpls.find((t) => t.primary === '[data-a11y-dialog="signin"]').firstArg === '[data-a11y-dialog-trigger="signin"]' &&
+    /items:\s*"\[data-a11y-menu-item\]"/.test(tpls.find((t) => t.type === 'menu').code);
+
+  // The panel: runs it on every page load, saves through the one door, skips what is mapped.
+  const fnAt = panelSrc.indexOf('async function autoMapHooked(');
+  const fnEnd = fnAt === -1 ? -1 : panelSrc.indexOf('\nasync function renderExistingFixes(', fnAt);
+  const body = fnAt === -1 ? '' : panelSrc.slice(fnAt, fnEnd);
+  const tabChanged = panelSrc.indexOf('async function onTabChanged(');
+  hookedWired = fnAt !== -1 && tabChanged !== -1 &&
+    /autoMapHooked\(freshTab\)/.test(panelSrc.slice(tabChanged, panelSrc.indexOf('\nchrome.tabs.onUpdated', tabChanged))) &&
+    /hookedComponents\(\)/.test(body);
+  hookedOneDoor = /saveMappingEntry\(tpl, \{ refreshUi: false \}\)/.test(body) &&
+    /m\.type === tpl\.type && m\.primary === tpl\.primary/.test(body) && /applyMappingsBatch\(fixes, tab\)/.test(body) &&
+    !/confirm|prompt\(/.test(body);
+}
+
 // ── The accordion: detection has to hand the mapping the right inputs ───────
 //
 // The CASES entry above proves the mapping machinery has always handled an
@@ -1761,6 +1843,26 @@ console.log(`  ${hookItemsEach ? '✅' : '❌'} …or by a comma group of each o
 if (!hookItemsEach) failed++;
 console.log(`  ${hookOverHashedClass ? '✅' : '❌'} …and with no hook, a hand-written class is chosen before a build-generated one`);
 if (!hookOverHashedClass) failed++;
+console.log(`  ${hookedMenu ? '✅' : '❌'} a page that names its components (data-a11y-menu, -menu-item, …) is read into the builder's fields, classes untouched`);
+if (!hookedMenu) failed++;
+console.log(`  ${hookedNamedDialogs ? '✅' : '❌'} …two of a kind are told apart by the name on the container and its parts`);
+if (!hookedNamedDialogs) failed++;
+console.log(`  ${hookedOutsidePart ? '✅' : '❌'} …a part outside its container (the dialog's trigger) is found by that name`);
+if (!hookedOutsidePart) failed++;
+console.log(`  ${hookedPrimaryFromPart ? '✅' : '❌'} …an accordion is addressed by its headers, the wrapper only scopes`);
+if (!hookedPrimaryFromPart) failed++;
+console.log(`  ${hookedMissingSaid ? '✅' : '❌'} …and a container missing the part the fix is addressed by says which one`);
+if (!hookedMissingSaid) failed++;
+console.log(`  ${hookedPanelOutside ? '✅' : '❌'} …with one instance on the page, parts outside it need no name (the tab panels)`);
+if (!hookedPanelOutside) failed++;
+console.log(`  ${hookedAllStrong ? '✅' : '❌'} every selector it produces is U1-valid and graded Strong`);
+if (!hookedAllStrong) failed++;
+console.log(`  ${hookedBuilds ? '✅' : '❌'} …and buildTemplate takes them as they come (the dialog's trigger becomes the first argument)`);
+if (!hookedBuilds) failed++;
+console.log(`  ${hookedWired ? '✅' : '❌'} the panel maps them on every page load, without a scan or a card`);
+if (!hookedWired) failed++;
+console.log(`  ${hookedOneDoor ? '✅' : '❌'} …through the one save door, skipping containers already mapped, asking nobody anything`);
+if (!hookedOneDoor) failed++;
 console.log(`  ${accHeader ? '✅' : '❌'} an accordion is rooted on its HEADER, not the container it was found by`);
 if (!accHeader) failed++;
 console.log(`  ${accContent ? '✅' : '❌'} …and the required contentSelector is read from what the header controls`);
@@ -1903,6 +2005,6 @@ if (!auditReports) failed++;
 console.log(`  ${descFromPage ? '✅' : '❌'} a description is taken from the page's own words, not composed`);
 if (!descFromPage) failed++;
 
-const total = results.length + 130;
+const total = results.length + 140;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

@@ -79,7 +79,7 @@
   // mapping built on one follows the state around. A client asked to add a
   // hook for us is asked for data-testid — the one every test runner already
   // reads — and the rest are here because sites already carry them.
-  const HOOK_ATTR_RE = /^data-(?:(?:test|qa|e2e|automation|a11y)(?:-?id)?|cy|tid)$/i;
+  const HOOK_ATTR_RE = /^data-(?:(?:test|qa|e2e|automation)(?:-?id)?|cy|tid|a11y(?:-[\w-]+)?)$/i;
   // A value that can sit inside [attr="…"] unescaped. U1_COMPOUND_RE cannot
   // see past a `]`, and a quote would end the string early.
   const hookValueOk = (v) => !!v && !/["\\\]]/.test(v) && v.length <= 80;
@@ -90,6 +90,121 @@
       if (HOOK_ATTR_RE.test(a.name) && hookValueOk(a.value)) return `[${a.name.toLowerCase()}="${a.value}"]`;
     }
     return '';
+  }
+
+  // ── data-a11y-* — a site that names its own components ────────────────────
+  //
+  // The contract a client is handed when its class names cannot be relied on
+  // (A11Y-HOOKS.md is the copy they get): one boolean attribute per component
+  // on its container, `data-a11y-<type>`, and one per part inside it,
+  // `data-a11y-<type>-<part>`. A page carrying them is mapped on sight — the
+  // panel builds and saves the mapping without a scan, a card or a question
+  // (autoMapHooked in panel.js). Owner decision, 2026-09-21.
+  //
+  // Not `data-u1-*`: that is the library's own bootstrap namespace
+  // ('[u1-button],[data-u1-button]'), and the panel drops a mapping built on
+  // it as junk. Not a value vocabulary either — "data-a11y='menu.item'" was
+  // the first draft, and the client's engineers would rather grep for an
+  // attribute than parse one.
+  //
+  // The optional VALUE is a name, for a page with two of the same component:
+  // data-a11y-menu="main" on the container, data-a11y-menu-item="main" on its
+  // items, and the selectors are exact without a chain. With one instance of
+  // a type on the page the bare attribute is already exact and no name is
+  // needed — on the container or on any part.
+  //
+  // Each part maps to the u1.fix field it fills (COMPONENT_SCHEMAS in
+  // panel.js). primaryFrom: the fix's first argument is a part, not the
+  // container — an accordion is addressed by its headers.
+  const A11Y_PREFIX = 'data-a11y-';
+  const A11Y_COMPONENTS = {
+    button:     { parts: { 'focus-to': 'focusTo' } },
+    link:       { parts: {} },
+    menu:       { parts: { item: 'items', trigger: 'triggers', submenu: 'submenus' } },
+    accordion:  { primaryFrom: 'header',
+                  parts: { header: 'headerSelector', content: 'contentSelector', disabled: 'disabledElementsSelector' } },
+    tabs:       { parts: { list: 'tabList', tab: 'tab', panel: 'tabPanel' } },
+    dialog:     { parts: { trigger: 'trigger', close: 'closeBtn', heading: 'heading', text: 'textContent', 'focus-to': 'focusTo' } },
+    listbox:    { parts: { trigger: 'trigger', option: 'options', label: 'label' } },
+    combobox:   { parts: { input: 'textbox', list: 'listbox', option: 'options', label: 'label' } },
+    carousel:   { parts: { slide: 'slide', prev: 'prevButton', next: 'nextButton', picker: 'slidePickerButtons',
+                           label: 'absoluteCarouselContainerLabel', 'active-slide': 'activeSlides' } },
+    datepicker: { parts: { trigger: 'trigger', days: 'days.table', day: 'days.day', 'day-selected': 'days.selected',
+                           'day-disabled': 'days.disabled', 'month-label': 'month.label', 'month-prev': 'month.prevButton',
+                           'month-next': 'month.nextButton', 'year-label': 'year.label', 'year-prev': 'year.prevButton',
+                           'year-next': 'year.nextButton' } },
+    form:       { parts: { submit: 'submitButton', input: 'inputField', invalid: 'invalidField', required: 'requiredField',
+                           error: 'errorMsg', success: 'successMsg', label: 'formLabelAbsolute' } },
+    table:      { parts: { row: 'row', cell: 'cell', 'column-header': 'columnheader', 'row-header': 'rowheader' } },
+    grid:       { parts: { row: 'row', cell: 'cell', 'column-header': 'columnheader', 'row-header': 'rowheader' } },
+    pagination: { parts: { page: 'pageButtons', prev: 'prevBtn', next: 'nextBtn', 'prev-skip': 'prevSkip',
+                           'next-skip': 'nextSkip', result: 'results' } },
+    radio:      { parts: { button: 'radioButton', checked: 'checkedState', unchecked: 'uncheckedState', exclude: 'exclude' } },
+    checkbox:   { parts: { checked: 'checkedState', unchecked: 'uncheckedState', disabled: 'disabled', exclude: 'exclude', label: 'label' } },
+    breadcrumb: { parts: { item: 'item', current: 'current', separator: 'separator' } },
+    tooltip:    { parts: { trigger: 'trigger' } },
+    loading:    { parts: {} },
+    heading:    { parts: {} },
+  };
+
+  /**
+   * Every component the page names with data-a11y-*, as the panel's builder
+   * wants it: { type, container, primary, fields: { <schemaField>: selector },
+   * parts: [...] }. A component whose first argument is a part it lacks comes
+   * back with primary '' and `missing`, so the panel can say so once.
+   */
+  function hookedComponents() {
+    const q = (root, sel) => { try { return Array.from(root.querySelectorAll(sel)); } catch (e) { return []; } };
+    const count = (sel) => { try { return document.querySelectorAll(sel).length; } catch (e) { return -1; } };
+    const named = (attr, v) => (v ? `[${attr}="${v}"]` : `[${attr}]`);
+    const out = [];
+    for (const type of Object.keys(A11Y_COMPONENTS)) {
+      const spec = A11Y_COMPONENTS[type];
+      const cAttr = A11Y_PREFIX + type;
+      const containers = q(document, `[${cAttr}]`);
+      for (const c of containers) {
+        const v = (c.getAttribute(cAttr) || '').trim();
+        const val = hookValueOk(v) ? v : '';
+        let containerSel = '';
+        if (containers.length === 1) containerSel = `[${cAttr}]`;
+        else if (val && count(named(cAttr, val)) === 1) containerSel = named(cAttr, val);
+        else containerSel = robustSelector(c);
+        if (!containerSel || !isU1Valid(containerSel)) continue;
+
+        const fields = {}, parts = [];
+        for (const part of Object.keys(spec.parts)) {
+          const pAttr = `${cAttr}-${part}`;
+          let els = q(c, `[${pAttr}]`);
+          // A trigger, a panel or a label may sit outside the container. Off
+          // the page as a whole it is taken only when it can be told whose it
+          // is: it carries this container's name, or there is one container.
+          if (!els.length) {
+            if (val) els = q(document, named(pAttr, val));
+            else if (containers.length === 1) els = q(document, `[${pAttr}]`);
+          }
+          if (!els.length) continue;
+          let sel = '';
+          if (val && els.every((e) => e.getAttribute(pAttr) === val) && count(named(pAttr, val)) === els.length) {
+            sel = named(pAttr, val);
+          } else if (count(`[${pAttr}]`) === els.length) {
+            sel = `[${pAttr}]`;
+          } else {
+            sel = scopedField(c, containerSel, els) || '';
+          }
+          if (sel && isU1Valid(sel)) { fields[spec.parts[part]] = sel; parts.push(part); }
+        }
+
+        let primary = containerSel;
+        if (spec.primaryFrom) {
+          const key = spec.parts[spec.primaryFrom];
+          primary = fields[key] || '';
+          delete fields[key];
+          if (!primary) { out.push({ type, container: containerSel, primary: '', fields, parts, missing: `${cAttr}-${spec.primaryFrom}` }); continue; }
+        }
+        out.push({ type, container: containerSel, primary, fields, parts });
+      }
+    }
+    return out;
   }
 
   // Which pseudo-classes may appear in a mapping.
@@ -5561,6 +5676,8 @@
   const api = {
     // pure
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID, HOOK_ATTR_RE, hookSelector,
+    // a site that names its own components
+    A11Y_PREFIX, A11Y_COMPONENTS, hookedComponents,
     // menu root correction
     menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
     formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, menuShape, tableShape, carouselShape, paginationShape, componentWording,
