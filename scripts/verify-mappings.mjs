@@ -1823,6 +1823,39 @@ if (!auditReports) failed++;
 console.log(`  ${descFromPage ? '✅' : '❌'} a description is taken from the page's own words, not composed`);
 if (!descFromPage) failed++;
 
-const total = results.length + 122;
+
+// ── Where a mapping applies: whole site or its own page ─────────────────────
+// The heading case that started this: one class on two pages, level 2 wanted
+// on one of them only. The page is the decoded path, no trailing slash, no
+// query — and the exported script must compare exactly the same thing.
+{
+  const scopeParts = ['pagePathOf', 'isPageScoped', 'pageScopedElsewhere', 'mappingOnPage'].map(n => lift('function', n));
+  const S2 = {};
+  new Function('S', `${scopeParts.join('\n')}\nS.pagePathOf=pagePathOf;S.isPageScoped=isPageScoped;S.pageScopedElsewhere=pageScopedElsewhere;S.mappingOnPage=mappingOnPage;`)(S2);
+  const t = (label, ok) => { console.log(`  ${ok ? '✅' : '❌'} ${label}`); if (!ok) failed++; };
+  t('a page is its decoded path with no trailing slash',
+    S2.pagePathOf('https://www.tamam.co.il/%d7%9e%d7%99-%d7%90%d7%a0%d7%97%d7%a0%d7%95/') === '/מי-אנחנו');
+  t('the query is not part of the page (?page=2 is the same page)',
+    S2.pagePathOf('https://x.co.il/products/?page=2#top') === '/products');
+  t('the root is "/"', S2.pagePathOf('https://x.co.il') === '/' && S2.pagePathOf('https://x.co.il/') === '/');
+  const scoped = { type: 'heading', primary: '.title', scope: 'page', pagePath: '/מי-אנחנו', pageUrl: 'https://www.tamam.co.il/%d7%9e%d7%99-%d7%90%d7%a0%d7%97%d7%a0%d7%95/' };
+  const wide = { type: 'heading', primary: '.title', scope: 'site', pagePath: '/מי-אנחנו' };
+  t('a site-wide mapping is never "elsewhere"', !S2.pageScopedElsewhere(wide, 'https://www.tamam.co.il/'));
+  t('a page-scoped mapping is elsewhere on another page', S2.pageScopedElsewhere(scoped, 'https://www.tamam.co.il/'));
+  t('…and at home on its own page, however the URL spells it',
+    !S2.pageScopedElsewhere(scoped, 'https://www.tamam.co.il/מי-אנחנו?utm=1'));
+  t('the drawer hides a page-scoped mapping on another page', S2.mappingOnPage(scoped, { visible: new Set(['.title']), exists: new Set(['.title']) }, 'https://www.tamam.co.il/') === false);
+  t('…but not a site-wide one with the same selector', S2.mappingOnPage(wide, { visible: new Set(['.title']), exists: new Set(['.title']) }, 'https://www.tamam.co.il/') === true);
+  // The export: every emitted call goes through guard(), and the comparison
+  // function is emitted whenever a scoped mapping exists.
+  const src = panelSrc;
+  t('the export wraps u1.fix calls in the page guard', /fixes\.push\(header\(m\) \+ '\\n' \+ guard\(m, c\)\)/.test(src));
+  t('…and the engine calls too', (src.match(/guard\((g|c|t|l|b|h|o), `/g) || []).length === 7);
+  t('__u1Here compares the decoded path with no trailing slash, like pagePathOf',
+    /function __u1Here\(\)[\s\S]{0,200}decodeURIComponent\(location\.pathname\)\.replace\(\/\\\\\/\+\$\/, ''\) \|\| '\/'/.test(src));
+  t('the live "Apply all" skips a mapping that applies elsewhere', /wanted\.filter\(m => !pageScopedElsewhere\(m, hereUrl\)\)/.test(src));
+}
+
+const total = results.length + 134;
 console.log(`\n  ${total - failed}/${total} checks passed\n`);
 if (failed) process.exit(1);

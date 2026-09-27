@@ -15282,8 +15282,25 @@ function cleanPageUrl(u) {
 //      while open, which the DOM test can't see while shut).
 // `present` is what selectorsPresentOnPage returned: `{ visible, exists }`
 // Sets, or null meaning "couldn't check" — treated as "don't rule it out".
+// ── Where a mapping applies ──────────────────────────────────────────────────
+// Every mapping used to apply on every page its selector matched, and one
+// class shared by two pages got the same treatment on both — a heading pushed
+// to level 2 on the page that had two H1s took the only H1 off the page that
+// was fine. `scope: 'page'` limits a mapping to the page it was captured on;
+// 'site' (the default, and what every mapping made before this has) is the old
+// behaviour. The page is its decoded pathname with no trailing slash — the
+// exported script compares exactly the same thing (see __u1Here) — and the
+// query is not part of it: ?page=2 is the same page.
+function pagePathOf(url) {
+  try { const u = new URL(url); return decodeURIComponent(u.pathname).replace(/\/+$/, '') || '/'; } catch (e) { return ''; }
+}
+function isPageScoped(m) { return !!(m && typeof m === 'object' && m.scope === 'page' && m.pagePath); }
+// True when a page-scoped mapping is being looked at from some other page.
+function pageScopedElsewhere(m, hereUrl) { return isPageScoped(m) && !!hereUrl && pagePathOf(hereUrl) !== m.pagePath; }
+
 function mappingOnPage(m, present, hereUrl) {
   if (!m || typeof m !== 'object') return true;
+  if (pageScopedElsewhere(m, hereUrl)) return false;                 // applies on another page only
   const p = m.primary || m.firstArg || '';
   if (present && p && present.visible.has(p)) return true;       // visible right now
   if (present && p && present.exists.has(p)) return true;        // in the DOM, just not showing
@@ -19259,6 +19276,7 @@ function pickMappingFields(m) {
     key: mappingKey(m), fixNo: m.fixNo, id: m.id, type: m.type,
     primary: m.primary || m.firstArg || '', label: m.type,
     screenshot: m.screenshot || null,
+    scope: m.scope === 'page' ? 'page' : 'site', pagePath: m.pagePath || '',
   };
 }
 
@@ -19995,6 +20013,10 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     // Only a page of THIS site can be where a mapping of this site was made.
     pageUrl: (tab && sameSiteUrl(tab.url)) ? tab.url : ((prev && sameSiteUrl(prev.pageUrl)) ? prev.pageUrl : ''),
     pageTitle: (tab && sameSiteUrl(tab.url)) ? (tab.title || '') : ((prev && sameSiteUrl(prev.pageUrl)) ? (prev.pageTitle || '') : ''),
+    // Whole site unless it was already limited to its page (the drawer's
+    // "applies" chip is where that is decided, after the mapping exists).
+    scope: (prev && prev.scope === 'page') ? 'page' : 'site',
+    pagePath: (prev && prev.pagePath) || pagePathOf((tab && sameSiteUrl(tab.url)) ? tab.url : ((prev && sameSiteUrl(prev.pageUrl)) ? prev.pageUrl : '')),
     capturedAt: Date.now(),
     // Stable chronological "Fix #N" shown in the UI, the exported script and the
     // close-out report. Assigned once and kept across edits so the number a
@@ -20110,10 +20132,16 @@ async function applyAllMappings({ silent = false, only = null, tab = null } = {}
   const key = storageKey('mappings', currentHostname);
   const stored = await U1Store.get([key]);
   const all = stored[key] || [];
-  const list = only ? all.filter(m => mappingKey(m) === only) : all;
+  const wanted = only ? all.filter(m => mappingKey(m) === only) : all;
+  // A page-scoped mapping is not applied off its page — the export guards it
+  // the same way — and is not counted as a failure there either.
+  const scopeTab = tab || await getTab();
+  const hereUrl = scopeTab && scopeTab.url;
+  const elsewhere = wanted.filter(m => pageScopedElsewhere(m, hereUrl)).length;
+  const list = wanted.filter(m => !pageScopedElsewhere(m, hereUrl));
   const status = document.getElementById('applyAllStatus');
   if (list.length === 0) {
-    if (!silent) showNotice(status, 'No mappings to apply.', 'error');
+    if (!silent) showNotice(status, elsewhere ? `${elsewhere} mapping${elsewhere === 1 ? ' applies' : 's apply'} on other pages only — nothing for this page.` : 'No mappings to apply.', 'error');
     return { applied: 0, failed: 0 };
   }
   // Custom mappings (aria-label) run as scripts; u1.fix ones go through the batch.
@@ -20806,8 +20834,14 @@ async function buildDeployableCode(list, hostname) {
     // or data-testid picked up while mapping a hostile element) — must not be
     // able to close this block comment early. See commentSafe().
     const what = [m && m.type, m && (m.primary || m.firstArg)].filter(Boolean).map(commentSafe).join('  ');
-    return `/* ---- ${label} — ${what} ---- */`;
+    const where = isPageScoped(m) ? `  [this page only: ${commentSafe(m.pagePath)}]` : '';
+    return `/* ---- ${label} — ${what}${where} ---- */`;
   };
+  // A page-scoped mapping's call runs only on its page. Compared the way the
+  // panel compares it (pagePathOf): decoded pathname, no trailing slash.
+  const guard = (m, code) => isPageScoped(m)
+    ? `if (__u1Here() === ${JSON.stringify(m.pagePath)}) {\n${code}\n}`
+    : code;
   const sorted = list.slice().sort((a, b) => {
     const an = (a && a.fixNo) || 1e9, bn = (b && b.fixNo) || 1e9;
     return an - bn;
@@ -20830,8 +20864,8 @@ async function buildDeployableCode(list, hostname) {
     // Declarations, not calls: a static fix switches on a corrector that lives
     // in the patch, so it has to be emitted BEFORE the patch runs.
     else if (m.custom === 'staticFix') { const c = mappingToCode(m); if (c) statics.push(header(m) + '\n' + c); }
-    else if (m.custom) { const c = mappingToCode(m); if (c) customs.push(header(m) + '\n' + c); } // regenerated, never stored m.code
-    else { const c = mappingToCode(m); if (c) fixes.push(header(m) + '\n' + c); }
+    else if (m.custom) { const c = mappingToCode(m); if (c) customs.push(header(m) + '\n' + guard(m, c)); } // regenerated, never stored m.code
+    else { const c = mappingToCode(m); if (c) fixes.push(header(m) + '\n' + guard(m, c)); }
   }
 
   const fileBanner = (label, note) => `/* ============================================================\n` +
@@ -20864,6 +20898,14 @@ async function buildDeployableCode(list, hostname) {
   // (tamam.co.il, 2026-09). Wait for the engine instead of assuming it: run at
   // once when it is already there, otherwise poll briefly, then say clearly
   // what is missing rather than fail silently.
+  if (sorted.some(isPageScoped)) {
+    fixesParts.push(`/* ---- This page ----\n` +
+      ` * Some mappings below apply on one page only. The page is compared as\n` +
+      ` * its decoded path with no trailing slash; the query is not part of it. */\n` +
+      `function __u1Here() {\n` +
+      `  try { return decodeURIComponent(location.pathname).replace(/\\/+$/, '') || '/'; } catch (e) { return location.pathname; }\n` +
+      `}`);
+  }
   if (fixes.length || customs.length) {
     fixesParts.push(`/* ---- Wait for the U1 engine ----\n` +
       ` * The calls below need window.u1.fix. If this file happens to run before\n` +
@@ -20931,19 +20973,19 @@ async function buildDeployableCode(list, hostname) {
     // third-party script still gets something that works.
     const engine = await getGridEngineSource(kinds);
     const calls = grids.map(g =>
-      header(g) + `\nwindow.__u1InstallGridFromMapping(${JSON.stringify(g.primary)}, ${JSON.stringify(g.config, null, 2)});`
+      header(g) + '\n' + guard(g, `window.__u1InstallGridFromMapping(${JSON.stringify(g.primary)}, ${JSON.stringify(g.config, null, 2)});`)
     ).concat(clickables.map(c =>
-      header(c) + `\nwindow.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' }, null, 2)});`
+      header(c) + '\n' + guard(c, `window.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' }, null, 2)});`)
     )).concat(tabStrips.map(t =>
-      header(t) + `\nwindow.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${JSON.stringify(t.config, null, 2)});`
+      header(t) + '\n' + guard(t, `window.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${JSON.stringify(t.config, null, 2)});`)
     )).concat(linkLists.map(l =>
-      header(l) + `\nwindow.__u1FixLinkListFromMapping(${JSON.stringify(l.primary)}, ${JSON.stringify(l.config, null, 2)});`
+      header(l) + '\n' + guard(l, `window.__u1FixLinkListFromMapping(${JSON.stringify(l.primary)}, ${JSON.stringify(l.config, null, 2)});`)
     )).concat(crumbs.map(b =>
-      header(b) + `\nwindow.__u1InstallBreadcrumbFromMapping(${JSON.stringify(b.primary)}, ${JSON.stringify(b.config, null, 2)});`
+      header(b) + '\n' + guard(b, `window.__u1InstallBreadcrumbFromMapping(${JSON.stringify(b.primary)}, ${JSON.stringify(b.config, null, 2)});`)
     )).concat(hides.map(h =>
-      header(h) + `\nwindow.__u1HideFromAll(${JSON.stringify({ selector: h.primary }, null, 2)});`
+      header(h) + '\n' + guard(h, `window.__u1HideFromAll(${JSON.stringify({ selector: h.primary }, null, 2)});`)
     )).concat(orders.map(o =>
-      header(o) + `\nwindow.__u1FocusOrderFromMapping(${JSON.stringify(o.primary)}, ${JSON.stringify({ order: (o.config && o.config.order) || '' }, null, 2)});`
+      header(o) + '\n' + guard(o, `window.__u1FocusOrderFromMapping(${JSON.stringify(o.primary)}, ${JSON.stringify({ order: (o.config && o.config.order) || '' }, null, 2)});`)
     )).join('\n\n');
     fixesParts.push(
       `/* ---- Engines (grid / clickable / tab strip / breadcrumb) ----\n` +
@@ -22088,6 +22130,15 @@ async function loadMappingsList() {
             ? 'Captured on this page: ' + pageUrl
             : 'Open the page this was captured on: ' + (m.pageTitle ? m.pageTitle + ' — ' : '') + pageUrl)}">↗ ${escapeHtml(here ? 'this page' : pathOf(pageUrl).slice(0, 28) + (pathOf(pageUrl).length > 28 ? '…' : ''))}</span>`
       : '';
+    // Where it applies. Whole site is the default and says nothing in the
+    // header; "this page only" is an exception, so it does.
+    const scoped = !legacy && isPageScoped(m);
+    const scopePath = scoped ? m.pagePath : (pageUrl ? pagePathOf(pageUrl) : '');
+    const scopeChip = legacy ? '' :
+      `<span class="mh-flag mh-flag-toggle mh-scope ${scoped ? 'on' : 'off'}" data-toggle-scope="${idx}" role="button" tabindex="0" aria-pressed="${scoped ? 'true' : 'false'}" title="${scoped
+          ? 'Applies on this page only: ' + escapeHtml(scopePath) + '. Click to apply it on the whole site.'
+          : 'Applies on the whole site — every page where the selector matches. Click to limit it to the page it was captured on' + (scopePath ? ' (' + escapeHtml(scopePath) + ')' : '') + '.'}">${scoped ? '⌖ this page only' : '⊕ whole site'}</span>`;
+    const headScope = scoped ? scopeChip : '';
     const focusChip = type === 'menu'
       ? `<span class="mh-flag mh-flag-toggle ${focusOpen ? 'on' : 'off'}" data-toggle-focusopen="${idx}" role="button" tabindex="0" aria-pressed="${focusOpen ? 'true' : 'false'}" title="${focusOpen
             ? 'Focus opens submenu: ON — Tab/focus on a trigger opens its submenu, Enter/Space does what click does. Click to turn off.'
@@ -22134,13 +22185,13 @@ async function loadMappingsList() {
           <span class="mh-caret">▸</span>
           <span class="mh-type">${escapeHtml(type)}</span>
           <span class="mh-sel">${escapeHtml(primary)}</span>
-          ${headTest}${headFocus}${headEnter}${headReview}
+          ${headTest}${headFocus}${headEnter}${headReview}${headScope}
           ${childCount ? `<span class="mh-kids" title="Mappings for elements inside this dialog — open the row to see them">▸ ${childCount} inside</span>` : ''}
           ${headGoto}
         </button>
         <div class="mapping-body" style="display:none">
           <div class="mapping-meta">
-            ${headReview ? '' : reviewChip}${headTest ? '' : testChip}${headFocus ? '' : focusChip}${headEnter ? '' : enterChip}${idChip}${headGoto ? '' : gotoChip}${thumbHtml}
+            ${headReview ? '' : reviewChip}${headTest ? '' : testChip}${headFocus ? '' : focusChip}${headEnter ? '' : enterChip}${idChip}${headScope ? '' : scopeChip}${headGoto ? '' : gotoChip}${thumbHtml}
           </div>
           ${noteHtml ? `<div class="mapping-meta-note">${noteHtml}</div>` : ''}
           ${childrenHtml ? `<div class="mapping-children">${childrenHtml}</div>` : ''}
@@ -22396,6 +22447,31 @@ async function loadMappingsList() {
       try {
         await applyMappingsBatch([{ type: m.type, primary: m.primary, firstArg: m.firstArg, config: m.config, overwriteRole: m.overwriteRole }]);
       } catch {}
+      loadMappingsList();
+    };
+    chip.addEventListener('click', toggle);
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
+    });
+  });
+
+  container.querySelectorAll('.mh-flag-toggle[data-toggle-scope]').forEach(chip => {
+    const toggle = async (e) => {
+      e.stopPropagation();
+      const idx = parseInt(chip.dataset.toggleScope, 10);
+      const m = list[idx];
+      if (!m || typeof m !== 'object') return;
+      if (m.scope !== 'page') {
+        // Limiting needs a page to limit to. A mapping imported without one
+        // has to be re-captured on its page first; saying so beats guessing.
+        const path = m.pagePath || pagePathOf(m.pageUrl || '');
+        if (!path) { showNotice(document.getElementById('applyAllStatus'), 'This mapping has no page recorded — open its page and save it again, then limit it.', 'error', 4500); return; }
+        m.scope = 'page'; m.pagePath = path;
+      } else {
+        m.scope = 'site';
+      }
+      chip.setAttribute('aria-disabled', 'true');
+      await U1Store.set({ [key]: list });
       loadMappingsList();
     };
     chip.addEventListener('click', toggle);
