@@ -1097,7 +1097,10 @@
     // ui-input-toggle-group). Four separate "button" rows is the same widget
     // cut into parts; the group is ONE radio. BEFORE the tabs rule: elal
     // spells the modifier ui-input-toggle-group--tabs, and first match wins.
-    [/toggle[-_]?group|segmented[-_]?control/i, 'radio'],
+    // `segmented` alone: CLASS_HINTS collects that word, and `control` on its
+    // own would collect every Bootstrap form-control — so the rule names what
+    // the collector can actually see (verify-detect checks the two agree).
+    [/toggle[-_]?group|segmented/i, 'radio'],
     [/\btabs\b|tab-bar|tabbar|tablist/i, 'tabs'],
     [/pagination|pager/i, 'pagination'],
     [/tooltip|popover/i, 'tooltip'],
