@@ -44,10 +44,34 @@
   try {
     var fetchWas = window.fetch;
     if (fetchWas) {
-      window.fetch = function (input) {
+      window.fetch = function (input, init) {
         if (active()) {
           note('fetch', typeof input === 'string' ? input : (input && input.url));
-          return Promise.reject(new Error('blocked while U1 Studio is inspecting this page'));
+          // NOT a rejection. Measured on vio.com (Next.js): the router's
+          // getRouteInfo awaits fetch for the route data on every link press;
+          // a rejected promise there is a fatal data-fetch error, and Next
+          // tears the whole React tree down into its "Application error: a
+          // client-side exception has occurred" page — the scan destroyed
+          // the page it was scanning, and the u1 engine then flooded the
+          // console with "Skip link … not found for Landmark" as its
+          // landmarks vanished. A request that simply never comes back is a
+          // state every router already copes with (a slow network) and no
+          // error path fires. The one settled case is the caller's own
+          // AbortSignal: a router that moves on cancels the stale request,
+          // and it expects an AbortError back — which reads as
+          // "cancelled", never as "failed".
+          var signal = (init && init.signal) || (input && typeof input === 'object' && input.signal) || null;
+          return new Promise(function (resolve, reject) {
+            if (!signal) return;
+            var abort = function () {
+              var err;
+              try { err = new DOMException('The operation was aborted.', 'AbortError'); }
+              catch (e) { err = new Error('The operation was aborted.'); err.name = 'AbortError'; }
+              reject(err);
+            };
+            if (signal.aborted) return abort();
+            try { signal.addEventListener('abort', abort, { once: true }); } catch (e) {}
+          });
         }
         return fetchWas.apply(this, arguments);
       };

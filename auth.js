@@ -25,6 +25,10 @@ const U1Auth = (() => {
 
   let accessToken = null;      // memory only — never persisted
   let refreshPromise = null;   // de-dupes concurrent refreshes
+  // Why the last refresh() returned false: 'offline' (never got an answer) or
+  // 'revoked' (the server said no). The two need different words in front of
+  // a person — one is "try again", the other is "sign in again".
+  let lastRefreshFailure = null;
 
   const api = (path) => `${U1_CONFIG.SERVER_URL}/api/studio${path}`;
 
@@ -92,6 +96,19 @@ const U1Auth = (() => {
     if (res.status === 401 && retryOn401) {
       const refreshed = await refresh();
       if (refreshed) return request(path, options, false);
+      // An access token lasts minutes and lapsing is ordinary; what matters is
+      // why it could not be renewed. Surfacing the server's "invalid_token"
+      // here blamed the token when the renewal had simply not got through —
+      // a deploy in progress, a dropped connection — and read as a bug.
+      if (lastRefreshFailure === 'offline') {
+        const err = new Error(`your session lapsed and ${U1_CONFIG.SERVER_URL} could not be reached to renew it — it will be retried`);
+        err.offline = true;
+        throw err;
+      }
+      const err = new Error('your session has ended — sign in again');
+      err.status = 401;
+      err.sessionEnded = true;
+      throw err;
     }
 
     // Not every studio endpoint answers in JSON — a screenful's thumbnail comes
@@ -140,9 +157,11 @@ const U1Auth = (() => {
         if (!res.ok) {
           // A refused refresh is a real answer: revoked, suspended or expired.
           // Anything else (network failure) throws above and leaves auth alone.
+          lastRefreshFailure = res.status === 401 ? 'revoked' : 'offline';
           if (res.status === 401) await clearAuth();
           return false;
         }
+        lastRefreshFailure = null;
         const body = await res.json();
         accessToken = body.accessToken;
         // The server now ROTATES the refresh token on every call — the old
@@ -160,6 +179,7 @@ const U1Auth = (() => {
         });
         return true;
       } catch {
+        lastRefreshFailure = 'offline';
         return false; // offline — keep the stored refresh token for later
       } finally {
         refreshPromise = null;
@@ -197,6 +217,67 @@ const U1Auth = (() => {
       if (body.error === 'too_many_attempts') throw new Error('Too many attempts. Wait 15 minutes and try again.');
       throw new Error('Wrong email or password.');
     }
+
+    accessToken = body.accessToken;
+    await writeAuth({ refreshToken: body.refreshToken, client: body.client });
+    return body.client;
+  }
+
+  /**
+   * Sign in with Google.
+   *
+   * chrome.identity.launchWebAuthFlow opens the server's own Google flow
+   * (/api/studio/auth/google) and watches for the redirect to this
+   * extension's https://<id>.chromiumapp.org/ address. The server does not
+   * put a session there — only a REFRESH TOKEN, in the URL fragment, which is
+   * exchanged at /auth/refresh right here. That exchange rotates it, so the
+   * value that travelled in a URL is dead the moment this returns; a copy of
+   * the URL unlocks nothing.
+   *
+   * Google proves the mailbox. Whether that mailbox is a Studio account is
+   * the server's decision (an invited client, active) — nobody is created by
+   * pressing the button.
+   */
+  async function loginWithGoogle() {
+    if (!chrome.identity || !chrome.identity.launchWebAuthFlow) {
+      throw new Error('This browser cannot open the Google sign-in.');
+    }
+    let redirected;
+    try {
+      redirected = await chrome.identity.launchWebAuthFlow({
+        url: api('/auth/google'),
+        interactive: true,
+      });
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      if (/canceled|cancelled|closed|did not approve/i.test(msg)) throw new Error('Sign-in was cancelled.');
+      throw new Error('Google sign-in could not complete: ' + msg);
+    }
+    const frag = new URLSearchParams(String(redirected || '').split('#')[1] || '');
+    const error = frag.get('error');
+    if (error) {
+      throw new Error({
+        not_a_studio_account: 'That Google account is not a U1 Studio account. Use the email you were invited with, or ask an admin to invite it.',
+        account_inactive: 'This account is not active. Ask an admin.',
+        state_mismatch: 'The sign-in did not come back the way it left. Try again.',
+        no_email: 'Google did not share an email address for that account.',
+      }[error] || `Sign-in failed (${error}).`);
+    }
+    const refreshToken = frag.get('refreshToken');
+    if (!refreshToken) throw new Error('The server did not return a session.');
+
+    let res;
+    try {
+      res = await fetch(api('/auth/refresh'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+    } catch (e) {
+      throw new Error(`Signed in, but could not reach ${U1_CONFIG.SERVER_URL} to open the session.`);
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error('Signed in with Google, but the server refused to open a session. Try again.');
 
     accessToken = body.accessToken;
     await writeAuth({ refreshToken: body.refreshToken, client: body.client });
@@ -308,5 +389,5 @@ const U1Auth = (() => {
   // SAME path as everything else: one place that attaches the bearer token, one
   // place that refreshes it on a 401, one definition of what "offline" means.
   // A second fetch helper would be a second thing to get those wrong in.
-  return { login, logout, isLoggedIn, getStoredClient, checkSiteAccess, requestAccess, touch, request };
+  return { login, loginWithGoogle, logout, isLoggedIn, getStoredClient, checkSiteAccess, requestAccess, touch, request };
 })();

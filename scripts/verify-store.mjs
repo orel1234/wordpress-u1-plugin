@@ -85,7 +85,14 @@ console.log('\nThe store passes storage through unchanged:');
   check('get accepts an array', Object.keys(multi).length === 2);
 
   const all = await store.get(null);
-  check('get(null) returns everything', Object.keys(all).length === Object.keys(SAMPLE).length);
+  // set() also leaves a private `__touched_<host>` stamp behind — the one key
+  // the store adds on its own — so it is set aside before the count.
+  check('get(null) returns everything', Object.keys(all).filter((k) => !k.startsWith('__touched_')).length === Object.keys(SAMPLE).length);
+  const stamp = await store.touchedAt('new.com');
+  check('a mappings save stamps when it happened, for Export to show beside u1-fixes.js',
+    typeof stamp.mappings === 'number' && Date.now() - stamp.mappings < 5000 && stamp.config === undefined, JSON.stringify(stamp));
+  check('the stamp is private: never in a backup, never parsed as site data',
+    store.isPrivate('__touched_new.com') && store.parseKey('__touched_new.com') === null);
 }
 
 console.log('\nBackups carry work, never credentials:');

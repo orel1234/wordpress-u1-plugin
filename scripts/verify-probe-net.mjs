@@ -81,10 +81,23 @@ console.log('\nActive once probe.js sets the shared DOM attribute:');
   w.document.addEventListener('u1-net-blocked', (e) => events.push(e.detail));
   w.document.documentElement.setAttribute('data-u1-net-block', '1');
 
-  let fetchRejected = false;
-  await w.fetch('/api/delete-account').catch(() => { fetchRejected = true; });
-  check('fetch is rejected while armed', fetchRejected);
+  // A blocked fetch must NOT reject: Next.js (vio.com) treats a rejected
+  // route-data fetch as fatal and replaces the whole page with its
+  // "Application error" screen. It stays pending instead, and settles only
+  // if the caller's own AbortSignal fires — as an AbortError, which routers
+  // read as "cancelled", not "failed".
+  let fetchSettled = 'pending';
+  w.fetch('/api/delete-account').then(() => { fetchSettled = 'resolved'; }, () => { fetchSettled = 'rejected'; });
+  await new Promise((r) => setTimeout(r, 10));
+  check('fetch stays pending while armed (never rejects — a rejection crashes Next.js apps)', fetchSettled === 'pending', fetchSettled);
   check('…and reported as blocked', events.some((d) => d.where === 'fetch' && d.url === '/api/delete-account'));
+
+  const ac = new AbortController();
+  let abortName = '';
+  const aborted = w.fetch('/api/route-data', { signal: ac.signal }).catch((e) => { abortName = e && e.name; });
+  ac.abort();
+  await aborted;
+  check('a blocked fetch rejects with AbortError when the caller aborts it', abortName === 'AbortError', abortName);
 
   const xhr = new w.XMLHttpRequest();
   let errored = false;

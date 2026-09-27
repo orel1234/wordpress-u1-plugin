@@ -91,7 +91,13 @@
               selector: sel,
               idx: el ? idxOf(el, sel) : 0,
               target: typeof target === 'string' ? target : '',
-              text: el ? (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '',
+              // A page-level rule (landmark-one-main, page-has-heading-one…)
+              // lands on <html> or <body>, whose textContent is the whole
+              // document — <style> and <script> bodies included. Quoted as
+              // the finding's text it read "Molina Healthcarea.u1st-skip-link
+              // :not(:focus){position:absolute…", which is CSS, not the page.
+              text: el && !/^(HTML|BODY)$/.test(el.tagName)
+                ? (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80) : '',
               tag: el ? el.tagName.toLowerCase() : '',
               // Where a link goes — the text alone ("here", "Learn more.") does
               // not say which of forty links this is.

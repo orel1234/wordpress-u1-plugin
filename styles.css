@@ -218,6 +218,14 @@ body[data-theme="light"] .test-code-tag .test-code-label { color: oklch(0.42 0.0
 body[data-theme="light"] .test-code-html { color: oklch(0.30 0.05 285); }
 body[data-theme="light"] .map-mode-btn:hover:not(.active):not(.is-locked) { color: var(--u1-primary-text); }
 body[data-theme="light"] .gate-error { color: oklch(0.48 0.18 25); }
+
+.gate-google-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; }
+.gate-google-btn svg { background: #fff; border-radius: 50%; padding: 3px; box-sizing: content-box; }
+.gate-pw-details { margin-top: 14px; }
+.gate-pw-details summary { cursor: pointer; font-size: 12px; color: var(--u1-text-muted); list-style: none; }
+.gate-pw-details summary::before { content: "\25B8 "; }
+.gate-pw-details[open] summary::before { content: "\25BE "; }
+.gate-pw-details form { margin-top: 10px; }
 body[data-theme="light"] .gate-ok { color: oklch(0.45 0.14 155); }
 body[data-theme="light"] .readonly-banner { color: oklch(0.45 0.13 80); }
 body[data-theme="light"] .offline-banner { color: var(--u1-primary-text); }
@@ -3603,6 +3611,35 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
   font-size: 11px;
   margin-top: 1px;
 }
+/* When what shapes the file last changed — the fact that tells a fresh copy
+   from a stale one. Muted and small, under the description, never wrapping
+   the filename. */
+.file-row-meta {
+  color: var(--u1-text-muted);
+  font-size: 10.5px;
+  margin-top: 2px;
+  opacity: 0.85;
+}
+.file-row-meta:empty { display: none; }
+.file-row-meta b { color: var(--u1-text); font-weight: 600; }
+/* The per-file download: at the end of the row, out of the text column. */
+.file-dl {
+  flex: 0 0 auto;
+  margin-left: auto;
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--u1-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--u1-text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.file-dl:hover { border-color: var(--u1-accent, #8b5cf6); color: var(--u1-accent, #8b5cf6); }
+.file-dl:disabled { opacity: 0.4; cursor: default; }
 
 /* Export's landing grid — two tiles per row, each a door to one destination. */
 .export-grid {
@@ -5499,6 +5536,10 @@ dialog.ai-box .btn-row .btn-primary { width: 100%; }
    only in the approval panel, which the sweep auto-approves and closes — so the
    count silently dropped by one and nothing said why. */
 .sweep-failed { color: var(--u1-danger, var(--u1-red-2)); }
+.sweep-failed-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.sweep-failed-row { display: flex; flex-direction: column; gap: 1px; }
+.sweep-failed-name { font-weight: 600; }
+.sweep-failed-row .sweep-failed { font-weight: 400; word-break: break-word; }
 
 /* How to RECOGNISE the element this field wants, under what the field IS.
    Two different questions, so two lines and two weights — the second is the

@@ -130,6 +130,14 @@ console.log('\nskip link');
   await settle(dom);
   check('target gained tabindex="-1"',
     dom.window.document.getElementById('main').getAttribute('tabindex') === '-1');
+  // Following the href would put "#main" in the address bar and a history
+  // entry behind it; the patch moves focus itself and leaves the URL alone.
+  const w = dom.window, link = w.document.querySelector('a.u1st-skip-link');
+  const ev = new w.MouseEvent('click', { bubbles: true, cancelable: true });
+  link.dispatchEvent(ev);
+  check('a skip that lands is handled by the patch, not by fragment navigation', ev.defaultPrevented);
+  await new Promise((r) => setTimeout(r, 5));
+  check('…and the target holds focus afterwards', w.document.activeElement === w.document.getElementById('main'));
 }
 
 // ── dialog: no focusable content, and the asymmetric trap ──────────────────
@@ -1015,6 +1023,82 @@ console.log('\nthe patch goes only where there is work');
   // place before the config preset creates window.u1.
   check('…and it still runs before injectConfig, which is why it was early',
     bg.indexOf('if (hasWork) await injectPatch(tabId)') < bg.indexOf('await injectConfig(tabId, stored[`config_'));
+}
+
+// ── A skip link's kind makes its target that landmark ──────────────────────
+//
+// molinahealthcare.com: "skip to main content" pointed at the content area
+// and the page still had no main landmark — nothing in Studio could map one.
+// Choosing "Main content" now does; the cases it must NOT touch matter as
+// much as the one it fixes.
+console.log('\nskip-link kind → landmark');
+{
+  const render = (html, list) => {
+    const dom = new JSDOM(`<!doctype html><body>${html}</body>`, { runScripts: 'outside-only', url: 'https://x.test/' });
+    const w = dom.window;
+    w.eval(SRC);
+    w.__u1SkipLinks = list;
+    w.__u1Patch.renderSkipLinks();
+    return w.document;
+  };
+  let d = render('<div class="content">x</div>', [{ label: 'Skip to main content', kind: 'main', selector: '.content', target: '.content' }]);
+  check('a "Main content" target that is a plain div becomes role=main', d.querySelector('.content').getAttribute('role') === 'main');
+
+  d = render('<main><div class="content">x</div></main>', [{ label: 'Skip to main content', kind: 'main', selector: '.content', target: '.content' }]);
+  check('…not when it already sits inside a <main>', !d.querySelector('.content').hasAttribute('role'));
+
+  d = render('<main>a</main><div class="content">x</div>', [{ label: 'Skip to main content', kind: 'main', selector: '.content', target: '.content' }]);
+  check('…not a second main when the page already has one elsewhere', !d.querySelector('.content').hasAttribute('role'));
+
+  d = render('<nav><ul class="menu"><li>a</li></ul></nav>', [{ label: 'Skip to navigation', kind: 'nav', selector: '.menu', target: '.menu' }]);
+  check('a nav list inside <nav> keeps its list semantics', !d.querySelector('.menu').hasAttribute('role'));
+
+  d = render('<button class="open-search">Search</button>', [{ label: 'Skip to search', kind: 'search', selector: '.open-search', target: '.open-search' }]);
+  check('a button is never turned into a landmark', !d.querySelector('.open-search').hasAttribute('role'));
+
+  d = render('<div class="content">x</div>', [{ label: 'skip to content', selector: '.content', target: '.content' }]);
+  check('a skip link saved before kinds existed changes nothing', !d.querySelector('.content').hasAttribute('role'));
+}
+
+// ── Deleting skip links takes them off the page, and the engine's own count ─
+//
+// Deleting every skip link on molinahealthcare.com left two on the page: the
+// ENGINE's (skipLinkApi, one per nav/main/footer — config cannot switch them
+// off). Ours had a second fault: an empty list fell back to the last list the
+// page remembered, and re-created the deleted links on the next pass.
+console.log('\nskip links: deleting, and the engine\'s own');
+{
+  const boot = (html) => {
+    const dom = new JSDOM(`<!doctype html><body>${html}</body>`, { runScripts: 'outside-only', url: 'https://x.test/' });
+    dom.window.eval(SRC);
+    return dom.window;
+  };
+  let w = boot('<div id="c">x</div>');
+  w.__u1SkipLinks = [{ label: 'Skip to main content', selector: '#c', target: '#c' }];
+  w.__u1Patch.renderSkipLinks();
+  check('a configured link is rendered', w.document.querySelectorAll('a.u1p-skip-link').length === 1);
+  w.__u1SkipLinks = [];
+  w.__u1Patch.renderSkipLinks();
+  check('an EMPTY list removes it from the open page', w.document.querySelectorAll('a.u1p-skip-link').length === 0);
+  w.__u1Patch.renderSkipLinks();
+  check('…and a later pass does not bring the old list back', w.document.querySelectorAll('a.u1p-skip-link').length === 0);
+
+  w = boot('<div id="a">x</div><div id="b">y</div>');
+  w.__u1SkipLinks = [{ label: 'Skip to a', selector: '#a', target: '#a' }, { label: 'Skip to b', selector: '#b', target: '#b' }];
+  w.__u1Patch.renderSkipLinks();
+  w.__u1SkipLinks = [{ label: 'Skip to a', selector: '#a', target: '#a' }];
+  w.__u1Patch.renderSkipLinks();
+  const hrefs = Array.from(w.document.querySelectorAll('a.u1p-skip-link')).map((a) => a.getAttribute('href'));
+  check('deleting ONE link removes that one and keeps the rest', hrefs.length === 1 && hrefs[0] === '#a', hrefs.join(','));
+
+  // The engine's link for the <nav> covers ours for a list inside it.
+  w = boot('<a class="u1st-skip-link" href="#n">Skip to navigation</a><nav id="n"><ul class="menu"><li>x</li></ul></nav>');
+  w.__u1SkipLinks = [{ label: 'Skip to navigation', kind: 'nav', selector: '.menu', target: '.menu' }];
+  const rep = w.__u1Patch.renderSkipLinks();
+  check('a nav skip link inside a <nav> U1 already links is not rendered a second time',
+    w.document.querySelectorAll('a.u1p-skip-link').length === 0 && rep.covered === 1);
+  check('…and the report names the engine\'s link as U1\'s own, with where it goes',
+    rep.onPage.length === 1 && rep.onPage[0].engine === true && rep.onPage[0].to === 'nav');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

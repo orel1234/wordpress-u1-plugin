@@ -4992,6 +4992,160 @@
     return out;
   }
 
+  /**
+   * Datepicker: the month is the one part of a calendar that is written on
+   * the page with no library help — a run of day numbers. Everything the
+   * mapping needs sits around that run:
+   *   · days.day      the leaf cells whose faces are 1..31
+   *   · days.table    their lowest common ancestor — the grid ALONE, never
+   *                   the panel that also holds the month/year controls
+   *   · days.selected the class exactly one day carries (or aria-selected)
+   *   · days.disabled the class the greyed-out days share (or [disabled])
+   *   · month.label / year.label   the smallest element whose own text is a
+   *                   month name / a year; one element saying both is the
+   *                   month label, so it is not read twice
+   *   · prev/next     pressables that say so, split by whether they also
+   *                   say "year"
+   * Pointed at the trigger rather than the panel (the input is what the
+   * specialist clicks on), the page is searched for the one open month.
+   */
+  function datepickerShape(rootSel) {
+    var root;
+    try { root = document.querySelector(rootSel); } catch (e) { return null; }
+    if (!root) return null;
+    var DAY = /^([1-9]|[12][0-9]|3[01])$/;
+    var isDay = function (el) {
+      return DAY.test((el.textContent || '').trim()) && !el.children.length;
+    };
+    var daysUnder = function (scope) {
+      var out = [];
+      try {
+        var all = scope.querySelectorAll('td,li,button,a,div,span');
+        for (var i = 0; i < all.length; i++) if (isDay(all[i])) out.push(all[i]);
+      } catch (e) {}
+      return out;
+    };
+    var runs = function (ds) {
+      var rise = 0;
+      for (var i = 1; i < ds.length; i++) {
+        if (Number(ds[i].textContent.trim()) === Number(ds[i - 1].textContent.trim()) + 1) rise++;
+      }
+      return ds.length >= 28 && ds.length <= 62 && rise >= ds.length * 0.7;
+    };
+    var days = daysUnder(root);
+    var scope = root;
+    if (!runs(days)) {
+      // The trigger, or a wrapper too high up: find the smallest element on
+      // the page that IS a month.
+      days = [];
+      var cands = document.querySelectorAll('table,tbody,div,ul,section');
+      var best = null, bestSize = Infinity;
+      for (var c = 0; c < cands.length; c++) {
+        var n = cands[c].querySelectorAll('*').length;
+        if (n > 400 || n >= bestSize) continue;
+        var d = daysUnder(cands[c]);
+        if (runs(d)) { best = cands[c]; bestSize = n; days = d; }
+      }
+      if (!best) return null;
+      scope = best;
+      // The panel is the grid's ancestor that also holds the month controls:
+      // climb while the parent still has no second month in it and is small.
+      var up = best;
+      for (var h = 0; h < 4 && up.parentElement && up.parentElement !== document.body; h++) {
+        var par = up.parentElement;
+        if (par.querySelectorAll('*').length > 250) break;
+        up = par;
+        if (par.querySelector('[aria-label*="prev" i],[aria-label*="next" i],[class*="prev" i],[class*="next" i]')) break;
+      }
+      scope = up;
+    }
+    // days.table — the lowest common ancestor of every day cell.
+    var lca = days[0].parentElement;
+    var holdsAll = function (el) {
+      for (var i = 0; i < days.length; i++) if (!el.contains(days[i])) return false;
+      return true;
+    };
+    while (lca && lca !== scope.parentElement && !holdsAll(lca)) lca = lca.parentElement;
+    if (!lca) return null;
+    // A class-less <tbody>/<tr> has nothing to be named by; the <table> has.
+    if (/^(TBODY|TR)$/.test(lca.tagName) && !classesOf(lca).length && lca.closest('table')) lca = lca.closest('table');
+    var tableSel = robustSelector(lca);
+    if (!isU1Valid(tableSel)) return null;
+    var daySel = commonSelectorFor(lca, days, tableSel);
+    if (!daySel || !daySel.selector || !isU1Valid(daySel.selector)) return null;
+    var out = { container: robustSelector(scope), fromTrigger: scope !== root, 'days.table': tableSel, 'days.day': daySel.selector };
+
+    // A class the marked days carry and the rest do not.
+    var exclusiveClass = function (marked, all, pat) {
+      if (!marked.length) return null;
+      var counts = {};
+      marked.forEach(function (el) {
+        classesOf(el).forEach(function (cl) { if (pat.test(cl)) counts[cl] = (counts[cl] || 0) + 1; });
+      });
+      var names = Object.keys(counts).filter(function (cl) { return counts[cl] === marked.length; });
+      for (var i = 0; i < names.length; i++) {
+        var leak = all.some(function (el) { return marked.indexOf(el) === -1 && el.classList.contains(names[i]); });
+        if (!leak) return names[i];
+      }
+      return null;
+    };
+    var selected = days.filter(function (el) { return el.getAttribute('aria-selected') === 'true' || (el.parentElement && el.parentElement.getAttribute('aria-selected') === 'true'); });
+    var selCls = exclusiveClass(days.filter(function (el) { return /select|chosen|current/i.test(el.className || ''); }), days, /select|chosen|current/i);
+    if (selCls) out['days.selected'] = '.' + selCls;
+    else if (selected.length === 1) out['days.selected'] = daySel.selector + '[aria-selected="true"]';
+    var disabledEls = days.filter(function (el) {
+      return el.disabled || el.getAttribute('aria-disabled') === 'true' || /disabled|outside|other-month|muted/i.test(el.className || '');
+    });
+    var disCls = exclusiveClass(disabledEls, days, /disabled|outside|other-month|muted/i);
+    if (disCls) out['days.disabled'] = '.' + disCls;
+    else if (disabledEls.length && disabledEls.every(function (el) { return el.disabled; })) out['days.disabled'] = daySel.selector + '[disabled]';
+
+    // Labels: the smallest element outside the grid whose OWN text says a
+    // month / a year.
+    var MONTH = /\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?|ינואר|פברואר|מרץ|אפריל|מאי|יוני|יולי|אוגוסט|ספטמבר|אוקטובר|נובמבר|דצמבר)\b/i;
+    var YEAR = /\b(19|20)\d{2}\b/;
+    var ownText = function (el) {
+      var t = '';
+      for (var i = 0; i < el.childNodes.length; i++) if (el.childNodes[i].nodeType === 3) t += el.childNodes[i].nodeValue;
+      if (!t.trim() && el.children.length === 0) t = el.textContent || '';
+      return t.trim();
+    };
+    var labelEl = null, yearEl = null;
+    try {
+      var ls = scope.querySelectorAll('*');
+      for (var li = 0; li < ls.length; li++) {
+        var el = ls[li];
+        if (lca.contains(el) || /^(BUTTON|A|OPTION)$/.test(el.tagName)) continue;
+        var t = ownText(el);
+        if (!t || t.length > 40) continue;
+        if (!labelEl && MONTH.test(t)) labelEl = el;
+        if (!yearEl && YEAR.test(t)) yearEl = el;
+      }
+    } catch (e) {}
+    if (labelEl) { var ms = robustSelector(labelEl); if (isU1Valid(ms)) out['month.label'] = ms; }
+    if (yearEl && yearEl !== labelEl) { var ys = robustSelector(yearEl); if (isU1Valid(ys)) out['year.label'] = ys; }
+
+    // Arrows, split by what they say.
+    var says = function (el) {
+      return [el.getAttribute('aria-label'), el.getAttribute('title'), el.className, el.id, el.textContent].join(' ');
+    };
+    try {
+      var press = scope.querySelectorAll('button,a,[role="button"]');
+      for (var pi = 0; pi < press.length; pi++) {
+        var b = press[pi];
+        if (lca.contains(b)) continue;
+        var w = says(b);
+        var dir = /prev|back|previous|‹|«|←|◀/i.test(w) ? 'prev' : (/next|forward|›|»|→|▶/i.test(w) ? 'next' : null);
+        if (!dir) continue;
+        var key = (/year/i.test(w) ? 'year.' : 'month.') + dir + 'Button';
+        if (out[key]) continue;
+        var bs = robustSelector(b);
+        if (isU1Valid(bs)) out[key] = bs;
+      }
+    } catch (e) {}
+    return out;
+  }
+
   function radioShape(rootSel) {
     var root;
     try { root = document.querySelector(rootSel); } catch (e) { return null; }
@@ -5516,7 +5670,7 @@
     selectorStrength, normalize, isU1Valid, U1_COMPOUND_RE, NOISE, VOLATILE_ID,
     // menu root correction
     menuItemsRoot, tabPanelsFor, accordionShape, dialogShape, openModalNow, comboboxShape, filterListShape, openedBy, listboxRoot, listboxShape,
-    formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, menuShape, tableShape, carouselShape, paginationShape, componentWording,
+    formShape, repairForU1, alreadyNative, menuIsReallyListbox, radioShape, menuShape, tableShape, carouselShape, paginationShape, datepickerShape, componentWording,
     authoredRoleConflict,
     // DOM
     robustSelector, commonSelectorFor, clickSignals, analyze, clearStamps, AUTO_RULES,

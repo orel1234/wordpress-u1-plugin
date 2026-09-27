@@ -3049,13 +3049,49 @@ async function pullSiteFromServer() {
   if (data.settings) {
     if (data.settings.config)    writes[storageKey('config', currentHostname)] = data.settings.config;
     if (data.settings.skipLinks) writes[storageKey('skipLinks', currentHostname)] = data.settings.skipLinks;
-    if (data.settings.u1Links)   writes[storageKey('u1Links', currentHostname)] = data.settings.u1Links;
+    // Never adopt the example pattern from the server — it is a saved
+    // placeholder, and Setup would only purge it again.
+    if (data.settings.u1Links &&
+        !isExampleU1Url(data.settings.u1Links.cssLink) && !isExampleU1Url(data.settings.u1Links.jsLink)) {
+      writes[storageKey('u1Links', currentHostname)] = data.settings.u1Links;
+    }
     if (data.settings.dismissed) writes[storageKey('dismissed', currentHostname)] = data.settings.dismissed;
     if (data.settings.declined)  writes[storageKey('declined', currentHostname)]  = data.settings.declined;
   }
   await U1Store.setLocalOnly(writes);
 
-  if (data.sweep) await adoptServerSweep(data.sweep);
+  // ── A survey that never reached the server ────────────────────────────────
+  //
+  // sweepWrite() saves the survey here first and uploads it second, and the
+  // upload can fail — a session that lapsed mid-scan, a deploy in progress, a
+  // dropped connection. Adopting the server's (older, or missing) survey here
+  // would then REPLACE the twenty-minute scan with what it was meant to
+  // supersede, silently, on the very next open. So a local survey the server
+  // has not acknowledged, and that is newer than what it holds, goes up now
+  // instead — the same rescue the stranded mappings below get.
+  let localSweepWins = false;
+  {
+    const cached = (await U1Store.get([sweepStoreKey()]))[sweepStoreKey()];
+    const serverAt = data.sweep && data.sweep.updatedAt ? Date.parse(data.sweep.updatedAt) : 0;
+    if (cached && cached.stops && cached.stops.length && !cached.pushedAt &&
+        (cached.savedAt || 0) > serverAt) {
+      localSweepWins = true;
+      try {
+        await U1Sync.pushSweep(currentHostname, {
+          url: cached.url, phase: cached.phase, cost: cached.cost, stops: cached.stops,
+        });
+        await markSweepPushed(currentHostname);
+        showNotice(document.getElementById('sweepPicksStatus'),
+          'The scan from last time had not reached the server. It has now — your colleagues can see it.',
+          'success', 8000);
+      } catch (err) {
+        showNotice(document.getElementById('sweepPicksStatus'),
+          'The scan on this computer still has not reached the server (' + err.message + '). ' +
+          'It is safe here and will be sent the next time the panel opens.', 'warn', 12000);
+      }
+    }
+  }
+  if (data.sweep && !localSweepWins) await adoptServerSweep(data.sweep);
 
   // And try again for the stranded ones, now, rather than leaving them to the
   // next time something happens to save. They are the whole reason this branch
@@ -3076,7 +3112,7 @@ async function pullSiteFromServer() {
     }
   }
 
-  return { ok: true, mappings: merged.length, sweep: !!data.sweep, stranded: stranded.length };
+  return { ok: true, mappings: merged.length, sweep: !!data.sweep && !localSweepWins, stranded: stranded.length };
 }
 
 /**
@@ -3311,7 +3347,15 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
 
-    if (btn.dataset.tab === 'config') refreshConfigSkipList();
+    // refreshConfigSkipList() draws the saved list; verifySkipLinksOnPage()
+    // is the LIVE half — it already existed, already asks the exact right
+    // question ("does this target still exist on the page open right now"),
+    // and was wired to nothing but a manual "🔍 Verify on page" press. So the
+    // list read the same whether it was checked five minutes ago on this
+    // page or five weeks ago on a different one. Reported repeatedly as
+    // "I configured five skip links and only two show up" — the tool always
+    // had the answer and never volunteered it.
+    if (btn.dataset.tab === 'config') { refreshConfigSkipList().then(verifySkipLinksOnPage); }
     if (btn.dataset.tab === 'export') refreshExportInfo();
     if (btn.dataset.tab === 'scan') renderScanHistory();
   });
@@ -3322,6 +3366,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 let currentHostname = 'unknown';
+// The page open right now, kept beside currentHostname for the same reason:
+// a sweep survey is of one PAGE (it scrolls down it, section by section), not
+// a whole site, and currentHostname alone cannot say whether the page a
+// finished survey pictures is the one on screen. Compared without hash or
+// query — an in-page anchor or a tracking param is not a different page.
+let currentPageUrl = '';
+const bareUrl = (u) => { try { const p = new URL(u); return p.origin + p.pathname; } catch (e) { return String(u || '').split(/[?#]/)[0]; } };
 
 // Whether an Anthropic key is saved, which is what the two paid Picker modes
 // are gated on. It lives up HERE, with the other module state, because boot
@@ -3623,10 +3674,12 @@ async function init() {
     el.textContent = currentHostname;
   });
 
-  await refreshSetupTab(tab);
   // Before the Picker is reachable: the two AI modes must not look enterable
-  // for the moment between the panel drawing and the key being read.
+  // for the moment between the panel drawing and the key being read. Ahead of
+  // refreshSetupTab, which probes the page for U1 and can stall on a slow or
+  // unresponsive tab — this must not wait on that.
   await refreshAiLocks();
+  await refreshSetupTab(tab);
   await loadConfigForm();
   await refreshConfigSkipList();
   updateConfigPreview();
@@ -3691,12 +3744,41 @@ async function autoRunOnOpen(tab) {
 //  TAB 1 — SETUP
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The bundle a fresh site starts from: the shared oreltest DEMO project, so
+// any client's site can be worked on before it has a project of its own.
+// Swap the project name here when the demo bundle moves.
+const U1_DEFAULT_LINKS = {
+  cssLink: 'https://prd.oreltest.user1st.com/u1.css',
+  jsLink: 'https://prd.oreltest.user1st.com/u1_vanilla-js-a11y.js',
+};
+
+// Empty link inputs are never left empty: whichever path clears them (Setup
+// load on a fresh site, Replace, Stop) they come back holding the demo bundle
+// as a real value, so Inject works with nothing typed.
+function fillDefaultLinks() {
+  for (const [id, url] of [['cssLink', U1_DEFAULT_LINKS.cssLink], ['jsLink', U1_DEFAULT_LINKS.jsLink]]) {
+    const el = document.getElementById(id);
+    if (el && !el.value.trim()) { el.placeholder = url; el.value = url; }
+  }
+}
+
 async function refreshSetupTab(tab) {
   // Load saved global links
   const linkKey = storageKey('u1Links', currentHostname);
   const injKey = storageKey('manualInject', currentHostname);
   const got = await U1Store.get([linkKey, injKey]);
-  const { cssLink = '', jsLink = '' } = got[linkKey] || got[injKey] || {};
+  let { cssLink = '', jsLink = '' } = got[linkKey] || got[injKey] || {};
+  // The "example" pattern was once the placeholder and got saved as a real
+  // bundle for a site by the CSP toggle. It never resolves, so a saved copy
+  // of it is a mistake, not a choice: drop it and start from the default.
+  if (isExampleU1Url(cssLink) || isExampleU1Url(jsLink)) {
+    await U1Store.remove([linkKey, injKey]);
+    cssLink = ''; jsLink = '';
+    // The server holds a copy and hands it back on every panel open (the pull
+    // runs after this), so a local purge alone came straight back next time.
+    // A removal does not push (undefined drops out of the JSON); say null.
+    try { await U1Sync.pushSettings(currentHostname, { u1Links: null }); } catch {}
+  }
   if (cssLink) document.getElementById('cssLink').value = cssLink;
   if (jsLink)  document.getElementById('jsLink').value  = jsLink;
 
@@ -3710,6 +3792,18 @@ async function refreshSetupTab(tab) {
     inputsSec.style.display   = 'none';
     document.getElementById('detectedCss').textContent = detected.cssHref || '(not found)';
     document.getElementById('detectedJs').textContent  = detected.jsSrc   || '(not found)';
+    // A tag on the page is not a library on the page. Our own injected tag
+    // with a wrong URL is found here too, and calling that "detected" hides
+    // the one fact that matters: window.u1 never appeared.
+    const detLine = document.querySelector('#u1Detected .status-line');
+    if (detLine) {
+      const dot = detLine.querySelector('.status-dot');
+      const txt = detLine.querySelector('span:not(.status-dot)');
+      if (dot) dot.className = 'status-dot ' + (detected.active ? 'active' : 'inactive');
+      if (txt) txt.textContent = detected.active
+        ? 'U1 detected on this page'
+        : 'U1 tag is on the page but the library did not load — check the URL (press Stop, then Replace)';
+    }
     // Show auto-inject badge if this hostname has manual injection saved
     const miStored = await U1Store.get([`manualInject_${currentHostname}`]);
     const armed = miStored[`manualInject_${currentHostname}`];
@@ -3749,6 +3843,10 @@ async function refreshSetupTab(tab) {
     inputsSec.style.display   = 'block';
     const badge = document.getElementById('autoInjectBadge');
     if (badge) badge.style.display = 'none';
+    // A new site with nothing saved and nothing on the page: start from the
+    // production URL pattern as a real value, not a placeholder, so the
+    // project name is the only thing left to type.
+    fillDefaultLinks();
   }
 
   // Detect skip links on page
@@ -3775,6 +3873,8 @@ async function refreshSetupTab(tab) {
     skipInpSec.style.display = 'block';
     // Pre-fill rows from saved user values if exist (else one empty row)
     populateSkipRows(userSaved);
+    refreshSkipHints();
+    refreshSkipEngineNote();
   }
 }
 
@@ -3783,6 +3883,11 @@ async function detectU1(tab) {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
+      // MAIN world: window.u1 is the page's global. From the isolated world it
+      // is never visible, so `active` was always false there — and once the
+      // status line started reporting it, every working site read as "the
+      // library did not load".
+      world: 'MAIN',
       func: () => {
         // 1) Globals — accept object or function, try common names
         let globalName = null;
@@ -3879,6 +3984,11 @@ async function detectSkipLinks(tab) {
         const found = [];
         const add = (a) => {
           if (!a) return;
+          // U1's own ("Skip to navigation", inserted first in <body> for every
+          // nav/main/footer landmark) and ours both carry u1st-skip-link. They
+          // are not the site's markup — counted as such, they were offered as
+          // links to adopt and reported as "the page's own".
+          if (a.classList && a.classList.contains('u1st-skip-link')) return;
           if (found.some(x => x.el === a)) return;
           const label = (a.textContent || a.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ');
           const target = a.getAttribute('href') || '';
@@ -3904,18 +4014,123 @@ async function detectSkipLinks(tab) {
 }
 
 // ── Dynamic skip-link rows ─────────────────────────────────────────────────
-function createSkipRow(label = '', target = '') {
+//
+// The label is a choice of five, not free text. Every skip link a site needs
+// is one of these, and typing them by hand gave "skip to nav", "Skip to
+// navigation" and "skip to menu" on three rows of the same site — and said
+// nothing about what the target IS. The choice says it: u1-patch.js makes a
+// "Main content" target the page's main landmark (renderSkipLinks →
+// makeLandmark), which is the one landmark Studio had no other way to map.
+const SKIP_KINDS = ['header', 'nav', 'main', 'search', 'footer'];
+const SKIP_KIND_NAME = { header: 'Header', nav: 'Navigation', main: 'Main content', search: 'Search', footer: 'Footer' };
+// Hebrew matches the engine's own skip-link words (TranslateText in
+// u1_vanilla-js-a11y.js: "דלג אל", "תוכן ראשי", "תפריט ניווט", "תחתית העמוד"),
+// so ours read the same as the ones U1 adds beside them.
+const SKIP_KIND_TEXT = {
+  en: { header: 'Skip to header', nav: 'Skip to navigation', main: 'Skip to main content', search: 'Skip to search', footer: 'Skip to footer' },
+  he: { header: 'דלג אל ראש העמוד', nav: 'דלג אל תפריט ניווט', main: 'דלג אל תוכן ראשי', search: 'דלג אל חיפוש', footer: 'דלג אל תחתית העמוד' },
+};
+function skipKindLabel(kind) {
+  const lang = (document.getElementById('langSelect')?.value || 'en').slice(0, 2);
+  return (SKIP_KIND_TEXT[lang] || SKIP_KIND_TEXT.en)[kind] || '';
+}
+/** Which of the five an old free-text label was — so saved rows keep their meaning. */
+function guessSkipKind(label) {
+  const t = String(label || '').toLowerCase();
+  if (/search|חיפוש/.test(t)) return 'search';
+  if (/footer|bottom|תחתית/.test(t)) return 'footer';
+  if (/nav|menu|ניווט|תפריט/.test(t)) return 'nav';
+  if (/main|content|תוכן/.test(t)) return 'main';
+  if (/header|top|banner|ראש|כותרת/.test(t)) return 'header';
+  return '';
+}
+
+// Which of the five U1 already links on the page open right now. The engine
+// adds its own skip link for every nav, main and footer landmark
+// (skipLinkApi, unconditional — see u1-engine-auto-skip-links), so a row for
+// one of those usually repeats it. Refreshed by refreshSkipEngineNote().
+let skipEngineKinds = new Set();
+
+/** The engine's own skip links on the open page, with the landmark each goes to. */
+async function readEngineSkipLinks() {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return null;
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: () => Array.from(document.querySelectorAll('a.u1st-skip-link:not(.u1p-skip-link)')).map((a) => {
+        const id = (a.getAttribute('href') || '').slice(1);
+        const t = id ? document.getElementById(id) : null;
+        const kind = !t ? '' : t.matches('nav,[role=navigation]') ? 'nav'
+                   : t.matches('main,[role=main]') ? 'main'
+                   : t.matches('footer,[role=contentinfo]') ? 'footer' : '';
+        return { text: (a.textContent || '').trim(), kind,
+                 to: t ? t.tagName.toLowerCase() + (t.getAttribute('role') ? `[role=${t.getAttribute('role')}]` : '') : '' };
+      }),
+    });
+    return (res && res[0] && res[0].result) || [];
+  } catch { return null; }
+}
+
+/**
+ * Setup says what U1 already covers on this page before anyone adds a row,
+ * and marks those kinds in every row's dropdown. Asked for after "I deleted
+ * every skip link and still get two": the two were U1's, and nothing in Setup
+ * said so — so the obvious next step was to add them again.
+ */
+async function refreshSkipEngineNote() {
+  const box = document.getElementById('skipEngineNote');
+  if (!box) return;
+  const engine = await readEngineSkipLinks();
+  if (!engine) { box.style.display = 'none'; return; }
+  skipEngineKinds = new Set(engine.map((l) => l.kind).filter(Boolean));
+  const left = SKIP_KINDS.filter((k) => !skipEngineKinds.has(k)).map((k) => SKIP_KIND_NAME[k]);
+  box.innerHTML = engine.length
+    ? `<div class="map-mode-hint">U1 already adds these on this page by itself — one for every nav, main and footer landmark. You do not need rows for them:</div>` +
+      '<ul class="detected-list">' + engine.map((l) => `
+        <li>
+          <span class="bullet">•</span>
+          <span>"${escapeHtml(l.text)}"</span>
+          <span class="arrow">→</span>
+          <span class="target">${escapeHtml(l.to)}</span>
+          <span class="skip-detected-flag">U1 automatic</span>
+        </li>`).join('') + '</ul>' +
+      `<div class="map-mode-hint">Left for you to add: <strong>${escapeHtml(left.join(', '))}</strong>.` +
+      `${skipEngineKinds.has('main') ? '' : ' Choosing “Main content” also makes its target the page’s main landmark.'}</div>`
+    : `<div class="map-mode-hint">U1 adds no skip links of its own on this page (it has no nav, main or footer landmark). ` +
+      'Choosing “Main content” below makes its target the main landmark, and U1 then adds its own link for it.</div>';
+  box.style.display = '';
+  // Every row's dropdown says which options U1 already covers.
+  document.querySelectorAll('#skipLinksContainer .skip-kind option').forEach((o) => {
+    if (!o.value) return;
+    o.textContent = SKIP_KIND_NAME[o.value] + (skipEngineKinds.has(o.value) ? ' — U1 adds this already' : '');
+  });
+}
+
+function createSkipRow(label = '', target = '', kind = '') {
   const container = document.getElementById('skipLinksContainer');
   const row = document.createElement('div');
   row.className = 'skiplink-row';
+  // A new row starts on the first kind no other row has taken yet.
+  const taken = new Set(Array.from(container.querySelectorAll('.skip-kind')).map((s) => s.value));
+  const chosen = kind || guessSkipKind(label) ||
+    (label ? '' : (SKIP_KINDS.find((k) => !taken.has(k) && !skipEngineKinds.has(k)) ||
+                   SKIP_KINDS.find((k) => !taken.has(k)) || 'main'));
+  // An old label that matches none of the five is kept as its own option
+  // rather than silently replaced — it is somebody's saved work.
+  const keepOwn = !chosen && label;
   row.innerHTML = `
     <div class="row-head">
       <div class="row-title"></div>
       <button type="button" class="btn-ghost btn-xs skip-remove-btn" title="Remove">✕</button>
     </div>
     <div class="field-group">
-      <label>Label</label>
-      <input type="text" class="skip-label" placeholder="Skip to main content">
+      <label>Skip to</label>
+      <select class="skip-kind">
+        ${SKIP_KINDS.map((k) => `<option value="${k}"${k === chosen ? ' selected' : ''}>${SKIP_KIND_NAME[k]}${skipEngineKinds.has(k) ? ' — U1 adds this already' : ''}</option>`).join('')}
+        ${keepOwn ? `<option value="" selected>Keep “${escapeHtml(label)}”</option>` : ''}
+      </select>
+      <input type="hidden" class="skip-label">
     </div>
     <div class="field-group">
       <label>Target</label>
@@ -3923,7 +4138,10 @@ function createSkipRow(label = '', target = '') {
       <div class="field-hint skip-hint"></div>
     </div>
   `;
-  row.querySelector('.skip-label').value = label;
+  const sel = row.querySelector('.skip-kind');
+  const syncLabel = () => { row.querySelector('.skip-label').value = sel.value ? skipKindLabel(sel.value) : label; };
+  sel.addEventListener('change', syncLabel);
+  syncLabel();
   row.querySelector('.skip-target').value = target;
   row.querySelector('.skip-remove-btn').addEventListener('click', () => {
     row.remove();
@@ -3958,10 +4176,72 @@ function populateSkipRows(saved) {
   container.innerHTML = '';
   if (saved && saved.length) {
     // Show the original selector the user typed (falls back to the resolved id)
-    saved.forEach(s => createSkipRow(s.label || '', s.selector || s.target || ''));
+    saved.forEach(s => createSkipRow(s.label || '', s.selector || s.target || '', s.kind || ''));
   } else {
     showSkipEmptyState();
   }
+}
+
+/**
+ * Re-runs the same live-page check the Save button runs, for every row
+ * already on screen — without saving anything.
+ *
+ * Each row's hint is written once, at Save time, for whatever page the panel
+ * happened to be pointed at that moment ("Element found — using its id: …").
+ * It then sits there unchanged: open Setup again next week, or on a
+ * different page of the same site, and a target that stopped matching still
+ * shows the old green checkmark. Reported more than once, on more than one
+ * site, as "I have five skip links configured and only two show up" — the
+ * tool always had the answer (this exact query), it just never asked the
+ * question again after the moment of saving. Called every time the rows are
+ * populated, so the hints are always for the page actually on screen right
+ * now, not for whichever page they were last saved from.
+ */
+async function refreshSkipHints() {
+  const rows = Array.from(document.querySelectorAll('#skipLinksContainer .skiplink-row'));
+  if (!rows.length) return;
+  const tab = await getTab();
+  if (!isInjectable(tab)) return;
+  const targets = rows.map((r) => r.querySelector('.skip-target').value.trim());
+  let results;
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (list) => list.map((sel) => {
+        if (!sel) return { count: 0 };
+        try {
+          const els = document.querySelectorAll(sel);
+          return { count: els.length, existingId: (els[0] && els[0].id) || '' };
+        } catch (e) { return { error: String((e && e.message) || e) }; }
+      }),
+      args: [targets],
+    });
+    results = res && res[0] && res[0].result;
+  } catch { return; }
+  if (!results) return;
+  rows.forEach((row, i) => {
+    const hintEl = row.querySelector('.skip-hint');
+    const target = targets[i];
+    const r = results[i];
+    if (!hintEl || !target || !r) return;
+    if (r.error) {
+      hintEl.textContent = `Invalid selector: ${r.error}`;
+      hintEl.className = 'field-hint error';
+    } else if (r.count === 0) {
+      // Not an error — skip links are deliberately site-wide, and a target
+      // that lives on another page is the ordinary case, not a mistake. But
+      // silence is what made this go unnoticed for a week at a time, so it
+      // says so plainly rather than leaving the hint blank.
+      hintEl.textContent = 'Not on this page — skip links are site-wide; it may exist on another page.';
+      hintEl.className = 'field-hint warn';
+    } else if (r.count > 1) {
+      hintEl.textContent = `${r.count} elements match on this page — using the first one.`;
+      hintEl.className = 'field-hint warn';
+    } else {
+      hintEl.textContent = r.existingId ? `On this page — id #${r.existingId}` : 'On this page.';
+      hintEl.className = 'field-hint ok';
+    }
+  });
 }
 
 function renderSkipDetectedList(items) {
@@ -4006,10 +4286,28 @@ function renderBundleOwner(links) {
   el.innerHTML = `Bundle belongs to the <strong>${escapeHtml(proj)}</strong> project.`;
 }
 
+// The Setup form pre-fills the production URL pattern with "example" where
+// the project name goes. prd.example.user1st.com does not resolve, so injecting
+// it as-is fails to load — and that failure used to be reported as "Blocked by
+// CSP" on a site with no CSP at all, which sent the specialist down the bypass
+// path and armed auto-injection with a URL that can never work.
+function isExampleU1Url(u) {
+  try { return /^prd\.example\.user1st\.com$/i.test(new URL(u).hostname); } catch { return false; }
+}
+const EXAMPLE_URL_MSG = 'The links still say "example" — replace it with the project name (prd.<project>.user1st.com) before injecting.';
+
 document.getElementById('injectBtn').addEventListener('click', async () => {
   const cssLink = document.getElementById('cssLink').value.trim();
   const jsLink  = document.getElementById('jsLink').value.trim();
   if (!cssLink || !jsLink) { alert('Please enter both CSS and JS links.'); return; }
+  // A confirm, not a refusal: on a machine whose DNS knows the "example"
+  // project (VPN, internal resolver) these links do load, and a hard block
+  // would be wrong there.
+  if ((isExampleU1Url(cssLink) || isExampleU1Url(jsLink)) &&
+      !confirm(EXAMPLE_URL_MSG + '\n\nInject the "example" links anyway?')) {
+    document.getElementById(isExampleU1Url(cssLink) ? 'cssLink' : 'jsLink')?.focus();
+    return;
+  }
   // SECURITY: these become <script src>/<link href> on the page — only allow
   // http(s), never javascript:/data: which would be arbitrary code execution.
   if (!isSafeHttpUrl(cssLink) || !isSafeHttpUrl(jsLink)) {
@@ -4056,6 +4354,7 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
     world: 'MAIN',
     func: (jsUrl) => {
       window.__u1CspBlocked = false;
+      window.__u1LoadFailed = false;
       const handler = (e) => {
         if (e.blockedURI && jsUrl.includes(e.blockedURI.split('/').pop().split('?')[0])) {
           window.__u1CspBlocked = true;
@@ -4070,7 +4369,10 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (href) => {
-      if (!document.getElementById('u1Css')) {
+      // Replace, not skip: a tag from an earlier attempt (a wrong URL that
+      // never loaded) must not silently win over the one being injected now.
+      document.getElementById('u1Css')?.remove();
+      {
         const link = document.createElement('link');
         link.id = 'u1Css'; link.rel = 'stylesheet'; link.href = href;
         document.head.appendChild(link);
@@ -4083,9 +4385,13 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
     target: { tabId: tab.id },
     world: 'MAIN',
     func: (src) => {
-      if (!document.getElementById('u1Js')) {
+      document.getElementById('u1Js')?.remove();
+      {
         const s = document.createElement('script');
         s.id = 'u1Js'; s.src = src; s.type = 'text/javascript';
+        // A DNS failure, a 404, a wrong project name: none of these are CSP,
+        // and the verdict below must not call them that.
+        s.onerror = () => { window.__u1LoadFailed = true; };
         document.body.appendChild(s);
       }
     },
@@ -4118,10 +4424,34 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
       func: () => ({
         u1Loaded: typeof window.u1 === 'object' && window.u1 !== null,
         cspBlocked: window.__u1CspBlocked === true,
+        loadFailed: window.__u1LoadFailed === true,
       }),
     }).catch(() => null);
 
     const check = checkRes?.[0]?.result;
+
+    if (check && !check.u1Loaded && check.loadFailed && !check.cspBlocked) {
+      // The tag went in and the browser could not fetch the file. That is the
+      // URL, not the site's policy — and the CSP bypass would not help.
+      if (statusText) statusText.textContent = 'U1 did not load';
+      if (statusDot) statusDot.className = 'status-dot inactive';
+      const notice = document.getElementById('injectNotice');
+      if (notice) {
+        notice.textContent =
+          `The browser could not fetch ${jsLink} — the file was not found or the host does not exist. ` +
+          `Check the project name in the URL (prd.<project>.user1st.com). This is not a CSP block.`;
+        notice.style.display = 'block';
+      }
+      const row = document.getElementById('cspBypassRow');
+      if (row) row.style.display = 'none';
+      // Take the failed tags back out so Setup does not report them as
+      // "detected" on the next refresh.
+      await chrome.scripting.executeScript({
+        target: { tabId: freshTab.id },
+        func: () => { document.getElementById('u1Js')?.remove(); document.getElementById('u1Css')?.remove(); },
+      }).catch(() => {});
+      return;
+    }
 
     if (check?.cspBlocked || (!check?.u1Loaded && check !== null)) {
       if (statusText) statusText.textContent = 'Blocked by CSP';
@@ -4167,6 +4497,7 @@ document.getElementById('injectBtn').addEventListener('click', async () => {
 document.getElementById('replaceU1Btn').addEventListener('click', () => {
   document.getElementById('u1Detected').style.display = 'none';
   document.getElementById('u1Inputs').style.display   = 'block';
+  fillDefaultLinks();
 });
 
 document.getElementById('stopAutoInjectBtn').addEventListener('click', async () => {
@@ -4183,6 +4514,7 @@ document.getElementById('stopAutoInjectBtn').addEventListener('click', async () 
   if (owner) owner.style.display = 'none';
   document.getElementById('cssLink').value = '';
   document.getElementById('jsLink').value = '';
+  fillDefaultLinks();
 
   const tab = await getTab();
   if (isInjectable(tab)) {
@@ -4204,6 +4536,8 @@ document.getElementById('editSkipBtn').addEventListener('click', async () => {
   const skipKey = storageKey('skipLinks', currentHostname);
   const stored  = await U1Store.get([skipKey]);
   populateSkipRows(stored[skipKey]);
+  refreshSkipHints();
+  refreshSkipEngineNote();
   document.getElementById('skipDetected').style.display = 'none';
   document.getElementById('skipInputs').style.display   = 'block';
 });
@@ -4252,7 +4586,10 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
 
   const rows = Array.from(document.querySelectorAll('#skipLinksContainer .skiplink-row'));
   for (const row of rows) {
-    const label  = row.querySelector('.skip-label').value.trim();
+    // The kind decides the words, in the language Config is set to NOW — a
+    // row saved while Config said English follows it to Hebrew on re-save.
+    const kind   = row.querySelector('.skip-kind')?.value || '';
+    const label  = (kind ? skipKindLabel(kind) : row.querySelector('.skip-label').value).trim();
     const target = row.querySelector('.skip-target').value.trim();
     const hintEl = row.querySelector('.skip-hint');
     if (hintEl) { hintEl.textContent = ''; hintEl.className = 'field-hint'; }
@@ -4275,7 +4612,7 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
 
     // Try it as a CSS selector on the live page
     if (!isInjectable(tab)) {
-      links.push({ label, target, selector: target }); // can't validate, pass through
+      links.push({ label, kind, target, selector: target }); // can't validate, pass through
       continue;
     }
 
@@ -4341,11 +4678,11 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
       // block the whole save on it.
       const isPlainId = /^#[A-Za-z][\w:-]*$/.test(target);
       if (isPlainId) {
-        links.push({ label, target, selector: target });
+        links.push({ label, kind, target, selector: target });
       } else {
         synthCounter++;
         const synthId = `u1-anchor-${synthToken}-${synthCounter}`;
-        links.push({ label, target: `#${synthId}`, selector: target, syntheticId: synthId });
+        links.push({ label, kind, target: `#${synthId}`, selector: target, syntheticId: synthId });
       }
       if (hintEl) {
         hintEl.textContent = 'Not found on this page — saved anyway (skip links are site-wide; it will attach on pages where it exists).';
@@ -4361,7 +4698,7 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
     // Element found — use its id or create a synthetic one.
     // Always keep the original selector so the UI shows what the user typed.
     if (queryResult.existingId) {
-      links.push({ label, target: '#' + queryResult.existingId, selector: target });
+      links.push({ label, kind, target: '#' + queryResult.existingId, selector: target });
       if (hintEl && queryResult.count === 1) {
         hintEl.textContent = `Element found — using its id: #${queryResult.existingId}`;
         hintEl.className = 'field-hint ok';
@@ -4369,7 +4706,7 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
     } else {
       synthCounter++;
       const synthId = `u1-anchor-${synthToken}-${synthCounter}`;
-      links.push({ label, target: `#${synthId}`, selector: target, syntheticId: synthId });
+      links.push({ label, kind, target: `#${synthId}`, selector: target, syntheticId: synthId });
       if (hintEl) {
         hintEl.textContent = `Will assign id="${synthId}" to the matched element at runtime.`;
         hintEl.className = 'field-hint ok';
@@ -4389,8 +4726,13 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
   // never actually reach the page on subsequent navigations.
   await saveConfig();
   flashMessage(document.getElementById('skipSaved'));
-  refreshConfigSkipList();
+  await refreshConfigSkipList();
   updateConfigPreview();
+  // On the open page NOW, not at the next reload: a deleted skip link used
+  // to stay on the page — and be re-rendered by it — until then. Then the
+  // note, since a "Main content" row can have just made a main landmark
+  // that U1 now links on its own.
+  verifySkipLinksOnPage().then(() => setTimeout(refreshSkipEngineNote, 1500));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4585,8 +4927,9 @@ async function refreshConfigSkipList() {
       ? '<div class="empty-state">' +
           `The page already has ${detectedSkipLinks.length} skip link` +
           `${detectedSkipLinks.length === 1 ? '' : 's'} of its own, written into the ` +
-          'site\'s markup. U1 is not rendering <em>those</em> — nothing is configured ' +
-          'here, so U1 adds none of its own.' +
+          'site\'s markup. U1 is not rendering <em>those</em>. (U1 does add one of its ' +
+          'own for every nav, main and footer landmark, configured here or not — ' +
+          'they are listed under the check below.)' +
         '</div>' +
         '<ul class="detected-list">' + detectedSkipLinks.map((s) => `
           <li>
@@ -4621,7 +4964,10 @@ async function verifySkipLinksOnPage() {
   const stored = await U1Store.get([skipKey]);
   const links = stored[skipKey] || [];
   const tab = await getTab();
-  if (!links.length || !isInjectable(tab)) return;
+  // An EMPTY list still runs: it is what tells the page to drop the links a
+  // previous list rendered (deleted in Setup, gone at once, not on reload),
+  // and the engine's own links are listed whether or not any are configured.
+  if (!isInjectable(tab)) return;
 
   // Before looking: make sure the page HAS what it is being checked for. The
   // renderer lives in the patch and reads window.__u1SkipLinks — both may be
@@ -4643,12 +4989,30 @@ async function verifySkipLinksOnPage() {
         const out = { build: P && P.build, renderer: !!(P && P.renderSkipLinks), u1: typeof (window.u1 || window.U1 || window.user1st), report: null, err: '' };
         try { if (out.renderer) out.report = P.renderSkipLinks(); } catch (e) { out.err = String(e && e.message || e); }
         out.links = Array.from(document.querySelectorAll('a.u1st-skip-link')).map(a => a.getAttribute('href') + ' ' + (a.textContent || '').trim());
+        // Read here, not from the patch's report: a page still running an
+        // older patch has no report.onPage, and the list must not depend on it.
+        out.engineLinks = Array.from(document.querySelectorAll('a.u1st-skip-link:not(.u1p-skip-link)')).map((a) => {
+          const id = (a.getAttribute('href') || '').slice(1);
+          const t = id ? document.getElementById(id) : null;
+          return { text: (a.textContent || '').trim(), href: a.getAttribute('href') || '',
+                   to: t ? t.tagName.toLowerCase() + (t.getAttribute('role') ? `[role=${t.getAttribute('role')}]` : '') : '' };
+        });
         return out;
       },
       args: [links],
     });
     diag = d && d[0] ? d[0].result : null;
   } catch (e) { diag = { err: 'could not run in the page: ' + (e && e.message || e) }; }
+  // The patch installs once per page (it guards itself), so reloading the
+  // EXTENSION leaves the page running the build it loaded with. Compared
+  // against the build this extension actually ships, so "I fixed it and
+  // nothing changed" is answered on screen rather than debugged.
+  let shipped = '';
+  try {
+    const src = await (await fetch(chrome.runtime.getURL('u1-patch.js'))).text();
+    shipped = (src.match(/build: '([^']+)'/) || [])[1] || '';
+  } catch {}
+  const stale = !!(diag && diag.build && shipped && diag.build !== shipped);
   const box = document.getElementById('configSkipList');
   if (box) {
     let line = box.querySelector('.skip-verify-diag');
@@ -4657,8 +5021,44 @@ async function verifySkipLinksOnPage() {
     line.textContent = !diag ? 'Could not read the page.'
       : diag.err ? `Page: ${diag.err}`
       : !diag.renderer ? `The page runs patch ${diag.build || '(none)'} without the skip-link renderer — reload the page (and the extension) and verify again.`
-      : `Patch ${diag.build} · ${r ? `${r.list} in the list, ${r.made} added now, ${r.kept} already there${r.missing.length ? `, not on this page: ${r.missing.join(', ')}` : ''}${r.errors.length ? `, errors: ${r.errors.join('; ')}` : ''}` : 'renderer returned nothing'} · links on the page now: ${(diag.links || []).length}`;
+      : stale ? `This page is still running patch ${diag.build}; the extension has ${shipped}. Reload the page to use it — the results below are the old patch's.`
+      : `Patch ${diag.build} · ${r ? `${r.list} in the list, ${r.made} added now, ${r.kept} already there${r.covered ? `, ${r.covered} left to U1's own link for the same landmark` : ''}${r.missing.length ? `, not on this page: ${r.missing.join(', ')}` : ''}${r.errors.length ? `, errors: ${r.errors.join('; ')}` : ''}` : 'renderer returned nothing'} · links on the page now: ${(diag.links || []).length}`;
+    // One press instead of a sentence: the page keeps the patch it loaded
+    // with until it reloads, and "reload the page" was being read as "reload
+    // the extension" — which is the half that does not help.
+    let rl = box.querySelector('.skip-reload-page');
+    if (stale) {
+      if (!rl) {
+        rl = document.createElement('button');
+        rl.type = 'button';
+        rl.className = 'btn-outline btn-xs skip-reload-page';
+        rl.textContent = '↻ Reload this page';
+        rl.addEventListener('click', async () => {
+          const t = await getTab();
+          if (t) chrome.tabs.reload(t.id);
+        });
+        line.after(rl);
+      }
+    } else if (rl) rl.remove();
+    // The engine's own skip links, named — the answer to "I deleted them all
+    // and still get two". U1 adds one for every nav, main and footer landmark
+    // on every page; Setup does not control them and never did.
+    let eng = box.querySelector('.skip-engine-list');
+    const engine = (diag && diag.engineLinks) || [];
+    if (engine.length) {
+      if (!eng) { eng = document.createElement('div'); eng.className = 'skip-engine-list'; box.appendChild(eng); }
+      eng.innerHTML = `<div class="map-mode-hint">Added by U1 itself — one for every nav, main and footer landmark, on every page. Not set here, and deleting skip links here does not remove them:</div>` +
+        '<ul class="detected-list">' + engine.map((l) => `
+          <li>
+            <span class="bullet">•</span>
+            <span>"${escapeHtml(l.text)}"</span>
+            <span class="arrow">→</span>
+            <span class="target">${escapeHtml(l.to || l.href)}</span>
+            <span class="skip-detected-flag">U1 automatic</span>
+          </li>`).join('') + '</ul>';
+    } else if (eng) eng.remove();
   }
+  if (!links.length) return;
   let results;
   try {
     const res = await chrome.scripting.executeScript({
@@ -4675,7 +5075,15 @@ async function verifySkipLinksOnPage() {
         // by the id the element carries now.
         const hrefs = [href, el && el.id ? '#' + el.id : ''].filter(Boolean);
         const rendered = hrefs.some(h => { try { return !!document.querySelector(`a[href="${CSS.escape(h)}"], a[href$="${CSS.escape(h)}"]`); } catch { return false; } });
-        return { targetExists, rendered };
+        // Not rendered BECAUSE U1 already links the landmark this target is
+        // in — ours would repeat the same words to a spot inside it.
+        const LM = { nav: 'nav,[role=navigation]', main: 'main,[role=main]', footer: 'footer,[role=contentinfo]' };
+        let covered = false;
+        if (!rendered && el && LM[s.kind]) {
+          const lm = el.closest(LM[s.kind]);
+          if (lm && lm.id) { try { covered = !!document.querySelector(`a.u1st-skip-link:not(.u1p-skip-link)[href="#${CSS.escape(lm.id)}"]`); } catch {} }
+        }
+        return { targetExists, rendered, covered };
       }),
       args: [links],
     });
@@ -4688,6 +5096,9 @@ async function verifySkipLinksOnPage() {
     if (!el) return;
     if (r.rendered) {
       el.textContent = '✅ on page';
+      el.className = 'skip-verify-status ok';
+    } else if (r.covered) {
+      el.textContent = '✅ U1 already links this landmark';
       el.className = 'skip-verify-status ok';
     } else if (!r.targetExists) {
       el.textContent = '⛔ target not found';
@@ -9408,7 +9819,10 @@ async function autoOpenCapture(tab, triggerSel, type) {
   if (urlBefore && urlAfter && urlAfter !== urlBefore) {
     try {
       await chrome.tabs.update(tab.id, { url: urlBefore });
-      await new Promise((r) => setTimeout(r, 1500));
+      await waitTabReady(tab.id, urlBefore, 15000);
+      // A new document: nothing the run injected into the old one survives.
+      try { await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['selector-intel.js'] }); } catch {}
+      await new Promise((r) => setTimeout(r, 600));
       out.navigatedBack = true;
     } catch { /* the tab may be gone; the caller's next read will say so */ }
   }
@@ -9522,7 +9936,13 @@ async function prepareOne(row, tab) {
   // slide, pageButtons) had no reader at all — the model either guessed or
   // the build refused. Measured now, filled only where the field is empty
   // or resolves to nothing.
-  let tblShape = null, carShape = null, pgShape = null;
+  let tblShape = null, carShape = null, pgShape = null, dpShape = null;
+  if (row.type === 'datepicker') {
+    // The same gap: days.table and days.day were REQUIRED and nothing read
+    // them, so a single-element scan handed back a form with two empty
+    // required fields and the build refused it.
+    dpShape = await inPage(tab.id, (x) => window.__u1SelectorIntel.datepickerShape(x), [row.sel]);
+  }
   if (row.type === 'table' || row.type === 'grid') {
     tblShape = await inPage(tab.id, (x) => window.__u1SelectorIntel.tableShape(x), [row.sel]);
   }
@@ -9615,6 +10035,16 @@ async function prepareOne(row, tab) {
       if (cap.root) row.sel = cap.root;
       markup = cap.markup;
       if (row.type === 'dialog' && cap.shape && !dlgShape) dlgShape = cap.shape;
+    }
+  }
+  if (!markup || markup.error || markup.notFound) {
+    // Not found on a document that is still loading is not an answer yet.
+    // Wait for the load to finish and read once more before saying so.
+    const t = await chrome.tabs.get(tab.id).catch(() => null);
+    if (t && t.status !== 'complete') {
+      await waitTabReady(tab.id, null, 10000);
+      await new Promise((r) => setTimeout(r, 600));
+      markup = await inPage(tab.id, (s) => window.__u1SelectorIntel.extractComponent(s), [row.sel]);
     }
   }
   if (!markup || markup.error || markup.notFound) {
@@ -9918,6 +10348,14 @@ async function prepareOne(row, tab) {
     if (pgShape) {
       fillMeasured([['pageButtons', pgShape.pageButtons], ['prevButton', pgShape.prevButton], ['nextButton', pgShape.nextButton]],
         'Measured — the pressables whose faces are running numbers.');
+    }
+    if (dpShape) {
+      fillMeasured(
+        ['days.table', 'days.day', 'days.selected', 'days.disabled', 'month.label', 'year.label',
+         'month.prevButton', 'month.nextButton', 'year.prevButton', 'year.nextButton'].map((k) => [k, dpShape[k]]),
+        'Measured — the run of day numbers is the month; the grid is their common parent.');
+      // Pointed at the trigger, the month found page-wide is the container.
+      if (dpShape.fromTrigger && dpShape.container && isU1ValidSelector(dpShape.container)) out.primary = dpShape.container;
     }
   }
 
@@ -10632,6 +11070,7 @@ function sweepWrite() {
           await U1Sync.pushSweep(host, {
             url: aiSweep.url, phase: aiSweep.phase, cost: aiCost, stops: aiSweep.stops,
           });
+          await markSweepPushed(host);
         } catch (err) {
           showNotice(document.getElementById('sweepPicksStatus'),
             'The scan is saved on this machine but did not reach the server, so your ' +
@@ -10660,6 +11099,18 @@ async function forgetSweep(host) {
  * gone, and sweepTab() falls back to the one in front, which is the right
  * answer for a survey being reopened rather than continued.
  */
+/**
+ * The server has this survey. Recorded on the cached copy so the next open
+ * knows the difference between "a copy of what the server holds" and "the only
+ * copy there is" — pullSiteFromServer() sends the second kind up.
+ */
+async function markSweepPushed(host) {
+  const key = sweepStoreKey(host);
+  const cached = (await U1Store.get([key]))[key];
+  if (!cached) return;
+  await U1Store.set({ [key]: { ...cached, pushedAt: Date.now() } });
+}
+
 async function restoreSweep() {
   if (aiSweep.running || aiSweep.stops.length) return false;
   let saved;
@@ -10741,9 +11192,16 @@ function sweepLog(n, what, kind, cost) {
       e.preventDefault();
       e.stopPropagation();
       const lines = [];
+      // textContent, not innerText: a row inside a CLOSED section fold is not
+      // rendered, and innerText of an unrendered element is ''. The copy came
+      // out as one summary line per section and none of the rows under it —
+      // exactly the "type: why it failed" lines the button exists to hand over.
       wrap.querySelectorAll('.sweep-log-body .sweep-log-row, .sweep-log-body summary').forEach((el) => {
-        const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
-        if (t) lines.push(el.tagName === 'SUMMARY' ? '## ' + t : t);
+        const parts = el.tagName === 'SUMMARY'
+          ? [el.textContent]
+          : [el.querySelector('.what')?.textContent, el.querySelector('.cost')?.textContent];
+        const t = parts.filter(Boolean).map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join('  ');
+        if (t) lines.push(el.tagName === 'SUMMARY' ? '## ' + t : (el.dataset.kind === 'err' ? '  ✗ ' : '  ') + t);
       });
       try {
         await navigator.clipboard.writeText(lines.join('\n'));
@@ -11338,6 +11796,26 @@ function mergeComponents(readLine, observed) {
  *
  * Returns true when the page is (still, or again) the one being surveyed.
  */
+/**
+ * Waits until the tab has finished loading — and, when `url` is given, is on
+ * that page. Resolves true when it is, false at the deadline. A fixed sleep
+ * after a navigation was the previous answer, and 1.5s is enough for a warm
+ * cache and not for a UAT server on a slow morning: the next read ran on a
+ * document that was still arriving and reported its header as "not on the
+ * page right now".
+ */
+async function waitTabReady(tabId, url, maxMs) {
+  const bare = (u) => String(u || '').split('#')[0];
+  const deadline = Date.now() + (maxMs || 10000);
+  while (Date.now() < deadline) {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    if (!t) return false;
+    if (t.status === 'complete' && (!url || bare(t.url) === bare(url))) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
 async function sweepBackIfNavigated(tab, n) {
   const from = aiSweep.url;
   if (!from) return true;
@@ -11544,6 +12022,31 @@ const sweepAvgCall = () =>
 const mins = (secs) => secs < 90 ? `~${Math.round(secs)}s`
   : `~${Math.round(secs / 60)}–${Math.round(secs / 60) + 2} min`;
 
+/**
+ * A finished (or in-progress) survey pictures ONE page — it scrolled down
+ * that page, section by section. currentPageUrl is not that page the moment
+ * you switch tabs to another page of the same site, or another browser tab
+ * entirely, and nothing said so: the drawer kept showing the old thumbnails
+ * and ▶ kept trying to scroll a page that was not open, with no sign the
+ * page underneath had moved on. The cross-SITE case already had this
+ * (warnWrongSite) — this is the same idea one level down, for a survey and a
+ * page on the SAME site.
+ *
+ * Returns '' when there is nothing to say (no survey yet, or it is the page
+ * open right now) so callers can prepend it unconditionally.
+ */
+function sweepPageMismatchBannerHtml() {
+  if (!aiSweep.url || !currentPageUrl) return '';
+  if (bareUrl(aiSweep.url) === bareUrl(currentPageUrl)) return '';
+  let herePath = currentPageUrl, surveyPath = aiSweep.url;
+  try { herePath = new URL(currentPageUrl).pathname || '/'; } catch (e) {}
+  try { surveyPath = new URL(aiSweep.url).pathname || '/'; } catch (e) {}
+  return `<div class="sweep-restored" role="note">` +
+    `This scan is of <code>${escapeHtml(surveyPath)}</code>; the open page is ` +
+    `<code>${escapeHtml(herePath)}</code>. The pictures and the 🔍/▶ jumps below ` +
+    `are for the scanned page, not this one — go back to it, or scan this page instead.</div>`;
+}
+
 function renderSweepScreens() {
   const wrap = document.getElementById('sweepPicks');
   const list = document.getElementById('sweepPicksList');
@@ -11635,7 +12138,7 @@ function renderSweepScreens() {
   // Done: the resting screen shows nothing here. The two record buttons
   // (what it cost / what was read) belong to the finished run, so they live
   // inside its Completed drawer below, not standing on the main screen.
-  summary.innerHTML = sweepDone ? '' : summaryBody;
+  summary.innerHTML = sweepPageMismatchBannerHtml() + (sweepDone ? '' : summaryBody);
   // typeof-guarded: verify-sweep lifts this function out and runs it alone.
   if (typeof updateSweepModeWording === 'function') updateSweepModeWording();
 
@@ -11893,6 +12396,15 @@ function sweepScreenRowHtml(stop) {
               stop.positional
               ? `<div class="sw-warn" role="note">⚠ ${stop.positional} positional — needs a class` +
                 `<span class="sw-warn-sub">these can only be reached by position; ask the client for a class or id</span></div>`
+              : ''}
+            ${// "1 of 8 made accessible" — and the seven? They were listed only
+              // in the chooser view, two presses away, and the scan log's
+              // copy dropped them. The card that reports the count carries
+              // the names and the reasons, so the number never stands alone.
+              (stop.found || []).some((f) => f.failed && !f.done)
+              ? `<div class="sweep-failed-list" role="note">${(stop.found || []).filter((f) => f.failed && !f.done).map((f) =>
+                  `<div class="sweep-failed-row"><span class="sweep-failed-name">✗ ${escapeHtml(f.type)} · ${escapeHtml(f.label || f.sel)}</span>` +
+                  `<span class="sweep-failed">${escapeHtml(f.failed)}</span></div>`).join('')}</div>`
               : ''}
           </div>
         </div>
@@ -12197,7 +12709,8 @@ function renderSweepPicks() {
   // the survey was still there, and unreachable, so the only apparent way on
   // was to start the whole page again.
   const unsearched = aiSweep.stops.filter(x => x.count && !x.scanned).length;
-  summary.innerHTML = `<div class="ai-meta">${total} component${total === 1 ? '' : 's'} across ` +
+  summary.innerHTML = sweepPageMismatchBannerHtml() +
+    `<div class="ai-meta">${total} component${total === 1 ? '' : 's'} across ` +
     `${stops.length} section${stops.length === 1 ? '' : 's'} · $${aiCost.toFixed(3)} to find them` +
     (unsearched
       ? ` · <button class="btn-outline btn-xs" data-back-to-sections>← ${unsearched} section${unsearched === 1 ? '' : 's'} still to search</button>`
@@ -13376,6 +13889,18 @@ async function scanPickedScreens(numbers) {
             (todo[b].why ? ` — ${String(todo[b].why).slice(0, 90)}` : '') +
             `. Saved to Mappings as it finishes.`,
             ((i + 0.7 + 0.3 * (b / Math.max(1, todo.length))) / stops.length) * 100);
+          // The read is guarded against a page that navigated; the build was
+          // not, and a build PRESSES things (a listbox's trigger, a dialog's
+          // opener). One press that left the page — a Log In link the net
+          // could not hold — and every component after it in the section
+          // came back "not on the page right now": seven of eight, on a
+          // header that had never gone anywhere. Same guard, same recovery,
+          // before each one.
+          if (!(await sweepBackIfNavigated(tab, stop.n))) {
+            todo[b].failed = 'the page navigated away during the build and would not come back — scan this section again';
+            sweepLog(stop.n, `${todo[b].type}: ${todo[b].failed}`, 'err');
+            continue;
+          }
           await spotlightBuild(tab, todo[b].sel, todo[b].trigger);
           try {
             const made = await confirmedToMapping(
@@ -13395,7 +13920,12 @@ async function scanPickedScreens(numbers) {
           }
         }
         await spotlightOff(tab);
-        const built = (stop.found || []).filter((f) => f.done).length;
+        // Only what THIS pass built, not stop.found's total done count — that
+        // total includes anything already done before this run (a resumed
+        // section, an earlier partial pass), so it can exceed todo.length:
+        // 1 already done + 2 built now against todo.length===2 read as
+        // "3 of 2 made accessible".
+        const built = todo.filter((f) => f.done).length;
         if (todo.length) {
           stop.outcome = `${built} of ${todo.length} made accessible — saved to Mappings`;
           sweepLog(stop.n, stop.outcome, built ? '' : 'err');
@@ -15224,6 +15754,7 @@ const SCAN_RULES = {
   'heading-empty':        { title: 'Empty heading', wcag: '1.3.1', severity: 'Medium', category: 'Headings', why: 'A heading element has no text.', fix: 'Add text, or remove the heading tag.' },
   'landmarks-missing':    { title: 'No landmarks for main areas', wcag: '1.3.1', severity: 'High', category: 'Page Navigation', why: 'Screen reader users cannot jump quickly to main sections.', fix: 'Use <header>, <nav>, <main>, <footer> or ARIA landmarks.' },
   'skip-link-missing':    { title: 'No skip link', wcag: '2.4.1', severity: 'High', category: 'skip link', why: 'Keyboard users must tab through the whole menu on every page.', fix: "Add a 'Skip to main content' link at the top (visible on focus)." },
+  'skip-link-landmark':   { title: 'No skip link to a landmark', wcag: '2.4.1', severity: 'Medium', category: 'skip link', why: 'The page has this area, but no skip link leads to it — a keyboard user reaches it only by tabbing through everything before it.', fix: 'In Setup, add a skip link and choose this kind. U1 adds the nav, main and footer ones itself once those landmarks exist; header and search are always yours to add.' },
   'img-alt-missing':      { title: 'Image missing alt text', wcag: '1.1.1', severity: 'High', category: 'Images', why: 'Screen reader users do not know what the image shows.', fix: "Add meaningful alt text, or alt='' if decorative." },
   'link-empty':           { title: 'Link has no accessible text', wcag: '2.4.4', severity: 'Critical', category: 'Link and Button Labels', why: 'Screen reader users hear a link with no meaning.', fix: 'Add visible text or an aria-label that describes the destination.' },
   'link-generic':         { title: 'Link text is vague', wcag: '2.4.4', severity: 'High', category: 'Link and Button Labels', why: 'Users cannot tell where a link goes.', fix: "Use descriptive link text (avoid 'Click here')." },
@@ -15248,7 +15779,7 @@ const SCAN_RULES = {
   'misleading-role':      { title: 'Interactive role but not keyboard-focusable', wcag: '4.1.2', severity: 'Critical', category: 'Focus access', why: 'Element is announced as clickable but cannot receive keyboard focus.', fix: 'Use a native <button>/<a>, or add tabindex="0"; otherwise remove the role.' },
   'clickable-div':        { title: 'Clickable element not identified as interactive', wcag: '4.1.2', severity: 'High', category: 'Screen Reader Support', why: 'A div/span with a click handler lacks an interactive role, so it is not announced as activatable.', fix: 'Use <button>/<a>, or add role="button" and tabindex="0".' },
   'aria-ref-broken':      { title: 'ARIA reference points to a missing id', wcag: '1.3.1', severity: 'Medium', category: 'Screen Reader Support', why: 'aria-labelledby / describedby / controls references an element that does not exist.', fix: 'Point the reference at a real element id.' },
-  'target-size-small':    { title: 'Touch target too small', wcag: '2.5.8', severity: 'Medium', category: 'Custom Components', why: 'Users miss taps and hit the wrong item.', fix: 'Increase target size (~24px) or add spacing around targets.' },
+  'target-size-small':    { title: 'Touch target too small (note)', wcag: '2.5.8', severity: 'Low', note: true, category: 'Custom Components', why: 'Users miss taps and hit the wrong item.', fix: 'Increase target size (~24px) or add spacing around targets.' },
 
   // ── Static checks the removed IBM engine used to make, in our words ──────
   'img-alt-filename':     { title: 'Alt text is just the file name', wcag: '1.1.1', severity: 'Medium', category: 'Images', why: 'A screen reader will read “Career_HealthNews” or “banner.png” aloud — the file name says nothing about what the picture shows or why it is there.', fix: 'Write what the picture is FOR in a few words, or alt="" if it is decoration.' },
@@ -15291,6 +15822,7 @@ const SCAN_CONCEPTS = {
   'zoom-disabled': 'zoom',
   'landmarks-missing': 'landmarks',
   'skip-link-missing': 'skip-link',
+  'skip-link-landmark': 'skip-link',
   'table-noheaders': 'table-headers',
   'tabindex-positive': 'tabindex',
 };
@@ -15321,7 +15853,6 @@ const AXE_RULES = {
   'page-has-heading-one': { as: 'h1-missing' },
   'frame-title': { as: 'iframe-notitle' },
   'meta-viewport': { as: 'zoom-disabled' },
-  'region': { as: 'landmarks-missing' },
   'bypass': { as: 'skip-link-missing' },
   'th-has-data-cells': { as: 'table-noheaders' }, 'td-has-header': { as: 'table-noheaders' },
   'tabindex': { as: 'tabindex-positive' },
@@ -15379,12 +15910,12 @@ const AXE_RULES = {
   'aria-deprecated-role': { concept: 'aria-grammar', title: 'Deprecated ARIA role', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'The role was dropped from the ARIA spec and newer screen readers may ignore it.', fix: 'Replace it with its current equivalent.' },
   'aria-valid-attr': { concept: 'aria-grammar', title: 'aria-* attribute does not exist', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'The attribute is misspelt (aria-lable, aria-labeledby) so it does nothing — usually a name that was meant to be there is missing.', fix: 'Fix the spelling.' },
   'aria-valid-attr-value': { concept: 'aria-grammar', title: 'aria-* attribute has an invalid value', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'aria-expanded="yes", aria-controls pointing at no id, aria-live="on" — the value is not one the attribute accepts, so it is ignored.', fix: 'Use the allowed values (true/false, a real id, polite/assertive).' },
-  'aria-allowed-attr': { concept: 'aria-grammar', title: 'ARIA attribute not allowed on this role', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'The attribute means nothing for this role (aria-checked on a link, aria-expanded on a heading) and is either ignored or mis-announced.', fix: 'Remove it, or change the role to one that supports it.' },
+  'aria-allowed-attr': { concept: 'aria-grammar', title: 'ARIA attribute not allowed on this role (note)', wcag: '4.1.2', severity: 'Low', note: true, category: 'Semantic Mapping', why: 'The attribute means nothing for this role (aria-checked on a link, aria-expanded on a heading) and is either ignored or mis-announced.', fix: 'Remove it, or change the role to one that supports it.' },
   'aria-prohibited-attr': { concept: 'aria-grammar', title: 'aria-label on an element that cannot carry a name', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Plain <div>, <span>, <p> and the like have no role, so their aria-label is ignored by most screen readers — the name the author wanted is silently lost.', fix: 'Give the element a role that takes a name, or put the text where it is read as content.' },
   'aria-conditional-attr': { concept: 'aria-grammar', title: 'ARIA attribute used where the role forbids it', wcag: '4.1.2', severity: 'Medium', category: 'Semantic Mapping', why: 'The attribute is only valid under certain conditions for this role (e.g. aria-checked on a native checkbox) and here it conflicts with the element itself.', fix: 'Remove the attribute; the native element already conveys the state.' },
   'aria-required-attr': { concept: 'aria-grammar', title: 'Role is missing an attribute it needs', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Some roles are meaningless without a state: a checkbox without aria-checked, a slider without aria-valuenow, a combobox without aria-expanded.', fix: 'Add the missing attribute — mapping the element as that component does it for you.' },
   'aria-required-children': { concept: 'aria-structure', title: 'Composite role is missing its parts', wcag: '1.3.1', severity: 'High', category: 'Semantic Mapping', why: 'A tablist with no tabs, a list with no listitems, a menu with no menuitems — the screen reader announces the container and then finds nothing inside.', fix: 'Give the children the matching roles — mapping the component as tabs / menu / listbox does exactly this.' },
-  'aria-required-parent': { concept: 'aria-structure', title: 'Role used outside the container it belongs in', wcag: '1.3.1', severity: 'High', category: 'Semantic Mapping', why: 'A tab outside a tablist, an option outside a listbox, a menuitem outside a menu — the role is announced but its position (“2 of 5”) is lost.', fix: 'Map the whole component, container included, rather than the item alone.' },
+  'aria-required-parent': { concept: 'aria-structure', title: 'Role used outside the container it belongs in (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Semantic Mapping', why: 'A tab outside a tablist, an option outside a listbox, a menuitem outside a menu — the role is announced but its position (“2 of 5”) is lost.', fix: 'Map the whole component, container included, rather than the item alone.' },
   'aria-roledescription': { concept: 'aria-grammar', title: 'aria-roledescription on an element with no role', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'A custom role description only applies when there is a role to describe; here it is ignored.', fix: 'Add a role, or remove the description.' },
   'aria-text': { concept: 'aria-grammar', title: 'role="text" hides focusable content', wcag: '4.1.2', severity: 'Medium', category: 'Semantic Mapping', why: 'role="text" flattens everything inside to plain text, so links or buttons within it stop being announced as such.', fix: 'Remove the role, or move the controls outside it.' },
   'aria-braille-equivalent': { concept: 'aria-grammar', title: 'Braille label with no spoken equivalent', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'aria-braillelabel is set but there is no aria-label or text for speech users.', fix: 'Add the ordinary name as well.' },
@@ -15399,15 +15930,15 @@ const AXE_RULES = {
   'accesskeys': { concept: 'accesskey-dup', title: 'Same accesskey on more than one element', wcag: '4.1.2', severity: 'Low', category: 'Focus access', why: 'Two elements share a keyboard shortcut, so pressing it activates only one and the other can never be reached that way.', fix: 'Give each accesskey a different letter, or drop them.' },
 
   // ── Landmarks ─────────────────────────────────────────────────────────────
-  'landmark-one-main': { concept: 'landmarks', title: 'Page has no main landmark', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'Without <main> a screen reader user cannot jump straight to the content past the header.', fix: 'Map the content area as the main landmark — Config does this.' },
+  'landmark-one-main': { concept: 'landmarks', title: 'Page has no main landmark', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'Without <main> a screen reader user cannot jump straight to the content past the header.', fix: 'In Setup, add a skip link, choose “Main content” and point it at the content area — that area becomes the main landmark.' },
   'landmark-no-duplicate-main': { concept: 'landmark-structure', title: 'More than one main landmark', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'Two <main> elements: “jump to main content” becomes a guess.', fix: 'Keep one <main>; the rest become <section> or plain <div>.' },
-  'landmark-no-duplicate-banner': { concept: 'landmark-structure', title: 'More than one page header (banner) landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'Two top-level <header>/role="banner": the landmark list shows two page headers.', fix: 'Keep one page header; give inner <header>s a section around them or no role.' },
-  'landmark-no-duplicate-contentinfo': { concept: 'landmark-structure', title: 'More than one page footer (contentinfo) landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'Two top-level <footer>/role="contentinfo": the landmark list shows two page footers.', fix: 'Keep one page footer.' },
-  'landmark-main-is-top-level': { concept: 'landmark-structure', title: 'Main landmark is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: '<main> inside <nav>, <header> or <aside> is announced as part of that region, not as the page content.', fix: 'Move <main> out so it sits directly under <body>.' },
-  'landmark-banner-is-top-level': { concept: 'landmark-structure', title: 'Page header landmark is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A banner inside main or nav is not the page header any more; the landmark list gets confusing.', fix: 'Move the <header> to the top level, or remove role="banner".' },
-  'landmark-contentinfo-is-top-level': { concept: 'landmark-structure', title: 'Page footer landmark is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A footer inside main is announced as part of the content, not as the page footer.', fix: 'Move the <footer> to the top level, or remove role="contentinfo".' },
-  'landmark-complementary-is-top-level': { concept: 'landmark-structure', title: 'Sidebar (aside) is nested inside another landmark', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'An <aside> inside <main> is announced as part of the content, not as a sidebar.', fix: 'Move it out, or drop the aside for a plain <div>.' },
-  'landmark-unique': { concept: 'landmark-structure', title: 'Several landmarks of the same kind with the same (or no) name', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'Three <nav>s with no names are listed as “navigation, navigation, navigation” — the user cannot tell the menu from the footer links.', fix: 'Give each one an aria-label (“Main menu”, “Footer links”).' },
+  'landmark-no-duplicate-banner': { concept: 'landmark-structure', title: 'More than one page header (banner) landmark (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'Two top-level <header>/role="banner": the landmark list shows two page headers.', fix: 'Keep one page header; give inner <header>s a section around them or no role.' },
+  'landmark-no-duplicate-contentinfo': { concept: 'landmark-structure', title: 'More than one page footer (contentinfo) landmark (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'Two top-level <footer>/role="contentinfo": the landmark list shows two page footers.', fix: 'Keep one page footer.' },
+  'landmark-main-is-top-level': { concept: 'landmark-structure', title: 'Main landmark is nested inside another landmark (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: '<main> inside <nav>, <header> or <aside> is announced as part of that region, not as the page content.', fix: 'Move <main> out so it sits directly under <body>.' },
+  'landmark-banner-is-top-level': { concept: 'landmark-structure', title: 'Page header landmark is nested inside another landmark (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'A banner inside main or nav is not the page header any more; the landmark list gets confusing.', fix: 'Move the <header> to the top level, or remove role="banner".' },
+  'landmark-contentinfo-is-top-level': { concept: 'landmark-structure', title: 'Page footer landmark is nested inside another landmark (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'A footer inside main is announced as part of the content, not as the page footer.', fix: 'Move the <footer> to the top level, or remove role="contentinfo".' },
+  'landmark-complementary-is-top-level': { concept: 'landmark-structure', title: 'Sidebar (aside) is nested inside another landmark (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'An <aside> inside <main> is announced as part of the content, not as a sidebar.', fix: 'Move it out, or drop the aside for a plain <div>.' },
+  'landmark-unique': { concept: 'landmark-structure', title: 'Several landmarks of the same kind with the same (or no) name (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'Three <nav>s with no names are listed as “navigation, navigation, navigation” — the user cannot tell the menu from the footer links.', fix: 'Give each one an aria-label (“Main menu”, “Footer links”).' },
 
   // ── Iframes and tables ────────────────────────────────────────────────────
   'frame-title-unique': { concept: 'frame-title-dup', title: 'Two iframes share the same title', wcag: '4.1.2', severity: 'Low', category: 'Iframes', why: 'The frame list reads the same name twice, so the user cannot tell them apart.', fix: 'Give each iframe its own title (“Map”, “Chat”).' },
@@ -15439,6 +15970,16 @@ const AXE_SKIP = {
   'color-contrast-enhanced': 'WCAG AAA (7:1) — beyond the AA target',
   'identical-links-same-purpose': 'WCAG AAA — and it guesses at intent',
   'meta-refresh-no-exceptions': 'WCAG AAA — the AA rule (meta-refresh) is shown',
+  // Fires once per top-level element outside ANY landmark — every promo card,
+  // every blurb, every stray <div> — because the page has no <main> wrapping
+  // its content at all. That is one real defect, not eleven: the moment a
+  // <main> goes around the content area, axe's OWN separate landmark-one-main
+  // rule (kept — "Page has no main landmark") is satisfied, and every one of
+  // these nodes becomes contained by it in the same stroke. Shown as its own
+  // 11-element list it read as eleven things to fix instead of the one that
+  // was already tracked, and the granularity is real elements no specialist
+  // would map a landmark onto individually — a sidebar blurb, a promo card.
+  'region': 'the same fault as landmark-one-main, one node per un-wrapped element — fixing the missing <main> clears all of them at once',
 };
 
 /** The catalog entry an axe finding is shown as, or null when it is skipped. */
@@ -15630,6 +16171,47 @@ async function scanPageStatic() {
         const firstLinks = Array.from(document.querySelectorAll('a[href^="#"]')).slice(0, 5);
         const hasSkip = firstLinks.some(a => /skip|main|content|navigation/i.test(txt(a) + ' ' + (a.getAttribute('href') || '')));
         if (!hasSkip) add('skip-link-missing', null, 'No “skip to content” link at the top');
+
+        // ── A skip link to every landmark the page has ─────────────────
+        // One skip link anywhere used to pass this whole question — and U1
+        // adds "Skip to navigation" on every page with a <nav>, so it always
+        // passed, while the <header> right above it had no link at all
+        // (molinahealthcare.com). Asked per KIND: some skip link must reach
+        // some landmark of that kind. Computed once — the findings below and
+        // the green/red chips in the checklist read the same answer.
+        const skipTargets = Array.from(document.querySelectorAll('a[href^="#"]'))
+          .filter(a => a.classList.contains('u1st-skip-link') ||
+                       /skip|jump to|דלג/i.test(txt(a) + ' ' + (a.getAttribute('aria-label') || '')))
+          .map(a => { const id = (a.getAttribute('href') || '').slice(1); try { return id ? document.getElementById(decodeURIComponent(id)) : null; } catch (e) { return null; } })
+          .filter(Boolean);
+        const LM_ANY = 'header,[role=banner],nav,[role=navigation],main,[role=main],footer,[role=contentinfo],search,[role=search]';
+        // Reached = the landmark itself, or a spot inside it whose NEAREST
+        // landmark is this one. On molina the <nav> sits inside the <header>:
+        // "Skip to navigation" lands inside the header, and counting that as
+        // reaching the header hid the one link the page was missing. A link
+        // to a wrapper around everything reaches nothing in particular.
+        const reached = (els) => els.some(lm => skipTargets.some(t =>
+          t === lm || (lm.contains(t) && (t.closest(LM_ANY) === lm || !t.closest(LM_ANY)))));
+        const shown = (sel) => Array.from(document.querySelectorAll(sel)).filter(visible);
+        // A <header> inside an article or section is that part's header,
+        // not the page's (it is not a banner landmark).
+        const banner = shown('header,[role=banner]').filter(h => h.getAttribute('role') === 'banner' || !h.closest('article,aside,main,nav,section'));
+        // No search landmark, but a button that opens one: the button is
+        // where a "skip to search" lands until the field exists.
+        const searchLm = shown('search,[role=search]');
+        const search = searchLm.length ? searchLm : shown('button[aria-label*="search" i],button[aria-label*="חיפוש"]');
+        const skipReach = [
+          ['header', 'header', banner], ['nav', 'navigation', shown('nav,[role=navigation]')],
+          ['main', 'main content', shown('main,[role=main]')], ['footer', 'footer', shown('footer,[role=contentinfo]')],
+          ['search', 'search', search],
+        ].map(([key, name, els]) => ({ key, name, present: els.length > 0, reached: els.length > 0 && reached(els), el: els[0] || null }));
+        if (hasSkip) {
+          // A kind the page does not have is not asked for here — a missing
+          // main is its own finding under Landmarks.
+          skipReach.forEach(k => {
+            if (k.present && !k.reached) add('skip-link-landmark', k.el, `No skip link to the ${k.name}`, k.name);
+          });
+        }
 
         // ── Images ─────────────────────────────────────────────────────
         Array.from(document.querySelectorAll('img')).slice(0, 200).forEach(el => {
@@ -15937,6 +16519,17 @@ async function scanPageStatic() {
               const fields = q(SEARCHQ).filter(visible);
               return fields.filter(f => !f.closest('[role=search],[role=form][aria-label],[role=form][aria-labelledby],form[aria-label],form[aria-labelledby],[role=form][u1st-avoid-change-detection]')).length;
             })(),
+            // A collapsed search icon that OPENS the real field on click — the
+            // field itself is not in the DOM at all until then, so the two
+            // checks above (which only ever look for an <input>) always read
+            // 0, no matter how the input would eventually be marked. Same
+            // shape as a mega-menu panel: real content the static scan cannot
+            // see because nothing has opened it yet. Confirmed on
+            // molinahealthcare.com: `.Search_short_search__N2BwJ` is
+            // `<button aria-label="Open search panel">`, not an input — the
+            // search box only exists after it is pressed.
+            searchTrigger: q('button[aria-label*="search" i],button[aria-label*="חיפוש"],[aria-haspopup][aria-label*="search" i]')
+              .filter(visible).length > 0,
           },
           skipLink: (() => {
             const a = q('a[href^="#"]').find(x => /skip|דלג|main|content|תוכן/i.test(txt(x) + ' ' + (x.getAttribute('aria-label') || '')));
@@ -15950,6 +16543,8 @@ async function scanPageStatic() {
             return { text: txt(x) || (x.getAttribute('aria-label') || ''), href: x.getAttribute('href') || '', lands: !!t, target: t ? selOf(t) : '' };
           }),
           positiveTabindex: q('[tabindex]').filter(x => +x.getAttribute('tabindex') > 0).length,
+          // Per kind: is it on the page, and does a skip link reach it.
+          skipReach: skipReach.map(k => ({ key: k.key, present: k.present, reached: k.reached })),
         };
         return { results: out, total: out.length, inventory };
       },
@@ -16193,8 +16788,9 @@ const STATIC_WHY_NOT = {
   'heading-skip': 'map the heading and give it the right level',
   'h1-missing': 'decide which element is the page heading', 'h1-multiple': 'decide which one is the page heading',
   'heading-empty': 'decide whether it is a heading at all',
-  'landmarks-missing': 'map the landmarks — Config does this',
-  'skip-link-missing': 'Config adds skip links',
+  'landmarks-missing': 'a skip link set to “Main content” in Setup makes its target the main landmark',
+  'skip-link-missing': 'Setup adds skip links',
+  'skip-link-landmark': 'add a skip link of that kind in Setup',
   'aria-hidden-focusable': 'use "must not be reachable" on it, or un-hide it',
 };
 
@@ -16308,13 +16904,13 @@ const SCAN_CHECKS = [
     rules: ['input-label', 'input-placeholder', 'group-nolabel', 'label-for-broken', 'label-hidden', 'autocomplete'], needs: 'inputs' },
   { id: 'contrast', title: 'Colour contrast', ask: 'Is text readable against its background, and are links told apart by more than colour?',
     rules: ['contrast', 'link-color-only'], engine: 'axe' },
-  { id: 'landmarks', title: 'Landmarks', ask: 'Can a screen reader jump to main, navigation, header, footer? (Several unnamed forms/regions are listed as a note.)',
+  { id: 'landmarks', title: 'Landmarks', ask: 'Can a screen reader jump to main, navigation, header, footer? (Nesting, duplicates and unnamed forms/regions are listed as a note.)',
     rules: ['landmarks', 'landmark-structure', 'landmark-noname'], evidence: 'landmarks' },
   { id: 'skip', title: 'Skip link', ask: 'Can the keyboard skip the menu and land on the content?',
     rules: ['skip-link'], evidence: 'skipLink' },
   { id: 'focus', title: 'Keyboard reach and focus order', ask: 'Can everything clickable be reached in a sensible order, with nothing hidden from screen readers while focusable?',
     rules: ['tabindex', 'misleading-role', 'clickable-div', 'aria-hidden-focusable', 'nested-controls', 'scroll-keyboard', 'frame-tabindex', 'accesskey-dup'] },
-  { id: 'aria', title: 'ARIA used correctly', ask: 'Are roles and aria-* attributes real, allowed, complete, and in the right container?',
+  { id: 'aria', title: 'ARIA used correctly', ask: 'Are roles and aria-* attributes real and complete? (An attribute a role does not allow, and a role outside its container, are listed as a note.)',
     rules: ['aria-grammar', 'aria-structure'], engine: 'axe' },
   { id: 'structure', title: 'Lists and text structure', ask: 'Are lists real lists, so items are counted and announced?',
     rules: ['list-structure'], engine: 'axe' },
@@ -16330,7 +16926,7 @@ const SCAN_CHECKS = [
     rules: ['switch-nostate', 'checkbox-nostate', 'slider-novalue', 'meter-novalue', 'combobox-noexpanded', 'meter-name', 'dialog-name', 'tooltip-name', 'treeitem-name'] },
   { id: 'ids', title: 'IDs and ARIA references', ask: 'Do ARIA references point at something? (Duplicate ids are listed as a note.)',
     rules: ['dup-id', 'aria-ref-broken'] },
-  { id: 'targets', title: 'Touch targets', ask: 'Are tap targets big enough?',
+  { id: 'targets', title: 'Touch targets', ask: 'Are tap targets big enough? (Small targets are listed as a note — a CSS change on the site’s side.)',
     rules: ['target-size-small'] },
 ];
 
@@ -16483,13 +17079,23 @@ function scanEvidenceHtml(check, inv) {
       const parts = [['main', L.main], ['nav', L.nav], ['header', L.header], ['footer', L.footer], ['search', L.search]]
         .map(([k, n]) => k === 'search' && !n && L.searchUnmarked
           ? `<span class="sc-lm sc-warnish" title="A search field is on the page but nothing carries role=search — name it with an aria-label mapping or add the role">search: found, not marked</span>`
+          : k === 'search' && !n && !L.searchUnmarked && L.searchTrigger
+          ? `<span class="sc-lm sc-warnish" title="A button opens the real search field, which is not in the page until then — 0 here is what a scan taken before it opens will always read, not a sign it is missing">search: opens on click</span>`
           : `<span class="sc-lm${n ? '' : ' sc-bad'}">${k}: ${n || 0}</span>`).join(' ');
       return `<div class="sc-evidence"><span class="sc-ev-k">Landmarks</span> ${parts}</div>`;
     }
     case 'skipLink': {
       const list = inv.skipLinks && inv.skipLinks.length ? inv.skipLinks : (inv.skipLink ? [{ text: inv.skipLink, href: '', lands: true }] : []);
-      if (!list.length) return '';
-      return `<div class="sc-evidence"><span class="sc-ev-k">${list.length} skip link${list.length === 1 ? '' : 's'}</span> <span class="sc-ev-note">— Tab once on a fresh load: do they appear, and does each land where it says?</span>` +
+      // One chip per kind, like the Landmarks row: green when a skip link
+      // reaches it, red when none does — including a kind the page does not
+      // have at all, which no skip link can reach either.
+      const reach = inv.skipReach || [];
+      const chips = reach.length ? `<div class="sc-evidence"><span class="sc-ev-k">Skip links to</span> ` + reach.map(k =>
+        k.reached
+          ? `<span class="sc-lm" title="A skip link lands here">${k.key} ✓</span>`
+          : `<span class="sc-lm sc-bad" title="${k.present ? 'On the page, but no skip link leads here' : 'Not on this page — there is nothing for a skip link to land on'}">${k.key} ✗${k.present ? '' : ' (none on page)'}</span>`).join(' ') + `</div>` : '';
+      if (!list.length) return chips;
+      return chips + `<div class="sc-evidence"><span class="sc-ev-k">${list.length} skip link${list.length === 1 ? '' : 's'}</span> <span class="sc-ev-note">— Tab once on a fresh load: do they appear, and does each land where it says?</span>` +
         `<ul class="sc-imgs">${list.map(l => `<li${l.target ? ` data-hl-sel="${esc(l.target)}" data-hl-idx="0" title="Hover to see where it lands"` : ''}>“${esc(l.text)}” → <code>${esc(l.href)}</code> ${l.lands ? '<span class="sc-lm">lands</span>' : '<strong class="sc-bad">target missing</strong>'}</li>`).join('')}</ul></div>`;
     }
     case 'iframes':
@@ -16569,7 +17175,16 @@ function renderScanChecklist(wrap) {
 // Rules whose findings are one decision taken many times — forty new-tab
 // links, a dozen duplicate ids. One row, the elements listed inside it, one
 // fix for all of them. A row each was forty rows saying the same sentence.
-const SCAN_GROUPED = new Set(['link-newwindow', 'dup-ids', 'list-stray-br']);
+//
+// landmarks-missing joined this set for the same reason: axe's own "region"
+// rule (translated to this id by AXE_RULES) reports EVERY top-level element
+// outside a landmark as its own node — 12 separate elements on one real
+// page, none of them a mistake, all of them the same one fix ("wrap the
+// content in landmarks"). Ungrouped, that was 12 full cards in a row, each
+// carrying its own "Why & how to fix" — indistinguishable at a glance from
+// 12 unrelated defects, and read as the scan being broken rather than as
+// twelve instances of one true thing.
+const SCAN_GROUPED = new Set(['link-newwindow', 'dup-ids', 'list-stray-br', 'landmarks-missing']);
 function scanRowsHtml(rows) {
   const out = [];
   const grouped = new Map();
@@ -19241,8 +19856,11 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     if (sc) {
       const pKey = primaryKeyOf(sc);
       const missing = (sc.req || []).filter((r) => {
+        // Selectors are stored NESTED (selectors.days.table), the schema
+        // names them dotted ('days.table') — read through getDeep, or every
+        // datepicker is refused as "days.table empty" with both fields full.
         const v = (r === pKey) ? template.primary
-          : ((template.config && template.config.selectors) || {})[r];
+          : getDeep((template.config && template.config.selectors) || {}, r);
         return !v || !String(v).trim();
       });
       if (missing.length) {
@@ -20239,6 +20857,29 @@ async function buildDeployableCode(list, hostname) {
     fixesParts.push(`/* ---- Static corrections — which ones are on ---- */\n` + statics.join('\n\n'));
   }
 
+  // Every u1.fix.* call below dereferences window.u1.fix the moment this file
+  // runs. On a site that loads the U1 engine after this file, or with
+  // async/defer, that is "Cannot read properties of undefined (reading
+  // 'form')" on the first call — and every mapping after it is dead too
+  // (tamam.co.il, 2026-09). Wait for the engine instead of assuming it: run at
+  // once when it is already there, otherwise poll briefly, then say clearly
+  // what is missing rather than fail silently.
+  if (fixes.length || customs.length) {
+    fixesParts.push(`/* ---- Wait for the U1 engine ----\n` +
+      ` * The calls below need window.u1.fix. If this file happens to run before\n` +
+      ` * the U1 library has loaded, the calls are held until it has. */\n` +
+      `function __u1WhenReady(fn) {\n` +
+      `  if (window.u1 && window.u1.fix) { fn(); return; }\n` +
+      `  var tries = 0;\n` +
+      `  var timer = setInterval(function () {\n` +
+      `    if (window.u1 && window.u1.fix) { clearInterval(timer); fn(); return; }\n` +
+      `    if (++tries >= 150) {\n` +
+      `      clearInterval(timer);\n` +
+      `      console.error('[u1] The U1 library (u1_vanilla-js-a11y.js) never loaded on this page, so the fixes in u1-fixes.js did not run. Load it before u1-patch.js and u1-fixes.js.');\n` +
+      `    }\n` +
+      `  }, 100);\n` +
+      `}`);
+  }
   // The patch must be in place BEFORE the u1.fix.* calls in u1-fixes.js: part
   // of what it does is wrap those functions so they apply to every match
   // instead of the first, and a wrapper installed afterwards would be too
@@ -20267,12 +20908,12 @@ async function buildDeployableCode(list, hostname) {
     // for why that is needed at all.
     if (fixes.length) {
       fixesParts.push(`/* ---- Component mappings ---- */\n` +
-        `function __u1ApplyMappings() {\n` + fixes.join('\n\n') + `\n}\n__u1ApplyMappings();`);
+        `function __u1ApplyMappings() {\n` + fixes.join('\n\n') + `\n}\n__u1WhenReady(__u1ApplyMappings);`);
     }
   }
   if (customs.length) {
     fixesParts.push(`/* ---- Accessible names ---- */\n` +
-      `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1ApplyNames();`);
+      `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1WhenReady(__u1ApplyNames);`);
   }
   if (grids.length || clickables.length || tabStrips.length || linkLists.length || crumbs.length || hides.length || orders.length) {
     // Only the engines these mappings actually call.
@@ -20347,6 +20988,7 @@ async function buildDeployableCode(list, hostname) {
       `    lastWidth = window.innerWidth;\n` +
       `    clearTimeout(t);\n` +
       `    t = setTimeout(function () {\n` +
+      `      if (!window.u1 || !window.u1.fix) return;\n` +
       `      try { ${reapply.map(f => f + '();').join(' ')} } catch (e) {}\n` +
       `    }, 250);\n` +
       `  });\n` +
@@ -21297,6 +21939,14 @@ async function loadMappingsList() {
   const applyAllRow = document.getElementById('applyAllRow');
   const toolbar = document.getElementById('mappingsToolbar');
 
+  // The count on the Mappings pane's tab. Set BEFORE the empty-list return
+  // below, or a site with nothing keeps the previous site's number on the
+  // tab beside "No mappings yet".
+  {
+    const paneN = document.getElementById('pickerMappingsCount');
+    if (paneN) paneN.textContent = list.length ? String(list.length) : '';
+  }
+
   if (list.length === 0) {
     // "The mappings disappeared" is almost always this: the work is filed
     // under another hostname for the same client. Say so here, where the
@@ -21393,11 +22043,6 @@ async function loadMappingsList() {
       cnt.title = 'Your own pass over the list. Kept in this extension only — never in the export, the report or on the server.';
     }
   }
-  // The count on the Mappings pane's tab, so the drawer says how full it is
-  // from the other pane.
-  const paneN = document.getElementById('pickerMappingsCount');
-  if (paneN) paneN.textContent = list.length ? String(list.length) : '';
-
   const itemHtml = (m, idx, childrenHtml, childCount) => {
     const code = mappingToCode(m);
     const legacy = typeof m === 'string';
@@ -21952,6 +22597,7 @@ async function refreshExportInfo() {
   const count  = (stored[mKey] || []).length;
   document.getElementById('exportMappingsCount').textContent =
     `${count} mapping${count !== 1 ? 's' : ''}`;
+  refreshExportFileMeta(count).catch(() => {});
 
   const sel = document.getElementById('platformSelect');
   const detectedLabel = document.getElementById('platformDetected');
@@ -21979,7 +22625,10 @@ document.getElementById('platformSelect').addEventListener('change', async (e) =
   if (detectedLabel) detectedLabel.textContent = ' — manual';
 });
 
-document.getElementById('exportBtn').addEventListener('click', async () => {
+// Everything an export needs, read once and the same way for the whole
+// package and for a single file — so the u1-fixes.js downloaded on its own is
+// byte-for-byte the one inside the zip.
+async function collectExportInputs() {
   // This goes to the client. Reading a global key here put another client's
   // bundle URLs into the handover document.
   const lk = storageKey('u1Links', currentHostname);
@@ -21997,6 +22646,113 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
   // split into the three files a client's dev drops in and links, rather than
   // one blob buried inside the Word document's own text.
   const built = await buildDeployableCode(stored[mKey] || [], currentHostname);
+  const platform = document.getElementById('platformSelect').value || 'wordpress';
+  return { cssLink, jsLink, skipLinks, config, built, platform };
+}
+
+function downloadOneFile(name, mime, data) {
+  const blob = new Blob([data], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Row key → the file buildHandoverFiles() produces for it. The two .docx names
+// carry the platform and hostname, so they are matched by prefix.
+const EXPORT_FILE_OF = {
+  guide:         (f) => f.name.startsWith('U1-Implementation-Guide-'),
+  config:        (f) => f.name === 'u1-config.js',
+  patch:         (f) => f.name === 'u1-patch.js',
+  fixes:         (f) => f.name === 'u1-fixes.js',
+  monitoring:    (f) => f.name === 'u1-monitoring.js',
+  monitoringDoc: (f) => f.name.startsWith('U1-Monitoring-'),
+};
+
+// `15 Sep 2026, 14:32 (2 hours ago)` — the absolute time is what gets compared
+// against an email's date; the relative one is what gets read at a glance.
+function fmtStamp(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const abs = d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return `${abs} (${describeAge(ts)})`;
+}
+
+let patchBuildStamp = null;
+async function getPatchBuildStamp() {
+  if (patchBuildStamp !== null) return patchBuildStamp;
+  try {
+    const src = await (await fetch(chrome.runtime.getURL('u1-patch.js'))).text();
+    const m = /build:\s*'([^']+)'/.exec(src);
+    patchBuildStamp = m ? m[1] : '';
+  } catch (e) { patchBuildStamp = ''; }
+  return patchBuildStamp;
+}
+
+// The line under each file: when what shapes it last changed. u1-fixes.js is
+// shaped by the mappings, u1-config.js by the config and the skip links, and
+// u1-patch.js / u1-monitoring.js by the extension build itself — their
+// content is the same for every site, so the patch's own build stamp and the
+// extension version are the facts that tell one copy from another.
+async function refreshExportFileMeta(mappingCount) {
+  const meta = (key) => document.querySelector(`[data-filemeta="${key}"]`);
+  if (!meta('fixes')) return;
+  const touched = await U1Store.touchedAt(currentHostname);
+  const [patchBuild, mf] = [await getPatchBuildStamp(), chrome.runtime.getManifest()];
+  const ext = (mf.version_name || mf.version || '').trim();
+  const changed = (ts) => ts ? `last changed <b>${escapeHtml(fmtStamp(ts))}</b>` : 'not changed on this machine yet';
+  const cfgTs = Math.max(touched.config || 0, touched.skipLinks || 0);
+  meta('fixes').innerHTML = mappingCount ? changed(touched.mappings) : 'no mappings yet';
+  meta('config').innerHTML = changed(cfgTs);
+  meta('patch').innerHTML = `patch build <b>${escapeHtml(patchBuild || 'unknown')}</b> · extension v${escapeHtml(ext)}`;
+  meta('monitoring').innerHTML = `extension v${escapeHtml(ext)}`;
+  meta('monitoringDoc').innerHTML = `extension v${escapeHtml(ext)}`;
+  meta('guide').innerHTML = 'built fresh on every download from the config and links above';
+}
+
+// One file, on its own. The .js files need no CSS/JS links, so a missing link
+// is only a problem for the two documents.
+document.querySelector('#exportViewPackage .file-list')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-download]');
+  if (!btn) return;
+  const key = btn.dataset.download;
+  const statusEl = document.getElementById('exportStatus');
+  btn.disabled = true;
+  try {
+    const { cssLink, jsLink, skipLinks, config, built, platform } = await collectExportInputs();
+    if ((key === 'guide' || key === 'monitoringDoc') && (!cssLink || !jsLink)) {
+      statusEl.className = 'notice error';
+      statusEl.textContent = 'Warning: CSS/JS links are empty. Fill them in the Setup tab first.';
+      flashMessage(statusEl, 4500);
+      return;
+    }
+    const files = buildHandoverFiles(currentHostname, cssLink, jsLink, built, skipLinks, config, platform);
+    const file = files.find(EXPORT_FILE_OF[key] || (() => false));
+    if (!file) {
+      statusEl.className = 'notice error';
+      statusEl.textContent = key === 'fixes' ? 'No mappings yet — u1-fixes.js has nothing in it.' : 'That file is not part of this export.';
+      flashMessage(statusEl, 4500);
+      return;
+    }
+    downloadOneFile(file.name, file.mime, file.data);
+    statusEl.className = 'notice success';
+    statusEl.textContent = `${file.name} downloaded.`;
+    flashMessage(statusEl, 3000);
+  } catch (err) {
+    statusEl.className = 'notice error';
+    statusEl.textContent = 'Error: ' + err.message;
+    flashMessage(statusEl, 4500);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('exportBtn').addEventListener('click', async () => {
+  const { cssLink, jsLink, skipLinks, config, built, platform } = await collectExportInputs();
 
   const statusEl = document.getElementById('exportStatus');
 
@@ -22007,7 +22763,6 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
     return;
   }
 
-  const platform = document.getElementById('platformSelect').value || 'wordpress';
   try {
     generateAndDownloadPackage(currentHostname, cssLink, jsLink, built, skipLinks, config, platform);
     statusEl.className = 'notice success';
@@ -22777,6 +23532,7 @@ async function onTabChanged(tab) {
   const previousHostname = currentHostname;
 
   currentHostname = newHostname;
+  currentPageUrl = tab.url || '';
   document.querySelectorAll('#mappingsHostname, #exportHostname, #closeOutHostname').forEach(el => {
     el.textContent = currentHostname;
   });
@@ -22851,6 +23607,16 @@ async function onTabChanged(tab) {
   // widget lives on. Not awaited, same as renderExistingFixes below: one
   // storage read and one presence probe, and nothing else here waits on it.
   if (!hostnameChanged) loadMappingsList();
+
+  // The page-mismatch banner (sweepPageMismatchBannerHtml) is drawn INSIDE
+  // the sweep views, so switching browser tabs — no hostname change, no
+  // survey re-run, nothing else here touches the sweep — left it stale until
+  // the drawer next redrew for an unrelated reason. Redrawn here, cheaply:
+  // both functions bail immediately when their own container is not in the
+  // DOM (the panel is on a different tab) or a naming pause owns the list.
+  if (document.getElementById('tab-picker')?.classList.contains('active')) {
+    if (aiSweep.phase === 'components') renderSweepPicks(); else renderSweepScreens();
+  }
 
   // Run detection immediately and again after a short delay to catch async U1 init
   await refreshSetupTab(tab);
@@ -23020,6 +23786,22 @@ document.getElementById('gateLoginForm').addEventListener('submit', async (e) =>
   } finally {
     btn.disabled = false;
     btn.textContent = 'Sign in';
+  }
+});
+
+document.getElementById('gateGoogleBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('gateGoogleBtn');
+  const err = document.getElementById('gateGoogleError');
+  err.style.display = 'none';
+  btn.disabled = true;
+  try {
+    await U1Auth.loginWithGoogle();
+    await init(); // re-runs the gate, now with credentials
+  } catch (e2) {
+    err.textContent = e2.message;
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
   }
 });
 

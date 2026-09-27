@@ -116,7 +116,36 @@
         throw new Error('Could not save to local storage: ' + msg);
       }
 
-      // The local write has happened. Anything that fails from here is the
+      // The local write has happened. Remember WHEN, per site and per prefix,
+      // for the three keys that shape an exported file (mappings → u1-fixes.js,
+      // config and skipLinks → u1-config.js). Export shows the stamp beside
+      // each file so a person sending u1-fixes.js to a client can tell whether
+      // it is newer than the one they sent last week. Private-prefixed: it
+      // never rides in a backup and parseKey() ignores it, so sync never sees
+      // it either. A stamp that fails to write is not a failed save.
+      try {
+        const touched = {};
+        for (const k of Object.keys(items)) {
+          const parsed = parseKey(k);
+          if (parsed && ['mappings', 'config', 'skipLinks'].includes(parsed.prefix)) {
+            (touched[parsed.hostname] = touched[parsed.hostname] || []).push(parsed.prefix);
+          }
+        }
+        const hosts = Object.keys(touched);
+        if (hosts.length) {
+          const stampKeys = hosts.map((h) => PRIVATE_PREFIX + 'touched_' + h);
+          const prev = await chrome.storage.local.get(stampKeys);
+          const now = Date.now(), writes = {};
+          hosts.forEach((h, i) => {
+            const rec = Object.assign({}, prev[stampKeys[i]] || {});
+            touched[h].forEach((prefix) => { rec[prefix] = now; });
+            writes[stampKeys[i]] = rec;
+          });
+          await chrome.storage.local.set(writes);
+        }
+      } catch (e) { /* the save itself succeeded */ }
+
+      // Anything that fails from here is the
       // SERVER refusing, which is a different fact and used to be reported as
       // the same one: "Could not save it: Could not save to local storage:
       // http_413" on a mapping that was sitting safely in chrome.storage.
@@ -193,6 +222,13 @@
         if (parsed && parsed.hostname === hostname) out[key] = all[key];
       }
       return out;
+    },
+
+    /** `{ mappings: ts, config: ts, skipLinks: ts }` — when each was last saved here. */
+    async touchedAt(hostname) {
+      const key = PRIVATE_PREFIX + 'touched_' + hostname;
+      const got = await chrome.storage.local.get([key]);
+      return (got && got[key]) || {};
     },
 
     /** Hostnames that have any saved work, newest-agnostic, sorted. */

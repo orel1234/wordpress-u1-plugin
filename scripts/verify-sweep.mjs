@@ -1204,14 +1204,18 @@ console.log('\nchoosing screens');
     // says so — so the batch size has to be here for it to work it out.
     SWEEP_ASK_BATCH: 60,
     SWEEP_EST: { scanBase: 10, scanPerElement: 0.85, fixSecs: 15, fixPerElements: 6, fallbackCall: 0.13, fixCall: 0.10 },
-    aiSweep: { phase: 'screens', stops: [
+    aiSweep: { phase: 'screens', url: '', stops: [
       { n: 1, thumb: PIXEL, count: 14, inventory: '6 links, 3 buttons', sticky: 27, truncated: false, found: [] },
       { n: 2, thumb: PIXEL, count: 0,  inventory: '',                   sticky: 0,  truncated: false, found: [] },
       { n: 3, thumb: PIXEL, count: 60, inventory: '18 links, 2 tabs',   sticky: 0,  truncated: true,  found: [] },
     ] },
+    currentPageUrl: '',
   };
   box.globalThis = box;
-  const src2 = [lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
+  const bareUrlSrc2 = panelSrc.slice(
+    panelSrc.indexOf('const bareUrl = '), panelSrc.indexOf('\n', panelSrc.indexOf('const bareUrl = ')));
+  const src2 = [bareUrlSrc2, lift('sweepPageMismatchBannerHtml'),
+                lift('renderSweepScreens'), lift('sweepScreenRowHtml'), lift('sweepEstimateHtml'),
                 lift('syncSweepMakeBtn'), lift('showSweepBusy'), lift('clearSweepBusy'),
                 lift('updateSweepBusy'),
                 lift('markScreenReading'), lift('markScreenRead'),
@@ -1234,6 +1238,7 @@ console.log('\nchoosing screens');
     '\nlet sweepReadSummaryHtml = \'\';';
   new w2.Function('ctx', `with (ctx) { ${src2}
     ctx.renderSweepScreens = renderSweepScreens; ctx.sweepPickedScreens = sweepPickedScreens;
+    ctx.sweepPageMismatchBannerHtml = sweepPageMismatchBannerHtml;
     ctx.syncSweepMakeBtn = syncSweepMakeBtn; ctx.showSweepBusy = showSweepBusy;
     ctx.clearSweepBusy = clearSweepBusy; ctx.updateSweepBusy = updateSweepBusy;
     ctx.markScreenReading = markScreenReading;
@@ -2810,6 +2815,35 @@ console.log('\nwhat the survey guessed against what the search found');
   check('…the ones that did not come back are accounted for', /12 left out/.test(after));
   check('…and the guess is still readable, so the two can be compared',
     /first pass had guessed/.test(after) && /6 menus · form/.test(after));
+}
+
+// ── A finished survey says which page it pictures ───────────────────────────
+//
+// Reported live: switch browser tabs to another page of the same site, and
+// the drawer went on showing the previous page's thumbnails with nothing
+// saying they were not this page. warnWrongSite already covered a different
+// SITE; this is the same idea one level down.
+console.log('\na survey says when the open page is not the one it pictures');
+{
+  const bareUrlSrc = panelSrc.slice(
+    panelSrc.indexOf('const bareUrl = '), panelSrc.indexOf('\n', panelSrc.indexOf('const bareUrl = ')));
+  const box = { escapeHtml: sandbox.escapeHtml, aiSweep: { url: '' }, currentPageUrl: '' };
+  box.globalThis = box;
+  const src = [bareUrlSrc, lift('sweepPageMismatchBannerHtml')].join('\n');
+  new Function('ctx', `with (ctx) { ${src}\n ctx.sweepPageMismatchBannerHtml = sweepPageMismatchBannerHtml; }`)(box);
+
+  box.aiSweep.url = 'https://molinahealthcare.com/about/mission-values';
+  box.currentPageUrl = 'https://molinahealthcare.com/about/mission-values?utm_source=x#top';
+  check('the same page, differing only by query and hash, is not a mismatch',
+    box.sweepPageMismatchBannerHtml() === '', box.sweepPageMismatchBannerHtml());
+
+  box.currentPageUrl = 'https://molinahealthcare.com/';
+  const banner = box.sweepPageMismatchBannerHtml();
+  check('a different page on the same site says so, naming both paths',
+    /\/about\/mission-values/.test(banner) && /scan this page instead/.test(banner), banner);
+
+  box.aiSweep.url = '';
+  check('no survey yet → nothing to say', box.sweepPageMismatchBannerHtml() === '');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

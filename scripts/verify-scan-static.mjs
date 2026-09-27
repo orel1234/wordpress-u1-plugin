@@ -184,6 +184,55 @@ console.log('\nstatic checks IBM used to make, in our words');
   check('a search field without role=search is counted as "found, not marked"', srch.inventory.landmarks.search === 0 && srch.inventory.landmarks.searchUnmarked === 1);
   const named = scan(`<div class="input-group" role="form" aria-label="Search" u1st-avoid-change-detection="true"><label for="q" hidden>Search</label><input id="searchInputText"></div>`);
   check('a NAMED form around the search field (what a U1 form mapping leaves) counts as the search landmark', named.inventory.landmarks.search === 1 && named.inventory.landmarks.searchUnmarked === 0 && hits(named, 'landmark-noname').length === 0);
+
+  // molinahealthcare.com: `.Search_short_search__N2BwJ` is a <button
+  // aria-label="Open search panel">, not an input — the real field is not in
+  // the DOM until it is pressed. Both counts above look for an <input> and
+  // always read 0 for this shape; the chip needs a third signal that says so
+  // rather than reading as "no search on this page at all".
+  const srchBtn = scan(`<button aria-label="Open search panel"><span>Search</span></button>`);
+  check('a collapsed search TRIGGER (no input in the DOM yet) is recorded as searchTrigger, not silently 0',
+    srchBtn.inventory.landmarks.search === 0 && srchBtn.inventory.landmarks.searchUnmarked === 0 &&
+    srchBtn.inventory.landmarks.searchTrigger === true);
+  const noSearch = scan(`<button aria-label="Log in">Log in</button>`);
+  check('an unrelated button does not get mistaken for a search trigger', noSearch.inventory.landmarks.searchTrigger === false);
+  check('the chip tells the two silent-zero cases apart',
+    /search: opens on click/.test(PANEL) && /searchTrigger/.test(PANEL));
+
+  // molinahealthcare.com: U1's own "Skip to navigation" / "Skip to footer"
+  // passed the whole skip-link question while the <header> had no link.
+  const u1Only = scan(`
+    <a class="u1st-skip-link" href="#n">Skip to navigation</a><a class="u1st-skip-link" href="#f">Skip to footer</a>
+    <header>top</header><nav id="n">menu</nav><div class="content">x</div><footer id="f">end</footer>`);
+  const lmMiss = hits(u1Only, 'skip-link-landmark').map((r) => r.detail);
+  check('with only U1\'s nav and footer links, the header is reported as having no skip link',
+    lmMiss.includes('header') && !lmMiss.includes('navigation') && !lmMiss.includes('footer'), lmMiss.join(','));
+  const covered = scan(`
+    <a class="u1st-skip-link" href="#h">Skip to header</a><a class="u1st-skip-link" href="#n">Skip to navigation</a>
+    <header id="h">top</header><nav id="n"><ul id="m"><li>a</li></ul></nav>`);
+  check('a skip link to the header (or into a landmark) covers it', hits(covered, 'skip-link-landmark').length === 0);
+  const wrapper = scan(`
+    <a class="u1st-skip-link" href="#all">Skip to content</a><div id="all"><header>top</header><main>x</main></div>`);
+  check('a link to a wrapper around everything reaches no landmark in particular',
+    hits(wrapper, 'skip-link-landmark').map((r) => r.detail).sort().join(',') === 'header,main content');
+  const inArticle = scan(`<a class="u1st-skip-link" href="#m">Skip to main content</a><main id="m"><article><header>card</header></article></main>`);
+  check('a <header> inside an article is not the page header — no link asked for it', hits(inArticle, 'skip-link-landmark').length === 0);
+  // The real molina shape: the <nav> sits INSIDE the <header>. U1's "Skip to
+  // navigation" lands inside the header — that is a link to the nav, not to
+  // the header, and must not count as one.
+  const nested = scan(`
+    <a class="u1st-skip-link" href="#n">Skip to navigation</a><a class="u1st-skip-link" href="#f">Skip to footer</a>
+    <header><nav id="n">menu</nav></header><div>x</div><footer id="f">end</footer>`);
+  check('a nav inside the header: the nav link does not count as a skip link to the header',
+    hits(nested, 'skip-link-landmark').map((r) => r.detail).includes('header'));
+  const reach = Object.fromEntries(nested.inventory.skipReach.map((k) => [k.key, k.present ? (k.reached ? 'green' : 'red') : 'absent']));
+  check('the chips say it per kind: header red, nav and footer green, main absent',
+    reach.header === 'red' && reach.nav === 'green' && reach.footer === 'green' && reach.main === 'absent', JSON.stringify(reach));
+  check('the Skip link row renders one chip per kind, green ✓ or red ✗',
+    /Skip links to/.test(PANEL) && /\$\{k\.key\} ✓/.test(PANEL) && /\$\{k\.key\} ✗/.test(PANEL));
+  const btn = scan(`<a class="u1st-skip-link" href="#m">Skip to main content</a><main id="m">x</main><button aria-label="Open search panel">Search</button>`);
+  check('a search that only opens on click asks for a skip link to its button',
+    hits(btn, 'skip-link-landmark').map((r) => r.detail).join(',') === 'search');
   check('the focus-outline CSS check is gone from the static scan', !/focus-not-visible/.test(PANEL));
 
   const weak = scan(``);

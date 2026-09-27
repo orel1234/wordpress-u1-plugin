@@ -217,6 +217,37 @@ console.log('\nskip links from config');
   const late = doc.createElement('a'); late.className = 'u1st-skip-link'; late.href = '#searchInputText'; late.textContent = 'Skip to search'; doc.body.prepend(late);
   w.__u1Patch.correctors.forEach((f) => f());
   check('if the engine later renders the same target, ours is removed', doc.querySelectorAll('a.u1st-skip-link[href="#searchInputText"]').length === 1 && !doc.querySelector('a.u1p-skip-link[href="#searchInputText"]'));
+  // Hidden until focused even where the theme's CSS outranks u1.css's rule.
+  const guard = doc.getElementById('u1p-skip-css');
+  check('a guard stylesheet hides every skip link until focus, with !important', !!guard &&
+    /a\.u1st-skip-link:not\(:focus\)\{position:absolute!important;[^}]*clip:rect\(0 0 0 0\)!important/.test(guard.textContent) &&
+    /a\.u1st-skip-link:focus\{[^}]*background-color:black!important/.test(guard.textContent));
+  // On an RTL page the area left of the page scrolls, so a link parked at
+  // left:-10000px is 10000px of horizontal scroll (tamam.co.il opened scrolled
+  // into it). The hidden state must never move the link off the page.
+  const hidden = /a\.u1st-skip-link:not\(:focus\)\{([^}]*)\}/.exec(guard.textContent);
+  check('the hidden state parks nothing off-page: no negative left, top or right', !!hidden && !/(left|right|top|bottom):-\d/.test(hidden[1]), hidden && hidden[1]);
+  w.__u1Patch.correctors.forEach((f) => f());
+  check('the guard stylesheet is added once', doc.querySelectorAll('#u1p-skip-css').length === 1);
+}
+
+// ── the same, on a Hebrew page: the engine's wording and direction ─────────
+console.log('\nskip links from config, Hebrew page');
+{
+  const d = dom(`<html lang="he" dir="rtl"><body>
+    <a class="u1st-skip-link rtl" href="#main">דלג אל תוכן מרכזי</a>
+    <main id="main">m</main><nav id="nav">n</nav><form id="contact">f</form></body></html>`);
+  const w = d.window, doc = w.document;
+  w.u1 = { fix: {}, config: { skipLinks: [
+    { label: 'תפריט ניווט', target: '#nav', selector: '#nav' },
+    { label: 'דלג אל טופס צור קשר', target: '#contact', selector: '#contact' },
+  ] } };
+  w.eval(slice([]));
+  w.__u1Patch.correctors.forEach((f) => f());
+  const mine = [...doc.querySelectorAll('a.u1p-skip-link')];
+  check('a bare label gets the Hebrew "דלג אל", not the English "Skip to"', mine[0] && mine[0].textContent === 'דלג אל תפריט ניווט', mine[0] && mine[0].textContent);
+  check('a label already phrased in Hebrew is kept as written', mine[1] && mine[1].textContent === 'דלג אל טופס צור קשר', mine[1] && mine[1].textContent);
+  check('ours carry the engine\'s rtl class on an rtl page', mine.length === 2 && mine.every((a) => a.classList.contains('rtl')));
 }
 
 // ── static fixes from the scan: new-tab names, stray <br>, real heading levels ─
@@ -287,7 +318,7 @@ console.log('\nstatic fixes reach the page; contrast, landmarks, heading, skip l
 
   check('contrast findings carry the colour pair and the link\'s href from the engine', /fgColor: d\.fgColor/.test(read('scan-engines.js')) && /href: el && el\.closest/.test(read('scan-engines.js')));
   check('the scan groups contrast by colour pair and SUGGESTS a darker shade — colours are the site\'s, nothing is applied', /function scanContrastPairs/.test(PANEL) && /function darkenToContrast/.test(PANEL) && /scan-contrast-suggest/.test(PANEL) && !/scan-contrast-fix/.test(PANEL));
-  check('new-tab links, duplicate ids and stray <br>s render as ONE row each, elements listed inside', /SCAN_GROUPED = new Set\(\['link-newwindow', 'dup-ids', 'list-stray-br'\]\)/.test(PANEL) && /function scanGroupedItemHtml/.test(PANEL));
+  check('new-tab links, duplicate ids, stray <br>s and missing landmarks render as ONE row each, elements listed inside', /SCAN_GROUPED = new Set\(\['link-newwindow', 'dup-ids', 'list-stray-br', 'landmarks-missing'\]\)/.test(PANEL) && /function scanGroupedItemHtml/.test(PANEL));
   check('after a fix the panel says, per rule, how many landed and which are still there', /fixed on the page\./.test(PANEL) && /Still there:/.test(PANEL) && /refreshScanAfterMapping\(rule\)/.test(PANEL));
   check('unnamed landmarks have a one-press fix', /'landmark-noname':\s*\{ does:/.test(PANEL));
   check('the page highlight is the unmissable kind', /__u1tPulse/.test(PANEL) && /#ff2d95/.test(PANEL));

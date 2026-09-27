@@ -617,6 +617,42 @@ console.log('\nnames U1 itself writes never enter a mapping');
       const pg = c15.w.__u1SelectorIntel.paginationShape('#pg');
       check('paginationShape finds the numbered pressables',
         !!pg && pg.pageButtons === '.page' && !!pg.nextButton, JSON.stringify(pg));
+      // A react-day-picker month, the way it renders on the site the owner
+      // mapped by hand (2026-09-16): days.table and days.day were REQUIRED
+      // and had no reader, so a single-element scan left both empty.
+      const rows = [];
+      let n = 1;
+      for (let w = 0; w < 5; w++) {
+        const cells = [];
+        for (let d = 0; d < 7; d++) {
+          const day = n++;
+          if (day > 31) break;
+          const extra = day === 14 ? ' rdp-selected' : (day === 2 ? ' rdp-disabled' : '');
+          cells.push(`<td class="rdp-day${extra}"${day === 14 ? ' aria-selected="true"' : ''}><button class="rdp-day_button"${day === 2 ? ' disabled' : ''}>${day}</button></td>`);
+        }
+        rows.push(`<tr class="rdp-week">${cells.join('')}</tr>`);
+      }
+      const c16 = collectIn(`<div id="dp" class="rdp-root"><div class="rdp-nav">
+        <button class="rdp-button_previous" aria-label="Go to the Previous Month">‹</button>
+        <button class="rdp-button_next" aria-label="Go to the Next Month">›</button></div>
+        <span class="rdp-caption_label" aria-live="polite">September 2026</span>
+        <table class="rdp-month_grid"><thead><tr><th>Mo</th><th>Tu</th><th>We</th><th>Th</th><th>Fr</th><th>Sa</th><th>Su</th></tr></thead>
+        <tbody class="rdp-weeks">${rows.join('')}</tbody></table></div>`);
+      const dp = c16.w.__u1SelectorIntel.datepickerShape('#dp');
+      check('datepickerShape reads the grid, the days, the label and the arrows off a react-day-picker month',
+        !!dp && dp['days.table'] === '.rdp-weeks' && dp['days.day'] === '.rdp-day_button' &&
+        dp['month.label'] === '.rdp-caption_label' && dp['month.prevButton'] === '.rdp-button_previous' &&
+        dp['month.nextButton'] === '.rdp-button_next' && !dp.fromTrigger, JSON.stringify(dp));
+      check('datepickerShape names the disabled days',
+        !!dp && dp['days.disabled'] === '.rdp-day_button[disabled]', JSON.stringify(dp && dp['days.disabled']));
+      // Pointed at the INPUT instead: the month is found page-wide and
+      // becomes the container.
+      const c17 = collectIn(`<input id="when" class="date-input"><div id="dp2" class="rdp-root">
+        <span class="rdp-caption_label">September 2026</span>
+        <table class="rdp-month_grid"><tbody class="rdp-weeks">${rows.join('')}</tbody></table></div>`);
+      const dp2 = c17.w.__u1SelectorIntel.datepickerShape('#when');
+      check('datepickerShape pointed at the trigger finds the month page-wide',
+        !!dp2 && dp2.fromTrigger && dp2['days.table'] === '.rdp-weeks' && dp2['days.day'] === '.rdp-day_button', JSON.stringify(dp2));
     }
   }
   check('u1 classes are noise', S.NOISE.test('u1st-tabbable-element'));

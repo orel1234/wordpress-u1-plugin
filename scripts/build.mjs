@@ -16,6 +16,8 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 // Everything the packaged extension needs, and nothing else.
 const FILES = [
   'manifest.json', 'rules.json',
+  // The toolbar/store icons the manifest points at (scripts/make-icons.py).
+  'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png',
   'panel.html', 'panel.js', 'styles.css',
   'config.js', 'store.js', 'auth.js',
   // The site's shared work — mappings, settings and scans on the server.

@@ -34,7 +34,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-08h' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-27a' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -915,10 +915,20 @@
       if (link.__u1pSkip) return;
       link.__u1pSkip = true;
       // Browsers disagree about whether the target receives focus; doing it
-      // explicitly is the only behaviour that is the same everywhere.
-      link.addEventListener('click', function () {
+      // explicitly is the only behaviour that is the same everywhere. And the
+      // move is made here rather than by following the href: the browser's
+      // own fragment navigation writes "#u1p-skip-w296fw" into the address
+      // bar — a made-up id, on every skip, on the client's own site — and
+      // pushes a history entry, so Back returns to the same page. Focus plus
+      // scroll is the whole of what a skip link owes its user; the href
+      // stays for what it says to assistive tech and for a page where this
+      // script is not running.
+      link.addEventListener('click', function (e) {
         var t = document.getElementById(link.getAttribute('href').slice(1));
-        if (t) setTimeout(function () { t.focus(); }, 0);
+        if (!t) return;
+        if (e && e.preventDefault) e.preventDefault();
+        try { t.scrollIntoView({ block: 'start' }); } catch (err) { try { t.scrollIntoView(); } catch (err2) {} }
+        setTimeout(function () { try { t.focus({ preventScroll: true }); } catch (err) { t.focus(); } }, 0);
       });
     });
   });
@@ -938,27 +948,133 @@
   // the config, so the links exist before anyone looks for them — the
   // corrector pass waits for the engine and for a mutation, and "Verify on
   // page" cannot wait for either.
+  // ── Hidden until focused, whatever the site's CSS says ───────────────────
+  // u1.css hides .u1st-skip-link with a plain, low-specificity rule
+  // (position:absolute; left:-10000px) and shows it on :focus. Any theme rule
+  // that names anchors more specifically — `header a { position: relative }`,
+  // a reset on `a` inside `#page` — wins the cascade, and every skip link,
+  // the engine's and ours, then sits in the page flow as a row of plain text
+  // at the top (seen on an Elementor site: the Styles pane listed only the
+  // theme's rules, u1.css's crossed out). The same idea, with !important, in
+  // a stylesheet of our own: the site cannot outrank it, and the focused look
+  // is u1.css's own so the link appears as the black pill people know from
+  // other U1 sites.
+  //
+  // NOT left:-10000px, though — hidden by clip instead. On a page with
+  // direction:rtl the area to the LEFT of the page is scrollable (the scroll
+  // origin is the right edge), so an element parked 10000px to the left adds
+  // 10000px of horizontal scroll, and the page opened scrolled into it: the
+  // left half blank, the content cut off at the right (tamam.co.il, the
+  // moment this stylesheet first applied there). Clipping to nothing keeps
+  // the link exactly where it is, one pixel big and invisible, and no
+  // direction has anything to scroll to. u1.css's own rule has the same
+  // latent fault on RTL sites; this one is the one in force when both apply.
+  var SKIP_CSS =
+    'a.u1st-skip-link:not(:focus){position:absolute!important;left:0!important;right:auto!important;top:0!important;' +
+      'width:1px!important;height:1px!important;margin:-1px!important;padding:0!important;border:0!important;' +
+      'overflow:hidden!important;clip:rect(0 0 0 0)!important;clip-path:inset(50%)!important;white-space:nowrap!important}' +
+    'a.u1st-skip-link:focus{position:absolute!important;left:6px!important;top:6px!important;' +
+      'width:auto!important;height:40px!important;margin:0!important;z-index:999999!important;display:inline-block!important;' +
+      'clip:auto!important;clip-path:none!important;overflow:visible!important;' +
+      'background-color:black!important;color:white!important;font-weight:600!important;font-size:16px!important;' +
+      'padding:8px 24px!important;border-radius:100px!important;box-sizing:border-box!important;' +
+      'text-decoration:none!important;line-height:24px!important;white-space:nowrap!important}' +
+    'a.u1st-skip-link.rtl:focus{direction:rtl!important;right:6px!important;left:auto!important}';
+  var ensureSkipCss = function () {
+    if (document.getElementById('u1p-skip-css')) return;
+    var st = document.createElement('style');
+    st.id = 'u1p-skip-css';
+    st.textContent = SKIP_CSS;
+    (document.head || document.documentElement).appendChild(st);
+  };
+
+  // "Skip to" in the page's language — the engine's own SKIP_TO strings, so a
+  // Hebrew page reads "דלג אל תוכן מרכזי" like the engine's links beside it,
+  // not "Skip to תוכן מרכזי". Direction follows the document, as the engine's
+  // isRtl does.
+  var SKIP_TO = { he: 'דלג אל', ar: 'انتقل إلى', ru: 'Перейти к', fr: 'Aller à', es: 'Saltar a', de: 'Springe zu', en: 'Skip to' };
+  var SAYS_SKIP = /^(skip|דלג|דלגו|انتقل|перейти|saltar|aller|springe)/i;
+  var pageLang = function () {
+    return ((document.documentElement.getAttribute('lang') || 'en').slice(0, 2)).toLowerCase();
+  };
+  var pageRtl = function () {
+    var dir = (document.documentElement.getAttribute('dir') || '').toLowerCase();
+    if (dir) return dir === 'rtl';
+    try { return getComputedStyle(document.documentElement).direction === 'rtl'; } catch (e) { return false; }
+  };
+
+  // A skip link chosen as "Main content" (or header / nav / search / footer)
+  // says what its target IS, so the target is made that landmark too. Found
+  // on molinahealthcare.com: "skip to main content" pointed at the content
+  // area and worked, yet the page had no main landmark at all — the scan said
+  // so, and nothing in Studio could map one. The engine's own SkipLinkFixer
+  // then adds its "Skip to main content" for the new role=main, and the
+  // duplicate check above removes ours in its favour.
+  //
+  // Conservative on purpose: nothing happens when the target already is, or
+  // sits inside, that landmark (a nav link list inside <nav>); a
+  // one-per-page landmark (main, banner, contentinfo) that already exists
+  // elsewhere is left alone; and only a generic container is given a role —
+  // a list, a button or a link keeps its own semantics.
+  var LANDMARK_OF = {
+    header: ['banner', 'header,[role=banner]'],
+    nav: ['navigation', 'nav,[role=navigation]'],
+    main: ['main', 'main,[role=main]'],
+    search: ['search', 'search,[role=search]'],
+    footer: ['contentinfo', 'footer,[role=contentinfo]'],
+  };
+  var ONE_PER_PAGE = { header: 1, main: 1, footer: 1 };
+  var makeLandmark = function (el, kind) {
+    var lm = LANDMARK_OF[kind];
+    if (!lm || !el || el.nodeType !== 1) return;
+    if (closest(el, lm[1])) return;
+    if (ONE_PER_PAGE[kind] && qsa(lm[1]).length) return;
+    if (!/^(DIV|SECTION|ARTICLE|ASIDE|FORM|SPAN)$/.test(el.tagName)) return;
+    if (el.getAttribute('role')) return;
+    set(el, 'role', lm[0]);
+  };
+  P.makeLandmark = makeLandmark;
+
+  // Landmarks the ENGINE gives a skip link of its own, unconditionally:
+  // activateFixers() ends with skipLinkApi(), whose SkipLinkFixer subscribes
+  // to nav/[role=navigation], main/[role=main] and footer/[role=contentinfo]
+  // and adds "Skip to navigation / main content / footer" for each one it
+  // sees (u1_vanilla-js-a11y.js, read). It never reads config.skipLinks, so
+  // nothing in Studio turns these off — deleting every configured skip link
+  // on molinahealthcare.com left exactly two: the engine's, for its one nav
+  // and one footer. Header and search have no engine link.
+  var ENGINE_KINDS = { nav: 1, main: 1, footer: 1 };
+
   P.renderSkipLinks = function () {
+    ensureSkipCss();
     var u1 = W.u1 !== undefined ? W.u1 : W.U1 !== undefined ? W.U1 : W.user1st;
     var cfg = u1 && u1.config;
-    // Studio and the exported config both leave a copy on window.__u1SkipLinks,
-    // because the engine's setConfiguration replaces u1.config and the list
-    // was seen to vanish with it. Whichever is there; the first non-empty one
-    // is kept for the rest of the page's life.
-    var list = (Array.isArray(W.__u1SkipLinks) && W.__u1SkipLinks.length) ? W.__u1SkipLinks
+    // Studio (background.js, applyConfig) always leaves an ARRAY on
+    // window.__u1SkipLinks — empty when the site has none — and that array
+    // is the answer, empty included. The fallbacks are only for a page where
+    // nothing set it: the engine's setConfiguration replaces u1.config and
+    // the list was seen to vanish with it, so the last list seen is kept.
+    //
+    // An empty __u1SkipLinks used to fall through to that remembered list:
+    // delete every skip link in Setup and the page re-created the old ones on
+    // the next pass, for as long as it stayed open.
+    var authoritative = Array.isArray(W.__u1SkipLinks);
+    var list = authoritative ? W.__u1SkipLinks
              : (cfg && Array.isArray(cfg.skipLinks) && cfg.skipLinks.length) ? cfg.skipLinks
              : P.skipLinks;
-    var report = { build: P.build, list: Array.isArray(list) ? list.length : 0, made: 0, kept: 0, missing: [], errors: [] };
-    if (!Array.isArray(list) || !list.length) return report;
-    P.skipLinks = list;
+    var report = { build: P.build, list: Array.isArray(list) ? list.length : 0, made: 0, kept: 0,
+                   covered: 0, missing: [], errors: [] };
+    if (!Array.isArray(list)) list = [];
+    if (list.length) P.skipLinks = list; else if (authoritative) P.skipLinks = [];
     var engineLinks = qsa('a.u1st-skip-link:not(.u1p-skip-link)');
-    // Ours duplicated by the engine's since the last pass → out.
-    qsa('a.u1p-skip-link').forEach(function (mine) {
-      var href = mine.getAttribute('href');
-      if (engineLinks.some(function (e) { return e.getAttribute('href') === href; })) mine.remove();
-    });
+    var engineHref = function (href) {
+      return engineLinks.some(function (e) { return e.getAttribute('href') === href; });
+    };
     var all = qsa('a.u1st-skip-link');
     var after = all.length ? all[all.length - 1] : null;
+    // Every href this list stands for this pass; ours pointing anywhere else
+    // (deleted in Setup, re-targeted, now covered by the engine) comes off.
+    var wanted = {};
     list.forEach(function (sl) {
       try {
       if (!sl || !sl.label) return;
@@ -968,17 +1084,28 @@
       if (!target && sl.selector) { try { target = document.querySelector(sl.selector); } catch (e) {} }
       if (!target && typeof sl.target === 'string' && !href) { try { target = document.querySelector(sl.target); } catch (e) {} }
       if (!target) { report.missing.push(sl.selector || sl.target || sl.label); return; }
+      if (sl.kind) makeLandmark(target, sl.kind);
+      // The engine already links this landmark — ours would be the same
+      // words ("Skip to navigation") to a spot inside it. On molina "skip to
+      // nav" pointed at the menu <ul> inside the <nav>, the engine's at the
+      // <nav>: two identical links, one tab stop apart.
+      if (sl.kind && ENGINE_KINDS[sl.kind]) {
+        var lm = closest(target, LANDMARK_OF[sl.kind][1]);
+        if (lm && lm.id && engineHref('#' + lm.id)) { report.covered++; return; }
+      }
       if (!target.id) target.id = sl.syntheticId || ('u1p-skip-' + Math.random().toString(36).slice(2, 8));
       href = '#' + target.id;
+      if (engineHref(href)) { report.covered++; return; }
+      wanted[href] = true;
       var have = false;
-      try { have = !!document.querySelector('a.u1st-skip-link[href="' + href.replace(/"/g, '\\"') + '"]'); } catch (e) {}
+      try { have = !!document.querySelector('a.u1p-skip-link[href="' + href.replace(/"/g, '\\"') + '"]'); } catch (e) {}
       if (have) { report.kept++; return; }
       var a = document.createElement('a');
-      a.className = 'u1st-skip-link u1p-skip-link';
+      a.className = 'u1st-skip-link u1p-skip-link' + (pageRtl() ? ' rtl' : '');
       a.href = href;
       var label = String(sl.label).trim();
       // "sign in" → "Skip to sign in"; a label already phrased as one is kept.
-      if (!/^(skip|דלג|דלגו|перейти|saltar|passer|springe)/i.test(label)) label = 'Skip to ' + label;
+      if (!SAYS_SKIP.test(label)) label = (SKIP_TO[pageLang()] || SKIP_TO.en) + ' ' + label;
       a.textContent = label.charAt(0).toUpperCase() + label.slice(1);
       if (after && after.parentNode) after.insertAdjacentElement('afterend', a);
       else document.body.insertAdjacentElement('afterbegin', a);
@@ -986,9 +1113,109 @@
       report.made++;
       } catch (e) { report.errors.push(String(e && e.message || e)); }
     });
+    qsa('a.u1p-skip-link').forEach(function (mine) {
+      if (!wanted[mine.getAttribute('href')]) mine.remove();
+    });
+    // What is on the page now, whoever put it there — the panel lists the
+    // engine's own beside the configured ones so a count never surprises.
+    report.onPage = qsa('a.u1st-skip-link').map(function (a) {
+      var id = (a.getAttribute('href') || '').slice(1);
+      var t = id ? document.getElementById(id) : null;
+      return { text: (a.textContent || '').trim(), href: a.getAttribute('href') || '',
+               engine: !a.classList.contains('u1p-skip-link'),
+               to: t ? t.tagName.toLowerCase() + (t.getAttribute('role') ? '[role=' + t.getAttribute('role') + ']' : '') : '' };
+    });
     return report;
   };
   P.correct(P.renderSkipLinks);
+})();
+//#endregion
+
+//#region u1-patch:visibility
+// ElementVisibility.isVisible walks every ancestor of a fix target up to
+// <html>, and isHidden() on each one reads:
+//   display=="none" || visibility=="hidden" ||
+//   (height=="0px" && (overflow=="auto"||overflow=="hidden")) ||
+//   width=="0px" || opacity=="0" || transform=="translateX(0%)"
+// — verified against the real bundle (dev.oreltest.user1st.com,
+// u1_vanilla-js-a11y.js). The height branch only counts a 0px height as
+// hidden when it also CLIPS (overflow auto/hidden) — a deliberate,
+// reasonable "collapsed accordion" signal. width=="0px" has no such
+// condition: it counts as hidden even with overflow:visible, where the
+// content is not clipped and is not hidden from anyone.
+//
+// Reproduced on molinahealthcare.com's header: a nameless 0×0,
+// overflow:visible <div> sits between the mega-menu and the <header> — a
+// pure positioning wrapper, content escapes it on purpose. Both header
+// menus mapped on that page share it as an ancestor. ChangeDetection.handle
+// (a setInterval poll) checks this BEFORE a fixer ever runs, every second,
+// forever — so a correctly-built, correctly-configured u1.fix.menu call
+// never fires. No error, no attribute, nothing: the mapping and the
+// selectors are not the defect, this ancestor is.
+//
+// The engine defines its own way out — `!element.getAttribute("u1-visible")`
+// skips the whole isHidden check for that ancestor — so this does not ask
+// every client to hand-edit markup for a defect in a third-party library.
+// It walks the ancestors of what THIS SITE actually asked u1.fix.* to
+// process (P.calls, recorded above) rather than scanning the page: a
+// handful of containers, not every element on it — the blanket scan that
+// froze molinahealthcare.com once already (see the budget comment at the
+// top of this file) is exactly the shape this avoids repeating.
+//
+// Deliberately narrower than U1's own rule: only width==0 with overflow
+// NOT clipping qualifies. A 0px dimension that DOES clip (overflow
+// hidden/auto) is left alone in every case — that is a real collapsed
+// state (an accordion panel, a slide-out drawer mid-transition) and U1
+// hiding it is correct; marking it visible would be the opposite bug.
+(function () {
+  var P = window.__u1Patch; if (!P) return;
+  var u = P.util;
+  var clips = function (v) { return v === 'hidden' || v === 'auto' || v === 'scroll'; };
+
+  var freeButZero = function (el) {
+    if (!el || el.nodeType !== 1 || el.tagName === 'HTML') return false;
+    // Cheapest check first, and it alone re-excludes an ancestor this ran on
+    // before: once set(), it stays set (set() itself no-ops a repeat write),
+    // so nothing past this line runs twice for the same element.
+    if (el.getAttribute('u1-visible')) return false;
+    // offsetWidth is a plain layout read; getComputedStyle (below) is not —
+    // this keeps the ordinary ancestor (a real width) from ever paying for
+    // it, on a walk that runs for every mapped container on every pass.
+    if (el.offsetWidth !== 0) return false;
+    var cs;
+    try { cs = getComputedStyle(el); } catch (e) { return false; }
+    // Both the shorthand and the longhand: real engines resolve overflow-x
+    // from `overflow`, but this is cheap enough to double-check rather than
+    // trust that every environment expands it the same way.
+    return cs.width === '0px' && !clips(cs.overflowX) && !clips(cs.overflow);
+  };
+
+  P.correct(function () {
+    var containers = [];
+    for (var i = 0; i < P.calls.length; i++) {
+      var sel = P.calls[i].selector;
+      if (sel && containers.indexOf(sel) === -1) containers.push(sel);
+    }
+    for (var c = 0; c < containers.length; c++) {
+      var roots = u.qsa(containers[c]);
+      // A selector that matches many elements — a link mapping on every card
+      // of a news list — matches siblings under ONE ancestor chain; walking
+      // it once per card is the same walk repeated. Three is enough to catch
+      // a wrapper any of them shares, and keeps a 300-card page from paying
+      // for 300 walks on every pass (the page is mutating as its cards load,
+      // so the passes come in bursts).
+      if (roots.length > 3) roots = roots.slice(0, 3);
+      for (var r = 0; r < roots.length; r++) {
+        var node = roots[r].parentElement;
+        // To <html> — the same distance U1's own check climbs. This only
+        // runs per mapped container, so the depth costs nothing a page-wide
+        // scan would.
+        for (var hop = 0; node && node.tagName !== 'HTML' && hop < 40; hop++, node = node.parentElement) {
+          if (freeButZero(node)) u.set(node, 'u1-visible', 'true');
+        }
+      }
+    }
+  });
 })();
 //#endregion
 
@@ -1671,6 +1898,35 @@
   };
 
   // Enter, Space or Down on a closed trigger opens it and steps inside.
+  //
+  // `u.closest(e.target, '[aria-expanded]')` assumes the trigger itself (or
+  // an ancestor of it) carries aria-expanded. It never does for a plain
+  // u1.fix.menu mapping: RolesAndAttributes.setSubmenuState (the real
+  // u1_vanilla-js-a11y.js) writes aria-expanded on the SUBMENU, a SIBLING of
+  // the trigger under the same <li> — never on the trigger and never on an
+  // ancestor shared with it. closest() only climbs ancestors, so on the most
+  // ordinary shape U1 itself produces this always returned null and did
+  // nothing: pressing Enter opened the panel (the page's own click handler)
+  // but never stepped focus inside it. Confirmed on
+  // molinahealthcare.com's mega-menu, and true of any site built the same
+  // way, not particular to that one.
+  //
+  // The trigger IS reliably markable: U1 sets aria-haspopup="true" on every
+  // item matching `selectors.triggers`, unconditionally, the moment
+  // fix.menu runs — before the submenu itself has been opened even once, so
+  // it exists from the first keypress. Used only as a fallback, so a site
+  // where aria-expanded genuinely does sit on the trigger (or an ancestor)
+  // keeps taking the original, unchanged path.
+  var panelFor = function (trigger) {
+    if (!trigger) return null;
+    var id = u.get(trigger, 'aria-controls') || u.get(trigger, 'data-controls');
+    if (id) { var byId = document.getElementById(id); if (byId) return byId; }
+    var next = trigger.nextElementSibling;
+    // Not itself another pressable — a panel is content, not a second
+    // control sitting beside the first.
+    if (next && !next.matches('button,[role="button"],a[href],input,select,textarea')) return next;
+    return null;
+  };
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
     // The caret wins. This matches on an ANCESTOR with aria-expanded, so
@@ -1678,13 +1934,37 @@
     // Enter entirely — see isTyping.
     if (u.isTyping(e.target)) return;
     var t = u.closest(e.target, '[aria-expanded]');
-    if (!t || u.get(t, 'aria-expanded') !== 'false') return;
-    // A native button already opens on Enter and Space; only Down is ours.
-    if (u.isNative(t) && e.key !== 'ArrowDown') return;
-    e.preventDefault();
-    t.click();
-    var panelId = u.get(t, 'aria-controls') || u.get(t, 'data-controls');
-    var panel = panelId ? document.getElementById(panelId) : t.nextElementSibling;
+    var panel = null;
+    if (t) {
+      if (u.get(t, 'aria-expanded') !== 'false') return;
+    } else {
+      t = u.closest(e.target, '[aria-haspopup="true"]');
+      panel = t && panelFor(t);
+      // Not '!== false': a panel U1 has never opened yet carries no
+      // aria-expanded AT ALL (setSubmenuState only ever runs the first time
+      // ChangeDetection sees the submenu become visible) — undefined means
+      // "still closed", not "unknown". 'true' is the only value this
+      // refuses, so a second Enter on an already-open trigger is a no-op
+      // here rather than a redundant click.
+      if (!panel || u.get(panel, 'aria-expanded') === 'true') return;
+    }
+    // A native button already opens on Enter and Space on its own — clicking
+    // it again here would be a second, redundant open. But that only excuses
+    // the CLICK; stepping focus into whatever just opened is this patch's
+    // to do regardless of who opened it, and returning here unconditionally
+    // (the previous shape of this check) skipped that half too — Enter
+    // opened the panel and then left a keyboard user stranded on the
+    // trigger, exactly the report this whole handler exists to fix. Only
+    // Down, which nothing native listens for, still needs the click itself.
+    var native = u.isNative(t);
+    if (!(native && e.key !== 'ArrowDown')) {
+      e.preventDefault();
+      t.click();
+    }
+    if (!panel) {
+      var panelId = u.get(t, 'aria-controls') || u.get(t, 'data-controls');
+      panel = panelId ? document.getElementById(panelId) : t.nextElementSibling;
+    }
     (window.requestAnimationFrame || setTimeout)(function () {
       if (!panel) return;
       var first = u.qsa(u.FOCUSABLE, panel).filter(u.visible)[0];
