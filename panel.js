@@ -22134,16 +22134,13 @@ async function loadMappingsList() {
     // header; "this page only" is an exception, so it does.
     const scoped = !legacy && isPageScoped(m);
     const scopePath = scoped ? m.pagePath : (pageUrl ? pagePathOf(pageUrl) : '');
-    // Two options side by side, radio-style — click the one you want. Orel
-    // tried the single flipping chip and read it as one button that did the
-    // wrong thing; two labelled choices say what each click does.
+    // One chip, always lit, saying where the mapping applies NOW; a click
+    // switches to the other. Orel wanted the current state readable at a
+    // glance, not two options to choose between.
     const scopeChip = legacy ? '' :
-      `<span class="mh-scope-group" role="radiogroup" aria-label="Where this mapping applies" data-scope-idx="${idx}">` +
-        `<span class="mh-flag mh-flag-toggle mh-scope ${scoped ? 'off' : 'on'}" data-scope-set="site" role="radio" tabindex="0" aria-checked="${scoped ? 'false' : 'true'}" title="Applies on the whole site — every page where the selector matches.">⊕ whole site</span>` +
-        `<span class="mh-flag mh-flag-toggle mh-scope ${scoped ? 'on' : 'off'}" data-scope-set="page" role="radio" tabindex="0" aria-checked="${scoped ? 'true' : 'false'}" title="${scopePath
-            ? 'Applies on this page only: ' + escapeHtml(scopePath)
-            : 'This mapping has no page recorded — open its page and save it again first.'}">⌖ this page only</span>` +
-      `</span>`;
+      `<span class="mh-flag mh-flag-toggle mh-scope on" data-scope-toggle="${idx}" role="button" tabindex="0" title="${scoped
+          ? 'Applies on this page only: ' + escapeHtml(scopePath) + '. Click to apply on the whole site.'
+          : 'Applies on the whole site — every page where the selector matches. Click to limit it to ' + (scopePath ? escapeHtml(scopePath) : 'the page it was captured on') + '.'}">${scoped ? '⌖ this page only' : '⊕ whole site'}</span>`;
     // In the collapsed header only the exception shows, and as a plain fact.
     const headScopeChip = scoped ? `<span class="mh-flag mh-scope on" title="Applies on this page only: ${escapeHtml(m.pagePath)}">⌖ this page only</span>` : '';
     const headScope = headScopeChip;
@@ -22463,16 +22460,13 @@ async function loadMappingsList() {
     });
   });
 
-  container.querySelectorAll('.mh-scope-group [data-scope-set]').forEach(opt => {
-    const choose = async (e) => {
+  container.querySelectorAll('.mh-flag-toggle[data-scope-toggle]').forEach(chip => {
+    const toggle = async (e) => {
       e.stopPropagation();
-      const group = opt.closest('.mh-scope-group');
-      const idx = parseInt(group.dataset.scopeIdx, 10);
+      const idx = parseInt(chip.dataset.scopeToggle, 10);
       const m = list[idx];
       if (!m || typeof m !== 'object') return;
-      const want = opt.dataset.scopeSet === 'page' ? 'page' : 'site';
-      if ((m.scope === 'page') === (want === 'page')) return;           // already that
-      if (want === 'page') {
+      if (m.scope !== 'page') {
         // Limiting needs a page to limit to. A mapping imported without one
         // has to be re-captured on its page first; saying so beats guessing.
         const path = m.pagePath || pagePathOf(m.pageUrl || '');
@@ -22481,13 +22475,13 @@ async function loadMappingsList() {
       } else {
         m.scope = 'site';
       }
-      group.querySelectorAll('[data-scope-set]').forEach(o => o.setAttribute('aria-disabled', 'true'));
+      chip.setAttribute('aria-disabled', 'true');
       await U1Store.set({ [key]: list });
       loadMappingsList();
     };
-    opt.addEventListener('click', choose);
-    opt.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(e); }
+    chip.addEventListener('click', toggle);
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); }
     });
   });
 
