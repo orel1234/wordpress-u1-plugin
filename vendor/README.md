@@ -26,3 +26,16 @@ one. `scan-coverage.md` has the rule-by-rule account.
 3. Run `node scripts/verify-scan-engines.mjs`: it fails when the new version
    ships a rule `AXE_RULES` has no wording for, so nothing reaches the reader
    in axe's words.
+
+## jQuery 1.7.2 for the URS compatibility engine
+
+`jquery-1.7.2.min.js` is the exact jQuery the legacy uRemediate engine handed
+to every URS script as `$`. It is not loaded by the extension itself:
+`scripts/build-urs-compat.mjs` inlines it into `urs-compat.js`, where
+`noConflict(true)` turns it into `window.uf$` so a client site's own jQuery is
+never touched. Copied as-is from the legacy repository
+(`uRemediate-Legacy/User1st.UI.Web.New1/Scripts/jquery-1.7.2.min.js`).
+
+| File | Library | Version | SHA-256 |
+|---|---|---|---|
+| `jquery-1.7.2.min.js` | jQuery | 1.7.2 | `ce664505b5de12a7e02f075cffc7ccaa34a8444498b17767423904e5136ad858` |

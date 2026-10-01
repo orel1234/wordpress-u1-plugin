@@ -578,6 +578,23 @@ const COMPONENT_SCHEMAS = {
       order:'Two or more selectors, separated by semicolons, in the order the keyboard should reach them. Tab and Shift+Tab follow this order while inside the set; leaving the set continues after its last element in the page. Nothing in the markup changes and no positive tabindex is written.',
     },
   },
+  // One URS pattern, carried over whole by the URS → U1 Studio converter
+  // (user1st-all/urs-migration). Never built by hand in the panel — `hidden`
+  // keeps it out of the type pickers — it arrives through Import and is applied
+  // on the client site by urs-compat.js, the legacy-engine re-implementation.
+  // config: { pattern:{…}, metadata:[…], scripts:[…], site?, texts? }.
+  'urs-compat': {
+    custom:'ursCompat',
+    hidden:true,
+    selectors:{target:'PRIMARY'},
+    fields:[],
+    rootFields:{},
+    req:['target'],
+    labels:{ target:'URS pattern element (converted — edit in URS, re-run the converter)' },
+    desc:{
+      target:'The element the URS pattern was mapped to. Everything the pattern carried in URS — roles, descriptions, tab-order rules, scripts — is applied inside it by the compatibility engine, exactly as the legacy snippet did.',
+    },
+  },
 };
 
 // Helpers to set/read nested values via dotted keys ("year.label")
@@ -629,6 +646,7 @@ const VALID_MAPPING_TYPES = new Set([
   'checkbox','radio','tabs','form','table','grid','pagination','loading','tooltip','heading',
   'breadcrumb','aria-label','link-list','keyboard-tabs','keyboard-grid','keyboard-clickable',
   'hide-element','focus-order',
+  'urs-compat',
 ]);
 
 // One mapping's stored shape, validated and stripped down to what is safe to
@@ -1281,7 +1299,47 @@ async function applyEngineCall(fnName, arg1, arg2) {
 const applyHideElement = (primary) => applyEngineCall('__u1HideFromAll', { selector: primary });
 const applyFocusOrder = (primary, config) => applyEngineCall('__u1FocusOrderFromMapping', primary, config || {});
 
+// A converted URS pattern: inject the compatibility engine, register and apply
+// just this one. Same shape as the other engine appliers.
+async function applyUrsCompat(primary, config) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['urs-compat.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (p, c) => (window.__u1UrsApplyOne ? window.__u1UrsApplyOne({ primary: p, config: c }) : { ok: false, err: 'urs-compat.js not loaded' }),
+      args: [primary, config || {}],
+    });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
+// All converted URS patterns of the site at once: one engine injection, one
+// pass over the tree. Apply All and the conversion itself go through here;
+// a card's own "test" still applies just that one.
+async function applyUrsCompatAll(list) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  const items = (list || []).filter((m) => m && m.custom === 'ursCompat' && m.primary).map((m) => ({ id: m.id, primary: m.primary, config: m.config || {} }));
+  if (!items.length) return { ok: false, err: 'No converted URS patterns.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['urs-compat.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (its) => (window.__u1UrsApplyMany ? window.__u1UrsApplyMany(its) : { ok: false, err: 'urs-compat.js not loaded' }),
+      args: [items],
+    });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) {
+    return { ok: false, err: err.message };
+  }
+}
+
 async function applyOne(type, primary, config, custom, owner) {
+  if (custom === 'ursCompat') return applyUrsCompat(primary, config);
   if (custom === 'hideElement') return applyHideElement(primary);
   if (custom === 'focusOrder') return applyFocusOrder(primary, config);
   if (custom === 'ariaLabel') return applyAriaLabel(primary, config);
@@ -2484,6 +2542,13 @@ function mappingToCode(m) {
   if (m.custom === 'keyboardGrid') {
     return `/* Accessible grid/datepicker — uses the engine included above. */\n` +
            `window.__u1InstallGridFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
+  }
+  if (m.custom === 'ursCompat') {
+    // The whole URS pattern, registered with the compatibility engine included
+    // above. Applied by __u1UrsApply() once every pattern is registered, because
+    // a child pattern is resolved inside its parent's element.
+    return `/* URS pattern — applied by the compatibility engine included above. */\n` +
+           `window.__u1UrsRegister(${formatJsObject({ id: m.id || '', primary: m.primary, config: m.config || {} })});`;
   }
   if (m.custom === 'hideElement') {
     return `/* Out of the tab order and the accessibility tree (mouse untouched). Uses the engine included above. */\n` +
@@ -3762,6 +3827,126 @@ function fillDefaultLinks() {
   }
 }
 
+// ── URS (legacy uRemediate) on this site ─────────────────────────────────────
+// The snippet announces itself: a <script> from *.user1st.info (fecdn, unfecdn,
+// feinteg…) with the site's domain in its Loader URL. When it is there, the
+// Setup tab offers to read the site's whole URS definition from that same
+// server and turn it into `urs-compat` mappings (urs-convert.js). Nothing is
+// shown — and nothing is fetched — on a page without the snippet.
+let ursDetected = null;   // { origin, siteUrl } for the page in front, or null
+let ursLastResult = null; // last conversion, for the worklist download
+
+async function detectUrs(tab) {
+  if (!isInjectable(tab) || typeof U1Urs === 'undefined') return null;
+  try {
+    const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: U1Urs.detectInPage });
+    const r = res && res[0] && res[0].result;
+    return r && r.found && r.origin ? r : null;
+  } catch { return null; }
+}
+
+async function refreshUrsSection(tab) {
+  const sec = document.getElementById('ursSection');
+  if (!sec) return;
+  ursDetected = await detectUrs(tab);
+  if (!ursDetected) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  const originEl = document.getElementById('ursOrigin');
+  if (originEl) originEl.textContent = ursDetected.origin.replace(/^https?:\/\//, '') + (ursDetected.siteUrl ? ` · ${ursDetected.siteUrl}` : '');
+  // Already converted once? Say so, and let the button re-run (it replaces
+  // the converted rows and leaves hand-made mappings alone).
+  const key = storageKey('mappings', currentHostname);
+  const got = await U1Store.get([key]);
+  const converted = (got[key] || []).filter((m) => m && m.custom === 'ursCompat');
+  const row = document.getElementById('ursExistingRow');
+  const val = document.getElementById('ursExisting');
+  const btn = document.getElementById('ursConvertBtn');
+  if (row && val) {
+    row.style.display = converted.length ? '' : 'none';
+    if (converted.length) {
+      const root = converted.find((m) => m.config && m.config.site);
+      val.textContent = `${converted.length} pattern${converted.length === 1 ? '' : 's'}` + (root && root.config.site.ursVersion ? ` from URS v${root.config.site.ursVersion}` : '');
+    }
+  }
+  if (btn) btn.textContent = converted.length ? 'Convert again from URS' : 'Convert from URS';
+}
+
+async function runUrsConversion() {
+  const notice = document.getElementById('ursNotice');
+  const btn = document.getElementById('ursConvertBtn');
+  const wl = document.getElementById('ursWorklistBtn');
+  if (!ursDetected) { showNotice(notice, 'No URS snippet was found on this page.', 'error', 6000); return; }
+  const host = currentHostname;
+  const domain = ursDetected.siteUrl || host;
+  btn.disabled = true;
+  const say = (t) => { notice.style.display = ''; notice.className = 'notice'; notice.textContent = t; };
+  // rules.json blocks fecdn.user1st.info for every request type, so the legacy
+  // snippet stays off the page while mapping — and that block catches the
+  // panel's own read of the definition too ("Failed to fetch"). Lift it for
+  // the duration of the read only; the finally puts it straight back.
+  const RULESET = 'u1_block';
+  let lifted = false;
+  try {
+    try { await chrome.declarativeNetRequest.updateEnabledRulesets({ disableRulesetIds: [RULESET] }); lifted = true; } catch {}
+    // The page's own language first, so a one-language site needs one request.
+    const pageLang = await (async () => {
+      try {
+        const r = await chrome.scripting.executeScript({ target: { tabId: (await getTab()).id }, func: () => document.documentElement.lang || '' });
+        return r && r[0] && r[0].result ? String(r[0].result).toLowerCase().split(/[-_]/)[0] : '';
+      } catch { return ''; }
+    })();
+    const langs = [pageLang, ...U1Urs.DEFAULT_LANGS].filter((l, i, a) => l && a.indexOf(l) === i);
+    const site = await U1Urs.fetchSite({
+      origin: ursDetected.origin, domain, langs,
+      fetchText: async (url) => { const r = await fetch(url, { credentials: 'omit' }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
+      onProgress: say,
+    });
+    say('Converting…');
+    const result = U1Urs.convert({ sitedef: site.sitedef, texts: site.texts, scripts: site.scripts, host });
+    ursLastResult = result;
+
+    // Merge: converted rows replace earlier converted rows (same ids); anything
+    // the specialist mapped by hand stays, and keeps its Fix # ahead of ours.
+    const key = storageKey('mappings', host);
+    const got = await U1Store.get([key]);
+    const kept = (got[key] || []).filter((m) => m && typeof m === 'object' && m.custom !== 'ursCompat');
+    let n = nextFixNo(kept);
+    for (const m of result.mappings) m.fixNo = n++;
+    const list = kept.concat(result.mappings);
+    await U1Store.set({ [key]: list });
+
+    await loadMappingsList();
+    await refreshExportInfo();
+    await refreshUrsSection(await getTab());
+    // Apply on the page in front right away — and the background re-applies
+    // on every load of this site from now on, so the page reads as converted.
+    say('Applying on this page…');
+    const applied = await applyUrsCompatAll(result.mappings);
+    const t = result.totals;
+    const warn = result.worklist.unknownMeta.size ? ` ${result.worklist.unknownMeta.size} fix type(s) the engine does not know — see the worklist.` : '';
+    const onPage = applied.ok ? ` Applied on this page now (${applied.applied} elements) and on every page of this site from here on.` : ` Not applied on this page: ${applied.err}`;
+    showNotice(notice,
+      `Converted ${t.patterns} patterns: ${t.fixes} fixes, ${t.scripts} scripts, ${t.siteScripts} site scripts, ${t.texts} texts (${t.languages.join(', ') || 'no languages found'}).` +
+      ` They are in Mappings under “All”.${onPage}${warn}`, 'success', 20000);
+    if (wl) wl.style.display = '';
+  } catch (err) {
+    showNotice(notice, 'Conversion failed: ' + (err && err.message ? err.message : String(err)), 'error', 15000);
+  } finally {
+    if (lifted) { try { await chrome.declarativeNetRequest.updateEnabledRulesets({ enableRulesetIds: [RULESET] }); } catch {} }
+    btn.disabled = false;
+  }
+}
+document.getElementById('ursConvertBtn')?.addEventListener('click', () => { runUrsConversion(); });
+document.getElementById('ursWorklistBtn')?.addEventListener('click', () => {
+  if (!ursLastResult) return;
+  const blob = new Blob([ursLastResult.markdown], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `urs-worklist-${currentHostname}.md`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+});
+
 async function refreshSetupTab(tab) {
   // Load saved global links
   const linkKey = storageKey('u1Links', currentHostname);
@@ -3781,6 +3966,9 @@ async function refreshSetupTab(tab) {
   }
   if (cssLink) document.getElementById('cssLink').value = cssLink;
   if (jsLink)  document.getElementById('jsLink').value  = jsLink;
+
+  // Detect the legacy URS snippet on the page (section stays hidden otherwise)
+  refreshUrsSection(tab).catch(() => {});
 
   // Detect U1 on page
   const detected = await detectU1(tab);
@@ -5241,6 +5429,9 @@ const $templatePreview = document.getElementById('templatePreview');
 //  one.
 // ─────────────────────────────────────────────────────────────────────────────
 const FIELD_HOW = {
+  'urs-compat': {
+    target: 'Set by the converter from the URS pattern selector. Not chosen by hand.',
+  },
   'hide-element': {
     target: 'The thing nobody should land on by keyboard or hear in a screen reader — a decorative logo link, a duplicate nav, a mouse-only widget. All matches are handled.',
   },
@@ -6194,7 +6385,7 @@ async function exportNamedLabels() {
 window.exportNamedLabels = exportNamedLabels;
 
 /** Types worth offering. Everything the builder can actually create. */
-const LABEL_TYPES = () => Object.keys(COMPONENT_SCHEMAS);
+const LABEL_TYPES = () => Object.keys(COMPONENT_SCHEMAS).filter((t) => !COMPONENT_SCHEMAS[t].hidden);
 
 /**
  * A picture of ONE element, cut out of the section screenshot already in hand.
@@ -15881,7 +16072,7 @@ const AXE_RULES = {
   'image-redundant-alt': { as: 'img-alt-filename' },
 
   // ── Colour ────────────────────────────────────────────────────────────────
-  'color-contrast': { concept: 'contrast', title: 'Text is too faint against its background', wcag: '1.4.3', severity: 'High', category: 'Colour and Contrast', why: 'The text and its background are too close in colour (under 4.5:1, or 3:1 for large text). People with low vision, and anyone in sunlight, cannot read it.', fix: 'Darken the text or lighten the background until the ratio is 4.5:1 — a CSS change on the site; U1 does not restyle text.' },
+  'color-contrast': { concept: 'contrast', title: 'Text is too faint against its background (note)', wcag: '1.4.3', severity: 'Low', note: true, category: 'Colour and Contrast', why: 'The text and its background are too close in colour (under 4.5:1, or 3:1 for large text). People with low vision, and anyone in sunlight, cannot read it.', fix: 'Darken the text or lighten the background until the ratio is 4.5:1 — a CSS change on the site; U1 does not restyle text.' },
   'link-in-text-block': { concept: 'link-color-only', title: 'Link in a paragraph is told apart by colour alone', wcag: '1.4.1', severity: 'Medium', category: 'Colour and Contrast', why: 'Inside running text the link differs from the words around it only by colour, so a colour-blind reader cannot see there is a link.', fix: 'Underline links inside paragraphs, or make the link colour differ from the text by at least 3:1 — a CSS change on the site.' },
 
   // ── Language ──────────────────────────────────────────────────────────────
@@ -15921,23 +16112,8 @@ const AXE_RULES = {
   'aria-tooltip-name': { concept: 'tooltip-name', title: 'Tooltip has no text', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'A role="tooltip" with no content is announced as nothing.', fix: 'Put the tooltip text inside it, or remove the role.' },
   'aria-treeitem-name': { concept: 'treeitem-name', title: 'Tree item has no name', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'A role="treeitem" with no text is an unnamed branch in the tree.', fix: 'Give each tree item text or an aria-label.' },
 
-  // ── ARIA used correctly ───────────────────────────────────────────────────
-  'aria-roles': { concept: 'aria-grammar', title: 'role= value is not a real role', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'The role is misspelt or invented, so the browser ignores it and the element is announced as plain.', fix: 'Use a real role (button, dialog, tablist…), or remove it.' },
-  'aria-allowed-role': { concept: 'aria-grammar', title: 'Role does not fit this element', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'A role this element may not carry (e.g. role="button" on an <a href>, role="heading" on a <li>) confuses what is announced.', fix: 'Use an element that fits the role, or a role that fits the element.' },
-  'aria-deprecated-role': { concept: 'aria-grammar', title: 'Deprecated ARIA role', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'The role was dropped from the ARIA spec and newer screen readers may ignore it.', fix: 'Replace it with its current equivalent.' },
-  'aria-valid-attr': { concept: 'aria-grammar', title: 'aria-* attribute does not exist', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'The attribute is misspelt (aria-lable, aria-labeledby) so it does nothing — usually a name that was meant to be there is missing.', fix: 'Fix the spelling.' },
-  'aria-valid-attr-value': { concept: 'aria-grammar', title: 'aria-* attribute has an invalid value', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'aria-expanded="yes", aria-controls pointing at no id, aria-live="on" — the value is not one the attribute accepts, so it is ignored.', fix: 'Use the allowed values (true/false, a real id, polite/assertive).' },
-  'aria-allowed-attr': { concept: 'aria-grammar', title: 'ARIA attribute not allowed on this role (note)', wcag: '4.1.2', severity: 'Low', note: true, category: 'Semantic Mapping', why: 'The attribute means nothing for this role (aria-checked on a link, aria-expanded on a heading) and is either ignored or mis-announced.', fix: 'Remove it, or change the role to one that supports it.' },
-  'aria-prohibited-attr': { concept: 'aria-grammar', title: 'aria-label on an element that cannot carry a name', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Plain <div>, <span>, <p> and the like have no role, so their aria-label is ignored by most screen readers — the name the author wanted is silently lost.', fix: 'Give the element a role that takes a name, or put the text where it is read as content.' },
-  'aria-conditional-attr': { concept: 'aria-grammar', title: 'ARIA attribute used where the role forbids it', wcag: '4.1.2', severity: 'Medium', category: 'Semantic Mapping', why: 'The attribute is only valid under certain conditions for this role (e.g. aria-checked on a native checkbox) and here it conflicts with the element itself.', fix: 'Remove the attribute; the native element already conveys the state.' },
-  'aria-required-attr': { concept: 'aria-grammar', title: 'Role is missing an attribute it needs', wcag: '4.1.2', severity: 'High', category: 'Semantic Mapping', why: 'Some roles are meaningless without a state: a checkbox without aria-checked, a slider without aria-valuenow, a combobox without aria-expanded.', fix: 'Add the missing attribute — mapping the element as that component does it for you.' },
-  'aria-required-children': { concept: 'aria-structure', title: 'Composite role is missing its parts', wcag: '1.3.1', severity: 'High', category: 'Semantic Mapping', why: 'A tablist with no tabs, a list with no listitems, a menu with no menuitems — the screen reader announces the container and then finds nothing inside.', fix: 'Give the children the matching roles — mapping the component as tabs / menu / listbox does exactly this.' },
-  'aria-required-parent': { concept: 'aria-structure', title: 'Role used outside the container it belongs in (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Semantic Mapping', why: 'A tab outside a tablist, an option outside a listbox, a menuitem outside a menu — the role is announced but its position (“2 of 5”) is lost.', fix: 'Map the whole component, container included, rather than the item alone.' },
-  'aria-roledescription': { concept: 'aria-grammar', title: 'aria-roledescription on an element with no role', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'A custom role description only applies when there is a role to describe; here it is ignored.', fix: 'Add a role, or remove the description.' },
-  'aria-text': { concept: 'aria-grammar', title: 'role="text" hides focusable content', wcag: '4.1.2', severity: 'Medium', category: 'Semantic Mapping', why: 'role="text" flattens everything inside to plain text, so links or buttons within it stop being announced as such.', fix: 'Remove the role, or move the controls outside it.' },
-  'aria-braille-equivalent': { concept: 'aria-grammar', title: 'Braille label with no spoken equivalent', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'aria-braillelabel is set but there is no aria-label or text for speech users.', fix: 'Add the ordinary name as well.' },
-  'aria-hidden-body': { concept: 'aria-grammar', title: 'The whole page is hidden from screen readers', wcag: '4.1.2', severity: 'Critical', category: 'Screen Reader Support', why: 'aria-hidden="true" on <body> removes every element from assistive technology — the page is blank to a screen reader.', fix: 'Remove aria-hidden from <body>. Usually a modal script that forgot to undo it.' },
-  'presentation-role-conflict': { concept: 'aria-grammar', title: 'Element is “presentational” but also interactive or labelled', wcag: '4.1.2', severity: 'Low', category: 'Semantic Mapping', why: 'role="none"/"presentation" says “ignore me”, while a tabindex or aria-label on the same element says the opposite; screen readers disagree on which wins.', fix: 'Pick one: remove the role, or remove the tabindex / aria attributes.' },
+  // ── ARIA used correctly ── gone: the sixteen aria-* grammar rules sit in
+  // AXE_SKIP below. 'nested-interactive' stays — it answers 'Keyboard reach'.
   'nested-interactive': { concept: 'nested-controls', title: 'Control inside a control', wcag: '4.1.2', severity: 'High', category: 'Focus access', why: 'A button inside a link, or a link inside a role="button" — screen readers announce only the outer one and keyboard focus can get stuck.', fix: 'Flatten it: one interactive element per action, side by side.' },
 
   // ── Keyboard reach ────────────────────────────────────────────────────────
@@ -15997,6 +16173,27 @@ const AXE_SKIP = {
   // was already tracked, and the granularity is real elements no specialist
   // would map a landmark onto individually — a sidebar blurb, a promo card.
   'region': 'the same fault as landmark-one-main, one node per un-wrapped element — fixing the missing <main> clears all of them at once',
+  // The whole "ARIA used correctly" row, dropped on request (2026-10): axe's
+  // ARIA grammar rules grade the site's hand-written role= / aria-* attributes.
+  // That is the developer's markup, not what a specialist maps with U1, and
+  // the row read as "13 to fix" on every page while nothing in it was a
+  // mapping's business. 'nested-interactive' is kept under Keyboard reach.
+  'aria-roles': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-allowed-role': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-deprecated-role': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-valid-attr': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-valid-attr-value': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-allowed-attr': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-prohibited-attr': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-conditional-attr': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-required-attr': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-required-children': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-required-parent': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-roledescription': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-text': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-braille-equivalent': 'ARIA grammar — the checklist row was removed on request, see above',
+  'aria-hidden-body': 'ARIA grammar — the checklist row was removed on request, see above',
+  'presentation-role-conflict': 'ARIA grammar — the checklist row was removed on request, see above',
 };
 
 /** The catalog entry an axe finding is shown as, or null when it is skipped. */
@@ -16919,7 +17116,7 @@ const SCAN_CHECKS = [
     rules: ['button-name'], needs: 'buttons' },
   { id: 'forms', title: 'Form fields', ask: 'Is every field labelled — visibly, once, correctly — and every option group named?',
     rules: ['input-label', 'input-placeholder', 'group-nolabel', 'label-for-broken', 'label-hidden', 'autocomplete'], needs: 'inputs' },
-  { id: 'contrast', title: 'Colour contrast', ask: 'Is text readable against its background, and are links told apart by more than colour?',
+  { id: 'contrast', title: 'Colour contrast', ask: 'Is text readable against its background, and are links told apart by more than colour? (Faint text is listed as a note — a CSS change on the site’s side.)',
     rules: ['contrast', 'link-color-only'], engine: 'axe' },
   { id: 'landmarks', title: 'Landmarks', ask: 'Can a screen reader jump to main, navigation, header, footer? (Nesting, duplicates and unnamed forms/regions are listed as a note.)',
     rules: ['landmarks', 'landmark-structure', 'landmark-noname'], evidence: 'landmarks' },
@@ -16927,8 +17124,6 @@ const SCAN_CHECKS = [
     rules: ['skip-link'], evidence: 'skipLink' },
   { id: 'focus', title: 'Keyboard reach and focus order', ask: 'Can everything clickable be reached in a sensible order, with nothing hidden from screen readers while focusable?',
     rules: ['tabindex', 'misleading-role', 'clickable-div', 'aria-hidden-focusable', 'nested-controls', 'scroll-keyboard', 'frame-tabindex', 'accesskey-dup'] },
-  { id: 'aria', title: 'ARIA used correctly', ask: 'Are roles and aria-* attributes real and complete? (An attribute a role does not allow, and a role outside its container, are listed as a note.)',
-    rules: ['aria-grammar', 'aria-structure'], engine: 'axe' },
   { id: 'structure', title: 'Lists and text structure', ask: 'Are lists real lists, so items are counted and announced?',
     rules: ['list-structure'], engine: 'axe' },
   { id: 'iframes', title: 'Iframes', ask: 'Is every embedded frame titled, each differently?',
@@ -20166,7 +20361,15 @@ async function applyAllMappings({ silent = false, only = null, tab = null } = {}
     } else if (result.u1Missing) { u1Missing = true; }
     else { err = result.err; }
   }
+  // Converted URS patterns go as one tree, not one call each: a child pattern
+  // is resolved inside its parent, and the engine re-walks everything per call.
+  const ursAll = custom.filter((m) => m.custom === 'ursCompat');
+  if (ursAll.length) {
+    const r = await applyUrsCompatAll(ursAll);
+    if (r.ok) applied += ursAll.length; else failed += ursAll.length;
+  }
   for (const m of custom) {
+    if (m.custom === 'ursCompat') continue;
     const r = await applyOne(m.type, m.firstArg || m.primary, m.config, m.custom, m);
     if (r.ok) applied++; else failed++;
   }
@@ -20371,7 +20574,13 @@ function hostRelation(a, b) {
 
 // Move (or copy) every per-site key from one hostname to another. Used to
 // recover work filed under an old URL.
-async function moveSiteData(from, to, { copy = false } = {}) {
+//
+// `replace` is for the one case a merge gets wrong: the destination's work is
+// the OLD version of what the source now holds (a prod site whose mappings were
+// rebuilt on a test domain). The destination is overwritten, prefix by prefix,
+// but only for prefixes the source actually has — a source with no skipLinks
+// does not wipe the destination's.
+async function moveSiteData(from, to, { copy = false, replace = false } = {}) {
   const prefixes = U1Store.SITE_PREFIXES || ['mappings', 'config', 'skipLinks', 'autoApply', 'platform', 'manualInject'];
   const fromKeys = prefixes.map(p => storageKey(p, from));
   const src = await U1Store.get(fromKeys);
@@ -20382,7 +20591,11 @@ async function moveSiteData(from, to, { copy = false } = {}) {
     if (v === undefined) continue;
     // Never clobber work that already exists at the destination: mappings are
     // concatenated (deduped by key), everything else only fills a gap.
-    if (p === 'mappings') {
+    if (replace) {
+      const destKey = storageKey(p, to);
+      writes[destKey] = v;
+      if (p === 'mappings') moved += (v || []).length;
+    } else if (p === 'mappings') {
       const destKey = storageKey('mappings', to);
       const dest = (await U1Store.get([destKey]))[destKey] || [];
       const seen = new Set(dest.map(m => mappingKey(m)));
@@ -20688,7 +20901,47 @@ document.addEventListener('click', async (e) => {
     'Mapping updated. Apply it to see the difference.', 'success', 5000);
 });
 
-// Recovering work filed under another hostname for the same client.// Recovering work filed under another hostname for the same client.
+// Replace this site's mappings with a sibling's. The offer exists only when
+// BOTH have mappings (the empty case already has Move/Copy above), and the
+// overwritten set is parked under a "__" key — never exported, never synced —
+// so a wrong click costs a console edit, not the work.
+async function renderReplaceOffer(ownCount) {
+  const box = document.getElementById('replaceOffer');
+  if (!box) return;
+  box.style.display = 'none';
+  if (!ownCount) return;
+  const sites = (await U1Store.listSites()).filter(h => h !== currentHostname && hostRelation(currentHostname, h));
+  const others = await U1Store.get(sites.map(h => storageKey('mappings', h)));
+  const kin = sites
+    .map(h => ({ h, n: (others[storageKey('mappings', h)] || []).length }))
+    .filter(r => r.n > 0);
+  if (!kin.length) return;
+  box.innerHTML =
+    `<strong>Same client under another address.</strong> Replace the ${ownCount} mapping${ownCount === 1 ? '' : 's'} saved for ${escapeHtml(currentHostname)} with another site's:` +
+    `<ul>${kin.map(r =>
+      `<li><code>${escapeHtml(r.h)}</code> — ${r.n} mapping${r.n === 1 ? '' : 's'} ` +
+      `<button class="btn-outline btn-xs" data-adopt-replace="${escapeHtml(r.h)}">Replace ${escapeHtml(currentHostname)}'s with these</button></li>`).join('')}</ul>` +
+    `<div class="ai-comp-why">This overwrites, it does not merge. What is replaced is kept aside once, so it can be recovered.</div>`;
+  box.style.display = '';
+}
+document.getElementById('replaceOffer')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-adopt-replace]');
+  if (!btn) return;
+  const from = btn.dataset.adoptReplace;
+  const mkey = storageKey('mappings', currentHostname);
+  const old = (await U1Store.get([mkey]))[mkey] || [];
+  if (!confirm(`Replace all ${old.length} mapping(s) of ${currentHostname} with those of ${from}?\n\nThe current ones are overwritten.`)) return;
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  await U1Store.set({ ['__replacedMappings_' + currentHostname]: { at: Date.now(), from, mappings: old } });
+  const { moved } = await moveSiteData(from, currentHostname, { copy: true, replace: true });
+  await loadMappingsList();
+  refreshExportInfo();
+  showNotice(document.getElementById('applyAllStatus'),
+    `Replaced ${currentHostname}'s mappings with ${moved} from ${from}.`, 'success', 8000);
+});
+
+// Recovering work filed under another hostname for the same client.
 document.getElementById('mappingsList')?.addEventListener('click', async (e) => {
   const move = e.target.closest('[data-adopt]');
   const copy = e.target.closest('[data-adopt-copy]');
@@ -20727,6 +20980,27 @@ async function getGridEngineSource(kinds) {
     // a deliverable that is larger than it needs to be still works, one missing
     // its engine does not.
     return stripComments(picked.length ? `'use strict';\n${picked.join('\n\n')}` : src);
+  } catch { return ''; }
+}
+
+// The URS compatibility engine ships whole (see the note where it is emitted).
+// Comments stripped like the other engines; the file carries its own jQuery
+// (1.7.2, the version the legacy engine gave the scripts) in a region that is
+// already minified.
+async function getUrsCompatSource() {
+  try {
+    const res = await fetch(chrome.runtime.getURL('urs-compat.js'));
+    const src = await res.text();
+    // Two regions: `jquery` is the minified library, shipped untouched —
+    // stripComments does not know regex literals, and a minified jQuery is
+    // full of them. `urs` is ours and is stripped like every other engine.
+    const pick = (kind) => {
+      const m = new RegExp(`//#region u1-engine:${kind}\\r?\\n([\\s\\S]*?)\\r?\\n//#endregion`).exec(src);
+      return m ? m[1] : '';
+    };
+    const jq = pick('jquery'), urs = pick('urs');
+    if (!jq || !urs) return stripComments(src); // markers lost — ship it whole rather than broken
+    return jq + '\n' + stripComments(urs);
   } catch { return ''; }
 }
 
@@ -20821,7 +21095,7 @@ function qaCheckFor(m) {
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
   const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [],
-        linkLists = [], crumbs = [], statics = [], hides = [], orders = [];
+        linkLists = [], crumbs = [], statics = [], hides = [], orders = [], urs = [];
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
@@ -20850,6 +21124,8 @@ async function buildDeployableCode(list, hostname) {
     if (typeof m === 'string') { fixes.push(m); continue; }
     if (!m || typeof m !== 'object') continue;
     if (m.custom === 'keyboardGrid') grids.push(m);
+    // Converted URS patterns: registered together, applied as one tree.
+    else if (m.custom === 'ursCompat') urs.push(m);
     else if (m.custom === 'keyboardClickable') clickables.push(m);
     // Engine-carrying too: each call is nothing without its region.
     else if (m.custom === 'hideElement') hides.push(m);
@@ -20994,6 +21270,26 @@ async function buildDeployableCode(list, hostname) {
       ` * re-applies itself on every re-render and each time a widget opens. */\n` +
       (engine ? `(function () {\n${engine}\n})();\n\n${calls}`
               : `/* !! Engine source unavailable — re-copy this script. */\n${calls}`)
+    );
+  }
+
+  // ── Converted URS site ─────────────────────────────────────────────────────
+  // Every mapping the converter made from a URS pattern is registered with the
+  // compatibility engine, then applied once as a tree (a child pattern lives
+  // inside its parent's element, so order and nesting both matter). The engine
+  // is urs-compat.js inlined whole: unlike grid-nav.js there is no per-kind
+  // slicing, because one URS site uses most of the legacy behaviours at once.
+  if (urs.length) {
+    const engine = await getUrsCompatSource();
+    const calls = urs.map(u => header(u) + '\n' + guard(u, mappingToCode(u))).join('\n\n');
+    fixesParts.push(
+      `/* ---- URS compatibility (converted from uRemediate) ----\n` +
+      ` * Re-implements the legacy uRemediate client engine: pattern tree, roles,\n` +
+      ` * descriptions, tab-order rules, state binding and the per-pattern scripts,\n` +
+      ` * with keyboard and screen-reader behaviours always on and the colour\n` +
+      ` * behaviours following the visitor's own system settings. */\n` +
+      (engine ? `(function () {\n${engine}\n})();\n\n${calls}\n\nwindow.__u1UrsApply();`
+              : `/* !! urs-compat.js source unavailable — re-copy this script. */\n${calls}`)
     );
   }
 
@@ -21980,6 +22276,7 @@ async function loadMappingsList() {
   const container = document.getElementById('mappingsList');
   const applyAllRow = document.getElementById('applyAllRow');
   const toolbar = document.getElementById('mappingsToolbar');
+  renderReplaceOffer(list.length).catch(() => {});
 
   // The count on the Mappings pane's tab. Set BEFORE the empty-list return
   // below, or a site with nothing keeps the previous site's number on the
@@ -22184,11 +22481,18 @@ async function loadMappingsList() {
     const headEnter = enterSel ? enterChip : '';
     const headReview = rv ? '' : reviewChip;
     const headGoto = here ? '' : gotoChip;
+    // A converted URS pattern is labelled by what it IS in URS — menu, dialog,
+    // section, the landmark — not by the type that carries it. The URS name
+    // rides on the chip's tooltip.
+    const ursPat = m && m.custom === 'ursCompat' && m.config && m.config.pattern ? m.config.pattern : null;
+    const URS_TYPE_LABEL = { menuWidget: 'menu', body: 'site', header: 'header', footer: 'footer', main: 'main', siteNav: 'navigation', search: 'search', complementary: 'aside', blockedTooltip: 'tooltip', popup: 'dialog' };
+    const typeLabel = ursPat ? ((URS_TYPE_LABEL[ursPat.patternType] || ursPat.patternType || 'pattern') + ' · URS') : type;
+    const typeTitle = ursPat ? `URS pattern “${ursPat.name || ''}” (${ursPat.patternType}) — ${(m.config.metadata || []).length} fixes, ${(m.config.scripts || []).length} scripts` : '';
     return `
       <div class="mapping-item${legacy ? ' legacy' : ''}${rv ? ' reviewed' : ''}" data-idx="${idx}">
         <button class="mapping-head" aria-expanded="false" data-idx="${idx}">
           <span class="mh-caret">▸</span>
-          <span class="mh-type">${escapeHtml(type)}</span>
+          <span class="mh-type"${typeTitle ? ` title="${escapeHtml(typeTitle)}"` : ''}>${escapeHtml(typeLabel)}</span>
           <span class="mh-sel">${escapeHtml(primary)}</span>
           ${headTest}${headFocus}${headEnter}${headReview}${headScope}
           ${childCount ? `<span class="mh-kids" title="Mappings for elements inside this dialog — open the row to see them">▸ ${childCount} inside</span>` : ''}

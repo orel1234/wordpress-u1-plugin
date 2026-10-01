@@ -345,6 +345,21 @@ async function injectKeyboardGrids(tabId, grids) {
   });
 }
 
+// Converted URS patterns: the compatibility engine, then the whole set in one
+// pass. It re-applies itself on DOM changes and dialogs from then on.
+async function injectUrsCompat(tabId, list) {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['urs-compat.js'] });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (items) => {
+      if (!window.__u1UrsApplyMany) { window.__u1StudioDebug && console.log('[U1 Studio] urs-compat: ENGINE NOT LOADED'); return; }
+      const r = window.__u1UrsApplyMany(items);
+      window.__u1StudioDebug && console.log('[U1 Studio] urs-compat:', r);
+    },
+    args: [list],
+  });
+}
+
 // Static fixes ("Fix all" on a scan rule) are saved as `custom: 'staticFix'`
 // mappings and export fine — but nothing re-applied them on a normal page
 // load: only the panel's own Fix-all press declared window.__u1Statics. So
@@ -511,6 +526,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     if (Object.keys(statics).length) { try { await injectStatics(tabId, statics); } catch {} }
     const names = ariaLabelsOf(all);
     if (names.length) { try { await injectAriaLabels(tabId, names); } catch {} }
+    // A site converted from URS: its patterns run through the compatibility
+    // engine, as one tree, on every load — the way the legacy snippet (which
+    // rules.json keeps off the page) used to.
+    const urs = all.filter(m => m && typeof m === 'object' && m.custom === 'ursCompat' && m.primary);
+    if (urs.length) { try { await injectUrsCompat(tabId, urs); } catch {} }
 
     const injectData = stored[`manualInject_${hostname}`];
     if (!injectData) return;

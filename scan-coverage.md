@@ -43,7 +43,7 @@ silently.
 | **Landmarks** — main, navigation, header, footer? | no main/nav at all; two or more unnamed `role="form"`/`role="region"` (a **note**, not a failure — one unnamed form is simply not a landmark; a form that is a U1 mapping is never counted) | region, landmark-one-main, landmark-no-duplicate-main/banner/contentinfo, landmark-*-is-top-level, landmark-unique |
 | **Skip link** — can the keyboard skip the menu? | no skip link at the top | bypass, skip-link |
 | **Keyboard reach and focus order** — everything reachable in order, nothing hidden-but-focusable? | positive tabindex; role with no focus; clickable div/span; focusable content inside aria-hidden | tabindex, aria-hidden-focus, focus-order-semantics, nested-interactive, scrollable-region-focusable, frame-focusable-content, accesskeys |
-| **ARIA used correctly** — roles and attributes real, allowed, complete, in the right container? | — (the grammar lives in axe) | aria-roles, aria-allowed-role, aria-deprecated-role, aria-valid-attr, aria-valid-attr-value, aria-allowed-attr, aria-prohibited-attr, aria-conditional-attr, aria-required-attr, aria-required-children, aria-required-parent, aria-roledescription, aria-text, aria-braille-equivalent, aria-hidden-body, presentation-role-conflict |
+| ~~**ARIA used correctly**~~ — removed from the checklist (2026-10, on request). axe's ARIA grammar rules (aria-roles, aria-allowed-role, aria-valid-attr, aria-required-children, presentation-role-conflict and the rest, sixteen in all) are listed in `AXE_SKIP` with the reason: they grade the site's hand-written role= / aria-* markup, which is not what a specialist maps with U1, and the row read as "13 to fix" on every page. `nested-interactive` stayed, under Keyboard reach. | — | — |
 | **Lists and text structure** — are lists real lists? | stray `<br>`/spacer inside a list (**Fix all**: aria-hidden on it); non-item content in a list with no roles (a list carrying roles — a menu on `<ul>`, role=listitem items — passes) | definition-list, dlitem (axe's list/listitem are skipped in favour of ours) |
 | **Iframes** — titled, each differently? | untitled iframe | frame-title, frame-title-unique |
 | **Data tables** — header cells, tied to the right rows and columns? | table with no `<th>` | th-has-data-cells, td-has-header, td-headers-attr, scope-attr-valid, table-fake-caption, table-duplicate-name, empty-table-header |
@@ -105,11 +105,11 @@ silently.
 |---|---|
 | html_lang_valid, element_lang_valid | html-lang-valid, valid-lang |
 | text_contrast_sufficient | color-contrast |
-| aria_role_valid, aria_role_allowed | aria-roles, aria-allowed-role |
+| aria_role_valid, aria_role_allowed | aria-roles, aria-allowed-role — since dropped with the ARIA row |
 | aria_attribute_valid, aria_attribute_allowed, aria_attribute_value_valid, aria_attribute_exists | aria-valid-attr, aria-allowed-attr, aria-valid-attr-value, aria-required-attr |
 | aria_attribute_deprecated | aria-deprecated-role |
 | aria_attribute_conflict | aria-conditional-attr |
-| aria_child_valid, aria_parent_required, aria_descendant_valid, list_children_valid | aria-required-children, aria-required-parent |
+| aria_child_valid, aria_parent_required, aria_descendant_valid, list_children_valid | aria-required-children, aria-required-parent — since dropped with the ARIA row |
 | aria_content_in_landmark | region |
 | aria_banner_single, aria_contentinfo_single, aria_contentinfo_misuse | landmark-no-duplicate-banner / contentinfo, landmark-*-is-top-level |
 | aria_landmark_name_unique, aria_*_label_unique (main, navigation, banner, complementary, contentinfo, region, search, form, article, application, document, toolbar) | landmark-unique |
@@ -128,7 +128,7 @@ silently.
 | table_headers_ref_valid, table_headers_related | td-headers-attr, td-has-header |
 | table_scope_valid | scope-attr-valid |
 | table_caption_empty, table_caption_nested, table_summary_redundant | table-fake-caption, table-duplicate-name |
-| table_aria_descendants, table_structure_misuse | presentation-role-conflict, aria-required-children |
+| table_aria_descendants, table_structure_misuse | presentation-role-conflict, aria-required-children — since dropped with the ARIA row |
 | element_scrollable_tabbable | scrollable-region-focusable |
 | iframe_interactive_tabbable | frame-focusable-content |
 | element_accesskey_unique | accesskeys |

@@ -24,7 +24,7 @@ const FILES = [
   // panel.html loads it, so leaving it out ships a panel that dies on a
   // missing script. verify.mjs now checks that list against this one.
   'sync.js',
-  'background.js', 'test-engine.js', 'grid-nav.js',
+  'background.js', 'test-engine.js', 'grid-nav.js', 'urs-compat.js', 'urs-convert.js',
   // Injected on demand to operate a component and watch what it does.
   // probe-net.js is probe.js's MAIN-world counterpart (see the comment atop
   // each) — without it in the package, panel.js's ensureProbeNet() injection
@@ -185,7 +185,8 @@ if (serverUrl) {
   // directive away used to drop api.anthropic.com, so AI mode worked unpacked
   // and died on a CSP error in every packaged build: exactly the class of
   // silent, late-discovered misconfiguration this script exists to prevent.
-  const ALWAYS_ALLOWED = ['https://api.anthropic.com'];
+  // *.user1st.info: the legacy fecdn the URS converter reads a site's definition from.
+  const ALWAYS_ALLOWED = ['https://api.anthropic.com', 'https://*.user1st.info'];
   const manPath = join(stage, 'manifest.json');
   const manifest = JSON.parse(readFileSync(manPath, 'utf8'));
   const sources = ["'self'", serverUrl, ...ALWAYS_ALLOWED];

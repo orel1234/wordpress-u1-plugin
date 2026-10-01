@@ -193,7 +193,7 @@ console.log('\nShipped files parse as classic browser scripts:');
 const SCRIPTS = [
   'panel.js', 'selector-intel.js', 'ai-advisor.js', 'event-recorder.js',
   'test-engine.js', 'background.js', 'store.js', 'auth.js', 'config.js',
-  'grid-nav.js', 'docx-gen.js', 'report-gen.js', 'report-view.js',
+  'grid-nav.js', 'urs-compat.js', 'urs-convert.js', 'docx-gen.js', 'report-gen.js', 'report-view.js',
 ];
 let unparseable = 0;
 for (const name of SCRIPTS) {

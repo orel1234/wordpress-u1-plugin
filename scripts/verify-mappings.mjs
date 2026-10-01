@@ -990,8 +990,9 @@ let rulesEveryType = [], rulesUnknownFields = [], rulesShipped = false, rulesUse
 
   // Every mappable type a person can pick has to be covered.
   // hide-element and focus-order are manual-only: the model never builds
-  // them, so component-rules.md has nothing to say about them.
-  const SKIP = new Set(['aria-label', 'keyboard-grid', 'keyboard-clickable', 'keyboard-tabs', 'loading', 'hide-element', 'focus-order']);
+  // them, so component-rules.md has nothing to say about them. urs-compat is
+  // never built at all — it arrives whole from the URS converter.
+  const SKIP = new Set(['aria-label', 'keyboard-grid', 'keyboard-clickable', 'keyboard-tabs', 'loading', 'hide-element', 'focus-order', 'urs-compat']);
   // Sections that describe a PATTERN rather than a u1.fix.* type. They are
   // named here so a new one cannot be added without a decision — a section
   // matching no schema is otherwise checked by nothing.

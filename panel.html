@@ -272,6 +272,36 @@
     </div>
   </div>
 
+  <!-- 1.1b URS (legacy uRemediate) ─────────────────────────────────────
+       Shown only when the page carries the legacy snippet. One click reads
+       the site's whole URS definition from fecdn and turns it into mappings
+       (urs-convert.js), so the client can leave the snippet behind. -->
+  <div class="section" id="ursSection" style="display:none;">
+    <div class="section-title">URS on this site<span class="dot">.</span></div>
+    <div class="status-line">
+      <span class="status-dot active"></span>
+      <span id="ursStatusText">Legacy uRemediate snippet detected</span>
+    </div>
+    <div class="detected-row">
+      <span class="label">Server</span>
+      <span class="value" id="ursOrigin"></span>
+    </div>
+    <div class="detected-row" id="ursExistingRow" style="display:none;">
+      <span class="label">Converted</span>
+      <span class="value" id="ursExisting"></span>
+    </div>
+    <div class="notice" style="display:block;">
+      Everything this site has in URS — every pattern, fix, text and script — becomes
+      mappings here, applied by the compatibility engine in the export. Nothing in
+      URS is changed. Review the result in Mappings (switch the list to <strong>All</strong>).
+    </div>
+    <div class="btn-row">
+      <button class="btn-primary" id="ursConvertBtn">Convert from URS</button>
+      <button class="btn-outline btn-sm" id="ursWorklistBtn" style="display:none;">Download worklist</button>
+    </div>
+    <div class="notice" id="ursNotice" style="display:none;"></div>
+  </div>
+
   <!-- 1.1a ANTHROPIC API KEY ──────────────────────────────────────────
        Moved out of a dialog in the Picker tab and into Setup, where the rest
        of "things this tool needs before it can work" already live. It was a
@@ -862,6 +892,7 @@
          in rather than re-derived by hand. Shown only when the page actually
          ran some — see findExistingFixes. -->
     <div id="importExisting" class="advisor-note" style="display:none;"></div>
+    <div id="replaceOffer" class="advisor-note" style="display:none;"></div>
     <div id="mappingsList"><div class="empty-state">No mappings yet.</div></div>
 
     <div class="btn-row" id="applyAllRow" style="display:none;">
@@ -1204,6 +1235,7 @@
      bearer token, the 401 refresh and the meaning of "offline" are defined
      in exactly one place -->
 <script src="sync.js"></script>
+<script src="urs-convert.js"></script>
 <script src="docx-gen.js"></script>
 <script src="report-gen.js"></script>
 <script src="panel.js"></script>
