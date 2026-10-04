@@ -20905,16 +20905,29 @@ document.addEventListener('click', async (e) => {
 // BOTH have mappings (the empty case already has Move/Copy above), and the
 // overwritten set is parked under a "__" key — never exported, never synced —
 // so a wrong click costs a console edit, not the work.
-async function renderReplaceOffer(ownCount) {
+// A sibling holding the SAME mappings is not offered: after a replace both
+// addresses hold one set, and offering it again read as "it did not work".
+// Same = same type and selectors; bookkeeping (fixNo, review state, stamps)
+// differs between the copies and is ignored.
+const mappingSetSig = (list) => (list || []).map((m) => {
+  const canon = (v) => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']'
+    : v && typeof v === 'object' ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}'
+    : JSON.stringify(v);
+  return [m && m.type, m && (m.firstArg || m.primary), canon(m && m.config && m.config.selectors)].join('|');
+}).sort().join('\n');
+async function renderReplaceOffer(ownList) {
   const box = document.getElementById('replaceOffer');
   if (!box) return;
   box.style.display = 'none';
+  const ownCount = (ownList || []).length;
   if (!ownCount) return;
+  const ownSig = mappingSetSig(ownList);
   const sites = (await U1Store.listSites()).filter(h => h !== currentHostname && hostRelation(currentHostname, h));
   const others = await U1Store.get(sites.map(h => storageKey('mappings', h)));
   const kin = sites
-    .map(h => ({ h, n: (others[storageKey('mappings', h)] || []).length }))
-    .filter(r => r.n > 0);
+    .map(h => ({ h, list: others[storageKey('mappings', h)] || [] }))
+    .filter(r => r.list.length > 0 && mappingSetSig(r.list) !== ownSig)
+    .map(r => ({ h: r.h, n: r.list.length }));
   if (!kin.length) return;
   box.innerHTML =
     `<strong>Same client under another address.</strong> Replace the ${ownCount} mapping${ownCount === 1 ? '' : 's'} saved for ${escapeHtml(currentHostname)} with another site's:` +
@@ -22276,7 +22289,7 @@ async function loadMappingsList() {
   const container = document.getElementById('mappingsList');
   const applyAllRow = document.getElementById('applyAllRow');
   const toolbar = document.getElementById('mappingsToolbar');
-  renderReplaceOffer(list.length).catch(() => {});
+  renderReplaceOffer(list).catch(() => {});
 
   // The count on the Mappings pane's tab. Set BEFORE the empty-list return
   // below, or a site with nothing keeps the previous site's number on the
