@@ -231,11 +231,25 @@
       return (got && got[key]) || {};
     },
 
+    /**
+     * Every key, and nothing else.
+     *
+     * get(null) hands back every VALUE too — the whole store, tens of
+     * megabytes once a few sites' scans and screenshots are in it — and it
+     * was being read that way four times on every page load of the active
+     * tab (two migrations, the sibling-site offer, the backup list), which is
+     * what froze the browser on molinahealthcare.com. getKeys() (Chrome 130+)
+     * is a key listing only; the fallback keeps older Chromes working.
+     */
+    async keys() {
+      if (typeof chrome.storage.local.getKeys === 'function') return chrome.storage.local.getKeys();
+      return Object.keys(await chrome.storage.local.get(null));
+    },
+
     /** Hostnames that have any saved work, newest-agnostic, sorted. */
     async listSites() {
-      const all = await chrome.storage.local.get(null);
       const hosts = new Set();
-      for (const key of Object.keys(all)) {
+      for (const key of await this.keys()) {
         const parsed = parseKey(key);
         if (parsed) hosts.add(parsed.hostname);
       }

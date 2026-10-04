@@ -3484,14 +3484,20 @@ const applyReceipts = new Map();   // mappingKey -> [{token, added:[attr]}]
 // was injected already holds its own copy in manualInject_<host> — and then
 // remove the shared key so it cannot leak into another client again.
 async function migrateGlobalU1Links() {
-  const all = await U1Store.get(null);
-  if (all.cssLink === undefined && all.jsLink === undefined) return;
+  // The two legacy keys first, on their own: on every machine that has
+  // already migrated (all of them, by now) this is the whole cost. Reading
+  // the entire store here, on every tab change, was one of the four
+  // whole-store reads that froze the browser on a large site.
+  const legacy = await U1Store.get(['cssLink', 'jsLink']);
+  if (legacy.cssLink === undefined && legacy.jsLink === undefined) return;
 
+  const keys = await U1Store.keys();
+  const injectKeys = keys.filter((k) => /^manualInject_(.+)$/.test(k));
+  const wanted = injectKeys.flatMap((k) => [k, storageKey('u1Links', k.slice('manualInject_'.length))]);
+  const all = Object.assign({}, legacy, await U1Store.get(wanted));
   const updates = {};
-  for (const key of Object.keys(all)) {
-    const m = /^manualInject_(.+)$/.exec(key);
-    if (!m) continue;
-    const host = m[1];
+  for (const key of injectKeys) {
+    const host = key.slice('manualInject_'.length);
     if (all[storageKey('u1Links', host)]) continue;      // already has its own
     const rec = all[key] || {};
     const cssLink = rec.cssLink || all.cssLink || '';
@@ -3631,14 +3637,16 @@ async function migrateDropU1Internal(host) {
 async function migrateWwwHostname(host) {
   if (!host || host === 'unknown' || host.startsWith('www.')) return;
   const suffix = '_www.' + host;
-  const all = await U1Store.get(null);
+  // Keys only, then just the pairs involved — not the whole store (see
+  // U1Store.keys for why that mattered).
+  const oldKeys = (await U1Store.keys()).filter((k) => k.endsWith(suffix));
+  if (!oldKeys.length) return;
+  const newKeyOf = (key) => `${key.slice(0, key.length - suffix.length)}_${host}`;
+  const all = await U1Store.get(oldKeys.flatMap((k) => [k, newKeyOf(k)]));
   const updates = {};
-  for (const key of Object.keys(all)) {
-    if (key.endsWith(suffix)) {
-      const prefix = key.slice(0, key.length - suffix.length);
-      const newKey = `${prefix}_${host}`;
-      if (!(newKey in all) && !(newKey in updates)) updates[newKey] = all[key];
-    }
+  for (const key of oldKeys) {
+    const newKey = newKeyOf(key);
+    if (!(newKey in all) && !(newKey in updates)) updates[newKey] = all[key];
   }
   if (Object.keys(updates).length) {
     await U1Store.set(updates);
