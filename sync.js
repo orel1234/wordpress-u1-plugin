@@ -309,5 +309,33 @@ const U1Sync = (() => {
     });
   }
 
-  return { pull, pushMappings, pushSettings, pushSweep, fetchThumb, deleteSweep, forget, uploadHandover };
+  /**
+   * Cloud delivery. A domain set to Cloud in the portal gets one script tag
+   * instead of files; Publish is what puts the current work behind it.
+   *
+   * delivery() — every domain of this site's customer, how each is delivered,
+   *              and what is live on the Cloud ones (with recent history).
+   * publish()  — the same files a handover would carry, made live. Only from
+   *              the main domain; the server answers publish_from_main otherwise.
+   * setLive()  — point one domain's link at an earlier version (rollback).
+   */
+  async function delivery(hostname) {
+    return U1Auth.request(path(hostname, '/delivery'));
+  }
+
+  async function publish(hostname, { files, note, patchBuild, targets }) {
+    return U1Auth.request(path(hostname, '/publish'), {
+      method: 'POST',
+      body: JSON.stringify({ files, note, patchBuild, targets }),
+    });
+  }
+
+  async function setLive(hostname, version) {
+    return U1Auth.request(path(hostname, '/live'), {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    });
+  }
+
+  return { pull, pushMappings, pushSettings, pushSweep, fetchThumb, deleteSweep, forget, uploadHandover, delivery, publish, setLive };
 })();

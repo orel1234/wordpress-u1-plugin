@@ -239,5 +239,73 @@ console.log('\nstatic checks IBM used to make, in our words');
   check('a real title is not flagged as weak', hits(weak, 'title-weak').length === 0);
 }
 
+// ── The checks PowerMapper (SortSite) makes that we did not ────────────────
+// Same rules, same fixtures shape, in monitoring.scanPage.ts and the Auto
+// Checker's catalog-checks.ts.
+console.log('\nchecks SortSite makes, in our words');
+{
+  const same = scan(`
+    <nav><a href="/products/medicaid">Products</a><a href="/about">About us</a></nav>
+    <footer><a href="/products/medicare">Products</a><a href="https://www.x.test/about/">About us</a><a href="/a">Read more</a><a href="/b">Read more</a></footer>`);
+  const st = hits(same, 'link-same-text');
+  check('"Products" to two pages is flagged once, on the second', st.length === 1 && st[0].text === 'Products', JSON.stringify(st));
+  check('…while "About us" twice to the same page (www / trailing slash aside) is not, and vague "Read more" is left to its own rule',
+    !st.some((r) => /about|read more/i.test(r.text)));
+
+  // scan() always writes <html lang="en">; these need the page's own attributes.
+  const scanHtml = (htmlAttrs, body) => {
+    const dom = new JSDOM(`<!doctype html><html ${htmlAttrs}><head><title>Members – Test</title></head><body>${body}</body></html>`,
+      { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://x.test/' });
+    const w = dom.window;
+    w.HTMLElement.prototype.getBoundingClientRect = function () { return { width: 100, height: 30, left: 0, top: 0, right: 100, bottom: 30 }; };
+    Object.defineProperty(w.HTMLElement.prototype, 'offsetParent', { get() { return this.ownerDocument.body; }, configurable: true });
+    if (!w.CSS) w.CSS = {};
+    if (!w.CSS.escape) w.CSS.escape = (s) => String(s).replace(/([^\w-])/g, '\\$1');
+    return vm.runInContext(`(() => ${BODY})()`, vm.createContext(w));
+  };
+  const parts = scanHtml('lang="he" dir="rtl"', `
+    <p>ברוכים הבאים לאתר שלנו, כאן תמצאו את כל המידע</p>
+    <p>Welcome to our website, here you will find everything</p>
+    <p lang="en">This paragraph is marked as English correctly</p>
+    <p>Molina Healthcare</p>`);
+  const lp = hits(parts, 'lang-of-parts');
+  check('an English paragraph inside a Hebrew page is flagged; a marked one and a two-word brand name are not',
+    lp.length === 1 && /^Welcome/.test(lp[0].text), JSON.stringify(lp.map((r) => r.text)));
+  check('…and a page that is mostly Hebrew is not called mis-declared', hits(parts, 'lang-page-mismatch').length === 0);
+
+  const wrongPage = scanHtml('lang="en"', [1, 2, 3, 4, 5, 6].map((i) => `<p>זוהי פסקה מספר ${i} שכתובה כולה בעברית רגילה</p>`).join(''));
+  check('a Hebrew page declared lang="en" is ONE page-level finding, not a row per paragraph',
+    hits(wrongPage, 'lang-page-mismatch').length === 1 && hits(wrongPage, 'lang-of-parts').length === 0);
+
+  check('a Hebrew page with no dir="rtl" is flagged', hits(scanHtml('lang="he"', '<p>שלום</p>'), 'dir-missing').length === 1);
+  check('…with dir="rtl" it is not', hits(scanHtml('lang="he" dir="rtl"', '<p>שלום</p>'), 'dir-missing').length === 0);
+  check('…an English page marked dir="rtl" is', hits(scanHtml('lang="en" dir="rtl"', '<p>Hi</p>'), 'dir-missing').length === 1);
+  check('…a page in a script we do not classify is not judged', hits(scanHtml('lang="ja"', '<p>こんにちは</p>'), 'dir-missing').length === 0);
+
+  const fields = scan(`
+    <div style="background-color: rgb(255, 255, 255)">
+      <input id="faint" aria-label="Email" style="background-color: rgb(255, 255, 255); border: 1px solid rgb(204, 204, 204)">
+      <input id="ok" aria-label="Name" style="background-color: rgb(255, 255, 255); border: 1px solid rgb(118, 118, 118)">
+      <input id="filled" aria-label="Phone" style="background-color: rgb(80, 80, 80); border: 0px none rgb(0, 0, 0)">
+      <input id="shadow" aria-label="Zip" style="background-color: rgb(255, 255, 255); border: 1px solid rgb(230, 230, 230); box-shadow: 0 0 0 1px rgb(0, 0, 0)">
+    </div>`);
+  const cc = hits(fields, 'control-contrast');
+  check('a #ccc border on white is flagged (1.6:1); #767676 (4.5:1), a dark fill, and a shadow-drawn edge are not',
+    cc.length === 1 && cc[0].selector === '#faint' && /1\.6:1/.test(cc[0].detail), JSON.stringify(cc));
+  const rules = PANEL.slice(PANEL.indexOf("'control-contrast':"), PANEL.indexOf("'control-contrast':") + 200);
+  check('…and it is a NOTE, like faint text — a CSS change U1 does not make', /severity: 'Low', note: true/.test(rules));
+
+  const moves = scan(`
+    <select name="state" onchange="window.location = this.value"><option>NY</option></select>
+    <select name="size" onchange="updatePrice(this)"><option>S</option></select>
+    <input name="q" aria-label="Search" onblur="this.form.submit()">`);
+  const cm = hits(moves, 'change-moves-page');
+  check('a <select> that navigates on change and a field that submits on blur are flagged; one that only updates a price is not',
+    cm.length === 2 && cm.some((r) => /^onchange/.test(r.detail)) && cm.some((r) => /^onblur/.test(r.detail)), JSON.stringify(cm));
+
+  for (const id of ['link-same-text', 'lang-of-parts', 'lang-page-mismatch', 'dir-missing', 'control-contrast', 'change-moves-page'])
+    check(`${id} has our wording and answers a checklist question`, PANEL.includes(`'${id}':`) && new RegExp(`rules: \\[[^\\]]*'${id}'`).test(PANEL));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

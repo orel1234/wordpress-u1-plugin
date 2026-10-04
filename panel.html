@@ -1117,7 +1117,16 @@
       <span class="export-tile-title">Generated Files &amp; Package</span>
       <span class="export-tile-sub">The implementation guide, u1-fixes.js and the rest — as a zip.</span>
     </button>
-    <button type="button" class="export-tile" data-exportview="finish">
+    <!-- Shown only when this site's customer has a Cloud domain (portal →
+         Studio → Clients → Delivery). Cloud replaces handing over files with
+         one script tag the customer installs once; this is where the work
+         goes live. -->
+    <button type="button" class="export-tile export-tile-cloud" data-exportview="cloud" id="exportTileCloud" hidden>
+      <span class="export-tile-icon" aria-hidden="true">☁️</span>
+      <span class="export-tile-title">Publish to the live site</span>
+      <span class="export-tile-sub" id="exportTileCloudSub">Cloud: the site updates when you publish. No files.</span>
+    </button>
+    <button type="button" class="export-tile" data-exportview="finish" id="exportTileFinish">
       <span class="export-tile-icon" aria-hidden="true">🏁</span>
       <span class="export-tile-title">Finish Project</span>
       <span class="export-tile-sub">The whole handover, into the client's folder on Drive.</span>
@@ -1179,6 +1188,27 @@
     <button class="btn-primary" id="finishProjectBtn">🏁 Finish project</button>
     <button class="btn-outline" id="copyClientEmailBtn">📧 Copy client email</button>
     <div class="notice" id="finishStatus"></div>
+  </div>
+
+  <!-- Publish (Cloud delivery). Drawn by renderCloudView() from
+       U1Sync.delivery(): one card per domain of this customer. -->
+  <div class="section export-view" id="exportViewCloud" hidden>
+    <button type="button" class="export-back-btn" data-exportback>← Back</button>
+    <div class="section-title" style="margin-top:12px;">Publish to the live site<span class="dot">.</span></div>
+    <p class="hint">
+      Builds the same code a handover would carry and makes it live on this client's
+      <strong>Cloud</strong> domains, each through its own script tag. Nothing you save
+      reaches the site until you publish, and every version can be put back.
+    </p>
+    <div id="cloudDomains"></div>
+    <div id="cloudPublishBox">
+      <div class="field-group">
+        <label for="cloudNote">What changed <span style="color:var(--u1-text-muted);font-weight:400;">(optional, kept with the version)</span></label>
+        <input type="text" id="cloudNote" maxlength="200" placeholder="e.g. main menu keyboard fix">
+      </div>
+      <button class="btn-primary" id="cloudPublishBtn">☁️ Publish</button>
+    </div>
+    <div class="notice" id="cloudStatus"></div>
   </div>
 
   <!-- Close-out report (all pages, with element screenshots) -->

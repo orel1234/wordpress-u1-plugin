@@ -108,6 +108,12 @@
     return out;
   }
 
+  function canonical(v) {
+    if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+    if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
+    return JSON.stringify(v);
+  }
+
   const KNOWN_META = new Set([
     'role', 'landmark', 'hideFromSR', 'description', 'tabIndexContainer', 'excludeTabIndex', 'reverseTabIndexDir',
     'replaceTagName', 'redundentAttr', 'haspopup', 'highContrast', 'inverseHighContrast', 'excludeColorContrast',
@@ -157,8 +163,10 @@
           const row = { type: m.type, values: decodeValues(m.values) };
           if (m.desc) row.desc = m.desc;
           // fecdn repeats some rows (per language, and with keys in another
-          // order); one copy is enough, keys sorted so order cannot fool it.
-          const k = row.type + JSON.stringify(row.values, Object.keys(row.values).sort());
+          // order); one copy is enough. canonical() sorts keys at every
+          // level — a key-list replacer would also filter the nested target
+          // object and make every row of a type look identical.
+          const k = row.type + canonical(row.values);
           if (seen.has(k)) continue;
           seen.add(k);
           if (!KNOWN_META.has(m.type)) worklist.unknownMeta.add(m.type);
@@ -181,6 +189,13 @@
           scriptsOut.push({ name: (v.name || '').trim(), when: Number(v.executionTime) || 1024, target: v.target || { selector: '.', childrenLevel: 0 }, code: v.script || '' });
           worklist.scriptCount++;
         }
+      }
+      // A pattern's display name is a TextID too (displayNameMethod "1"). URS
+      // uses it for the skip link of a main pattern ("דלג לתוכן עמוד"), the
+      // alt-navigation entry and dialog announcements.
+      if (p.data && typeof p.data.displayName === 'string' && GUID_RE.test(p.data.displayName)) {
+        usedTextIds.add(p.data.displayName);
+        if (!byId[p.data.displayName]) worklist.textIdsMissing.add(p.data.displayName);
       }
       if (NATIVE_PATTERN_HINT[p.type]) worklist.nativeCandidates.push({ pattern: p.name, urs: 'pattern:' + p.type, studio: NATIVE_PATTERN_HINT[p.type] });
 
@@ -228,16 +243,44 @@
     const root = mappings[0];
     if (root) for (const id of usedTextIds) if (byId[id]) root.config.texts[id] = byId[id];
 
+    // Skip links. URS gives every pattern whose type carries the addAccessKey
+    // behaviour (main, on every site we have seen) a "skip to <display name>"
+    // quick link. Studio has skip links of its own (config.skipLinks, rendered
+    // by u1-patch.js only on pages where the target exists), so they become
+    // those — one entry per pattern, in URS's own wording.
+    const types = raw.patternTypes || {};
+    const lang = (languages.indexOf('he') > -1 ? 'he' : languages[0]) || 'en';
+    const SKIP = { he: 'דלג ל', ar: 'انتقل إلى ', ru: 'Перейти к ', fr: 'Aller à ', es: 'Saltar a ', de: 'Springe zu ', en: 'Skip to ' };
+    const DEFAULT_MAIN = { he: 'תוכן עמוד', en: 'main content' };
+    const skipLinks = [];
+    (function walkSkip(p) {
+      const t = types[p.type];
+      if (t && (t.behaviors || []).some((b) => b && b.name === 'addAccessKey')) {
+        const sel = decodeSelector(p.selector);
+        if (sel && sel.selector && !sel.childrenLevel) {
+          const dn = p.data && p.data.displayName;
+          let name = dn && GUID_RE.test(dn) ? (byId[dn] && byId[dn][lang]) : dn; // the site's language only — never a sentence in two languages
+          if (!name || GUID_RE.test(name)) name = DEFAULT_MAIN[lang] || DEFAULT_MAIN.en;
+          if (!skipLinks.some((x) => x.selector === sel.selector)) {
+            skipLinks.push({ label: (SKIP[lang] || SKIP.en) + name, kind: p.type === 'search' ? 'search' : 'main', target: sel.selector, selector: sel.selector });
+          }
+        }
+      }
+      for (const c of p.patterns || []) walkSkip(c);
+    })({ patterns: defn.patterns });
+    worklist.skipLinks = skipLinks;
+
     const totals = {
       patterns: mappings.length,
       fixes: Object.values(worklist.metadataTypes).reduce((n, c) => n + c, 0),
       scripts: worklist.scriptCount,
       siteScripts: (scripts || []).length,
       texts: root ? Object.keys(root.config.texts).length : 0,
+      skipLinks: skipLinks.length,
       languages,
       ursVersion: defn.version,
     };
-    return { mappings, worklist, totals, markdown: worklistMarkdown(host, totals, worklist, siteKey) };
+    return { mappings, skipLinks, lang, worklist, totals, markdown: worklistMarkdown(host, totals, worklist, siteKey) };
   }
 
   function worklistMarkdown(host, totals, worklist, siteKey) {
@@ -250,7 +293,13 @@
       `| Declarative fixes carried over | ${totals.fixes} |`,
       `| Pattern scripts carried over | ${totals.scripts} |`,
       `| Site scripts carried over | ${totals.siteScripts} |`,
-      `| Texts (TextIDs) carried over | ${totals.texts} in ${totals.languages.join(', ') || '(none)'} |`, '');
+      `| Texts (TextIDs) carried over | ${totals.texts} in ${totals.languages.join(', ') || '(none)'} |`,
+      `| Skip links (from main patterns) | ${totals.skipLinks} |`, '');
+    if (worklist.skipLinks && worklist.skipLinks.length) {
+      md.push('## Skip links', '', 'Become Studio skip links (Config). Each renders only on pages where its target exists.', '', '| label | target |', '|---|---|');
+      for (const l of worklist.skipLinks) md.push(`| ${l.label} | \`${l.selector}\` |`);
+      md.push('');
+    }
     md.push('## Fix types in this site', '', '| count | URS type |', '|---|---|');
     for (const [k, v] of sortedMeta) md.push(`| ${v} | ${k} |`);
     md.push('');
@@ -299,5 +348,5 @@
     return out;
   }
 
-  return { fetchSite, convert, unwrap, endpoints, detectInPage, DEFAULT_LANGS, _decodeValues: decodeValues };
+  return { fetchSite, convert, unwrap, endpoints, detectInPage, DEFAULT_LANGS, _decodeValues: decodeValues, _canonical: canonical };
 });

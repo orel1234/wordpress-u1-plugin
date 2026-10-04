@@ -34,7 +34,7 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-09-27a' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-10-04a' });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -643,6 +643,84 @@
       u1.fix.heading.__u1PatchHeadingWrap = true;
       if (origHeading.__u1PatchFilled) u1.fix.heading.__u1PatchFilled = true;
     }
+
+    // ── Any CSS selector, handed to U1 as one it can read ──────────────────
+    //
+    // U1 resolves selectors through jQuery and refuses, silently, anything
+    // past `> + ~`, tags, classes, ids, attributes and a few structural
+    // pseudos — no descendant space, no :has, no :last-of-type. That made the
+    // selector the hard part of every mapping: on tamam.co.il the only thing
+    // separating three real section titles from the bold paragraphs around
+    // them is a <br> right after the <strong>, which `strong:has(+br)` says
+    // exactly and nothing U1 accepts can say at all.
+    //
+    // So the browser resolves the selector instead. Every match is stamped
+    // with a token in `data-u1p-sel` (space-separated, one element can carry
+    // several), and U1 is handed `[data-u1p-sel~="token"]` — an attribute
+    // selector, which it has always accepted. The token is a hash of the
+    // selector, so the same selector is the same token on every call and on
+    // every page. Elements that appear later are stamped by the correction
+    // pass. A selector U1 can already read passes through untouched, and one
+    // that is not CSS at all does too, so U1 reports it the way it always has.
+    //
+    // Wrapped here, outside every correction above and inside the recorder
+    // below: the corrections see a selector they can read, and the recorder
+    // sees the one the site wrote.
+    var SEL_MARK = 'data-u1p-sel';
+    var U1_COMPOUND = /^(?:[\w-]+)?(?:\.[\w-]+|#[\w-]+|\[[^\]]*\]|::?[\w-]+(?:\([^()]*\))?)*$/;
+    var U1_PSEUDO = /^:(?:not|nth-child|nth-of-type|nth-last-child|nth-last-of-type|first-child|last-child|only-child)\b/;
+    var u1Reads = function (s) {
+      var n = String(s).trim().replace(/\s*([>+~,])\s*/g, '$1');
+      return n.split(',').every(function (group) {
+        return group !== '' && group.split(/[>+~]/).every(function (c) {
+          if (c === '' || !U1_COMPOUND.test(c)) return false;
+          var found = c.match(/::?[\w-]+(?:\([^()]*\))?/g);
+          return !found || found.every(function (p) { return U1_PSEUDO.test(p); });
+        });
+      });
+    };
+    P.freeSel = P.freeSel || {};
+    var stampFree = function (css, token) {
+      qsa(css).forEach(function (el) {
+        var cur = get(el, SEL_MARK) || '';
+        if ((' ' + cur + ' ').indexOf(' ' + token + ' ') === -1) el.setAttribute(SEL_MARK, cur ? cur + ' ' + token : token);
+      });
+    };
+    P.readable = function (sel) {
+      if (typeof sel !== 'string' || !sel.trim() || u1Reads(sel)) return sel;
+      try { document.querySelector(sel); } catch (e) { return sel; }
+      var h = 5381;
+      for (var i = 0; i < sel.length; i++) h = ((h * 33) ^ sel.charCodeAt(i)) >>> 0;
+      var token = 's' + h.toString(36);
+      P.freeSel[token] = sel;
+      stampFree(sel, token);
+      return '[' + SEL_MARK + '~="' + token + '"]';
+    };
+    var readableIn = function (v, inSelectors) {
+      if (typeof v === 'string') return inSelectors ? P.readable(v) : v;
+      if (!v || typeof v !== 'object') return v;
+      var out = Array.isArray(v) ? [] : {};
+      Object.keys(v).forEach(function (k) { out[k] = readableIn(v[k], inSelectors || k === 'selectors'); });
+      return out;
+    };
+    P.correct(function () {
+      Object.keys(P.freeSel).forEach(function (t) { stampFree(P.freeSel[t], t); });
+    });
+    Object.keys(u1.fix).forEach(function (name) {
+      if (name.charAt(0) === '_' || typeof u1.fix[name] !== 'function') return;
+      var inner = u1.fix[name];
+      var outer = function () {
+        var args = Array.prototype.slice.call(arguments);
+        try {
+          // landmarks(props, context) carries its selectors inside props.
+          args[0] = typeof args[0] === 'string' ? P.readable(args[0]) : readableIn(args[0], name === 'landmarks');
+          if (args.length > 1) args[1] = readableIn(args[1], false);
+        } catch (e) { args = arguments; }
+        return inner.apply(this, args);
+      };
+      ['__u1PatchFilled', '__u1PatchHeadingWrap'].forEach(function (k) { if (inner[k]) outer[k] = inner[k]; });
+      u1.fix[name] = outer;
+    });
 
     // ── Record what the SITE itself asked for ─────────────────────────────
     //

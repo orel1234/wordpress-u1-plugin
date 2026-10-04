@@ -735,14 +735,14 @@ const listboxMeasuredFirst = (() => {
 // But the card is drawn long before the save gate runs, and a card showing a
 // name the engine cannot use — under a red banner explaining that it cannot —
 // is a thing the specialist is being asked to approve.
+// The save gate used to rename an unreadable selector, then refuse it. Now the
+// patch translates any CSS selector, so the save keeps what was written — and
+// the export must say so on a site whose u1-patch.js predates the translation,
+// or that site's U1 refuses the selector as silently as it always did.
 const repairsAtSave = (() => {
-  // The save gate's own list, not the first `const bad = []` in the file.
-  const gate = panelSrc.lastIndexOf('const bad = [];');
-  if (gate === -1) return false;
-  const before = panelSrc.lastIndexOf('repairForU1', gate);
-  // The repair must sit inside the same guard, immediately above the refusal —
-  // not merely somewhere earlier in the file.
-  return before !== -1 && gate - before < 1500;
+  const fn = /\nasync function buildDeployableCode\([\s\S]*?\n\}/.exec(panelSrc);
+  return !!fn && /needsPatch/.test(fn[0]) && /window\.__u1Patch && window\.__u1Patch\.readable/.test(fn[0]) &&
+    /!isU1ValidSelector\(v\)/.test(fn[0]);
 })();
 const repairsBeforeCard = (() => {
   const rep = panelSrc.indexOf('repairForU1');
@@ -1307,38 +1307,56 @@ if (!rescansAfterSettling) failed++;
 
 // ── A selector the ENGINE cannot use must not be saveable ───────────────────
 //
-// U1 resolves through jQuery, which refuses a pseudo-class SILENTLY — the fix
-// never applies and nothing says so, so the mapping looks finished in the
-// drawer, ships in the export, and decorates nothing forever. From
-// tamam.co.il: a heading rooted on
-//   .elementor-widget-text-editor>.elementor-widget-container>p:last-of-type
-// saved cleanly and did nothing. isU1ValidSelector existed all along; the AI
-// route called it and the manual builder never did.
+// U1 resolves through jQuery, which refuses a pseudo-class or a descendant
+// space SILENTLY. This used to be answered by refusing such a selector at
+// save. It is answered in u1-patch.js now: the browser resolves the selector,
+// the matches are stamped, and U1 gets `[data-u1p-sel~="…"]`. From
+// tamam.co.il: three section titles told apart from bold paragraphs only by
+// the <br> after them — `strong:has(+br)`, which nothing U1 reads can say.
+// So: the save refuses only text that is not CSS at all, and the patch is run
+// for real against a stub engine that refuses what jQuery-in-U1 refuses.
 let engineRefuses = false, engineChecksFields = false, engineAllowsGood = false;
 {
   const src = readFileSync(join(ROOT, 'panel.js'), 'utf8');
   const fn = /\nasync function saveMappingEntry\([\s\S]*?\n\}/.exec(src);
-  const body = fn ? fn[0] : src;
-  engineRefuses = /if \(template\.primary && !isU1ValidSelector\(template\.primary\)\)/.test(src) &&
-                  /U1 cannot use \$\{bad\.length === 1 \? 'this selector' : 'these selectors'\}/.test(src) &&
-                  /refuses them SILENTLY/.test(src);
-  // Not only the primary: a sub-selector with a pseudo-class fails the same
-  // silent way, and a mapping half of which never runs is no better.
-  engineChecksFields = /for \(const \[k, v\] of Object\.entries\(sels\)\)[\s\S]{0,200}!isU1ValidSelector\(v\)/.test(src);
-  // The validator itself agrees about the real case.
+  const body = fn ? fn[0] : '';
+  const parsesOnly = /createDocumentFragment\(\)\.querySelector\(v\)/.test(body) &&
+                     !/U1 cannot use \$\{bad\.length/.test(body);
+  let translated = false;
+  try {
+    const dom = new JSDOM(`<div class="w"><p><strong>Long bold paragraph</strong></p>
+      <p><strong>The Highest Standards</strong><br>text</p><h3><strong>Real</strong></h3></div>`,
+      { runScripts: 'outside-only' });
+    const w = dom.window, got = [];
+    const reads = (x) => /^[^ :]*$/.test(x);
+    w.u1 = { fix: { heading(sel, props) {
+      if (!reads(sel) || !reads(props.selectors.heading)) throw new Error('refused');
+      got.push(sel);
+      w.document.querySelectorAll(sel).forEach((e) => e.setAttribute('aria-level', props.level));
+    } } };
+    w.eval(readFileSync(join(ROOT, 'u1-patch.js'), 'utf8'));
+    w.u1.fix.heading('.w strong:has(+br)', { level: '3', selectors: { heading: '.w strong:has(+br)' } });
+    const lv = [...w.document.querySelectorAll('strong')].map((e) => e.getAttribute('aria-level'));
+    // The site's own selector is what the recorder keeps, not the stamp.
+    translated = got.length === 1 && /^\[data-u1p-sel~="s[0-9a-z]+"\]$/.test(got[0]) &&
+      lv.join() === ',3,' && w.__u1Patch.calls[0].selector === '.w strong:has(+br)' &&
+      w.__u1Patch.readable('.a>.b') === '.a>.b' && w.__u1Patch.readable('div[[[') === 'div[[[';
+  } catch (e) { translated = false; }
+  engineRefuses = parsesOnly && translated;
+  engineChecksFields = /for \(const \[k, v\] of Object\.entries\(sels\)\)[\s\S]{0,200}!parses\(v\)/.test(body);
   const isValid = isU1ValidSelector;
   engineAllowsGood =
     !isValid('.elementor-widget-text-editor>.elementor-widget-container>p:last-of-type') &&
-    !isValid('.a .b') &&                       // a descendant space is refused too
+    !isValid('.a .b') &&
     isValid('.elementor-slides>.swiper-slide') &&
     isValid('#menu-1-a35013c') &&
     isValid('.a,.b');
 }
-console.log(`  ${engineRefuses ? '✅' : '❌'} a selector U1 cannot resolve is refused at save, not shipped to fail silently`);
+console.log(`  ${engineRefuses ? '✅' : '❌'} a full CSS selector is kept at save and handed to U1 through the patch's stamp, not refused`);
 if (!engineRefuses) failed++;
-console.log(`  ${engineChecksFields ? '✅' : '❌'} …sub-selectors too, since half a mapping that never runs is no better`);
+console.log(`  ${engineChecksFields ? '✅' : '❌'} …sub-selectors too, and only text the browser cannot parse is refused`);
 if (!engineChecksFields) failed++;
-console.log(`  ${engineAllowsGood ? '✅' : '❌'} …while > + ~ , and plain compounds still pass`);
+console.log(`  ${engineAllowsGood ? '✅' : '❌'} …while the validator still knows which selectors U1 reads by itself`);
 if (!engineAllowsGood) failed++;
 
 // ── The two validators must not disagree ────────────────────────────────────
@@ -1815,7 +1833,7 @@ console.log(`  ${listboxMeasuredFirst ? '✅' : '❌'} …and a listbox is measu
 if (!listboxMeasuredFirst) failed++;
 console.log(`  ${repairsBeforeCard ? '✅' : '❌'} a name U1 cannot resolve is renamed before the card offers it for approval`);
 if (!repairsBeforeCard) failed++;
-console.log(`  ${repairsAtSave ? '✅' : '❌'} …and again at the one door every route saves through`);
+console.log(`  ${repairsAtSave ? '✅' : '❌'} …and the export warns when the site\'s u1-patch.js is too old to translate a full CSS selector`);
 if (!repairsAtSave) failed++;
 console.log(`  ${auditRuns ? '✅' : '❌'} the survey's answer is checked against the page on BOTH routes, not just one`);
 if (!auditRuns) failed++;

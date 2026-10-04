@@ -3622,6 +3622,17 @@ details.sweep-settings::details-content { grid-column: 1 / -1; }
 }
 .file-row-meta:empty { display: none; }
 .file-row-meta b { color: var(--u1-text); font-weight: 600; }
+/* A file changed in the last two days: the one to send again. */
+.file-fresh {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: var(--u1-radius-sm);
+  border: 1px solid var(--u1-amber);
+  color: var(--u1-amber);
+  font-weight: 600;
+  white-space: nowrap;
+}
 /* The per-file download: at the end of the row, out of the text column. */
 .file-dl {
   flex: 0 0 auto;
@@ -6332,3 +6343,32 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
 /* Hover any finding, see its element on the page — same as the evidence lists. */
 .scan-item[data-hl-sel] { cursor: crosshair; }
 .scan-mapped { margin-left: auto; font-size: 10px; font-weight: 800; color: var(--u1-green); }
+
+/* ── Cloud delivery: the Publish view (renderCloudView) ───────────────────── */
+.export-tile-cloud { border-color: var(--u1-primary); }
+.cloud-domain {
+  border: 1px solid var(--u1-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--u1-surface-2);
+}
+.cloud-domain-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cloud-domain-head strong { font-size: 13px; color: var(--u1-text); margin-right: 2px; overflow-wrap: anywhere; }
+.cloud-chip {
+  font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+  background: var(--u1-surface-3); color: var(--u1-text-muted);
+}
+.cloud-chip-on { background: var(--u1-primary-dim); color: var(--u1-primary-text); }
+.cloud-domain-line { font-size: 12px; color: var(--u1-text-muted); margin-top: 6px; }
+.cloud-warn { color: var(--u1-warn) !important; }
+.cloud-tag-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.cloud-tag-row code {
+  flex: 1; min-width: 0; font-size: 11px; padding: 5px 8px; border-radius: 6px;
+  background: var(--u1-surface-code); color: var(--u1-text);
+  overflow-x: auto; white-space: nowrap;
+}
+.cloud-history { margin-top: 8px; font-size: 12px; }
+.cloud-history summary { cursor: pointer; color: var(--u1-text-muted); }
+.cloud-version { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0; border-top: 1px solid var(--u1-border); color: var(--u1-text); }
+.cloud-version > span:first-child { flex: 1; min-width: 160px; }

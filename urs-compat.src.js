@@ -504,8 +504,11 @@
       targets.forEach(function (form) {
         var req = sel('requiredFieldsSelector'), inv = sel('invalidFieldSelector'), err = sel('errorMsgSelector'), ok = sel('successMsgSelector');
         try { if (req) $(form).find(req).each(function () { setAttr(this, 'aria-required', 'true'); }); } catch (e) { /* noop */ }
-        try { if (err) $(form).find(err).each(function () { setAttr(this, 'role', 'alert'); setAttr(this, 'aria-live', 'assertive'); }); } catch (e) { /* noop */ }
-        try { if (ok) $(form).find(ok).each(function () { setAttr(this, 'role', 'status'); }); } catch (e) { /* noop */ }
+        // Messages are announced only where the site has not already made them
+        // a live region (neither URS profile touched those; overriding a
+        // polite region with an assertive alert is a change, not a fix).
+        try { if (err) $(form).find(err).each(function () { if (!this.getAttribute('aria-live') && !this.getAttribute('role')) setAttr(this, 'role', 'alert'); }); } catch (e) { /* noop */ }
+        try { if (ok) $(form).find(ok).each(function () { if (!this.getAttribute('aria-live') && !this.getAttribute('role')) setAttr(this, 'role', 'status'); }); } catch (e) { /* noop */ }
         var mark = function () {
           try {
             $(form).find('[aria-invalid]').each(function () { if (!(inv && $(this).is(inv))) this.removeAttribute('aria-invalid'); });
@@ -537,6 +540,7 @@
     // closeBy). A submenu is tied to its item the way the legacy did it: when
     // it becomes visible, the item that had focus is its trigger.
     menuWidget: function (ctx, v, targets) {
+      targets = menuBarsFor(ctx, targets);
       targets.forEach(function (bar) {
         var w = menuWidgetOf(bar, true);
         w.direction = String(v.direction || 'horizontal').toLowerCase();
@@ -549,6 +553,7 @@
       });
     },
     menuWidgetMenu: function (ctx, v, targets) {
+      targets = menuBarsFor(ctx, targets);
       if (String(v.level || '0') === '0') return; // level 0 is the menubar row itself
       var selv = v.selector && (typeof v.selector === 'object' ? v.selector.selector : v.selector);
       if (!selv || selv === '.') return;
@@ -562,6 +567,7 @@
       });
     },
     menuWidgetItem: function (ctx, v, targets) {
+      targets = menuBarsFor(ctx, targets);
       var selv = v.selector && (typeof v.selector === 'object' ? v.selector.selector : v.selector); if (!selv) return;
       var level = Number(v.level) || 0;
       var type = String(v.type || 'item').trim();
@@ -602,6 +608,12 @@
   });
 
   // ── menu widget runtime ───────────────────────────────────────────────────
+  // Menu rows belong to the pattern element (the menubar), whatever their
+  // target says — legacy _markMenuWidgetElements walked the item's metadata.
+  function menuBarsFor(ctx, targets) {
+    if (ctx.pattern && ctx.pattern.patternType === 'menuWidget') return [ctx.patternEl];
+    return targets && targets.length ? targets : [ctx.patternEl];
+  }
   var OPEN_TYPES = { openByClick: 1, openByHover: 1, openByExecuteScript: 1 };
   function menuWidgetOf(bar, create) {
     var w = $(bar).data('u1st-mw');
@@ -647,7 +659,12 @@
     var cur = current || items.filter(function (i) { return i.getAttribute('tabindex') === '0'; })[0] || vis[0];
     items.forEach(function (it) { it.setAttribute('tabindex', it === cur ? '0' : '-1'); it.setAttribute('u1st-shouldExcludeTabIndex', it === cur ? '0' : '1'); });
   }
-  function focusMenuItem(it) { if (!it) return; var m = $(it).parent().closest('[u1st_menu]')[0] || $(it).data('u1st-mwMenu'); if (m) rovingTabindex(m, it); try { it.focus(); } catch (e) { /* noop */ } }
+  function focusMenuItem(it) {
+    if (!it) { debug('menu: focusMenuItem(nothing)'); return; }
+    var m = $(it).parent().closest('[u1st_menu]')[0] || $(it).data('u1st-mwMenu'); if (m) rovingTabindex(m, it);
+    try { it.focus(); } catch (e) { /* noop */ }
+    debug('menu: focus →', it.tagName, (it.textContent || '').trim().slice(0, 15), '| got it:', document.activeElement === it, '| tabindex', it.getAttribute('tabindex'), '| visible', actuallyVisible(it));
+  }
   function siblingItem(it, dir) {
     var m = $(it).parent().closest('[u1st_menu]')[0] || $(it).data('u1st-mwMenu'); if (!m) return null;
     var vis = menuItemsOf(m, true); if (!vis.length) return null;
@@ -658,11 +675,27 @@
     var w = bar && menuWidgetOf(bar); if (!w) return;
     Object.keys(w.submenus).forEach(function (k) { try { $(w.submenus[k].selector).each(function () { if ($(this).data('u1st-mwForcedHidden')) { this.style.display = ''; $(this).removeData('u1st-mwForcedHidden'); } }); } catch (e) { /* noop */ } });
   }
+  function visibleSubmenuOf(w, it) {
+    var scope = (it && ($(it).closest('li')[0] || it.parentNode)) || w.bar, found = null;
+    Object.keys(w.submenus).some(function (k) { try { return $(w.submenus[k].selector).toArray().some(function (m) { if (scope.contains(m) && actuallyVisible(m) && inViewport(m)) { found = m; return true; } return false; }); } catch (e) { return false; } });
+    return found;
+  }
   function runOpen(it) {
     var info = $(it).data('u1st-mwInfo') || {};
     var bar = $(it).data('u1st-mwBar');
     var w = bar && menuWidgetOf(bar);
     releaseForcedHidden(bar);
+    // Already open (the site opened it on focus, or the mouse did): an explicit
+    // open means "take me in" — focus its first item, as the legacy popup
+    // handler did the moment a menu showed.
+    var already = w && visibleSubmenuOf(w, it);
+    debug('menu: open requested on', (it.textContent || '').trim().slice(0, 15), '| already open:', !!already, '| widgets:', R.menuWidgets.length);
+    if (already) {
+      w.lastOpened = it; w.lastOpenedAt = Date.now();
+      if (!$(already).data('u1st-mwVisible')) submenuOpened(w, already, it);
+      else { var first = menuItemsOf(already, true)[0] || tabbablesIn(already)[0]; if (first) focusMenuItem(first); }
+      return;
+    }
     if (w) { w.lastOpened = it; w.lastOpenedAt = Date.now(); }
     R.lastFocused = it;
     setTimeout(function () {
@@ -688,7 +721,8 @@
   function closeSubmenu(menuEl, then) {
     var sub = $(menuEl).data('u1st-mwSub') || {}, bar = $(menuEl).data('u1st-mwBar');
     var trigger = $(menuEl).data('u1st-mwTrigger');
-    var w = bar && menuWidgetOf(bar); if (w && w.hovered === trigger) w.hovered = null;
+    var w = bar && menuWidgetOf(bar);
+    if (w) { w.hovered = trigger || w.hovered; w.closedAt = Date.now(); }
     var done = function () { if (then) then(trigger); };
     try {
       if (sub.closeBy === 'clickOnTrigger' && trigger) { trigger.click(); }
@@ -703,7 +737,13 @@
       }
     } catch (e) { warn('menu close failed:', e.message); }
     // legacy fallback chain: still visible after 300ms → hide it ourselves
-    setTimeout(function () { if (actuallyVisible(menuEl) && trigger) fireHover(trigger, bar, HOVER_OUT); setTimeout(function () { if (actuallyVisible(menuEl)) { $(menuEl).data('u1st-mwForcedHidden', true); menuEl.style.display = 'none'; } done(); }, 300); }, 300);
+    setTimeout(function () {
+      if (actuallyVisible(menuEl) && trigger) fireHover(trigger, bar, HOVER_OUT);
+      setTimeout(function () {
+        if (actuallyVisible(menuEl)) { $(menuEl).data('u1st-mwForcedHidden', true); menuEl.style.display = 'none'; debug('menu: forced hidden'); }
+        done();
+      }, 300);
+    }, 300);
   }
   function openSubmenusOf(bar) { return $(bar).data('u1st-mwOpen') || []; }
   function closeAll(bar, then) {
@@ -730,7 +770,7 @@
       var menu = $(it).parent().closest('[u1st_menu]')[0]; if (menu !== bar) return; // only menubar items open by focus
       if (info.type === 'openByHover') return; // legacy: hover items were flagged avoid_focus
       if (w.hovered && w.hovered !== it && !$(w.hovered).parent().closest('li,[u1st_menuItem]').has(it).length) fireHover(w.hovered, bar, HOVER_OUT);
-      if (w.hovered !== it) {
+      if (w.hovered !== it && !(w.closedAt && Date.now() - w.closedAt < 1200)) {
         w.hovered = it; w.lastFocusOpen = Date.now(); releaseForcedHidden(bar);
         // After the focus has settled, not inside its dispatch, and exactly
         // ONCE: a site whose hover handler toggles (Genesis does) closes the
@@ -768,7 +808,11 @@
       var rtl = window.getComputedStyle(it).direction === 'rtl';
       var k = e.key;
       if (k === ' ' || k === 'Spacebar') { e.preventDefault(); e.stopPropagation(); if (opens) runOpen(it); return; }
-      if (k === 'Escape') { if (!isBar) { e.preventDefault(); e.stopPropagation(); w.pending = null; closeSubmenu(menu, function (t) { w.hovered = t || w.lastOpened; focusMenuItem(t || w.lastOpened); }); } return; }
+      if (k === 'Escape') {
+        if (!isBar) { e.preventDefault(); e.stopPropagation(); w.pending = null; closeSubmenu(menu, function (t) { w.hovered = t || w.lastOpened; focusMenuItem(t || w.lastOpened); }); }
+        else { var own = visibleSubmenuOf(w, it); if (own) { e.preventDefault(); e.stopPropagation(); if (!$(own).data('u1st-mwTrigger')) $(own).data('u1st-mwTrigger', it); closeSubmenu(own, function () { w.hovered = it; }); } }
+        return;
+      }
       if (k === 'Tab') {
         if (isBar) return; // roving tabindex: native Tab leaves the menubar
         e.preventDefault(); e.stopPropagation(); var shift = e.shiftKey;
@@ -1043,7 +1087,8 @@
         var txt = typeof inst === 'object' && inst ? (inst[R.langCode] || inst[R.langCode.split(/[-_]/)[0]] || inst[Object.keys(inst)[0]]) : inst;
         if (!txt) return;
         txt = evaluateExpression(e, String(txt), e);
-        var where = opts.placement || opts.location || 'before';
+        var where = opts.placement || opts.location ||
+          (opts.append ? 'append' : opts.prepend ? 'prepend' : opts.after ? 'after' : opts.ariaLabel ? 'ariaLabel' : opts.tempAriaLabel ? 'tempAriaLabel' : 'before');
         if (where === 'ariaLabel' || where === 'tempAriaLabel') { setAttr(e, 'aria-label', txt); return; }
         if ($(e).data('u1st-instText') === txt) return;
         $(e).data('u1st-instText', txt);
@@ -1104,7 +1149,12 @@
     },
     tooltip: { setLocation: function (T, loc, ctx) { els(T, ctx).forEach(function (e) { $(e).data('u1st-tooltipLocation', loc); }); }, disable: function (T, ctx) { els(T, ctx).forEach(function (e) { $(e).data('u1st-toolTipApplied', true); }); } },
     setTooltipIcon: function () { },
-    tabControl: { setBehavior: function (T, conf, ctx) { els(T, ctx).forEach(function (e) { $(e).data('u1st-tabControl-Conf', conf); }); }, setInstructions: function (T, inst, features, opts, ctx) { api.setInstructions(T, inst, features, opts, ctx); } },
+    tabControl: {
+      setBehavior: function (T, conf, ctx) { els(T, ctx).forEach(function (e) { $(e).data('u1st-tabControl-Conf', conf); }); },
+      // Legacy: the tab list's own instructions replace the default ones the
+      // tab control puts on every tab. Stored, then applied by normalizeTabs.
+      setInstructions: function (T, inst, features, opts, ctx) { els(T, ctx).forEach(function (e) { $(e).data('u1st-tabInstructions', { inst: inst, opts: opts || {} }); }); try { normalizeTabs(); } catch (x) { /* noop */ } },
+    },
     global: {
       allowFocus: function () { }, allowBlur: function () { },
       tabControl: { setBehavior: function () { }, setInstructions: function () { } },
@@ -1247,7 +1297,15 @@
       if (rootFilter) elsFound = elsFound.filter(rootFilter);
       if (!elsFound.length) return;
       elsFound.forEach(function (e) {
-        e.setAttribute('u1st-itemid', pat.ursId || m.id || '');
+        // First pattern to claim an element keeps it (legacy ItemsRepository:
+        // an element that already has item data keeps it, so a second pattern
+        // on the same element never applies its rows or scripts there). The
+        // tree is walked in the same order every pass, so the owner is stable.
+        var mine = pat.ursId || m.id || '';
+        var owner = $(e).data('u1st-ursOwner');
+        if (owner && owner !== mine) { debug('pattern', pat.name, 'skipped on an element owned by', owner); return; }
+        if (!owner) $(e).data('u1st-ursOwner', mine);
+        e.setAttribute('u1st-itemid', mine);
         if (pat.data && (pat.data.isDynamic || pat.data.isDynamicImproved)) e.setAttribute('u1st-dynamicElement', '1');
         applyPatternOn(m, e, scope, deferred, extra); applied++;
       });
@@ -1256,6 +1314,84 @@
     R.roots.forEach(function (r) { visit(r, null); });
     while (deferred.length) { var fn = deferred.pop(); try { fn(); } catch (e) { warn('deferred step threw:', e.message); } }
     return applied;
+  }
+
+  // ── tab control (legacy built-in TabControl handler) ───────────────────────
+  // Every [role=tab] group, on any site: aria-selected is "true" on the tab
+  // whose panel is showing and "false" on the others, and inactive panels are
+  // aria-hidden. Fixes sites that write an id or nothing into aria-selected.
+  // Arrow keys move between tabs (no activation; Enter/Space activates).
+  function tabGroups() {
+    var groups = [], seen = [];
+    $('[role=tab]').each(function () {
+      var list = $(this).closest('[role=tablist]')[0] || this.parentNode && (this.parentNode.getAttribute && this.parentNode.getAttribute('role') === 'presentation' ? this.parentNode.parentNode : this.parentNode);
+      if (!list || seen.indexOf(list) > -1) return;
+      seen.push(list);
+      groups.push({ list: list, tabs: $(list).find('[role=tab]').toArray() });
+    });
+    return groups;
+  }
+  function panelOf(tab) {
+    var id = tab.getAttribute('aria-controls') || (/^#/.test(tab.getAttribute('href') || '') ? tab.getAttribute('href').slice(1) : '');
+    return id ? document.getElementById(id) : null;
+  }
+  var TAB_TEXT = {
+    he: { inst: 'אתה נמצא באיזור כרטסיה, השתמש בכפתורי החיצים  למעלה ולמטה  לשם ניווט בין הכרטיסיות, השתמש בכפתור ה\'טאב\' על מנת להכנס לתוכן הכרטסיה, בתוכן הכרטסיה תמצא קישור שיחזיר אותך לאיזור בחירת הכרטסיות', back: "'{0}' לחץ על מנת לחזור ללשונית" },
+    en: { inst: 'The section that your focused on is a tabs selector. Use the  up and down  keys to navigate between the tabs, use the tab key to go inside the content of the tab. Inside the tab content you will have a link that will take you back to the selected tab.', back: "Click here to go back to tab '{0}'" },
+  };
+  function tabText() { var l = (R.langCode || 'en').split(/[-_]/)[0]; return TAB_TEXT[l] || TAB_TEXT.en; }
+  var SR_ONLY = 'position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;white-space:nowrap!important;';
+  function ensureTabHelpers(g) {
+    var own = $(g.list).data('u1st-tabInstructions');
+    var inst = own ? (typeof own.inst === 'object' && own.inst ? (own.inst[R.langCode] || own.inst[R.langCode.split(/[-_]/)[0]] || own.inst[Object.keys(own.inst)[0]]) : own.inst) : tabText().inst;
+    g.tabs.forEach(function (t) {
+      if (!$(t).data('u1st-tabInst')) {
+        $(t).data('u1st-tabInst', true);
+        var sp = document.createElement('span'); sp.className = 'u1st-instructions _u1st_tabInst'; sp.style.cssText = SR_ONLY; sp.textContent = ' ' + inst;
+        t.appendChild(sp);
+      }
+      var pn = panelOf(t);
+      if (pn && !$(pn).data('u1st-backLink')) {
+        $(pn).data('u1st-backLink', true);
+        var a = document.createElement('a'); a.href = '#'; a.className = '_u1st_link u1st-instructions'; a.setAttribute('tabindex', '0');
+        a.style.cssText = SR_ONLY;
+        a.addEventListener('focus', function () { a.style.cssText = 'position:static;'; });
+        a.addEventListener('blur', function () { a.style.cssText = SR_ONLY; });
+        a.textContent = tabText().back.replace('{0}', pureText(t, '._u1st_tabInst'));
+        a.addEventListener('click', function (e) { e.preventDefault(); try { t.focus(); } catch (x) { /* noop */ } });
+        pn.appendChild(a);
+      }
+    });
+  }
+  function normalizeTabs() {
+    tabGroups().forEach(function (g) {
+      if (!g.tabs.length) return;
+      try { ensureTabHelpers(g); } catch (e) { warn('tab helpers:', e.message); }
+      var shown = g.tabs.filter(function (t) { var pn = panelOf(t); return pn && actuallyVisible(pn); });
+      var sel = shown.length === 1 ? shown[0]
+        : g.tabs.filter(function (t) { return /(^|\s)(active|selected|current)(\s|$)/.test(t.className || '') || /(^|\s)(active|selected|current)(\s|$)/.test((t.parentNode && t.parentNode.className) || ''); })[0]
+        || g.tabs.filter(function (t) { return t.getAttribute('aria-selected') === 'true'; })[0];
+      if (!sel) return;
+      g.tabs.forEach(function (t) {
+        setAttr(t, 'aria-selected', t === sel ? 'true' : 'false');
+        var pn = panelOf(t); if (pn && pn !== sel && !pn.contains(t)) { if (t === sel) pn.removeAttribute('aria-hidden'); else if (!actuallyVisible(pn)) setAttr(pn, 'aria-hidden', 'true'); }
+      });
+    });
+  }
+  function installTabKeys() {
+    if (R.tabKeys) return; R.tabKeys = true;
+    document.addEventListener('keydown', function (e) {
+      var t = e.target; if (!t || !t.getAttribute || t.getAttribute('role') !== 'tab') return;
+      if (!/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End)$/.test(e.key)) return;
+      var g = tabGroups().filter(function (x) { return x.tabs.indexOf(t) > -1; })[0]; if (!g) return;
+      var tabs = g.tabs.filter(actuallyVisible); var i = tabs.indexOf(t); if (i < 0) return;
+      var rtl = window.getComputedStyle(t).direction === 'rtl';
+      var step = { ArrowRight: rtl ? -1 : 1, ArrowLeft: rtl ? 1 : -1, ArrowDown: 1, ArrowUp: -1 }[e.key];
+      var next = e.key === 'Home' ? tabs[0] : e.key === 'End' ? tabs[tabs.length - 1] : tabs[(i + step + tabs.length) % tabs.length];
+      e.preventDefault(); e.stopPropagation();
+      try { next.focus(); } catch (x) { /* noop */ }
+    }, true);
+    document.addEventListener('click', function (e) { var t = e.target && e.target.closest && e.target.closest('[role=tab]'); if (t) setTimeout(normalizeTabs, 150); }, true);
   }
 
   // ── global keyboard behaviour (legacy keyToMouseEvents) ───────────────────
@@ -1268,7 +1404,7 @@
           e.preventDefault(); e.stopPropagation(); evt(t, 'mousedown'); t.click(); evt(t, 'mouseup');
         }
       }
-      if ((e.key === ' ' || e.key === 'Spacebar') && $(t).is('[role=checkbox]:not(input),[role=radio]:not(input),[role=button]:not(input):not(button)')) {
+      if ((e.key === ' ' || e.key === 'Spacebar') && $(t).is('[role=checkbox]:not(input),[role=radio]:not(input),[role=button]:not(input):not(button),[role=tab]:not(button)')) {
         e.preventDefault(); e.stopPropagation(); t.click();
       }
       if (e.key === 'Escape') {
@@ -1395,6 +1531,7 @@
     try {
       if (scope === 4) runSiteScripts(3, document.body);
       n = applyTree(scope, scope === 4 ? { dynamic: true, targets: targets || null } : null);
+      try { normalizeTabs(); } catch (e) { warn('tab control:', e.message); }
       if (scope === 4) runSiteScripts(4, document.body);
       if (modes().isHighContrast || modes().isGrayScale) { /* wrappers added by appliers */ } else unwrapContrast();
     } catch (e) { warn('apply failed:', e && e.message ? e.message : e); }
@@ -1410,7 +1547,7 @@
     R.mappings.push(m);
   };
   function start() {
-    buildTree(); collectPopups(); installKeyboard();
+    buildTree(); collectPopups(); installKeyboard(); installTabKeys();
     runSiteScripts(8, document.body);
     runSiteScripts(1, document.body);
     var n = reapply(2);

@@ -2325,11 +2325,12 @@ function renderSelectorTest(result, sel) {
   const list = (result.sample || []).map((s, i) =>
     `<li data-idx="${i}"><code>${escapeHtml(s.tag + s.id + (s.cls || ''))}</code>${s.text ? ` — "${escapeHtml(s.text)}"` : ''}</li>`
   ).join('');
-  // Warn about U1 selector compatibility (U1 rejects spaces / descendant combinators).
+  // A selector U1 cannot read itself still works: u1-patch.js resolves it in
+  // the browser and hands U1 an attribute selector naming the same elements.
   const norm = normalizeU1Selector(sel);
   let u1note = '';
   if (!isU1ValidSelector(sel)) {
-    u1note = `<div class="u1-warn">⚠️ U1 can't use this selector — it only supports <code>&gt; + ~</code> combinators (no spaces / descendant). Use direct children with <code>&gt;</code>.</div>`;
+    u1note = `<div class="u1-note">Full CSS selector. The patch resolves it and passes U1 the matched elements — u1-patch.js on the site must be from this build or later.</div>`;
   } else if (norm !== sel) {
     u1note = `<div class="u1-note">U1 will use: <code>${escapeHtml(norm)}</code> (spaces removed)</div>`;
   }
@@ -3914,6 +3915,14 @@ async function runUrsConversion() {
     for (const m of result.mappings) m.fixNo = n++;
     const list = kept.concat(result.mappings);
     await U1Store.set({ [key]: list });
+    // Skip links from URS main patterns, added to the site's own list (a
+    // target already listed is left as the specialist set it).
+    if (result.skipLinks && result.skipLinks.length) {
+      const skipKey = storageKey('skipLinks', host);
+      const have = (await U1Store.get([skipKey]))[skipKey] || [];
+      const add = result.skipLinks.filter((l) => !have.some((h) => h && (h.selector === l.selector || h.target === l.target)));
+      if (add.length) { await U1Store.set({ [skipKey]: have.concat(add) }); try { await saveConfig(); await refreshConfigSkipList(); updateConfigPreview(); } catch {} }
+    }
 
     await loadMappingsList();
     await refreshExportInfo();
@@ -3926,7 +3935,7 @@ async function runUrsConversion() {
     const warn = result.worklist.unknownMeta.size ? ` ${result.worklist.unknownMeta.size} fix type(s) the engine does not know — see the worklist.` : '';
     const onPage = applied.ok ? ` Applied on this page now (${applied.applied} elements) and on every page of this site from here on.` : ` Not applied on this page: ${applied.err}`;
     showNotice(notice,
-      `Converted ${t.patterns} patterns: ${t.fixes} fixes, ${t.scripts} scripts, ${t.siteScripts} site scripts, ${t.texts} texts (${t.languages.join(', ') || 'no languages found'}).` +
+      `Converted ${t.patterns} patterns: ${t.fixes} fixes, ${t.scripts} scripts, ${t.siteScripts} site scripts, ${t.texts} texts (${t.languages.join(', ') || 'no languages found'}), ${t.skipLinks} skip link${t.skipLinks === 1 ? '' : 's'}.` +
       ` They are in Mappings under “All”.${onPage}${warn}`, 'success', 20000);
     if (wl) wl.style.display = '';
   } catch (err) {
@@ -15588,16 +15597,8 @@ async function validateMapping(type, primary, fieldValues, rootValues) {
     }
   }
 
-  // Descendant-space check (U1 rejects spaces; only > + ~ combinators allowed).
-  // Custom mappings (aria-label) run our own querySelector — descendant spaces
-  // are fine there, so skip this warning.
-  if (!schema.custom) {
-    for (const [k, v] of Object.entries(map)) {
-      if (/[\w\]\)]\s+[.#\[\w]/.test(v)) {
-        notes.push({ level: 'warn', msg: `“${k}” has a descendant space — U1 only allows > + ~ combinators, so it may be rejected.` });
-      }
-    }
-  }
+  // No descendant-space warning any more: u1-patch.js resolves any CSS
+  // selector and hands U1 an attribute selector it can read.
 
   // options/items pointing at the container itself.
   if (type === 'listbox' && fieldValues.options && fieldValues.options === primary) {
@@ -15997,6 +15998,13 @@ const SCAN_RULES = {
   'title-weak':           { title: 'Page title looks like a file name', wcag: '2.4.2', severity: 'Low', category: 'Page Structure', why: 'The tab title is a file name, a URL or “Untitled” — it does not tell a user which page they are on.', fix: 'Set a <title> that names the page and the site: “Members – Molina Healthcare”.' },
   'list-stray-br':        { title: 'Line break or spacer sitting directly inside a list', wcag: '1.3.1', severity: 'Low', category: 'Page Structure', why: 'A <br> or an empty spacer between the items is counted as one — the screen reader says “list, 7 items” for 5 links.', fix: 'Hide the stray nodes from screen readers (aria-hidden="true"). The list stays exactly as it looks.' },
   'list-structure':       { title: 'List holds things that are not list items', wcag: '1.3.1', severity: 'Medium', category: 'Page Structure', why: 'A <ul>/<ol> contains elements other than <li> and carries no roles of its own, so the count and the items a screen reader announces are wrong.', fix: 'Put only <li> directly inside the list, or map it as the component it really is (a menu, a tab strip) so it gets the right roles.' },
+  // ── Checks PowerMapper (SortSite) makes, in our words ────────────────────
+  'link-same-text':       { title: 'Same link text goes to different pages', wcag: '2.4.4', severity: 'Medium', category: 'Link and Button Labels', why: 'Two links say the same thing but lead to different pages. In a screen reader\'s list of links they read as one link twice, and nobody can tell which is which.', fix: 'Give each a name that says where it goes — “Products — Medicaid”, “Products — Medicare” — with an aria-label mapping.' },
+  'lang-of-parts':        { title: 'Text in another language is not marked', wcag: '3.1.2', severity: 'Medium', category: 'Screen Reader Support', why: 'This text is in a different language from the one declared around it, so the screen reader reads it with the wrong voice and it comes out as noise.', fix: 'Mark it with lang="…" (lang="en" on English inside a Hebrew page) — an attribute mapping on the element.' },
+  'lang-page-mismatch':   { title: 'Page language is declared wrong', wcag: '3.1.1', severity: 'High', category: 'Screen Reader Support', why: 'Most of the page is in a different language from the one <html lang> declares, so a screen reader reads the whole page with the wrong voice.', fix: 'Set <html lang="…"> to the language the page is written in.' },
+  'dir-missing':          { title: 'Text direction does not match the language', wcag: '1.3.2', severity: 'Medium', category: 'Screen Reader Support', why: 'A right-to-left language (Hebrew, Arabic) without dir="rtl" — or a left-to-right one marked rtl — puts punctuation, numbers and mixed text in the wrong order, on screen and when read aloud.', fix: 'Set dir="rtl" on <html> for Hebrew and Arabic pages (dir="ltr" for the others).' },
+  'control-contrast':     { title: 'Field edge is too faint to see (note)', wcag: '1.4.11', severity: 'Low', note: true, category: 'Colour and Contrast', why: 'Neither the field\'s border nor its fill reaches 3:1 against what surrounds it, so people with low vision cannot see where the field is.', fix: 'Darken the border (or the field\'s fill) to 3:1 against the background — a CSS change on the site; U1 does not restyle controls.' },
+  'change-moves-page':    { title: 'Choosing an option moves the page', wcag: '3.2.2', severity: 'High', category: 'Forms and Inputs', why: 'The page navigates or submits as soon as a value changes or focus moves. A keyboard user browsing a dropdown with the arrow keys is sent away on the first arrow, before reaching the option they wanted.', fix: 'Act only when the user asks — a “Go” button beside the dropdown — instead of on change, focus or blur.' },
   'landmark-noname':      { title: 'Several form/region landmarks with no name (note)', wcag: '1.3.1', severity: 'Low', note: true, category: 'Page Structure', why: 'Not a failure: an unnamed role="form" or role="region" is simply not listed as a landmark, and one of them costs nobody anything. Two or more without names is the case worth a note — a screen reader\'s landmark list then reads “form, form”, and the person cannot tell which is which. A form that is a U1 mapping is already the treatment and is not counted here.', fix: 'Optional: give each a name (“Search”, “Newsletter”) — Fix all takes it from the field\'s own label or the heading inside.' },
 };
 
@@ -16683,6 +16691,131 @@ async function scanPageStatic() {
           if (r.width < 24 && r.height < 24) { add('target-size-small', el, `${Math.round(r.width)}×${Math.round(r.height)}px`); smallCount++; }
         });
 
+        // ── The checks PowerMapper (SortSite) makes that we did not ────────
+        // Same rules in monitoring.scanPage.ts (the nightly mail) and in the
+        // Auto Checker's catalog-checks.ts — change one, change all three.
+
+        // Same link text, different destinations (2.4.4). "Products" in the
+        // header and "Products" in the footer going to two pages: in a screen
+        // reader's list of links they are one entry twice, and nobody can
+        // tell which is which. Vague and empty names are their own findings.
+        const destOf = (a) => { try { const u = new URL(a.getAttribute('href'), location.href); return (u.host.replace(/^www\./, '') + u.pathname.replace(/\/+$/, '') + u.search).toLowerCase(); } catch (e) { return (a.getAttribute('href') || '').replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase(); } };
+        const byName = {};
+        Array.from(document.querySelectorAll('a[href]')).slice(0, 300).forEach(el => {
+          const href = el.getAttribute('href') || '';
+          if (!visible(el) || /^(#|javascript:|mailto:|tel:)/i.test(href)) return;
+          const name = accName(el).toLowerCase().replace(/[\s.:!?›»>]+$/g, '').replace(/\s+/g, ' ');
+          if (!name || generic.test(name)) return;
+          (byName[name] = byName[name] || []).push(el);
+        });
+        Object.keys(byName).forEach(name => {
+          const dests = {};
+          byName[name].forEach(el => { const d = destOf(el); if (d && !dests[d]) dests[d] = el; });
+          const els = Object.keys(dests).map(d => dests[d]);
+          if (els.length < 2) return;
+          els.slice(1).forEach(el => add('link-same-text', el, accName(el), `${els.length} links named this way go to ${els.length} different pages`));
+        });
+
+        // Text in another language than the one declared around it (3.1.2),
+        // or a whole page in another language than <html lang> says (3.1.1).
+        // The script of the letters is what is read: English inside a Hebrew
+        // page is read with the Hebrew voice, and comes out as noise.
+        const SCRIPT_OF_LANG = (l) => {
+          const p = (l || '').toLowerCase().split(/[-_]/)[0];
+          if (/^(he|iw|yi)$/.test(p)) return 'hebrew';
+          if (/^(ar|fa|ur|ps|ckb)$/.test(p)) return 'arabic';
+          if (/^(ru|uk|bg|be|kk|mk|sr|ky|mn|tg)$/.test(p)) return 'cyrillic';
+          if (p === 'el') return 'greek';
+          if (/^(en|es|fr|de|it|pt|nl|sv|da|no|nb|nn|fi|pl|cs|sk|hu|ro|tr|id|ms|vi|ca|hr|sl|et|lv|lt|sq|is|ga|cy|eu|gl|af|sw|tl|fil)$/.test(p)) return 'latin';
+          return ''; // a script we do not classify (zh, ja, hi…) — not checked
+        };
+        const SCRIPTS = { hebrew: /[֐-׿]/g, arabic: /[؀-ۿݐ-ݿ]/g, cyrillic: /[Ѐ-ӿ]/g, greek: /[Ͱ-Ͽ]/g, latin: /[A-Za-zÀ-ɏ]/g };
+        const scriptOfText = (t) => {
+          let total = 0, best = '', bestN = 0;
+          Object.keys(SCRIPTS).forEach(k => { const n = (t.match(SCRIPTS[k]) || []).length; total += n; if (n > bestN) { best = k; bestN = n; } });
+          return total >= 15 && bestN / total >= 0.8 ? best : '';
+        };
+        const pageLang = (document.documentElement.getAttribute('lang') || '').trim();
+        const blocks = [];
+        const tw = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+        const ownText = new Map();
+        for (let n = tw.nextNode(); n && ownText.size < 1500; n = tw.nextNode()) {
+          const p = n.parentElement;
+          if (!p || p.closest('script,style,noscript,template,code,pre,kbd,samp,svg,textarea,[translate="no"]')) continue;
+          ownText.set(p, (ownText.get(p) || '') + ' ' + n.nodeValue);
+        }
+        ownText.forEach((t, el) => {
+          t = t.trim().replace(/\s+/g, ' ');
+          if (t.split(' ').length < 3) return;
+          const script = scriptOfText(t);
+          if (!script || !visible(el)) return;
+          const holder = el.closest('[lang]');
+          const declared = SCRIPT_OF_LANG(holder ? holder.getAttribute('lang') : '');
+          if (!declared) return;
+          blocks.push({ el, t, script, declared, ownLang: !!holder && holder !== document.documentElement });
+        });
+        const wrongBlocks = blocks.filter(b => b.script !== b.declared);
+        const pageWrong = blocks.filter(b => !b.ownLang);
+        const pageWrongN = pageWrong.filter(b => b.script !== b.declared).length;
+        if (pageLang && pageWrong.length >= 5 && pageWrongN / pageWrong.length >= 0.6)
+          add('lang-page-mismatch', null, `<html lang="${pageLang}">, but ${pageWrongN} of ${pageWrong.length} text blocks are in ${pageWrong.find(b => b.script !== b.declared).script} script`);
+        else wrongBlocks.slice(0, 15).forEach(b => add('lang-of-parts', b.el, b.t.slice(0, 80), `${b.script} text inside lang="${(b.el.closest('[lang]') || document.documentElement).getAttribute('lang')}"`));
+
+        // A right-to-left language laid out left-to-right, or the reverse (1.3.2).
+        const RTL = /^(hebrew|arabic)$/.test(SCRIPT_OF_LANG(pageLang));
+        const dirOf = (el) => (el && (el.getAttribute('dir') || '').toLowerCase()) || '';
+        const drawn = (() => { try { return getComputedStyle(document.body || document.documentElement).direction; } catch (e) { return ''; } })();
+        const saysRtl = dirOf(document.documentElement) === 'rtl' || dirOf(document.body) === 'rtl' || drawn === 'rtl';
+        if (RTL && !saysRtl) add('dir-missing', null, `<html lang="${pageLang}"> with no dir="rtl"`);
+        else if (!RTL && SCRIPT_OF_LANG(pageLang) && dirOf(document.documentElement) === 'rtl') add('dir-missing', null, `<html lang="${pageLang}" dir="rtl">`);
+
+        // A field whose edge cannot be seen (1.4.11): neither its border nor
+        // its own fill reaches 3:1 against what surrounds it. Colours that
+        // come from a picture or a shadow are not judged — that needs eyes.
+        const rgba = (c) => { const m = /rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:[ ,/]+([\d.]+%?))?/.exec(c || ''); if (!m) return null; let a = m[4] == null ? 1 : parseFloat(m[4]); if (/%$/.test(m[4] || '')) a /= 100; return [+m[1], +m[2], +m[3], a]; };
+        const over = (top, base) => top ? [0, 1, 2].map(i => top[i] * top[3] + base[i] * (1 - top[3])).concat(1) : base;
+        const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+        const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+        const bgBehind = (el) => {
+          const layers = [];
+          for (let e = el; e; e = e.parentElement) {
+            const s = getComputedStyle(e);
+            if (s.backgroundImage && s.backgroundImage !== 'none') return null;
+            const c = rgba(s.backgroundColor);
+            if (c && c[3] > 0) { layers.push(c); if (c[3] >= 1) break; }
+          }
+          return layers.reverse().reduce((base, c) => over(c, base), [255, 255, 255, 1]);
+        };
+        const hex = (c) => '#' + c.slice(0, 3).map(v => ('0' + Math.round(v).toString(16)).slice(-2)).join('');
+        let faintCount = 0;
+        Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]):not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]),select,textarea')).slice(0, 60).forEach(el => {
+          if (faintCount >= 20 || !visible(el)) return;
+          const s = getComputedStyle(el);
+          if ((s.backgroundImage && s.backgroundImage !== 'none') || (s.boxShadow && s.boxShadow !== 'none')) return;
+          const outside = el.parentElement ? bgBehind(el.parentElement) : [255, 255, 255, 1];
+          if (!outside) return;
+          const fill = over(rgba(s.backgroundColor), outside);
+          if (ratio(fill, outside) >= 3) return;
+          const sides = ['Top', 'Right', 'Bottom', 'Left'].filter(k => parseFloat(s['border' + k + 'Width']) >= 1 && !/^(none|hidden)$/.test(s['border' + k + 'Style']));
+          const edges = sides.map(k => over(rgba(s['border' + k + 'Color']), outside));
+          const best = edges.reduce((m, c) => Math.max(m, ratio(c, outside)), 0);
+          if (best >= 3) return;
+          add('control-contrast', el, accName(el) || el.getAttribute('name') || el.tagName.toLowerCase(),
+            edges.length ? `border ${hex(edges[0])} on ${hex(outside)} — ${best.toFixed(1)}:1` : `no border; field ${hex(fill)} on ${hex(outside)}`);
+          faintCount++;
+        });
+
+        // Choosing an option, or leaving a field, moves the page (3.2.2 / 3.2.1).
+        // A keyboard user browsing a <select> with the arrow keys is sent
+        // away on the first arrow. Only inline handlers are visible to a
+        // static read; one added with addEventListener needs the Dynamic scan.
+        const MOVES = /location|\.href\s*=|submit\s*\(|window\.open|\.go\s*\(|navigate/i;
+        Array.from(document.querySelectorAll('select[onchange],[onfocus],[onblur]')).slice(0, 100).forEach(el => {
+          const how = el.tagName === 'SELECT' && MOVES.test(el.getAttribute('onchange') || '') ? 'onchange'
+            : MOVES.test(el.getAttribute('onfocus') || '') ? 'onfocus' : MOVES.test(el.getAttribute('onblur') || '') ? 'onblur' : '';
+          if (how) add('change-moves-page', el, accName(el) || el.getAttribute('name') || el.tagName.toLowerCase(), `${how}="${(el.getAttribute(how) || '').slice(0, 60)}"`);
+        });
+
         // What the page HOLDS, so the checklist can say "passed" with the
         // evidence beside it, and "nothing to check" when there is nothing —
         // a title that exists can still be wrong, and only a person can say.
@@ -17006,6 +17139,12 @@ const STATIC_WHY_NOT = {
   'skip-link-missing': 'Setup adds skip links',
   'skip-link-landmark': 'add a skip link of that kind in Setup',
   'aria-hidden-focusable': 'use "must not be reachable" on it, or un-hide it',
+  'link-same-text': 'needs a name that tells the links apart — an aria-label mapping',
+  'lang-of-parts': 'needs the passage\'s language (the script is not enough: English, Spanish and French share one) — an attribute mapping with lang="…"',
+  'lang-page-mismatch': '<html lang> is set in the page',
+  'dir-missing': 'dir is set on <html> in the page',
+  'control-contrast': 'colours are the site\'s to set — a CSS change',
+  'change-moves-page': 'the page\'s own script decides when to navigate — a change for the developers',
 };
 
 /**
@@ -17104,20 +17243,20 @@ function showOnlyScan(which) {
 const SCAN_CHECKS = [
   { id: 'title', title: 'Page title', ask: 'Does the tab title say what this page is?',
     rules: ['doc-title'], evidence: 'title' },
-  { id: 'lang', title: 'Page language', ask: 'Is the language declared and valid, so screen readers use the right voice?',
-    rules: ['lang'], evidence: 'lang' },
+  { id: 'lang', title: 'Page language', ask: 'Is the language declared, valid and right — for the page and for every part in another language — and does the text run in the right direction?',
+    rules: ['lang', 'lang-page-mismatch', 'lang-of-parts', 'dir-missing'], evidence: 'lang' },
   { id: 'headings', title: 'Heading structure', ask: 'One H1, levels in order, none empty, nothing bold pretending — does the outline read like a table of contents?',
     rules: ['h1-missing', 'h1-multiple', 'heading-order', 'heading-empty', 'fake-heading'], evidence: 'headings', needs: 'headings' },
   { id: 'images', title: 'Images', ask: 'Does every meaningful image, icon and SVG have alt text, and is the alt text right?',
     rules: ['img-alt', 'img-alt-filename', 'image-map'], evidence: 'images', needs: 'imagesTotal' },
-  { id: 'links', title: 'Link text', ask: 'Does every link say where it goes, on its own — and warn when it opens a new tab?',
-    rules: ['link-name', 'link-generic', 'link-newwindow', 'label-mismatch'], needs: 'links' },
+  { id: 'links', title: 'Link text', ask: 'Does every link say where it goes, on its own — no two alike going to different pages — and warn when it opens a new tab?',
+    rules: ['link-name', 'link-generic', 'link-same-text', 'link-newwindow', 'label-mismatch'], needs: 'links' },
   { id: 'buttons', title: 'Button names', ask: 'Does every button, including icon-only and custom ones, have a name?',
     rules: ['button-name'], needs: 'buttons' },
-  { id: 'forms', title: 'Form fields', ask: 'Is every field labelled — visibly, once, correctly — and every option group named?',
-    rules: ['input-label', 'input-placeholder', 'group-nolabel', 'label-for-broken', 'label-hidden', 'autocomplete'], needs: 'inputs' },
-  { id: 'contrast', title: 'Colour contrast', ask: 'Is text readable against its background, and are links told apart by more than colour? (Faint text is listed as a note — a CSS change on the site’s side.)',
-    rules: ['contrast', 'link-color-only'], engine: 'axe' },
+  { id: 'forms', title: 'Form fields', ask: 'Is every field labelled — visibly, once, correctly — every option group named, and does choosing an option leave the page alone until the user asks?',
+    rules: ['input-label', 'input-placeholder', 'group-nolabel', 'label-for-broken', 'label-hidden', 'autocomplete', 'change-moves-page'], needs: 'inputs' },
+  { id: 'contrast', title: 'Colour contrast', ask: 'Is text readable against its background, can the edge of every field be seen, and are links told apart by more than colour? (Faint text and faint field edges are listed as a note — a CSS change on the site’s side.)',
+    rules: ['contrast', 'control-contrast', 'link-color-only'], engine: 'axe' },
   { id: 'landmarks', title: 'Landmarks', ask: 'Can a screen reader jump to main, navigation, header, footer? (Nesting, duplicates and unnamed forms/regions are listed as a note.)',
     rules: ['landmarks', 'landmark-structure', 'landmark-noname'], evidence: 'landmarks' },
   { id: 'skip', title: 'Skip link', ask: 'Can the keyboard skip the menu and land on the content?',
@@ -19969,78 +20108,31 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   //
   // Here, for the same reason the role question is here: one save path, one
   // place to refuse.
-  // ── A selector the ENGINE cannot use ──────────────────────────────────────
+  // ── A selector that is not CSS at all ─────────────────────────────────────
   //
-  // U1 resolves selectors through jQuery, and a pseudo-class is refused there
-  // SILENTLY — the fix simply never applies, and nothing anywhere says so. So
-  // a mapping built on one looks finished in the drawer, ships in the export,
-  // and decorates nothing on the client's site, forever.
+  // This used to refuse every selector U1 cannot read itself — a pseudo-class
+  // or a descendant space, which jQuery inside U1 refuses SILENTLY. That is
+  // handled in u1-patch.js now: it resolves the selector in the browser,
+  // stamps the matches and hands U1 an attribute selector naming them, so
+  // `strong:has(+br)` and `.a .b` work like any other selector. The case it
+  // was written for (tamam.co.il, `…>p:last-of-type`) is the one it serves.
   //
-  // isU1ValidSelector has existed all along and this path never called it: the
-  // AI route checked (checkAiSelector), the manual builder did not. Reported
-  // from tamam.co.il, where
-  //   .elementor-widget-text-editor>.elementor-widget-container>p:last-of-type
-  // saved cleanly and did nothing. Checked here because this is the one save
-  // path, which is where the required-field refusal already lives.
+  // What is left to refuse is text the browser cannot parse either: that one
+  // fails everywhere, in the patch as in U1, and should never be saved.
   if (template && template.type) {
     const sels = (template.config && template.config.selectors) || {};
-
-    // Rename before refusing.
-    //
-    // The refusal below is correct and stays. What was wrong was that it was
-    // the FIRST thing tried on a selector that resolves perfectly well in the
-    // browser and points at exactly the right element — two dialogs on a live
-    // site were refused over `#state-select-modal h2`, with the advice "give
-    // the element a class", addressed to a person, about a heading the tool was
-    // looking straight at.
-    //
-    // repairForU1 resolves it and names the same element again with the
-    // builder every other selector here comes from, which cannot emit an
-    // invalid name. It refuses to answer unless the new name points at exactly
-    // the same elements, so nothing is silently widened. Whatever it cannot
-    // repair falls through to the refusal unchanged.
-    const invalid = [];
-    if (template.primary && !isU1ValidSelector(template.primary)) invalid.push(['', template.primary]);
-    for (const [k, v] of Object.entries(sels)) {
-      if (typeof v === 'string' && v.trim() && !isU1ValidSelector(v)) invalid.push([k, v]);
-    }
-    const repairs = [];
-    if (invalid.length) {
-      const tab = await getTab();
-      if (isInjectable(tab)) {
-        let fixed = null;
-        try {
-          fixed = await inPage(tab.id, (list) => list.map(([k, v]) => {
-            try { return [k, v, window.__u1SelectorIntel.repairForU1(v) || '']; }
-            catch (e) { return [k, v, '']; }
-          }), [invalid]);
-        } catch (e) { fixed = null; }
-        for (const [k, was, now] of fixed || []) {
-          if (!now || !isU1ValidSelector(now)) continue;
-          if (k) setDeep(template.config.selectors, k, now);
-          else template.primary = now;
-          repairs.push({ field: k || template.type, was, now });
-        }
-      }
-      if (repairs.length) template.code = mappingToCode(template);
-    }
-
     const bad = [];
-    if (template.primary && !isU1ValidSelector(template.primary)) {
-      bad.push(template.primary);
-    }
+    const parses = (v) => {
+      try { document.createDocumentFragment().querySelector(v); return true; } catch (e) { return false; }
+    };
+    if (template.primary && !parses(template.primary)) bad.push(template.primary);
     for (const [k, v] of Object.entries(sels)) {
-      if (typeof v === 'string' && v.trim() && !isU1ValidSelector(v) && !bad.includes(v)) {
-        bad.push(`${k}: ${v}`);
-      }
+      if (typeof v === 'string' && v.trim() && !parses(v) && !bad.includes(v)) bad.push(`${k}: ${v}`);
     }
     if (bad.length) {
       throw new Error(
-        `U1 cannot use ${bad.length === 1 ? 'this selector' : 'these selectors'} — it resolves them ` +
-        `through jQuery, which refuses a pseudo-class (:last-of-type, :nth-child, :hover) and a ` +
-        `descendant space, and it refuses them SILENTLY. Saved like this the fix would never run and ` +
-        `nothing would say why. ${bad.join(' · ')}. Use > + ~ , between compound selectors, and give ` +
-        `the element a class if it has nothing else to point at.`);
+        `${bad.length === 1 ? 'This is not a valid CSS selector' : 'These are not valid CSS selectors'} — ` +
+        `the browser cannot read ${bad.length === 1 ? 'it' : 'them'} either, so the fix would never run. ${bad.join(' · ')}.`);
     }
   }
 
@@ -21237,9 +21329,23 @@ async function buildDeployableCode(list, hostname) {
     // Wrapped in a named function and called, rather than run inline, so the
     // resize hook further down can run exactly the same calls again. See there
     // for why that is needed at all.
+    // A selector U1 cannot read itself only works through the patch's
+    // translation (P.readable). A site still running an older u1-patch.js
+    // would have U1 refuse it silently — so say so, once, in the console.
+    const selValues = (m) => {
+      const out = [m.firstArg || m.primary];
+      const walk = (o) => { for (const v of Object.values(o || {})) typeof v === 'string' ? out.push(v) : (v && typeof v === 'object' && walk(v)); };
+      walk(m.config && m.config.selectors);
+      return out.filter((v) => typeof v === 'string' && v.trim());
+    };
+    const needsPatch = sorted.some((m) => m && typeof m === 'object' && m.type && !m.custom &&
+      selValues(m).some((v) => !isU1ValidSelector(v)));
     if (fixes.length) {
+      const patchCheck = needsPatch
+        ? `if (!(window.__u1Patch && window.__u1Patch.readable)) console.error('[u1] Some mappings below use CSS selectors that only u1-patch.js (build 2026-10-04a or later) can pass to U1. Replace u1-patch.js with the one exported alongside this file.');\n\n`
+        : '';
       fixesParts.push(`/* ---- Component mappings ---- */\n` +
-        `function __u1ApplyMappings() {\n` + fixes.join('\n\n') + `\n}\n__u1WhenReady(__u1ApplyMappings);`);
+        `function __u1ApplyMappings() {\n` + patchCheck + fixes.join('\n\n') + `\n}\n__u1WhenReady(__u1ApplyMappings);`);
     }
   }
   if (customs.length) {
@@ -22970,7 +23076,7 @@ async function loadMappingsList() {
 
 // Export's four destinations as a grid of tiles instead of four cards
 // stacked one after another — pick one, do that thing, ← Back to the grid.
-const EXPORT_VIEWS = { package: 'exportViewPackage', finish: 'exportViewFinish', closeout: 'exportViewCloseout', backup: 'exportViewBackup' };
+const EXPORT_VIEWS = { package: 'exportViewPackage', cloud: 'exportViewCloud', finish: 'exportViewFinish', closeout: 'exportViewCloseout', backup: 'exportViewBackup' };
 function setExportView(name) {
   const grid = document.getElementById('exportGrid');
   const target = EXPORT_VIEWS[name] || null;
@@ -23014,7 +23120,245 @@ async function refreshExportInfo() {
   // it has to be rebuilt here rather than once at start-up: a site joins the
   // list the moment its first mapping is saved.
   await refreshBackupSites();
+  refreshDelivery().catch(() => {});
 }
+
+// ── Cloud delivery: Publish instead of handing over files ────────────────────
+//
+// Each domain is Satellite (files, the handover as it always was) or Cloud
+// (one script tag the customer installs once), chosen per domain in the
+// portal. The export screen follows that choice: an all-Satellite client sees
+// exactly what it always did, an all-Cloud one gets Publish in place of
+// Finish Project, and a mixed one gets both.
+//
+// What is published is the output of collectExportInputs() — the very files
+// the handover carries — so a Cloud site runs byte-for-byte what a Satellite
+// one would have been sent. The config is always the window.u1.config form:
+// the React/Angular variants are ES modules, which a script tag cannot run.
+let cloudState = null;   // last U1Sync.delivery() answer for currentHostname
+
+async function refreshDelivery() {
+  const tile = document.getElementById('exportTileCloud');
+  const finishTile = document.getElementById('exportTileFinish');
+  cloudState = null;
+  if (tile) tile.hidden = true;
+  if (finishTile) finishTile.hidden = false;
+  if (!currentHostname || !(await U1Auth.isLoggedIn())) return;
+  const host = currentHostname;
+  let d;
+  try { d = await U1Sync.delivery(host); } catch (e) { return; }   // offline / unassigned: today's screen
+  if (host !== currentHostname || !d || !Array.isArray(d.domains)) return;
+  cloudState = d;
+  const cloud = d.domains.filter((x) => x.delivery === 'cloud');
+  if (!cloud.length) return;
+  if (tile) tile.hidden = false;
+  if (finishTile) finishTile.hidden = cloud.length === d.domains.length;
+  const sub = document.getElementById('exportTileCloudSub');
+  if (sub) {
+    const live = cloud.filter((x) => x.liveVersion != null).length;
+    sub.textContent = live
+      ? `${cloud.length} Cloud domain${cloud.length === 1 ? '' : 's'}, ${live} live. The site updates when you publish.`
+      : `${cloud.length} Cloud domain${cloud.length === 1 ? '' : 's'}, nothing published yet.`;
+  }
+  await renderCloudView();
+}
+
+/** Has anything that shapes the published code changed since this domain's live version? */
+async function cloudChangedSince(ts) {
+  if (!ts) return true;
+  const rec = (await U1Store.touchedAt(currentHostname)) || {};
+  const last = Math.max(rec.mappings || 0, rec.config || 0, rec.skipLinks || 0);
+  return last > new Date(ts).getTime();
+}
+
+async function renderCloudView() {
+  const box = document.getElementById('cloudDomains');
+  const pubBox = document.getElementById('cloudPublishBox');
+  if (!box || !cloudState) return;
+  const d = cloudState;
+  box.textContent = '';
+
+  if (!d.isMain) {
+    const p = document.createElement('p');
+    p.className = 'notice cloud-warn';
+    p.style.display = 'block';
+    p.textContent = d.main
+      ? `Publish from the main domain, ${d.main}. This domain holds a copy of its mappings, and one publish there updates every Cloud domain of the client.`
+      : 'This client has no main domain yet. Set one in the portal.';
+    box.appendChild(p);
+  }
+  if (pubBox) pubBox.hidden = !d.isMain;
+
+  for (const dom of d.domains) {
+    const card = document.createElement('div');
+    card.className = 'cloud-domain';
+    const cloud = dom.delivery === 'cloud';
+
+    const head = document.createElement('div');
+    head.className = 'cloud-domain-head';
+    if (cloud && d.isMain) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !dom.paused;
+      cb.dataset.cloudTarget = dom.hostname;
+      cb.setAttribute('aria-label', `Publish to ${dom.hostname}`);
+      head.appendChild(cb);
+    }
+    const name = document.createElement('strong');
+    name.textContent = dom.hostname;
+    head.appendChild(name);
+    const tags = [dom.main ? 'Main' : 'Copy', cloud ? 'Cloud' : 'Satellite'];
+    for (const t of tags) {
+      const b = document.createElement('span');
+      b.className = 'cloud-chip' + (t === 'Cloud' ? ' cloud-chip-on' : '');
+      b.textContent = t;
+      head.appendChild(b);
+    }
+    card.appendChild(head);
+
+    const line = document.createElement('div');
+    line.className = 'cloud-domain-line';
+    if (!cloud) {
+      line.textContent = 'Satellite: delivered as files. Use Finish Project or the package.';
+    } else if (dom.paused) {
+      line.textContent = 'Paused in the portal. The link serves nothing until it is resumed there.';
+      line.classList.add('cloud-warn');
+    } else if (dom.liveVersion == null) {
+      line.textContent = 'Nothing published yet. The tag below starts working on the first publish.';
+      line.classList.add('cloud-warn');
+    } else {
+      const changed = dom.main ? await cloudChangedSince(dom.livePublishedAt) : false;
+      line.textContent = `Live: version ${dom.liveVersion}, ${fmtStamp(dom.livePublishedAt)}${dom.livePublishedBy ? ` by ${dom.livePublishedBy}` : ''}.` +
+        (changed ? ' There are changes here that are not live yet.' : '');
+      if (changed) line.classList.add('cloud-warn');
+    }
+    card.appendChild(line);
+
+    if (cloud && dom.installUrl) {
+      const tag = `<script src="${dom.installUrl}" defer></script>`;
+      const row = document.createElement('div');
+      row.className = 'cloud-tag-row';
+      const code = document.createElement('code');
+      code.textContent = tag;
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn-outline btn-sm';
+      copy.textContent = 'Copy tag';
+      copy.title = 'Goes after the U1 library tag. Installed once.';
+      copy.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(tag);
+        copy.textContent = 'Copied';
+        setTimeout(() => { copy.textContent = 'Copy tag'; }, 1500);
+      });
+      row.append(code, copy);
+      card.appendChild(row);
+    }
+
+    if (cloud && dom.versions && dom.versions.length) {
+      const det = document.createElement('details');
+      det.className = 'cloud-history';
+      const sum = document.createElement('summary');
+      sum.textContent = `History (${dom.versions.length})`;
+      det.appendChild(sum);
+      for (const v of dom.versions) {
+        const r = document.createElement('div');
+        r.className = 'cloud-version';
+        const txt = document.createElement('span');
+        txt.textContent = `v${v.version} · ${fmtStamp(v.publishedAt)}${v.publishedBy ? ` · ${v.publishedBy}` : ''}${v.note ? ` · ${v.note}` : ''}`;
+        r.appendChild(txt);
+        if (v.version === dom.liveVersion) {
+          const live = document.createElement('span');
+          live.className = 'cloud-chip cloud-chip-on';
+          live.textContent = 'Live';
+          r.appendChild(live);
+        } else {
+          const back = document.createElement('button');
+          back.type = 'button';
+          back.className = 'btn-outline btn-sm';
+          back.textContent = 'Make live';
+          back.addEventListener('click', () => cloudSetLive(dom.hostname, v.version, back));
+          r.appendChild(back);
+        }
+        if (v.pinnedUrl) {
+          // For a client whose security team pins a fixed version with SRI.
+          const pin = document.createElement('button');
+          pin.type = 'button';
+          pin.className = 'btn-outline btn-sm';
+          pin.textContent = 'Copy pinned tag';
+          pin.title = 'This exact version, with an integrity hash. It never changes; updating means replacing the tag.';
+          pin.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(`<script src="${v.pinnedUrl}" integrity="${v.integrity}" crossorigin="anonymous" defer></script>`);
+            pin.textContent = 'Copied';
+            setTimeout(() => { pin.textContent = 'Copy pinned tag'; }, 1500);
+          });
+          r.appendChild(pin);
+        }
+        det.appendChild(r);
+      }
+      card.appendChild(det);
+    }
+    box.appendChild(card);
+  }
+}
+
+async function cloudSetLive(hostname, version, btn) {
+  const status = document.getElementById('cloudStatus');
+  if (!confirm(`Make version ${version} live on ${hostname}? Visitors get it within about five minutes.`)) return;
+  btn.disabled = true;
+  try {
+    await U1Sync.setLive(hostname, version);
+    showNotice(status, `${hostname} is back on version ${version}.`, 'success', 5000);
+    await refreshDelivery();
+  } catch (e) {
+    showNotice(status, `Could not change the live version: ${(e && e.message) || e}`, 'error', 0);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('cloudPublishBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('cloudPublishBtn');
+  const status = document.getElementById('cloudStatus');
+  const targets = [...document.querySelectorAll('#cloudDomains [data-cloud-target]')]
+    .filter((cb) => cb.checked).map((cb) => cb.dataset.cloudTarget);
+  if (!targets.length) { showNotice(status, 'Choose at least one domain to publish to.', 'error', 4000); return; }
+  if (!confirm(`Publish to ${targets.join(', ')}? Visitors get it within about five minutes.`)) return;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Building…';
+  try {
+    const { config, skipLinks, built } = await collectExportInputs();
+    if (!built.fixes && !(config && Object.keys(config).length)) {
+      showNotice(status, 'Nothing to publish yet. Map something first.', 'error', 4000);
+      return;
+    }
+    btn.textContent = 'Publishing…';
+    const r = await U1Sync.publish(currentHostname, {
+      files: {
+        config: buildConfigFileContent(config, skipLinks, 'wordpress'),
+        patch: built.patch || '',
+        fixes: built.fixes || '',
+        monitoring: built.monitoring || '',
+      },
+      note: (document.getElementById('cloudNote').value || '').trim(),
+      patchBuild: await getPatchBuildStamp(),
+      targets,
+    });
+    const done = (r && r.published) || [];
+    const paused = done.filter((p) => p.paused).map((p) => p.hostname);
+    showNotice(status,
+      `Published: ${done.map((p) => `${p.hostname} v${p.version}`).join(', ')}. Live within about five minutes.` +
+      (paused.length ? ` ${paused.join(', ')} ${paused.length === 1 ? 'is' : 'are'} paused in the portal and will not serve it until resumed.` : ''),
+      'success', 0);
+    document.getElementById('cloudNote').value = '';
+    await refreshDelivery();
+  } catch (e) {
+    showNotice(status, `Publish failed: ${(e && e.message) || e}`, 'error', 0);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
 
 // Persist a manual platform override per site.
 document.getElementById('platformSelect').addEventListener('change', async (e) => {
@@ -23102,11 +23446,25 @@ async function refreshExportFileMeta(mappingCount) {
   const touched = await U1Store.touchedAt(currentHostname);
   const [patchBuild, mf] = [await getPatchBuildStamp(), chrome.runtime.getManifest()];
   const ext = (mf.version_name || mf.version || '').trim();
-  const changed = (ts) => ts ? `last changed <b>${escapeHtml(fmtStamp(ts))}</b>` : 'not changed on this machine yet';
+  // A file that changed in the last two days is one the site most likely does
+  // not have yet — marked so it stands out, not left to be read off a date.
+  const FRESH_MS = 48 * 3600 * 1000;
+  const fresh = (ts) => ts && Date.now() - ts < FRESH_MS
+    ? ` <span class="file-fresh">changed — send again</span>` : '';
+  const changed = (ts) => ts ? `last changed <b>${escapeHtml(fmtStamp(ts))}</b>${fresh(ts)}` : 'not changed on this machine yet';
   const cfgTs = Math.max(touched.config || 0, touched.skipLinks || 0);
   meta('fixes').innerHTML = mappingCount ? changed(touched.mappings) : 'no mappings yet';
   meta('config').innerHTML = changed(cfgTs);
-  meta('patch').innerHTML = `patch build <b>${escapeHtml(patchBuild || 'unknown')}</b> · extension v${escapeHtml(ext)}`;
+  // The patch build stamp IS its date ('2026-10-04a'), so the patch gets a
+  // "last changed" like the files beside it. No time of day: the stamp has none.
+  const pm = /^(\d{4})-(\d{2})-(\d{2})/.exec(patchBuild || '');
+  const patchTs = pm ? new Date(+pm[1], +pm[2] - 1, +pm[3]).getTime() : 0;
+  const patchDay = patchTs
+    ? new Date(patchTs).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+    : '';
+  meta('patch').innerHTML = patchTs
+    ? `last changed <b>${escapeHtml(patchDay)}</b>${fresh(patchTs)} · build ${escapeHtml(patchBuild)} · extension v${escapeHtml(ext)}`
+    : `patch build <b>${escapeHtml(patchBuild || 'unknown')}</b> · extension v${escapeHtml(ext)}`;
   meta('monitoring').innerHTML = `extension v${escapeHtml(ext)}`;
   meta('monitoringDoc').innerHTML = `extension v${escapeHtml(ext)}`;
   meta('guide').innerHTML = 'built fresh on every download from the config and links above';

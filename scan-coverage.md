@@ -33,13 +33,13 @@ silently.
 | Question | Our checks | axe rules (shown in our words) |
 |---|---|---|
 | **Page title** — does the tab title say what this page is? | missing title; title that is a file name / URL / “Untitled” | document-title |
-| **Page language** — declared and valid? | missing `lang` | html-has-lang, html-lang-valid, valid-lang, html-xml-lang-mismatch |
+| **Page language** — declared, valid and right, for the page and every part; text running the right way? | missing `lang`; page declared in a language most of its text is not in; a passage in another script with no `lang` on it (English inside a Hebrew page); a right-to-left language with no `dir="rtl"` (or a left-to-right one marked rtl) | html-has-lang, html-lang-valid, valid-lang, html-xml-lang-mismatch |
 | **Heading structure** — one H1, levels in order, none empty, nothing bold pretending? | no H1; several H1; skipped level (with **Map it → H3** / **Map all N headings**); empty heading | heading-order, empty-heading, page-has-heading-one, p-as-heading |
 | **Images** — every meaningful image, icon and SVG has alt text, and is it right? | missing alt; alt that is a bare file-name token (real words pass); every alt listed for a person to **approve** — approved ones stop being findings | image-alt, input-image-alt, role-img-alt, svg-img-alt, object-alt, area-alt, server-side-image-map, image-redundant-alt |
-| **Link text** — says where it goes on its own, and warns about new tabs? | empty link; vague link (“here”, “read more” — with **Map it → name from card**); opens a new tab without saying so (**Fix all**: “(opens in a new tab)” added to the name, in the page's language) | link-name, label-content-name-mismatch |
+| **Link text** — says where it goes on its own, and warns about new tabs? | empty link; the same text on links to different pages; vague link (“here”, “read more” — with **Map it → name from card**); opens a new tab without saying so (**Fix all**: “(opens in a new tab)” added to the name, in the page's language) | link-name, label-content-name-mismatch |
 | **Button names** — every button, including icon-only and custom ones? | unnamed button | button-name, input-button-name, aria-command-name, summary-name, aria-toggle-field-name |
-| **Form fields** — labelled visibly, once, correctly; option groups named? | unlabelled field; placeholder as the only label; radio/checkbox group with no name; `<label for>` pointing at nothing | label, select-name, aria-input-field-name, form-field-multiple-labels, label-title-only, autocomplete-valid |
-| **Colour contrast** — text readable, links told apart by more than colour? | — (needs the rendered page) | color-contrast, link-in-text-block |
+| **Form fields** — labelled visibly, once, correctly; option groups named; nothing moves the page on change? | a `<select>` that navigates on change, or a field that submits on focus/blur (inline handlers only); unlabelled field; placeholder as the only label; radio/checkbox group with no name; `<label for>` pointing at nothing | label, select-name, aria-input-field-name, form-field-multiple-labels, label-title-only, autocomplete-valid |
+| **Colour contrast** — text readable, field edges visible, links told apart by more than colour? | a field whose border and fill both fall under 3:1 against what surrounds it (a **note** — a CSS change; colours from an image or a shadow are not judged) | color-contrast, link-in-text-block |
 | **Landmarks** — main, navigation, header, footer? | no main/nav at all; two or more unnamed `role="form"`/`role="region"` (a **note**, not a failure — one unnamed form is simply not a landmark; a form that is a U1 mapping is never counted) | region, landmark-one-main, landmark-no-duplicate-main/banner/contentinfo, landmark-*-is-top-level, landmark-unique |
 | **Skip link** — can the keyboard skip the menu? | no skip link at the top | bypass, skip-link |
 | **Keyboard reach and focus order** — everything reachable in order, nothing hidden-but-focusable? | positive tabindex; role with no focus; clickable div/span; focusable content inside aria-hidden | tabindex, aria-hidden-focus, focus-order-semantics, nested-interactive, scrollable-region-focusable, frame-focusable-content, accesskeys |
@@ -159,6 +159,45 @@ silently.
 | element_attribute_deprecated, applet_alt_exists, embed_noembed_exists, noembed_content_exists, frame_src_valid, img_longdesc_misuse | obsolete HTML; not seen on the sites this tool serves |
 | element_accesskey_labelled, input_haspopup_conflict, figure_label_exists | rare and low impact |
 | debug_paths, detector_tabbable | IBM's own diagnostics |
+
+---
+
+## What PowerMapper (SortSite) checks, and where it is here
+
+SortSite's WCAG 2.2 list ([powermapper.com/products/sortsite/rules/accwcag2.2](https://www.powermapper.com/products/sortsite/rules/accwcag2.2/))
+is 333 rules over 44 criteria, compared by name and description in October
+2026. About 150 of them are ARIA and HTML grammar, one rule per element pair
+("main cannot have ancestor X", "role=tab must have parent tablist"). Those
+are the rules the ARIA row dropped, and they stay dropped (`AXE_SKIP`); the
+"cannot have clickable ancestor" family is `nested-interactive`.
+
+**Added for this comparison**, in all three scanners: Studio
+(`scanPageStatic`), the CRM monitor (`monitoring.scanPage.ts`, same rules and
+words) and the Auto Checker (`catalog-checks.ts`, filed under the auditor's
+catalog item in brackets):
+
+| SortSite rule | WCAG | Ours | Catalog |
+|---|---|---|---|
+| Same link text goes to different pages | 2.4.4 | `link-same-text` | #49 |
+| Language change without lang attribute | 3.1.2 | `lang-of-parts` | #108 |
+| Page lang is invalid (declared, but the wrong language) | 3.1.1 | `lang-page-mismatch` | #107 |
+| Right-to-left language without dir / dir does not match language | 1.3.2 | `dir-missing` | #28 |
+| Control has poor contrast | 1.4.11 | `control-contrast` (note) | #67 |
+| select change event blocks keyboard navigation / Form submits on focus change | 3.2.2, 3.2.1 | `change-moves-page` | #105, #104 |
+
+**Not added, on purpose:**
+
+| SortSite rule | Why |
+|---|---|
+| CSS outline or border hides focus indicator (2.4.7) | U1's own stylesheet paints the ring on `body *:focus` with `!important`, so a site's `outline:none` is overridden on every page U1 runs on. Removed from the static scan before (verify-scan-static asserts it stays gone). |
+| PDF and Word checks (untagged, no title, no lang) | the scan reads a page, not the files it links to |
+| Document title used on multiple pages, Provide multiple ways (2.4.2, 2.4.5) | site-wide: SortSite crawls, the scan reads one page |
+| AAA rules (7:1 contrast, 44×44 targets, justified text, reading level, no headings) | beyond the AA target |
+| ASCII art, CSS `content:`, flashing images, word with spaces between letters | reading meaning out of content — too many false alarms |
+| CSS animation / animated GIF / autoplay video over 5 s | needs the page watched over time; carousels are covered |
+| mouse handlers without keyboard equivalent, JavaScript simulated link | covered by "clickable div/span" and "role with no focus"; handlers added in script need the Dynamic scan |
+| Script opens new window without warning | only `target="_blank"` is visible to a static read |
+| CSS line-height / letter-spacing / word-spacing cannot be resized (in stylesheets) | axe's avoid-inline-spacing covers inline styles; stylesheet `!important` is a CSS change U1 does not make |
 
 ---
 

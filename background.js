@@ -439,6 +439,20 @@ function staticsOf(list) {
   return on;
 }
 
+// A mapping set to apply on its own page only (panel.js: isPageScoped) must
+// not run anywhere else on the site. The exported u1-fixes.js guards it with
+// __u1Here(); this is the same rule — decoded pathname, no trailing slash, no
+// query — so what auto-apply shows while working is what the client's site
+// (and a Cloud publish) will actually run. Without it, auto-apply ran every
+// page-scoped mapping on every page of the host.
+function pagePathOfUrl(url) {
+  try { return decodeURIComponent(new URL(url).pathname).replace(/\/+$/, '') || '/'; } catch (e) { return ''; }
+}
+function forThisPage(list, url) {
+  const here = pagePathOfUrl(url);
+  return (list || []).filter((m) => !(m && typeof m === 'object' && m.scope === 'page' && m.pagePath && here && m.pagePath !== here));
+}
+
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (isSystemUrl(tab?.url)) return;
   if (!isTrustedInjectionUrl(tab.url)) {
@@ -497,7 +511,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     }
     // Arm the mappings poll as early as possible (document_start) so fix.* runs
     // the instant window.u1.fix appears — before U1's first scan when possible.
-    const earlyAll = stored[`mappings_${hostname}`] || [];
+    const earlyAll = forThisPage(stored[`mappings_${hostname}`], tab.url);
     const early = earlyAll.filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
     if (early.length) { try { await injectMappings(tabId, early); } catch {} }
     // Arm the custom keyboard-grid engine early too (idempotent — it guards itself).
@@ -515,7 +529,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     const stored = await U1Store.get([`manualInject_${hostname}`, `mappings_${hostname}`]);
 
     // Auto-apply mappings (independent of manual-inject — the site may load U1 itself).
-    const all = stored[`mappings_${hostname}`] || [];
+    const all = forThisPage(stored[`mappings_${hostname}`], tab.url);
     const mappings = all.filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
     if (mappings.length) { try { await injectMappings(tabId, mappings); } catch {} }
 
