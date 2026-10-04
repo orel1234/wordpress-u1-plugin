@@ -2923,6 +2923,32 @@ async function rememberPushedKeys(host, keys) {
   try { await U1Store.setLocalOnly({ [k]: [...have] }); } catch {}
 }
 
+/**
+ * The opposite, for rows about to be saved.
+ *
+ * "Ever pushed" never forgot a key, and a key is type::selector — the same
+ * on every machine and every day. So a mapping pushed months ago, deleted
+ * on the server since (a tombstone), and now saved here again under the
+ * same key was still "seen": if THIS push did not land, the next pull read
+ * it as "a colleague deleted it" and threw the local copy away. That is
+ * how the ten mappings copied onto molinahealthcare.com vanished on
+ * 2026-10-04 — the copy was made while the panel was frozen, the push
+ * never ran, and the first working pull cleaned them up.
+ *
+ * Forgotten BEFORE the push, remembered again only for what the server
+ * confirms: a push that fails, or never finishes, leaves the row stranded —
+ * kept, and sent again — instead of acknowledged.
+ */
+async function forgetPushedKeys(host, keys) {
+  if (!keys || !keys.length) return;
+  const k = pushedKeysStoreKey(host);
+  const have = await loadPushedKeys(host);
+  let changed = false;
+  for (const key of keys) changed = have.delete(key) || changed;
+  if (!changed) return;
+  try { await U1Store.setLocalOnly({ [k]: [...have] }); } catch {}
+}
+
 U1Store.onSiteWrite = async (keys, items) => {
   // Not signed in, or on a site nobody is assigned to: the panel still works
   // locally and this is simply not its business.
@@ -2945,6 +2971,8 @@ U1Store.onSiteWrite = async (keys, items) => {
       for (const gone of serverMappingKeys) {
         if (!live.has(gone)) rows.push({ key: gone, payload: {}, deleted: true });
       }
+      // Until the server confirms these, they are not "seen" — see forgetPushedKeys.
+      await forgetPushedKeys(currentHostname, [...live]);
       const out = await U1Sync.pushMappings(currentHostname, rows);
       serverMappingKeys = live;
       // Only what the server actually confirmed. A batch that 413'd contributes

@@ -242,7 +242,16 @@
      * is a key listing only; the fallback keeps older Chromes working.
      */
     async keys() {
-      if (typeof chrome.storage.local.getKeys === 'function') return chrome.storage.local.getKeys();
+      // Defensive: a getKeys that throws or answers with something other than
+      // an array must not take the sibling-site offers and the backup list
+      // with it — those callers swallow errors, so the symptom would be
+      // "the offer is gone" with nothing to say why.
+      try {
+        if (typeof chrome.storage.local.getKeys === 'function') {
+          const keys = await chrome.storage.local.getKeys();
+          if (Array.isArray(keys)) return keys;
+        }
+      } catch (e) { /* fall through to the full read */ }
       return Object.keys(await chrome.storage.local.get(null));
     },
 
