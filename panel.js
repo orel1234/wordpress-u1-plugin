@@ -153,12 +153,15 @@ const COMPONENT_SCHEMAS = {
   },
 
   listbox: {
-    // Primary = the listbox container (gets role="listbox"). U1 waits for the
-    // trigger, so it is the fix() first arg when provided.
+    // Primary = the listbox (gets role="listbox"), and it is ALSO the fix()
+    // first arg. It used to be the trigger ("U1 waits for the trigger"), and
+    // on a list that is born on the press (molina's Log In, 2026-10-05) U1
+    // then ran when the trigger existed, found no list, and decorated
+    // nothing. The first arg is what U1 waits FOR — the list — so the fix
+    // runs when the list appears. Owner's call (Orel, 2026-10-05).
     selectors:{listbox:'PRIMARY', trigger:'', options:'', label:''},
     fields:['trigger','options','label'],
     rootFields:{closeOnSelect:true, enterSelects:false},
-    firstArgFrom:'trigger',
     req:['listbox','trigger','options'],
     desc:{
       listbox:'Selector of the options container (the list of options).',
@@ -385,20 +388,25 @@ const COMPONENT_SCHEMAS = {
     custom:'ariaLabel',
     selectors:{target:'PRIMARY'},
     fields:[],
-    rootFields:{middleText:'', headingSelector:'', label:''},
+    // Own name first: typing the whole name is the common case ("Select your
+    // state — more information"); building it from a heading is the other.
+    rootFields:{label:'', middleText:'', headingSelector:''},
     selectorRoots:['headingSelector'], // option fields that are selectors → get 🔍
+    placeholders:{ label:'e.g. More information about choosing your state' },
     // The heading is the WHOLE point: "Read more" + "about" is still "Read
     // more". Without a heading to borrow from, this mapping has nothing to
     // add, so it is required like the target itself — in the form, in
     // validateMapping, and in the one save path.
     req:['target','headingSelector'],
     labels:{
-      target:'Button to describe (its current text is kept)',
+      target:'Element to name',
+      label:'Your own name — replaces the current one',
       middleText:'Text to add in the middle',
       headingSelector:'Heading whose text is added at the end (CSS selector)',
     },
     desc:{
-      target:'The button or link to give a better name to. Its existing text is used as the start of the new label.',
+      target:'The button, link or icon to give a better name to.',
+      label:'Typed here, this IS the accessible name, exactly as written — the element\u2019s own text and the two fields below are not used. Leave it empty to build the name from the element\u2019s text + the heading below.',
       middleText:'Plain words inserted after the button’s text. "about" is translated to the page’s lang (על, sobre, về…); anything else is used as typed. Not a selector.',
       headingSelector:'CSS selector of the heading whose text becomes the end of the name — the reason this mapping exists. Looked up in the same card as each button; a button whose card has no such heading is left as it is.',
     },
@@ -583,6 +591,19 @@ const COMPONENT_SCHEMAS = {
   // keeps it out of the type pickers — it arrives through Import and is applied
   // on the client site by urs-compat.js, the legacy-engine re-implementation.
   // config: { pattern:{…}, metadata:[…], scripts:[…], site?, texts? }.
+  // One IDE (uRemediate Studio / UFE) script, kept because it is not plain data
+  // (executeScript, descriptions, conditionals…). Arrives from the IDE
+  // converter (ide-convert.js); run by the IDE layer of urs-compat.js.
+  'ide-compat': {
+    custom:'ideCompat',
+    hidden:true,
+    selectors:{target:'PRIMARY'},
+    fields:[],
+    rootFields:{},
+    req:['target'],
+    labels:{ target:'IDE script (converted — runs through the compatibility engine)' },
+    desc:{ target:'The script runs once per page load through the IDE compatibility layer, which provides the api it was written against and forwards component calls to u1.fix.' },
+  },
   'urs-compat': {
     custom:'ursCompat',
     hidden:true,
@@ -646,7 +667,7 @@ const VALID_MAPPING_TYPES = new Set([
   'checkbox','radio','tabs','form','table','grid','pagination','loading','tooltip','heading',
   'breadcrumb','aria-label','link-list','keyboard-tabs','keyboard-grid','keyboard-clickable',
   'hide-element','focus-order',
-  'urs-compat',
+  'urs-compat','ide-compat',
 ]);
 
 // One mapping's stored shape, validated and stripped down to what is safe to
@@ -842,10 +863,32 @@ var clean = function (s) { return (s || '').replace(/\s+/g, ' ').trim().replace(
 function buildAriaLabelCode(target, middleText, headingSel, label) {
   // A name typed by a person is used as it is — "988 Suicide & Crisis Lifeline
   // website" for a link that says "here". Nothing to derive.
+  // Both forms re-run whenever the page draws new elements (a paginated
+  // list's next page, a re-render), not once at load — see injectAriaLabels.
+  // A this-page-only name stays on its page when the site changes page
+  // without a reload (__u1OnPage names it in __u1CallPage), and coming back
+  // to the page re-runs it rather than stacking a second observer.
+  const followKey = JSON.stringify([target, label || '', middleText || '', headingSel || '']);
+  const follow = (body) => `(function () {
+  var page = typeof window.__u1CallPage === 'string' ? window.__u1CallPage : null;
+  var here = function () { try { return decodeURIComponent(location.pathname).replace(/\\/+$/, '') || '/'; } catch (e) { return location.pathname; } };
+  var run = function () {
+    if (page && here() !== page) return;
+${body}
+  };
+  var reg = (window.__u1Follow = window.__u1Follow || {});
+  var key = ${JSON.stringify(followKey)} + '|' + (page || '');
+  if (reg[key]) { run(); return; }
+  reg[key] = true;
+  run();
+  var t = 0;
+  new MutationObserver(function () { clearTimeout(t); t = setTimeout(run, 150); })
+    .observe(document, { childList: true, subtree: true, characterData: true });
+})();`;
   if (label && String(label).trim()) {
-    return `document.querySelectorAll(${JSON.stringify(target)}).forEach(function (el) {
-  el.setAttribute('aria-label', ${JSON.stringify(String(label).trim())});
-});`;
+    return follow(`  document.querySelectorAll(${JSON.stringify(target)}).forEach(function (el) {
+    if (el.getAttribute('aria-label') !== ${JSON.stringify(String(label).trim())}) el.setAttribute('aria-label', ${JSON.stringify(String(label).trim())});
+  });`);
   }
   // Mirrors applyAriaLabel: the heading is taken from the nearest card that
   // holds one, and a button with no heading near it is left alone rather than
@@ -861,11 +904,86 @@ function buildAriaLabelCode(target, middleText, headingSel, label) {
   // "about" follows the page's language at run time (see ABOUT_BY_LANG) —
   // the exported site may serve the same template in several languages.
   return `${ARIA_LABEL_RUNTIME}
-document.querySelectorAll(${JSON.stringify(target)}).forEach(function (el) {
+` + follow(`document.querySelectorAll(${JSON.stringify(target)}).forEach(function (el) {
   var ownText = clean(el.textContent);
 ${headBlock}  var parts = [ownText, aboutFor(el, ${JSON.stringify(middleText.trim())}), headingText].filter(Boolean);
-  el.setAttribute('aria-label', parts.join(' '));
-});`;
+  var want = parts.join(' ');
+  if (el.getAttribute('aria-label') !== want) el.setAttribute('aria-label', want);
+});`);
+}
+
+// ── Accessible names in the exported file, written once ───────────────────────
+//
+// buildAriaLabelCode above is self-contained — right for a single mapping on
+// its own. In u1-fixes.js it meant the 22-language table, the helpers and a
+// MutationObserver were repeated for EVERY name: ten names, ten copies and ten
+// observers on the whole document (molinahealthcare.com, 2026-10-11). The
+// export writes this runtime once instead, with one shared observer, and each
+// name is one readable line the site's developer can edit:
+//
+//   __u1Name({ target: ".card>a", middle: "about", heading: ".card>h3" });
+//   __u1Name({ target: ".chat-btn", label: "Open live chat" });
+//
+// Same behaviour as the per-mapping form: the derived name is own text + the
+// middle word in the page's language + the nearest heading, a target with no
+// heading near it is left alone, a this-page-only name runs on its page only,
+// and every name re-applies when the page draws new elements.
+const ARIA_NAME_RUNTIME = String.raw`function __u1Name(s) {
+  var w = window, N = w.__u1Names;
+  if (!N) {
+    var ABOUT = { en: 'about', he: 'על', ar: 'حول', vi: 'về', es: 'sobre', fr: 'sur', pt: 'sobre', ru: 'о', zh: '关于', ko: '관련', ja: 'について', hmn: 'txog', tl: 'tungkol sa', de: 'über', it: 'su', pl: 'o', uk: 'про', fa: 'درباره', hi: 'के बारे में', so: 'ku saabsan', am: 'ስለ', tr: 'hakkında' };
+    var clean = function (t) { return (t || '').replace(/\s+/g, ' ').trim().replace(/[.。:：…]+$/, ''); };
+    var about = function (el, middle) {
+      if ((middle || '').trim().toLowerCase() !== 'about') return (middle || '').trim();
+      var n = el, lang = '';
+      while (n && n !== document && !lang) { lang = (n.getAttribute && n.getAttribute('lang')) || ''; n = n.parentNode; }
+      lang = (lang || document.documentElement.lang || 'en').toLowerCase();
+      return ABOUT[lang] || ABOUT[lang.split('-')[0]] || 'about';
+    };
+    var here = function () { try { return decodeURIComponent(location.pathname).replace(/\/+$/, '') || '/'; } catch (e) { return location.pathname; } };
+    N = w.__u1Names = { seen: {}, runs: [], t: 0 };
+    N.apply = function (s) {
+      document.querySelectorAll(s.target).forEach(function (el) {
+        var want = s.label;
+        if (!want) {
+          var heading = '';
+          if (s.heading) {
+            var h = null, node = el.parentElement;
+            while (node && node !== document.body) { h = node.querySelector(s.heading); if (h) break; node = node.parentElement; }
+            heading = h ? clean(h.textContent) : '';
+            if (!heading) return;
+          }
+          want = [clean(el.textContent), about(el, s.middle), heading].filter(Boolean).join(' ');
+        }
+        if (el.getAttribute('aria-label') !== want) el.setAttribute('aria-label', want);
+      });
+    };
+    N.here = here;
+    new MutationObserver(function () {
+      clearTimeout(N.t);
+      N.t = setTimeout(function () { N.runs.forEach(function (r) { try { r(); } catch (e) {} }); }, 150);
+    }).observe(document, { childList: true, subtree: true, characterData: true });
+  }
+  var page = typeof w.__u1CallPage === 'string' ? w.__u1CallPage : null;
+  var run = function () { if (!page || N.here() === page) N.apply(s); };
+  var key = JSON.stringify([s.target, s.label || '', s.middle || '', s.heading || '']) + '|' + (page || '');
+  if (!N.seen[key]) { N.seen[key] = true; N.runs.push(run); }
+  run();
+}`;
+
+// One name as the exported file states it — see ARIA_NAME_RUNTIME.
+function ariaNameCall(m) {
+  const sel = (m.config && m.config.selectors) || {};
+  const label = String((m.config && m.config.label) || '').trim();
+  const spec = { target: m.primary };
+  if (label) spec.label = label;
+  else {
+    const middle = String(sel.middleText || (m.config && m.config.middleText) || '').trim();
+    const heading = String(sel.headingSelector || (m.config && m.config.headingSelector) || '').trim();
+    if (middle) spec.middle = middle;
+    if (heading) spec.heading = heading;
+  }
+  return `__u1Name(${formatJsObject(spec)});`;
 }
 
 // One place that answers "did the user name a target?", used before `activates`
@@ -1171,6 +1289,7 @@ async function applyConfig(config) {
         // engine's setConfiguration cannot replace; it runs on mutations, and
         // a config write is not one, so it is woken.
         window.__u1SkipLinks = Array.isArray(cfg.skipLinks) ? cfg.skipLinks : [];
+        window.__u1SkipLinksEngine = cfg.skipLinksEngine || '';
         try { if (window.__u1Patch && window.__u1Patch.renderSkipLinks) window.__u1Patch.renderSkipLinks(); } catch (e) {}
         try { if (window.__u1Patch && window.__u1Patch.schedule) setTimeout(window.__u1Patch.schedule, 0); } catch (e) {}
 
@@ -1338,7 +1457,32 @@ async function applyUrsCompatAll(list) {
   }
 }
 
+async function applyIdeCompat(m) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { ok: false, err: 'Cannot run on this page.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['urs-compat.js'] });
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: (mm) => { if (!window.__u1IdeApplyOne) return { ok: false, err: 'urs-compat.js not loaded' }; window.__u1IdeRegister(mm); return window.__u1IdeApplyOne(mm); },
+      args: [{ id: m.id, config: m.config }],
+    });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) { return { ok: false, err: err.message }; }
+}
+async function applyIdeCompatAll(list) {
+  const tab = await getTab();
+  const items = (list || []).filter((m) => m && m.custom === 'ideCompat').map((m) => ({ id: m.id, config: m.config }));
+  if (!items.length || !isInjectable(tab)) return { ok: false, err: 'Nothing to apply.' };
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['urs-compat.js'] });
+    const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: (its) => { its.forEach((i) => window.__u1IdeRegister(i)); return window.__u1IdeApply(); }, args: [items] });
+    return res?.[0]?.result || { ok: false, err: 'No result' };
+  } catch (err) { return { ok: false, err: err.message }; }
+}
+
 async function applyOne(type, primary, config, custom, owner) {
+  if (custom === 'ideCompat') return applyIdeCompat(owner || { id: '', config });
   if (custom === 'ursCompat') return applyUrsCompat(primary, config);
   if (custom === 'hideElement') return applyHideElement(primary);
   if (custom === 'focusOrder') return applyFocusOrder(primary, config);
@@ -1938,6 +2082,9 @@ async function applyMappingsBatch(items, forTab) {
             }
             const rebuiltAfterU1 = preStamped && fieldEls > 0 && fieldElsTouched === 0;
 
+            // Remembered before the strip below: a role on an element U1 had
+            // marked is U1's own work, whatever the marker is lifted for.
+            const markedBefore = target.hasAttribute('u1st-avoid-change-detection');
             if (siteAuthoredOptOut || rebuiltAfterU1) {
               target.removeAttribute('u1st-avoid-change-detection');
             }
@@ -2043,6 +2190,7 @@ async function applyMappingsBatch(items, forTab) {
               // U1's own fingerprints mean the role is ours, and asking about
               // our own work is noise people learn to click through.
               if (el.hasAttribute('u1st-avoid-change-detection') ||
+                  (el === target && markedBefore) ||
                   el.hasAttribute('data-u1-revert') ||
                   el.hasAttribute('u1st-trigger-element')) return;
               roleClash = { sel: it.primary || sel, role: have, willWrite: want };
@@ -2544,6 +2692,10 @@ function mappingToCode(m) {
     return `/* Accessible grid/datepicker — uses the engine included above. */\n` +
            `window.__u1InstallGridFromMapping(${JSON.stringify(m.primary)}, ${formatJsObject(m.config)});`;
   }
+  if (m.custom === 'ideCompat') {
+    return `/* IDE script — run by the compatibility engine included above. */\n` +
+           `window.__u1IdeRegister(${formatJsObject({ id: m.id || '', config: m.config || {} })});`;
+  }
   if (m.custom === 'ursCompat') {
     // The whole URS pattern, registered with the compatibility engine included
     // above. Applied by __u1UrsApply() once every pattern is registered, because
@@ -2585,7 +2737,10 @@ function mappingToCode(m) {
            `window.__u1Statics[${JSON.stringify(m.primary)}] = ${formatJsObject(opts)};`;
   }
   if (m.custom === 'ariaLabel') {
-    return buildAriaLabelCode(m.primary, sel.middleText || (m.config && m.config.middleText) || '', sel.headingSelector || (m.config && m.config.headingSelector) || '');
+    // The typed name too — it was dropped here, so a mapping saved as
+    // "More information about choosing your state" shipped to the client as
+    // "<own text> about <heading>" with no heading: nothing at all.
+    return buildAriaLabelCode(m.primary, sel.middleText || (m.config && m.config.middleText) || '', sel.headingSelector || (m.config && m.config.headingSelector) || '', (m.config && m.config.label) || '');
   }
   if (m.type && m.primary && m.config) {
     // The site wrote a role here and it was decided, explicitly, to replace it.
@@ -3264,6 +3419,104 @@ async function pushImportedSites(data, statusEl) {
   return out;
 }
 
+// ── Scan → Pages: the site's inventory ──────────────────────────────────────
+// One row per page that matters: what covers it (mappings captured on it,
+// limited to it, and the site-wide ones that apply everywhere) and a sign-off
+// with its date once somebody has been over it with a screen reader.
+function pagePathKey(u) {
+  try { const x = new URL(u, 'https://' + (currentHostname || 'x')); return (x.pathname.replace(/\/+$/, '') || '/') + (x.search || ''); }
+  catch { return String(u || '').trim(); }
+}
+async function readPages() {
+  const key = storageKey('pages', currentHostname);
+  if (!key) return [];
+  const got = await U1Store.get([key]);
+  return Array.isArray(got[key]) ? got[key] : [];
+}
+async function writePages(list) {
+  const key = storageKey('pages', currentHostname);
+  if (key) await U1Store.set({ [key]: list });
+}
+async function addPages(urls) {
+  const list = await readPages();
+  const have = new Set(list.map((p) => p.path));
+  let added = 0;
+  for (const raw of urls) {
+    const t = String(raw || '').trim();
+    if (!t) continue;
+    let path;
+    try {
+      const x = new URL(t, 'https://' + (currentHostname || 'x'));
+      // Another site's page is not this site's inventory.
+      if (/^https?:/i.test(t) && x.hostname.replace(/^www\./, '') !== String(currentHostname || '').replace(/^www\./, '')) continue;
+      path = pagePathKey(x.href);
+    } catch { continue; }
+    if (have.has(path)) continue;
+    have.add(path);
+    list.push({ path, addedAt: Date.now() });
+    added++;
+  }
+  await writePages(list);
+  return added;
+}
+async function loadPagesList() {
+  const box = document.getElementById('pagesList'), sum = document.getElementById('pagesSummary'), n = document.getElementById('pagesCount');
+  if (!box) return;
+  const [pages, mappings] = await Promise.all([readPages(), (async () => {
+    const k = storageKey('mappings', currentHostname); if (!k) return [];
+    const g = await U1Store.get([k]); return Array.isArray(g[k]) ? g[k] : [];
+  })()]);
+  const siteWide = mappings.filter((m) => m && typeof m === 'object' && !isPageScoped(m));
+  const ok = pages.filter((p) => p.approvedAt).length;
+  if (n) n.textContent = pages.length ? String(pages.length) : '';
+  if (sum) sum.innerHTML = pages.length
+    ? `<strong>${pages.length}</strong> page${pages.length === 1 ? '' : 's'} · <strong>${ok}</strong> signed off · <strong>${siteWide.length}</strong> site-wide mapping${siteWide.length === 1 ? '' : 's'} apply on every page`
+    : 'No pages yet — paste the site\u2019s URLs above.';
+  box.innerHTML = pages.map((p, i) => {
+    const here = mappings.filter((m) => m && m.pageUrl && pagePathKey(m.pageUrl) === p.path);
+    const limited = mappings.filter((m) => isPageScoped(m) && pagePathKey(m.pagePath) === p.path);
+    const types = {};
+    here.forEach((m) => { const t = m.type || m.custom || '?'; types[t] = (types[t] || 0) + 1; });
+    const typesTxt = Object.entries(types).map(([t, c]) => `${c} ${t}`).join(', ');
+    const when = p.approvedAt ? new Date(p.approvedAt).toLocaleDateString() : '';
+    return `<div class="pages-row${p.approvedAt ? ' is-ok' : ''}" data-i="${i}">
+      <span class="pages-path" data-open="${escapeHtml(p.path)}" title="Open this page in the tab">${escapeHtml(p.path)}</span>
+      <span class="pages-actions">
+        <button type="button" class="pages-ok" data-ok="${i}" aria-pressed="${p.approvedAt ? 'true' : 'false'}" title="${p.approvedAt ? 'Signed off ' + escapeHtml(when) + ' — click to undo' : 'Mark this page as accessible'}">${p.approvedAt ? '✓ accessible · ' + escapeHtml(when) : '○ sign off'}</button>
+        <button type="button" class="btn-ghost btn-xs" data-remove="${i}" title="Remove from the inventory">✕</button>
+      </span>
+      <span class="pages-meta">
+        <span class="mh-flag${here.length ? ' on' : ''}">${here.length} captured here${typesTxt ? ': ' + escapeHtml(typesTxt) : ''}</span>
+        ${limited.length ? `<span class="mh-flag on">${limited.length} this page only</span>` : ''}
+        <span class="mh-flag">+ ${siteWide.length} site-wide</span>
+      </span>
+    </div>`;
+  }).join('');
+}
+document.getElementById('pagesAddBtn')?.addEventListener('click', async () => {
+  const ta = document.getElementById('pagesInput');
+  const added = await addPages((ta?.value || '').split(/\r?\n/));
+  if (ta) ta.value = '';
+  showNotice(document.getElementById('scanStatus') || document.getElementById('applyStatus'), added ? `${added} page${added === 1 ? '' : 's'} added.` : 'Nothing new to add (empty, already listed, or another site).', added ? 'success' : 'warn', 4000);
+  loadPagesList();
+});
+document.getElementById('pagesAddHereBtn')?.addEventListener('click', async () => {
+  const tab = await getTab();
+  const added = tab && tab.url ? await addPages([tab.url]) : 0;
+  showNotice(document.getElementById('scanStatus') || document.getElementById('applyStatus'), added ? 'This page is in the inventory.' : 'This page is already listed.', added ? 'success' : 'warn', 3000);
+  loadPagesList();
+});
+document.getElementById('pagesList')?.addEventListener('click', async (e) => {
+  const okBtn = e.target.closest('[data-ok]'), rm = e.target.closest('[data-remove]'), open = e.target.closest('[data-open]');
+  const list = await readPages();
+  if (okBtn) { const p = list[+okBtn.dataset.ok]; if (p) { p.approvedAt = p.approvedAt ? 0 : Date.now(); await writePages(list); loadPagesList(); } return; }
+  if (rm) { list.splice(+rm.dataset.remove, 1); await writePages(list); loadPagesList(); return; }
+  if (open) {
+    const tab = await getTab();
+    if (tab) chrome.tabs.update(tab.id, { url: 'https://' + currentHostname + open.dataset.open });
+  }
+});
+
 /** This machine's config, skip links and library URLs, on their way up. */
 async function pushLocalSettings() {
   const names = ['config', 'skipLinks', 'u1Links', 'dismissed', 'declined'];
@@ -3908,7 +4161,7 @@ async function refreshUrsSection(tab) {
   if (btn) btn.textContent = converted.length ? 'Convert again from URS' : 'Convert from URS';
 }
 
-async function runUrsConversion() {
+async function runUrsConversion(opts = {}) {
   const notice = document.getElementById('ursNotice');
   const btn = document.getElementById('ursConvertBtn');
   const wl = document.getElementById('ursWorklistBtn');
@@ -3974,8 +4227,10 @@ async function runUrsConversion() {
       `Converted ${t.patterns} patterns: ${t.fixes} fixes, ${t.scripts} scripts, ${t.siteScripts} site scripts, ${t.texts} texts (${t.languages.join(', ') || 'no languages found'}), ${t.skipLinks} skip link${t.skipLinks === 1 ? '' : 's'}.` +
       ` They are in Mappings under “All”.${onPage}${warn}`, 'success', 20000);
     if (wl) wl.style.display = '';
+    return { source: 'URS', count: t.patterns };
   } catch (err) {
     showNotice(notice, 'Conversion failed: ' + (err && err.message ? err.message : String(err)), 'error', 15000);
+    if (opts.auto) throw err;
   } finally {
     if (lifted) { try { await chrome.declarativeNetRequest.updateEnabledRulesets({ enableRulesetIds: [RULESET] }); } catch {} }
     btn.disabled = false;
@@ -3991,6 +4246,223 @@ document.getElementById('ursWorklistBtn')?.addEventListener('click', () => {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 });
+
+// ── Other accessibility on the page → mappings, on arrival ───────────────────
+// Open the panel on any page that carries the URS snippet, the old u1
+// attribute markers, or published IDE work, and that work is already in the
+// mappings list. Each source is imported on its own the FIRST time only — a
+// site whose converted cards exist (or were imported once and then deleted by
+// hand) is left alone, so nothing a specialist edited is overwritten; the
+// Setup sections keep their "Convert again" buttons for a deliberate refresh.
+// Imports run one after another: two writing the same mappings list at once
+// would lose rows.
+let legacyRun = Promise.resolve();
+async function refreshLegacySources(tab) {
+  const host = currentHostname;
+  const [, , ] = await Promise.all([
+    refreshUrsSection(tab).catch(() => {}),
+    refreshMarkersSection(tab).catch(() => {}),
+    refreshIdeSection().catch(() => {}),
+  ]);
+  if (host !== currentHostname) return; // the tab moved on
+  legacyRun = legacyRun.then(() => autoImportLegacy(host, tab)).catch((e) => console.warn('[U1 Studio] legacy import:', e));
+  return legacyRun;
+}
+async function autoImportLegacy(host, tab) {
+  if (host !== currentHostname || !host || host === 'unknown') return;
+  const markKey = '__legacyImported_' + host;
+  const done = (await U1Store.get([markKey]))[markKey] || {};
+  const key = storageKey('mappings', host);
+  const rows = ((await U1Store.get([key]))[key] || []).filter((m) => m && typeof m === 'object');
+  const has = (pred) => rows.some(pred);
+  const results = [];
+  const run = async (name, fn) => { try { const r = await fn(); if (r) results.push(r); } catch (e) { results.push({ source: name, error: e && e.message ? e.message : String(e) }); } };
+  if (ursDetected && !done.urs && !has((m) => m.custom === 'ursCompat')) {
+    await run('URS', () => runUrsConversion({ auto: true }));
+    done.urs = Date.now();
+  }
+  if (document.getElementById('ideSection')?.style.display !== 'none' && !done.ide && !has((m) => m.source === 'ide')) {
+    await run('IDE', () => runIdeConversion({ auto: true }));
+    done.ide = Date.now();
+  }
+  if (markersScan && markersScan.mappings.length) {
+    let r = null;
+    await run('u1 markers', async () => (r = await runMarkersConversion({ auto: true, scan: markersScan, imported: done.markers || [] })));
+    if (r && r.keys) done.markers = (done.markers || []).concat(r.keys);
+  }
+  if (!results.length) return;
+  try { await U1Store.setLocalOnly({ [markKey]: done }); } catch {}
+  // The site's Config, from the site — once, only when it has none yet.
+  let cfgMade = null;
+  try { if (results.some((r) => !r.error)) cfgMade = await configFromSite(host, tab); } catch (e) { console.warn('[U1 Studio] config from site:', e); }
+  // Show them: the Picker tab, Mappings pane, with a line saying what came from where.
+  const ok = results.filter((r) => !r.error), bad = results.filter((r) => r.error);
+  try { document.querySelector('.tab-btn[data-tab="picker"]')?.click(); setPickerPane('mappings'); } catch {}
+  const status = document.getElementById('mappingsStatus');
+  if (status) showNotice(status,
+    (ok.length ? 'Imported from this site\'s existing accessibility: ' + ok.map((r) => `${r.source} (${r.count})`).join(', ') + '.' : '') +
+    (cfgMade ? ` Config set from this site (${cfgMade.language}, ${cfgMade.direction.toUpperCase()}, focus ${cfgMade.visualFocus.style.color}/${cfgMade.visualFocus.style.secondaryColor}).` : '') +
+    (bad.length ? ' Could not import ' + bad.map((r) => `${r.source}: ${r.error}`).join('; ') + '.' : ''),
+    bad.length ? 'warn' : 'success', 15000);
+}
+
+// A converted site gets a Config of its own instead of the form's defaults:
+// language and direction from the page, the focus-ring colours from the u1
+// configuration the site already runs (window.u1.config / u1stConfiguration),
+// skip links from what the import stored. Never over a Config a person saved.
+async function configFromSite(host, siteTab) {
+  const cfgKey = storageKey('config', host), skipKey = storageKey('skipLinks', host);
+  const got = await U1Store.get([cfgKey, skipKey]);
+  if (got[cfgKey]) return false;
+  const tab = isInjectable(siteTab) ? siteTab : await getTab();
+  if (!isInjectable(tab)) return false;
+  let site = null;
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: () => {
+        const h = document.documentElement;
+        const dir = (h.getAttribute('dir') || document.body?.getAttribute('dir') || getComputedStyle(h).direction || '').toLowerCase();
+        const lang = (h.getAttribute('lang') || (window.u1 && window.u1.lang) || '').slice(0, 2).toLowerCase();
+        const hex = (c) => {
+          if (!c) return '';
+          const e = document.createElement('i'); e.style.color = c; if (!e.style.color) return '';
+          document.body.appendChild(e); const m = /(\d+),\s*(\d+),\s*(\d+)/.exec(getComputedStyle(e).color); e.remove();
+          return m ? '#' + m.slice(1, 4).map((n) => (+n).toString(16).padStart(2, '0')).join('').toUpperCase() : '';
+        };
+        const pick = (o) => o && o.visualFocus && o.visualFocus.style ? o.visualFocus.style : null;
+        let vf = pick(window.u1 && window.u1.config) || pick(window.u1stConfiguration) || null;
+        // A site that sets no readable config still shows its ring: the engine
+        // paints it as variables on <body> at the first Tab press.
+        const bs = document.body ? document.body.style : null;
+        if (!vf && bs && bs.getPropertyValue('--outline-color')) vf = { color: bs.getPropertyValue('--outline-color').trim(), secondaryColor: bs.getPropertyValue('--secondary-outline-color').trim(), doubleBorder: !!bs.getPropertyValue('--outer-border') };
+        // u1 on the page, nothing drawn yet: the engine's own defaults.
+        if (!vf && window.u1 && window.u1.fix) vf = { color: 'black', secondaryColor: 'white', doubleBorder: false };
+        return { lang, dir: dir === 'rtl' || /^(he|ar|fa|ur)$/.test(lang) ? 'rtl' : 'ltr', vf: vf ? { color: hex(vf.color), secondaryColor: hex(vf.secondaryColor), doubleBorder: !!vf.doubleBorder } : null };
+      },
+    });
+    site = res && res[0] && res[0].result;
+  } catch {}
+  if (!site) return false;
+  const langOk = site.lang && [...$langSelect.options].some((o) => o.value === site.lang);
+  const cfg = {
+    visualFocus: { style: {
+      color: (site.vf && site.vf.color) || $primaryColorHex.value.trim() || '#FFFFFF',
+      secondaryColor: (site.vf && site.vf.secondaryColor) || $secondaryColorHex.value.trim() || '#000000',
+      doubleBorder: site.vf ? !!site.vf.doubleBorder : !!$doubleBorder.checked,
+    } },
+    skipLinks: got[skipKey] || [],
+    language: langOk ? site.lang : ($langSelect.value || 'en'),
+    direction: site.dir,
+  };
+  await U1Store.set({ [cfgKey]: cfg });
+  if (host === currentHostname) { try { await loadConfigForm(); updateConfigPreview(); } catch {} }
+  return cfg;
+}
+
+// ── IDE (uRemediate Studio / UFE) ────────────────────────────────────────────
+const ideFetchText = async (url) => { const r = await fetch(url, { credentials: 'omit' }); return { status: r.status, text: await r.text() }; };
+async function refreshIdeSection() {
+  const sec = document.getElementById('ideSection');
+  if (!sec || typeof U1Ide === 'undefined' || !currentHostname) return;
+  const host = currentHostname;
+  const ok = await U1Ide.probe(ideFetchText, host) || await U1Ide.probe(ideFetchText, 'www.' + host);
+  if (host !== currentHostname) return; // the tab moved on while we asked
+  sec.style.display = ok ? '' : 'none';
+  if (!ok) return;
+  const key = storageKey('mappings', host);
+  const done = ((await U1Store.get([key]))[key] || []).filter((m) => m && m.source === 'ide');
+  const row = document.getElementById('ideExistingRow');
+  if (row) { row.style.display = done.length ? '' : 'none'; document.getElementById('ideExisting').textContent = `${done.filter((m) => !m.custom).length} native, ${done.filter((m) => m.custom === 'ideCompat').length} script cards`; }
+  const btn = document.getElementById('ideConvertBtn'); if (btn) btn.textContent = done.length ? 'Convert again from IDE' : 'Convert from IDE';
+}
+async function runIdeConversion(opts = {}) {
+  const notice = document.getElementById('ideNotice');
+  const btn = document.getElementById('ideConvertBtn');
+  const say = (t) => { notice.style.display = ''; notice.className = 'notice'; notice.textContent = t; };
+  btn.disabled = true;
+  try {
+    const host = currentHostname;
+    const site = await U1Ide.fetchSite({ domain: host, fetchText: ideFetchText, onProgress: say });
+    say('Converting…');
+    const key = storageKey('mappings', host);
+    const have = ((await U1Store.get([key]))[key] || []).filter((m) => m && typeof m === 'object' && m.source !== 'ide');
+    const result = U1Ide.convert({ acorn: window.acorn, bundle: site.bundle, localization: site.localization, langScript: site.langScript, host, firstFixNo: nextFixNo(have) });
+    await U1Store.set({ [key]: have.concat(result.mappings) });
+    await loadMappingsList();
+    await refreshExportInfo();
+    await refreshIdeSection();
+    say('Applying on this page…');
+    const applied = await applyAllMappings({ silent: true }).catch(() => null);
+    const t = result.totals, dropped = (result.worklist.dropped || []).length;
+    showNotice(notice,
+      `Converted ${t.handlers} IDE scripts: ${t.native} native mappings and ${t.compat} script cards (compatibility engine).` +
+      (dropped ? ` ${dropped} call${dropped === 1 ? '' : 's'} had fields with no u1 equivalent — see each card's note.` : '') +
+      (applied && applied.applied ? ' Applied on this page, and on every page of this site from here on.' : ''),
+      'success', 20000);
+    return { source: 'IDE', count: t.native + t.compat };
+  } catch (err) {
+    showNotice(notice, 'IDE conversion failed: ' + (err && err.message ? err.message : String(err)), 'error', 15000);
+    if (opts.auto) throw err;
+  } finally { btn.disabled = false; }
+}
+document.getElementById('ideConvertBtn')?.addEventListener('click', () => { runIdeConversion(); });
+
+// ── u1 markers (old attribute technique) ─────────────────────────────────────
+let markersScan = null;
+async function scanMarkers(tab) {
+  if (!isInjectable(tab) || typeof U1Markers === 'undefined') return null;
+  try {
+    const res = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: U1Markers.scanInPage });
+    return (res && res[0] && res[0].result) || null;
+  } catch { return null; }
+}
+async function refreshMarkersSection(tab) {
+  const sec = document.getElementById('markersSection');
+  if (!sec) return;
+  markersScan = await scanMarkers(tab);
+  if (!markersScan || !markersScan.mappings.length) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  const counts = {};
+  markersScan.mappings.forEach((m) => { counts[m.type] = (counts[m.type] || 0) + 1; });
+  const found = document.getElementById('markersFound');
+  if (found) found.textContent = Object.entries(counts).map(([t, n]) => (n > 1 ? `${n} × ` : '') + t).join(', ');
+}
+async function runMarkersConversion(opts = {}) {
+  const notice = document.getElementById('markersNotice');
+  const tab = await getTab();
+  const scan = opts.scan || await scanMarkers(tab);
+  if (!scan || !scan.mappings.length) { if (!opts.auto) showNotice(notice, 'No u1 markers on this page.', 'error', 6000); return null; }
+  const key = storageKey('mappings', currentHostname);
+  const have = ((await U1Store.get([key]))[key] || []).filter((m) => m && typeof m === 'object');
+  let fresh = U1Markers.toStudioMappings(scan, { firstFixNo: nextFixNo(have), title: tab && tab.title });
+  if (opts.auto) {
+    // automatic: only components this site has not mapped yet, and never one
+    // that was imported before and then deleted by hand
+    const haveKeys = new Set(have.map(mappingKey));
+    const done = new Set(opts.imported || []);
+    fresh = fresh.filter((m) => !haveKeys.has(mappingKey(m)) && !done.has(mappingKey(m)));
+    if (!fresh.length) return null;
+    let n = nextFixNo(have); fresh.forEach((m) => { m.fixNo = n++; });
+  }
+  // Re-running replaces a mapping with the same identity instead of doubling it.
+  const freshKeys = new Set(fresh.map(mappingKey));
+  const kept = have.filter((m) => !freshKeys.has(mappingKey(m)));
+  const replaced = have.length - kept.length;
+  await U1Store.set({ [key]: kept.concat(fresh) });
+  await loadMappingsList();
+  await refreshExportInfo();
+  const applied = await applyAllMappings({ silent: true }).catch(() => null);
+  const notes = scan.notes || [];
+  showNotice(notice,
+    `Converted ${fresh.length} component${fresh.length === 1 ? '' : 's'} from ${scan.markedElements} marked elements` +
+    (replaced ? ` (${replaced} replaced from an earlier run)` : '') + '.' +
+    (applied && applied.applied ? ` Applied on this page.` : '') +
+    (notes.length ? ` Not convertible: ${notes.map((n) => n.reason.split(' —')[0]).join('; ')}.` : ''),
+    notes.length ? 'warn' : 'success', 20000);
+  return { source: 'u1 markers', count: fresh.length, keys: fresh.map(mappingKey) };
+}
+document.getElementById('markersConvertBtn')?.addEventListener('click', () => { runMarkersConversion(); });
 
 async function refreshSetupTab(tab) {
   // Load saved global links
@@ -4012,8 +4484,10 @@ async function refreshSetupTab(tab) {
   if (cssLink) document.getElementById('cssLink').value = cssLink;
   if (jsLink)  document.getElementById('jsLink').value  = jsLink;
 
-  // Detect the legacy URS snippet on the page (section stays hidden otherwise)
-  refreshUrsSection(tab).catch(() => {});
+  // Other accessibility already on this page — the URS snippet, the old u1
+  // attribute markers, published IDE work — is detected, and imported as
+  // mappings on its own the first time (see refreshLegacySources).
+  refreshLegacySources(tab).catch((e) => console.warn('[U1 Studio] legacy import:', e));
 
   // Detect U1 on page
   const detected = await detectU1(tab);
@@ -4192,6 +4666,12 @@ async function detectSiteType(tab) {
         if (document.querySelector('[ng-version]') || window.ng || window.getAllAngularRootElements) {
           return 'angular';
         }
+        // Next.js is React: its root is #__next (Pages Router) or none at all
+        // (App Router) — molinahealthcare.com was offered "HTML / JavaScript".
+        if (document.querySelector('#__next') || window.__NEXT_DATA__ || window.next ||
+            document.querySelector('script[src*="/_next/"]')) {
+          return 'react';
+        }
         const root = document.getElementById('root') || document.querySelector('[data-reactroot]');
         const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
         if (window.React ||
@@ -4319,7 +4799,7 @@ async function refreshSkipEngineNote() {
   skipEngineKinds = new Set(engine.map((l) => l.kind).filter(Boolean));
   const left = SKIP_KINDS.filter((k) => !skipEngineKinds.has(k)).map((k) => SKIP_KIND_NAME[k]);
   box.innerHTML = engine.length
-    ? `<div class="map-mode-hint">U1 already adds these on this page by itself — one for every nav, main and footer landmark. You do not need rows for them:</div>` +
+    ? `<div class="map-mode-hint">U1 already adds these on this page by itself — one for every nav, main and footer landmark. To change one's wording, add a row of the same kind (footer / navigation / main content) with your own words — the engine's link takes them instead of a second link appearing:</div>` +
       '<ul class="detected-list">' + engine.map((l) => `
         <li>
           <span class="bullet">•</span>
@@ -4363,7 +4843,11 @@ function createSkipRow(label = '', target = '', kind = '') {
         ${SKIP_KINDS.map((k) => `<option value="${k}"${k === chosen ? ' selected' : ''}>${SKIP_KIND_NAME[k]}${skipEngineKinds.has(k) ? ' — U1 adds this already' : ''}</option>`).join('')}
         ${keepOwn ? `<option value="" selected>Keep “${escapeHtml(label)}”</option>` : ''}
       </select>
-      <input type="hidden" class="skip-label">
+    </div>
+    <div class="field-group">
+      <label>Link text <span class="muted">(optional — your own wording)</span></label>
+      <input type="text" class="skip-label" placeholder="">
+      <div class="field-hint">Leave empty for the standard wording. “Skip to” is added if you leave it out.</div>
     </div>
     <div class="field-group">
       <label>Target</label>
@@ -4372,9 +4856,14 @@ function createSkipRow(label = '', target = '', kind = '') {
     </div>
   `;
   const sel = row.querySelector('.skip-kind');
-  const syncLabel = () => { row.querySelector('.skip-label').value = sel.value ? skipKindLabel(sel.value) : label; };
+  const labelBox = row.querySelector('.skip-label');
+  // The placeholder shows the standard wording for the kind; the box holds
+  // the owner's own words when they differ from it (a saved custom label,
+  // or one typed now). Owner's ask, 2026-10-05: free text per row.
+  const syncLabel = () => { labelBox.placeholder = sel.value ? skipKindLabel(sel.value) : ''; };
   sel.addEventListener('change', syncLabel);
   syncLabel();
+  if (label && (!chosen || label !== skipKindLabel(chosen))) labelBox.value = label;
   row.querySelector('.skip-target').value = target;
   row.querySelector('.skip-remove-btn').addEventListener('click', () => {
     row.remove();
@@ -4822,7 +5311,8 @@ document.getElementById('saveSkipBtn').addEventListener('click', async () => {
     // The kind decides the words, in the language Config is set to NOW — a
     // row saved while Config said English follows it to Hebrew on re-save.
     const kind   = row.querySelector('.skip-kind')?.value || '';
-    const label  = (kind ? skipKindLabel(kind) : row.querySelector('.skip-label').value).trim();
+    const own    = (row.querySelector('.skip-label')?.value || '').trim();
+    const label  = own || (kind ? skipKindLabel(kind) : '');
     const target = row.querySelector('.skip-target').value.trim();
     const hintEl = row.querySelector('.skip-hint');
     if (hintEl) { hintEl.textContent = ''; hintEl.className = 'field-hint'; }
@@ -5032,6 +5522,11 @@ document.querySelectorAll('input[name="direction"]').forEach(r =>
 );
 
 // Persist the auto-apply preference per hostname; apply immediately when enabled.
+// The engine's own skip links, on or off: saved into config_<host> (so the
+// per-load injection and the export carry it) and applied the way every
+// other config control is.
+document.getElementById('hideEngineSkip')?.addEventListener('change', () => { onConfigChange(); });
+
 $autoApplyConfig.addEventListener('change', async () => {
   await U1Store.set({
     [storageKey('autoApply', currentHostname)]: $autoApplyConfig.checked,
@@ -5079,6 +5574,8 @@ async function loadConfigForm() {
   const stored = await U1Store.get([key, autoKey]);
   if ($autoApplyConfig) $autoApplyConfig.checked = !!stored[autoKey];
   const cfg = stored[key];
+  const hideBox = document.getElementById('hideEngineSkip');
+  if (hideBox) hideBox.checked = !!(cfg && cfg.skipLinksEngine === 'hide');
   if (!cfg) {
     const site = await pageLangDir();
     if (site) {
@@ -5362,6 +5859,10 @@ function buildConfigObject(includeSkipLinks = []) {
     skipLinks: includeSkipLinks,
     language: $langSelect.value || 'en',
     direction: document.querySelector('input[name="direction"]:checked')?.value || 'ltr',
+    // 'hide': the engine's own skip links (one per nav/main/footer, added
+    // unconditionally) are removed by the patch; only the configured rows
+    // stay. Owner's ask on molinahealthcare.com, 2026-10-05.
+    ...(document.getElementById('hideEngineSkip')?.checked ? { skipLinksEngine: 'hide' } : {}),
   };
 }
 
@@ -5474,6 +5975,9 @@ const $templatePreview = document.getElementById('templatePreview');
 //  one.
 // ─────────────────────────────────────────────────────────────────────────────
 const FIELD_HOW = {
+  'ide-compat': {
+    target: 'Always the page body. The script is the mapping.',
+  },
   'urs-compat': {
     target: 'Set by the converter from the URS pattern selector. Not chosen by hand.',
   },
@@ -6018,7 +6522,24 @@ function renderSubSelectorInputs(type, into, opts) {
   $previewSection.style.display = 'none';
   refreshStrength();
   // The heading is required and the page knows which one it is.
-  if (type === 'aria-label') autofillAriaLabelHeading();
+  if (type === 'aria-label') {
+    autofillAriaLabelHeading();
+    // While a name is typed the heading route is not used: say so, and dim it.
+    const own = $subSelArea.querySelector('[data-root="label"]');
+    const sync = () => {
+      const typed = !!(own && own.value.trim());
+      for (const k of ['middleText', 'headingSelector']) {
+        const inp = $subSelArea.querySelector(`[data-root="${k}"]`);
+        const row = inp && inp.closest('.root-text');
+        if (!row) continue;
+        row.style.opacity = typed ? '.45' : '';
+        const tag = row.querySelector('.root-tag');
+        if (tag) tag.textContent = typed ? '(not used — your own name is)' : (k === 'headingSelector' ? '★ required' : '(option)');
+      }
+    };
+    own?.addEventListener('input', sync);
+    sync();
+  }
 }
 
 /**
@@ -6073,6 +6594,17 @@ async function autofillAriaLabelHeading(force) {
 // The element selector changed under an aria-label form: the heading belongs
 // to THAT element, so it is looked up again. Debounced — typing a selector
 // character by character must not ask the page on every keystroke.
+// The selector field grows with its text and never scrolls inside itself;
+// Enter generates (a newline in a selector means nothing).
+const growPrimarySelector = () => {
+  $primarySelectorInput.style.height = 'auto';
+  $primarySelectorInput.style.height = Math.min(220, $primarySelectorInput.scrollHeight + 2) + 'px';
+};
+$primarySelectorInput.addEventListener('input', growPrimarySelector);
+new MutationObserver(growPrimarySelector).observe($primarySelectorInput, { attributes: true, attributeFilter: ['value'] });
+$primarySelectorInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('generateBtn')?.click(); }
+});
 $primarySelectorInput.addEventListener('input', () => {
   if ($componentType.value !== 'aria-label') return;
   clearTimeout(ariaHeadingFillTimer);
@@ -7041,6 +7573,37 @@ function labelScreen(stop, collected, tab) {
  * parts inside it. That is the one that works, and it is the one the estimate's
  * "Build" row has always been quoting for — a call per component.
  */
+/**
+ * The survey's "panel" for a listbox is not always the LIST. A list that is
+ * born on the press and removed on close (React: {open && <ul/>}) is gone by
+ * the time the ledger is written, so the probe names it by the element it
+ * was born into — on molinahealthcare.com the Log In and Language wrappers —
+ * and the mapping shipped with listbox: '[class*="Login_dropdown__"]', the
+ * wrapper, rows and all (2026-10-05). Before a listbox container from the
+ * survey is trusted it is read: open, the reader names the real list; shut,
+ * the container is dropped so the open-and-read below does the work.
+ */
+async function settleListboxContainer(tab, container, triggerSel) {
+  if (!container) return { container: '', trigger: triggerSel };
+  const sh = await inPage(tab.id, (c) => {
+    const S = window.__u1SelectorIntel;
+    let el = null;
+    try { el = document.querySelector(c); } catch (e) { return { bad: true }; }
+    if (!el) return { bad: true };
+    let shape = null;
+    try { shape = S.listboxShape(c); } catch (e) { shape = null; }
+    // A container that IS a list of rows stands as it is.
+    const rows = Array.prototype.filter.call(el.children, (k) => k.nodeType === 1);
+    const listy = /^(UL|OL|SELECT|DATALIST)$/.test(el.tagName) || /^(listbox|menu|list)$/.test(el.getAttribute('role') || '') ||
+      (rows.length >= 2 && rows.every((r) => r.tagName === rows[0].tagName) && !el.querySelector('[aria-haspopup],[aria-expanded]'));
+    return { shape, listy };
+  }, [container]).catch(() => null);
+  if (!sh || sh.bad) return { container, trigger: triggerSel };
+  if (sh.shape && sh.shape.listbox) return { container: sh.shape.listbox, trigger: sh.shape.trigger || triggerSel };
+  if (sh.listy) return { container, trigger: triggerSel };
+  return { container: '', trigger: triggerSel };   // a wrapper around a list that is not there now
+}
+
 async function confirmedToMapping(pick, stop, tab, extra) {
   const cand = (sweepCands.get(stop && stop.n) || []).find((c) => c.mark === pick.mark);
   let sel = pick.sel || (cand && cand.selector) || '';
@@ -7058,6 +7621,11 @@ async function confirmedToMapping(pick, stop, tab, extra) {
     const seen = (stop.probed || []).find((p) =>
       p.parts && (p.parts.trigger === sel || p.root === sel) && p.parts.panel);
     container = (seen && seen.parts.panel) || '';
+    if (container && pick.type === 'listbox') {
+      const settled = await settleListboxContainer(tab, container, sel);
+      container = settled.container;
+      if (settled.container && settled.trigger) sel = settled.trigger;
+    }
     // The row does not always hold the control. A menu row retyped by
     // menuIsReallyListbox is rooted on the LIST itself, and this hunt then
     // asked "what does the list open" and pressed a hidden <ul> — so the
@@ -7070,10 +7638,15 @@ async function confirmedToMapping(pick, stop, tab, extra) {
       const lb = await inPage(tab.id, (x) => {
         const S = window.__u1SelectorIntel;
         let sh = S.listboxShape(x);
+        // Climb to the parent only when nothing in here declares a popup: a
+        // trigger that says aria-haspopup / aria-expanded has a list that is
+        // simply not open yet (born on the press), and the parent read off
+        // the header instead — see listShaped. The press below is the answer.
         if (!sh) {
           try {
             const el = document.querySelector(x);
-            if (el && el.parentElement) {
+            const declares = el && (el.matches('[aria-haspopup],[aria-expanded]') || el.querySelector('[aria-haspopup],[aria-expanded]'));
+            if (el && el.parentElement && !declares) {
               const up = S.robustSelector(el.parentElement);
               if (up && S.isU1Valid(up)) sh = S.listboxShape(up);
             }
@@ -7927,7 +8500,12 @@ function resetAiWorkspace() {
   empty('aiBulkList'); empty('aiBulkSummary'); empty('aiSummary'); empty('sweepLog');
   empty('sweepPicksList'); empty('sweepPicksSummary');
 }
-let aiCost = 0;         // running spend for this panel session, in USD
+let aiCost = 0;         // running spend for this site's AI work, in USD — carried over from the saved sweep
+// What the LAST model call cost, on its own. The running figure above starts
+// from the saved sweep's total (adoptServerSweep / the local restore), so on
+// molinahealthcare.com one 1-component scan read "~$27.99 this session" —
+// the whole site's sweep history, not that call (2026-10-08).
+let aiLastCost = 0;
 let aiRowTimer = null;
 let aiCardTimer = null;
 
@@ -8246,7 +8824,7 @@ document.getElementById('aiDiscoverBtn')?.addEventListener('click', async () => 
       return;
     }
 
-    aiCost += U1AI.estimateCost(part.usage) || 0;
+    aiCost += (aiLastCost = U1AI.estimateCost(part.usage) || 0);
     const mergedContext = { candidates: collected.candidates, tokens: collected.tokens || [] };
     let found = part.components || [];
 
@@ -9043,7 +9621,8 @@ function renderAiComponents(found) {
   // already looking at. Only the count and what it cost are worth the space.
   document.getElementById('aiSummary').innerHTML =
     `<div class="ai-meta">${comps.length} component${comps.length === 1 ? '' : 's'} found` +
-    ` · ${escapeHtml(found.model || '')} · ~$${aiCost.toFixed(3)} this session</div>` +
+    `${found.model ? ' · ' + escapeHtml(found.model) : ''} · this scan ~$${aiLastCost.toFixed(3)}` +
+    ` <span class="ai-meta-total" title="Everything the AI has cost on this site so far, the saved sweep included">· site total ~$${aiCost.toFixed(2)}</span></div>` +
     // Folded away. It is the same paragraph on every scan, it is read once, and
     // sitting above the results it is only something to scroll past. How many
     // rows were left out earns a place on the summary; the explanation does not.
@@ -9614,6 +10193,8 @@ document.getElementById('aiScopeFindBtn')?.addEventListener('click', async () =>
   try {
     const res = await testSelector(sel);
     if (res.err || res.error) { showNotice($aiStatus, res.err || res.error, 'error', 5000); return; }
+    scopePick = { sel, count: res.count || 0, index: 0 };
+    renderScopeCount(sel, res);
     showNotice($aiStatus,
       res.count === 0 ? `Matches nothing on this page — check the selector, and open it first if it is a dialog.`
       : res.count === 1 ? `1 match — outlined on the page.`
@@ -9633,8 +10214,7 @@ document.getElementById('aiScopeFindBtn')?.addEventListener('click', async () =>
         if ((input?.value || '').trim() !== sel) return;
         preview.innerHTML = shot
           ? `<img src="${shot}" alt="The element ${escapeHtml(sel)} matches on the page">` +
-            `<span class="ai-scope-preview-note">this is what ${escapeHtml(sel)} points at${
-              res.count > 1 ? ` (first of ${res.count})` : ''}</span>`
+            `<span class="ai-scope-preview-note">${res.count > 1 ? `match 1 of ${res.count} — ‹ › above shows the others — ` : 'this is what '}${escapeHtml(sel)}${res.count > 1 ? '' : ' points at'}</span>`
           : '';
         if (!shot) preview.style.display = 'none';
       } else {
@@ -9646,6 +10226,97 @@ document.getElementById('aiScopeFindBtn')?.addEventListener('click', async () =>
     btn.disabled = false;
   }
 });
+// How many elements the selector reaches — shown as you type, and kept on
+// screen. The count used to live in a notice that vanished after four
+// seconds and in a footnote under the picture ("first of 8"); the owner
+// could not see, while deciding, whether a selector named one card or every
+// card on the page (2026-10-06). The arrows walk the matches: each press
+// outlines and photographs the next one.
+let scopeCountTimer = null;
+let scopePick = { sel: '', count: 0, index: 0 };
+async function scopeCountOf(sel) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return { err: 'not injectable' };
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (selector) => { try { return { count: document.querySelectorAll(selector).length }; } catch (e) { return { error: e.message }; } },
+      args: [sel],
+    });
+    return res?.[0]?.result || { err: 'no result' };
+  } catch (e) { return { err: e.message }; }
+}
+function renderScopeCount(sel, res) {
+  const box = document.getElementById('aiScopeCount');
+  if (!box) return;
+  if (!sel) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = '';
+  box.classList.toggle('is-none', !res || !!res.error || !res.count);
+  if (res && res.error) { box.innerHTML = `<strong>Invalid selector</strong><span>${escapeHtml(res.error)}</span>`; return; }
+  if (res && res.err) { box.innerHTML = `<span>Cannot read this page.</span>`; return; }
+  const n = res ? res.count : 0;
+  const at = scopePick.sel === sel ? scopePick.index + 1 : 1;
+  const nav = n > 1 ? `<span class="ai-scope-nav"><button type="button" class="btn-outline btn-xs" data-scope-step="-1" title="Previous match">‹</button>` +
+    `<span>${at} / ${n}</span>` +
+    `<button type="button" class="btn-outline btn-xs" data-scope-step="1" title="Next match">›</button></span>` : '';
+  box.innerHTML = n === 0
+    ? `<strong>Matches nothing</strong><span>on this page right now — if it is a dialog or a drop-down, open it first.</span>`
+    : n === 1 ? `<strong>1 element</strong><span>matches on this page.</span>`
+    : `<strong>${n} elements</strong><span>match on this page — one component or a whole class of them; ‹ › shows each.</span>${nav}`;
+}
+// Outline and photograph match number `index` of `sel`.
+async function showScopeMatch(sel, index) {
+  const preview = document.getElementById('aiScopePreview');
+  const tab = await getTab();
+  if (!isInjectable(tab)) return;
+  const picked = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (selector, i) => {
+      let els; try { els = Array.from(document.querySelectorAll(selector)); } catch (e) { return 0; }
+      document.querySelectorAll('[data-u1-scope-pick]').forEach((el) => el.removeAttribute('data-u1-scope-pick'));
+      if (!els.length) return 0;
+      const el = els[((i % els.length) + els.length) % els.length];
+      el.setAttribute('data-u1-scope-pick', '1');
+      const prevOutline = el.style.outline, prevOffset = el.style.outlineOffset;
+      el.style.outline = '2px solid #6c4cf1'; el.style.outlineOffset = '1px';
+      setTimeout(() => { el.style.outline = prevOutline; el.style.outlineOffset = prevOffset; }, 2500);
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return els.length;
+    },
+    args: [sel, index],
+  }).then((r) => r?.[0]?.result || 0).catch(() => 0);
+  if (!picked || !preview) return;
+  scopePick = { sel, count: picked, index: ((index % picked) + picked) % picked };
+  renderScopeCount(sel, { count: picked });
+  preview.style.display = '';
+  preview.innerHTML = '<span class="ai-scope-preview-note">taking its picture…</span>';
+  const shot = await captureElementScreenshot('[data-u1-scope-pick="1"]');
+  if ((document.getElementById('aiScopeInput')?.value || '').trim() !== sel) return;
+  preview.innerHTML = shot
+    ? `<img src="${shot}" alt="Match ${scopePick.index + 1} of ${picked} for ${escapeHtml(sel)}">` +
+      `<span class="ai-scope-preview-note">match ${scopePick.index + 1} of ${picked} — ${escapeHtml(sel)}</span>`
+    : '';
+  if (!shot) preview.style.display = 'none';
+}
+document.getElementById('aiScopeCount')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-scope-step]');
+  if (!b) return;
+  const sel = (document.getElementById('aiScopeInput')?.value || '').trim();
+  if (!sel) return;
+  const from = scopePick.sel === sel ? scopePick.index : 0;
+  showScopeMatch(sel, from + Number(b.dataset.scopeStep));
+});
+document.getElementById('aiScopeInput')?.addEventListener('input', () => {
+  const sel = (document.getElementById('aiScopeInput')?.value || '').trim();
+  clearTimeout(scopeCountTimer);
+  if (!sel) { renderScopeCount('', null); return; }
+  scopeCountTimer = setTimeout(async () => {
+    const res = await scopeCountOf(sel);
+    if ((document.getElementById('aiScopeInput')?.value || '').trim() !== sel) return;
+    renderScopeCount(sel, res);
+  }, 300);
+});
+
 document.getElementById('aiScopeInput')?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); document.getElementById('aiDiscoverBtn')?.click(); }
 });
@@ -10110,7 +10781,10 @@ async function prepareOne(row, tab) {
       lbShape = await inPage(tab.id, (s) => {
         const el = document.querySelector(s);
         const up = el && el.parentElement;
-        return up ? window.__u1SelectorIntel.listboxShape(
+        // Not when something in here declares a popup — the list is born on
+        // the press, and the press below reads it (see listShaped).
+        const declares = el && (el.matches('[aria-haspopup],[aria-expanded]') || el.querySelector('[aria-haspopup],[aria-expanded]'));
+        return up && !declares ? window.__u1SelectorIntel.listboxShape(
           window.__u1SelectorIntel.robustSelector(up)) : null;
       }, [row.sel]);
     }
@@ -10386,7 +11060,7 @@ async function prepareOne(row, tab) {
     fieldDocs: schema.desc || {},
     options: Object.keys(schema.rootFields || {}),
   });
-  aiCost += U1AI.estimateCost(out.usage) || 0;
+  aiCost += (aiLastCost = U1AI.estimateCost(out.usage) || 0);
   if (out.err) return { err: out.err };
 
   // The specialist already told us which element opens this, and that is
@@ -10857,7 +11531,7 @@ document.getElementById('aiMapAllBtn')?.addEventListener('click', async () => {
   if (!aiBulk.armed) {
     aiBulk.armed = true;
     const per = aiCost > 0 ? aiCost / Math.max(1, aiMapped.length) : 0;
-    const estimate = per ? ` Roughly $${(per * rows.length).toFixed(2)} more, on top of $${aiCost.toFixed(3)} this session.` : '';
+    const estimate = per ? ` Roughly $${(per * rows.length).toFixed(2)} more, on top of $${aiCost.toFixed(2)} spent on this site so far.` : '';
     btn.textContent = `Yes — prepare all ${rows.length}`;
     showNotice(status,
       `${rows.length} component${rows.length === 1 ? '' : 's'} means ${rows.length} model call${rows.length === 1 ? '' : 's'}.${estimate} Press again to start.` +
@@ -11543,6 +12217,71 @@ document.getElementById('sweepStartBtn')?.addEventListener('click', async () => 
   await runSweep(tab);
 });
 
+/**
+ * The run's press plan (F-lite + D): one snapshot decides press membership,
+ * and the hint layer's strips are seeded. Factored out of runSweep because a
+ * RELOAD (sweepReload) needs it again on a page that has no plan any more.
+ */
+async function sweepPlan(tab) {
+  try {
+    await ensureProbeNet(tab.id);
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, files: ['selector-intel.js', 'probe.js'] });
+    await inPage(tab.id, () => {
+      const P = window.__u1Probe;
+      if (!P || !P.planRun) return 0;
+      P.resetRun();
+      const seeds = [];
+      try {
+        for (const rootEl of document.querySelectorAll(
+          '[role="tablist"],[class*="tab" i],[class*="menu" i],[class*="nav" i]')) {
+          if (seeds.length >= 60) break;
+          const kids = [...rootEl.children].map((k) => {
+            try {
+              return k.matches('button,[role="button"],[role="tab"],summary') ? k
+                : k.querySelector('button,[role="button"],[role="tab"],summary');
+            } catch (e) { return null; }
+          }).filter(Boolean);
+          if (kids.length >= 2) for (const k of kids) { if (seeds.length < 60) seeds.push(k); }
+        }
+      } catch (e) {}
+      window.scrollTo(0, 0);
+      return P.planRun(document.body, { seeds });
+    });
+  } catch { /* the walk still runs, on live rects */ }
+}
+
+/**
+ * The page is GONE — not navigated, replaced in place. A single-page app's
+ * router can render another view (its not-found page, say) over the one
+ * being surveyed while the URL stays put, because the net swallowed its
+ * pushState; probeAll notices (pageLost: half the elements it started with
+ * are out of the document) and stops. The way back is the way the
+ * URL-watch takes: load the surveyed URL again, settle, inject, re-plan —
+ * and never press again what was pressed before the page went
+ * (aiSweep.skipKeys, by pressKey), so the same press cannot take it apart
+ * twice. Returns false when the page would not come back.
+ */
+async function sweepReload(tab, n, why) {
+  const from = aiSweep.url;
+  if (!from) return false;
+  const bare = (u) => String(u || '').split('#')[0];
+  sweepLog(n, why, 'err');
+  showSweepBusy(`Section ${n}`, 'The page was replaced by a press. Loading it again and carrying on.');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let back = false;
+  try { await chrome.tabs.update(tab.id, { url: from }); } catch { return false; }
+  for (let i = 0; i < 60 && !back && !aiSweep.abort; i++) {
+    await sleep(250);
+    const t = await chrome.tabs.get(tab.id).catch(() => null);
+    back = !!(t && t.status === 'complete' && bare(t.url) === bare(from));
+  }
+  if (!back) return false;
+  await sleep(SWEEP_SETTLE_MS * 2);
+  await sweepPlan(tab);
+  return true;
+}
+
 async function runSweep(tab) {
   const btn = document.getElementById('sweepStartBtn');
   const stopBtn = document.getElementById('sweepStopBtn');
@@ -11579,32 +12318,7 @@ async function runSweep(tab) {
   // snapshot decides press membership (live-rect membership was a coin flip —
   // the hero advances on its own clock), and the hint layer's strips are
   // seeded so a strip the markup announces always gets its presses.
-  try {
-    await ensureProbeNet(tab.id);
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id }, files: ['selector-intel.js', 'probe.js'] });
-    await inPage(tab.id, () => {
-      const P = window.__u1Probe;
-      if (!P || !P.planRun) return 0;
-      P.resetRun();
-      const seeds = [];
-      try {
-        for (const rootEl of document.querySelectorAll(
-          '[role="tablist"],[class*="tab" i],[class*="menu" i],[class*="nav" i]')) {
-          if (seeds.length >= 60) break;
-          const kids = [...rootEl.children].map((k) => {
-            try {
-              return k.matches('button,[role="button"],[role="tab"],summary') ? k
-                : k.querySelector('button,[role="button"],[role="tab"],summary');
-            } catch (e) { return null; }
-          }).filter(Boolean);
-          if (kids.length >= 2) for (const k of kids) { if (seeds.length < 60) seeds.push(k); }
-        }
-      } catch (e) {}
-      window.scrollTo(0, 0);
-      return P.planRun(document.body, { seeds });
-    });
-  } catch { /* the walk still runs, on live rects */ }
+  await sweepPlan(tab);
   if (log) { log.innerHTML = ''; log.style.display = 'none'; }
   btn.disabled = true;
   stopBtn.style.display = '';
@@ -11677,8 +12391,33 @@ async function runSweep(tab) {
         const band = pos ? {
           from: pos.y,
           to: (!bandStep || pos.y + bandStep >= (pos.height || 0)) ? null : pos.y + bandStep,
+          skipKeys: aiSweep.skipKeys || null,
         } : null;
         const probed = await probeScreen(tab, band);
+        // The page was replaced IN PLACE (see sweepReload). Everything this
+        // band pressed before the loss is remembered by key and skipped
+        // from here on; the band is read again on the fresh page. Three
+        // reloads is the limit — a page that keeps going is a page that
+        // cannot be surveyed by pressing, and the survey says so and stops.
+        if (probed && probed.pageLost) {
+          aiSweep.skipKeys = Array.from(new Set([...(aiSweep.skipKeys || []), ...(probed.pressedKeys || [])]));
+          aiSweep.reloads = (aiSweep.reloads || 0) + 1;
+          const culprit = probed.lostKey ? probed.lostKey.split('|')[1] || probed.lostKey : '';
+          if (aiSweep.reloads <= 3 &&
+              await sweepReload(tab, n, `pressing ${culprit ? '“' + culprit + '”' : 'something'} replaced the whole page in place — loading it again, and that press is not repeated`)) {
+            // Keep what the presses before the loss established.
+            if (probed.ledger && probed.ledger.length) {
+              aiSweep.lostObserved = (aiSweep.lostObserved || []).concat(probed.ledger);
+            }
+            aiSweep.stops.pop();
+            n--;
+            await inPage(tab.id, (y) => window.scrollTo({ top: y, left: 0, behavior: 'instant' }), [stop.scrollY]);
+            await new Promise(r => setTimeout(r, SWEEP_SETTLE_MS));
+            continue;
+          }
+          sweepLog(n, 'the page was replaced by a press and could not be brought back — stopping here so the rest of the survey is not about another page', 'err');
+          break;
+        }
         // Pressing things can still take the page somewhere, however careful
         // the probe is: it cancels link clicks and form submits, but a site
         // whose own handler does `location.href = '/search'` navigates as its
@@ -11866,7 +12605,7 @@ async function runSweep(tab) {
     // in stop.probed, so every later consumer — the typing merge, the
     // panel-recovery lookups — reads whole components instead of shards.
     try {
-      const finalObs = await inPage(tab.id, () => {
+      let finalObs = await inPage(tab.id, () => {
         const P = window.__u1Probe, S = window.__u1SelectorIntel;
         if (!P || !P.classifyRun || !S) return null;
         const sy = window.scrollY || 0;
@@ -11884,6 +12623,17 @@ async function runSweep(tab) {
           return { type: c.type, root: rootSel, why: c.why, parts, docY };
         }).filter((c) => c.root);
       });
+      // What the presses before a reload had established (see sweepReload)
+      // rides along, deduped by type + root selector.
+      let finalAll = finalObs || [];
+      if (aiSweep.lostObserved && aiSweep.lostObserved.length) {
+        const seen = new Set(finalAll.map((c) => c.type + '|' + c.root));
+        for (const c of aiSweep.lostObserved) {
+          const k = c.type + '|' + c.root;
+          if (!seen.has(k)) { seen.add(k); finalAll.push(c); }
+        }
+      }
+      finalObs = finalAll;
       if (finalObs && finalObs.length) {
         aiSweep.finalObserved = finalObs;
         const byY = [...aiSweep.stops].sort((a, b) => (a.scrollY || 0) - (b.scrollY || 0));
@@ -12116,7 +12866,8 @@ async function probeScreen(tab, band) {
             to: sectionBand.to == null ? Infinity : sectionBand.to }
         : undefined;
       const out = await P.probeAll(document.body,
-        { inViewport: true, settle: 80, max: 12, limit: 2500, idle: 2000, sectionY });
+        { inViewport: true, settle: 80, max: 12, limit: 2500, idle: 2000, sectionY,
+          skipKeys: sectionBand && sectionBand.skipKeys ? sectionBand.skipKeys : null });
       // Selectors are worked out HERE, where the elements are. The panel never
       // handles a node — only a selector produced by the same code that
       // produces every other selector in the tool.
@@ -12126,8 +12877,31 @@ async function probeScreen(tab, band) {
         const common = root && S.commonSelectorFor ? S.commonSelectorFor(root, els) : null;
         return (common && common.selector) || els.map((e) => S.robustSelector(e)).join(',');
       };
+      // The page replaced in place (see sweepReload): what was pressed, by
+      // a key that survives the reload, and what those presses had already
+      // established — read NOW, on the detached ledger, before the reload
+      // throws it away.
+      let ledger = null;
+      if (out.pageLost) {
+        try {
+          const sy = window.scrollY || 0;
+          ledger = P.classifyRun().map((c) => {
+            const parts = {};
+            for (const k of Object.keys(c.parts || {})) {
+              const sels = (c.parts[k] || []).map((e) => { try { return S.robustSelector(e); } catch (e2) { return ''; } }).filter(Boolean);
+              if (sels.length) parts[k] = sels.length === 1 ? sels[0] : sels.join(',');
+            }
+            let rootSel = '', docY = 0;
+            try { rootSel = S.robustSelector(c.root) || ''; } catch (e) {}
+            try { docY = c.root.getBoundingClientRect().top + sy; } catch (e) {}
+            return { type: c.type, root: rootSel, why: c.why, parts, docY };
+          }).filter((c) => c.root && c.type);
+        } catch (e) { ledger = null; }
+      }
       return {
         restored: out.restored, pressed: out.pressed, skipped: out.skipped,
+        pageLost: !!out.pageLost, lostKey: out.lostKey || '', pressedKeys: out.pressedKeys || [],
+        ledger,
         // Script navigations the net stopped during the presses — the report
         // the armNet comment promised and nothing ever surfaced.
         blocked: (out.blocked || []).slice(0, 20),
@@ -12439,7 +13213,11 @@ function renderSweepScreens() {
   // moves ahead of them instead of sitting stranded below.
   wrap.classList.toggle('is-sweep-done', sweepDone);
 
-  setStage(mapMode === 'sweep' ? 'screens' : 'none');
+  // Off the Whole-page route this list is not on screen, and the stage
+  // belongs to whatever that route is showing — the found list, a card —
+  // not to an empty survey. 'none' here was what hid a freshly scanned
+  // Automatic result (see onTabChanged).
+  setStage(mapMode === 'sweep' ? 'screens' : resumeStage());
   syncSweepMakeBtn();
   if (typeof syncSweepStartBtn === 'function') syncSweepStartBtn();
   saveSweep();
@@ -13958,7 +14736,7 @@ async function scanPickedScreens(numbers) {
           continue;
         }
         if (got && got.err) { died = got.err; break; }
-        aiCost += U1AI.estimateCost(got.usage) || 0;
+        aiCost += (aiLastCost = U1AI.estimateCost(got.usage) || 0);
         parts.push(got);
         if (aiSweep.abort) break;
       }
@@ -14476,8 +15254,13 @@ async function buildPickedComponents() {
       if (triggerRequired(f.type)) {
         const seen = (stop.probed || []).find(p =>
           p.parts && (p.parts.trigger === f.sel || p.root === f.sel) && p.parts.panel);
-        container = (seen && seen.parts.panel) ||
-          (await inPage(tab.id, (s) => window.__u1SelectorIntel.openedBy(s), [f.sel])) || '';
+        container = (seen && seen.parts.panel) || '';
+        if (container && f.type === 'listbox') {
+          const settled = await settleListboxContainer(tab, container, found);
+          container = settled.container;
+          if (settled.container && settled.trigger) found = settled.trigger;
+        }
+        if (!container) container = (await inPage(tab.id, (s) => window.__u1SelectorIntel.openedBy(s), [f.sel])) || '';
         // Both of those need f.sel to BE the trigger. The survey names the
         // component, which for a sign-in dropdown is the wrapper holding the
         // button and the closed list together — so both came back empty and the
@@ -14495,10 +15278,13 @@ async function buildPickedComponents() {
           const lb = await inPage(tab.id, (s) => {
             const S = window.__u1SelectorIntel;
             let sh = S.listboxShape(s);
+            // Not past a declared popup: its list is born on the press, and
+            // the parent reads the header instead (see listShaped).
             if (!sh) {
               try {
                 const el = document.querySelector(s);
-                if (el && el.parentElement) {
+                const declares = el && (el.matches('[aria-haspopup],[aria-expanded]') || el.querySelector('[aria-haspopup],[aria-expanded]'));
+                if (el && el.parentElement && !declares) {
                   const up = S.robustSelector(el.parentElement);
                   if (up && S.isU1Valid(up)) sh = S.listboxShape(up);
                 }
@@ -15823,8 +16609,33 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
     fieldValues[inp.dataset.field] = inp.value.trim();
   });
 
+  // A listbox pointed at its WRAPPER — the element around the button and the
+  // list — is the natural thing to pick, and the only thing pickable while
+  // the list is closed (molina's Log In: the list exists only while open).
+  // The form then said "trigger is inside listbox, and it must not be" and
+  // stopped, with nothing a person could do about it. Measured instead: the
+  // reader names the real list, opening the widget if it has to, and the
+  // form is rewritten with the three parts. Options that are links make it
+  // a menu in role (R0), recorded on the template as overwriteRole.
+  let settledRole = null;
+  if (type === 'listbox') {
+    const fixed = await settleManualListbox(primary, fieldValues.trigger || '');
+    if (fixed && fixed.listbox && fixed.listbox !== primary) {
+      $primarySelectorInput.value = fixed.listbox;
+      $subSelArea.querySelectorAll('input[type="text"][data-field]').forEach(inp => {
+        if (inp.dataset.field === 'trigger' && fixed.trigger) inp.value = fixed.trigger;
+        if (inp.dataset.field === 'options' && fixed.options) inp.value = fixed.options;
+      });
+      fieldValues.trigger = fixed.trigger || fieldValues.trigger;
+      fieldValues.options = fixed.options || fieldValues.options;
+      showNotice(status, `“${primary}” is the wrapper; the list that opens is “${fixed.listbox}” — the selectors were read off the open widget.`, 'info', 7000);
+    }
+    if (fixed && fixed.linksRole) settledRole = fixed.linksRole;
+  }
+
   currentTemplate = buildTemplateFromForm();
   if (!currentTemplate) return;
+  if (settledRole && !currentTemplate.overwriteRole) currentTemplate.overwriteRole = settledRole;
   $templatePreview.textContent = currentTemplate.code;
   $previewSection.style.display = 'block';
 
@@ -15843,6 +16654,54 @@ document.getElementById('generateBtn').addEventListener('click', async () => {
     renderAdvisorNotes(notes);
   } catch {}
 });
+
+/**
+ * The manual builder's listbox, measured (see the Generate handler). Returns
+ * { listbox, trigger, options, linksRole } or null when the form's answer
+ * stands. `linksRole` is 'menu' when the options are links — a listbox of
+ * links carries menu semantics (R0 doctrine).
+ */
+async function settleManualListbox(primary, triggerSel) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return null;
+  const read = await inPage(tab.id, (pSel, tSel) => {
+    const S = window.__u1SelectorIntel;
+    let el = null, trig = null;
+    try { el = document.querySelector(pSel); } catch (e) { return null; }
+    try { trig = tSel ? document.querySelector(tSel) : null; } catch (e) { trig = null; }
+    if (!el) return null;
+    const rows = Array.prototype.filter.call(el.children, (k) => k.nodeType === 1);
+    const listy = /^(UL|OL|SELECT|DATALIST)$/.test(el.tagName) || /^(listbox|menu|list)$/.test(el.getAttribute('role') || '') ||
+      (rows.length >= 2 && rows.every((r) => r.tagName === rows[0].tagName) && !(trig && el.contains(trig)));
+    const wrapper = (trig && el.contains(trig)) || !listy;
+    let shape = null;
+    try { shape = S.listboxShape(pSel); } catch (e) { shape = null; }
+    const linksIn = (sel, root) => {
+      let opts = []; try { opts = Array.prototype.slice.call((root || document).querySelectorAll(sel)); } catch (e) {}
+      if (!opts.length) return false;
+      const links = opts.filter((o) => (o.matches && o.matches('a[href]')) || o.querySelector('a[href]'));
+      return links.length * 2 >= opts.length;
+    };
+    return { wrapper, shape, linksRole: shape && shape.options && linksIn(shape.options) ? 'menu' : null };
+  }, [primary, triggerSel]).catch(() => null);
+  if (!read) return null;
+  if (read.shape && read.shape.listbox && (read.wrapper || read.shape.listbox !== primary)) {
+    return { listbox: read.shape.listbox, trigger: read.shape.trigger, options: read.shape.options, linksRole: read.linksRole };
+  }
+  if (!read.wrapper) return null;
+  // Closed, and the list is not there to read: open it and read it then.
+  const cap = await autoOpenCapture(tab, triggerSel || primary, 'listbox');
+  if (cap && cap.shape && cap.shape.listbox) {
+    const linksRole = await inPage(tab.id, (optSel) => {
+      let opts = []; try { opts = Array.prototype.slice.call(document.querySelectorAll(optSel)); } catch (e) {}
+      if (!opts.length) return null;
+      const links = opts.filter((o) => (o.matches && o.matches('a[href]')) || o.querySelector('a[href]'));
+      return links.length * 2 >= opts.length ? 'menu' : null;
+    }, [cap.shape.options || '']).catch(() => null);
+    return { listbox: cap.shape.listbox, trigger: cap.shape.trigger || cap.pressed || triggerSel, options: cap.shape.options, linksRole };
+  }
+  return null;
+}
 
 /**
  * Ask before writing our role over one the site's own markup already carries.
@@ -15902,6 +16761,7 @@ function loadMappingIntoForm(m) {
   // lost it.
   if (mapMode !== 'manual') setMapMode('manual');
   $primarySelectorInput.value = m.primary || '';
+  growPrimarySelector();
   $componentType.value = m.type;
   renderTypeGuide(m.type);
   renderSubSelectorInputs(m.type);
@@ -16029,6 +16889,7 @@ const SCAN_RULES = {
   // ── Static checks the removed IBM engine used to make, in our words ──────
   'img-alt-filename':     { title: 'Alt text is just the file name', wcag: '1.1.1', severity: 'Medium', category: 'Images', why: 'A screen reader will read “Career_HealthNews” or “banner.png” aloud — the file name says nothing about what the picture shows or why it is there.', fix: 'Write what the picture is FOR in a few words, or alt="" if it is decoration.' },
   'label-for-broken':     { title: 'Label points at a field that does not exist', wcag: '1.3.1', severity: 'High', category: 'Forms and Inputs', why: 'The <label for="…"> names an id no field has, so the field it sits next to is announced with no label at all.', fix: 'Make the label\'s for="" match the field\'s id.' },
+  'button-symbol-name':   { title: 'Button named only by a symbol', wcag: '4.1.2', severity: 'High', category: 'Link and Button Labels', why: 'A name of “+”, “-” or a lone letter is read as “plus button”, “dash button” or nothing at all; a text-size control disabled only by a class is announced as usable.', fix: 'Name each control for what it does (“Increase text size”), mirror a class-only disabled state as aria-disabled, and group the pair under one label — the “Fix all” here does it from the symbols themselves.' },
   'link-newwindow':       { title: 'Link opens a new tab without saying so', wcag: '3.2.5', severity: 'Low', category: 'Link and Button Labels', why: 'target="_blank" moves the user to a new tab with no warning; screen reader users lose their place and the Back button stops working.', fix: 'Say it in the name — “Careers (opens in a new tab)” — with an aria-label mapping, or drop the target.' },
   'media-nocontrols':     { title: 'Video or audio has no controls', wcag: '2.1.1', severity: 'Medium', category: 'Media Animation Motion', why: 'Without the controls attribute or a custom control bar there is no keyboard way to play, pause or change the volume.', fix: 'Add the controls attribute, or make sure the custom controls are real buttons.' },
   'title-weak':           { title: 'Page title looks like a file name', wcag: '2.4.2', severity: 'Low', category: 'Page Structure', why: 'The tab title is a file name, a URL or “Untitled” — it does not tell a user which page they are on.', fix: 'Set a <title> that names the page and the site: “Members – Molina Healthcare”.' },
@@ -16375,6 +17236,12 @@ async function scanPageStatic() {
           // it would be the tool flagging its own fix, and `inert` is a
           // statement that this subtree is not part of the page's interface.
           try { if (el.closest('[inert]')) return false; } catch (e) {}
+          // The browser's own answer, ancestors included: a desktop logo and
+          // a mobile logo both sit in the markup, one of them inside a
+          // display:none / visibility:hidden / opacity:0 container at any
+          // width — only the one a person can see is judged (Orel,
+          // 2026-10-08: "check that the element is seen before checking it").
+          try { if (el.checkVisibility && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true, contentVisibilityAuto: true })) return false; } catch (e) {}
           const r = el.getBoundingClientRect();
           if (r.width < 1 || r.height < 1) return false;
           const s = getComputedStyle(el);
@@ -16493,7 +17360,10 @@ async function scanPageStatic() {
         });
 
         // ── Links ──────────────────────────────────────────────────────
-        const generic = /^(click here|read more|here|link|more|learn more|details|›|»|>)$/i;
+        // A name that is only punctuation — molina's mobile logo link carries
+        // aria-label="/" and its desktop one "Help" (2026-10-06) — says
+        // nothing either; it is read out as "slash, link".
+        const generic = /^(click here|read more|here|link|more|learn more|details|›|»|>|[\W_]+)$/i;
         Array.from(document.querySelectorAll('a[href]')).slice(0, 300).forEach(el => {
           if (!visible(el)) return;
           const name = accName(el);
@@ -16511,7 +17381,10 @@ async function scanPageStatic() {
         // ── Buttons ────────────────────────────────────────────────────
         Array.from(document.querySelectorAll('button,[role=button],input[type=submit],input[type=button]')).slice(0, 300).forEach(el => {
           if (!visible(el)) return;
-          if (!accName(el)) add('button-noname', el, '(unnamed button)');
+          const bn = accName(el);
+          if (!bn) add('button-noname', el, '(unnamed button)');
+          // Named by a symbol alone: “+”, “-”, “−”, “×” (not a close), “A”, “AA”.
+          else if (/^(\+|[-−–]|[aA]{1,2}|[<>«»‹›]{1,2})$/.test(bn)) add('button-symbol-name', el, bn);
         });
 
         // ── Form fields ────────────────────────────────────────────────
@@ -17117,6 +17990,7 @@ const STATIC_FIXABLE = {
   'zoom-disabled':       { does: 'Let the page be enlarged: remove user-scalable=no and raise maximum-scale.' },
   'autoplay-audio':      { does: 'Remove the autostart and make sure there is a control. The media stays.' },
   'landmark-noname':     { does: 'Name each unnamed form/region from what is inside it: a search box becomes role="search" named after its field; others take their heading or first field label as the name.' },
+  'button-symbol-name':  { does: 'Name every control that is named by a symbol alone from the symbol and its neighbours: “+” / “-” beside an “A” become “Increase text size” / “Decrease text size” (in the page’s language), the pair is grouped under “Text size”, a class-only disabled state becomes aria-disabled, and each press announces the new size. “‹” / “›” become “Previous” / “Next”.' },
   'link-newwindow':      { does: 'Add “(opens in a new tab)” — in the page’s language — to the name of every link that opens one and does not say so. The visible text is untouched; the name a screen reader hears is extended.' },
   'list-stray-br':       { does: 'Hide every <br> and empty spacer sitting directly inside a list from screen readers (aria-hidden="true"), so the item count is right. Nothing visible changes.' },
   'lang-missing':        { does: 'Set the page language, so a screen reader reads it in the right voice.', needsLang: true },
@@ -17200,7 +18074,7 @@ const STATIC_WHY_NOT = {
 // visible at a time instead of both stacked, so pressing a scan's own button
 // is always pressing something you're already looking at.
 function setScanChoicePane(name) {
-  const pane = name === 'mappings' ? 'mappings' : 'content';
+  const pane = name === 'mappings' ? 'mappings' : name === 'pages' ? 'pages' : 'content';
   document.querySelectorAll('.scan-choice-tab').forEach((b) => {
     const on = b.dataset.scanpane === pane;
     b.classList.toggle('active', on);
@@ -17208,8 +18082,10 @@ function setScanChoicePane(name) {
   });
   const content = document.getElementById('scanPaneContent');
   const mappings = document.getElementById('scanPaneMappings');
+  const pages = document.getElementById('scanPanePages');
   if (content) content.hidden = pane !== 'content';
   if (mappings) mappings.hidden = pane !== 'mappings';
+  if (pages) { pages.hidden = pane !== 'pages'; if (pane === 'pages') loadPagesList(); }
   // Each pane's results belong to it. They used to sit below BOTH panes, so
   // the Static pane showed the last mapping run under its own card.
   const s = document.getElementById('scanResultsSection');
@@ -17339,7 +18215,7 @@ document.getElementById('scanResults')?.addEventListener('toggle', (e) => {
 const SCAN_CHECK_MAPPINGS = {
   headings: { types: ['heading'] },
   links: { types: ['aria-label', 'link', 'link-list'], statics: ['link-newwindow'] },
-  buttons: { types: ['aria-label', 'button', 'keyboard-clickable', 'link'] },
+  buttons: { types: ['aria-label', 'button', 'keyboard-clickable', 'link'], statics: ['button-symbol-name'] },
   forms: { types: ['form', 'combobox', 'checkbox', 'radio', 'datepicker'], statics: ['input-placeholder'] },
   landmarks: { types: ['breadcrumb'], statics: ['landmark-noname'] },
   focus: { types: ['keyboard-clickable', 'focus-order', 'hide-element', 'keyboard-tabs', 'keyboard-grid'], statics: ['tabindex-positive', 'exclude'] },
@@ -17429,6 +18305,254 @@ function scanChecklistBuckets() {
   return { byCheck, rest };
 }
 
+// ── Scan → Heading outline: change a level where you read it ────────────────
+// The selector a heading mapping is saved on decides which headings change,
+// and a class shared by a whole card grid changes them all. So before
+// anything is saved the page is asked which OTHER headings that selector
+// reaches, and they are named; then "all of them" or "only this one".
+async function outlineHeadingTarget(sel, idx) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return null;
+  return inPage(tab.id, (sel, idx) => {
+    const S = window.__u1SelectorIntel;
+    let el = null;
+    try { el = document.querySelectorAll(sel)[idx] || document.querySelector(sel); } catch (e) { return null; }
+    if (!el) return null;
+    const txt = (e) => (e.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    const lvl = (e) => +e.getAttribute('aria-level') || (/^H[1-6]$/.test(e.tagName) ? +e.tagName[1] : 0);
+    const shared = (S && S.robustSelector && S.robustSelector(el)) || sel;
+    let all = [];
+    try { all = Array.from(document.querySelectorAll(shared)); } catch (e) { all = [el]; }
+    // A path that names this element alone — the patch translates the
+    // structural pseudos for the engine, so :nth-child is safe to save.
+    const only = (() => {
+      const parts = [];
+      for (let e = el; e && e !== document.body; e = e.parentElement) {
+        if (e.id && /^[A-Za-z][\w-]*$/.test(e.id)) { parts.unshift('#' + e.id); break; }
+        const cls = (typeof e.className === 'string' ? e.className.trim().split(/\s+/) : []).filter((c) => /^[A-Za-z][\w-]*$/.test(c) && !/\d{3,}|__[A-Za-z0-9]{5}$/.test(c))[0];
+        const i = Array.prototype.indexOf.call(e.parentElement.children, e) + 1;
+        parts.unshift(e.tagName.toLowerCase() + (cls ? '.' + cls : '') + ':nth-child(' + i + ')');
+        try { if (document.querySelectorAll(parts.join('>')).length === 1) break; } catch (err) {}
+      }
+      return parts.join('>');
+    })();
+    const control = el.querySelector('a[href],button,[role="button"],[role="link"],input,select,textarea');
+    return { shared, only, others: all.filter((e) => e !== el).map((e) => ({ text: txt(e), level: lvl(e) })), text: txt(el),
+             holds: control ? (control.tagName.toLowerCase() + ((control.getAttribute('aria-label') || control.textContent || '').trim() ? ' “' + (control.getAttribute('aria-label') || control.textContent).replace(/\s+/g, ' ').trim().slice(0, 40) + '”' : '')) : '' };
+  }, [sel, Number(idx) || 0]);
+}
+// Put the new level on the page NOW — the same call the mapping makes on
+// every load — and redraw the outline from what the page says afterwards,
+// so the change is seen where it was made, not after a re-scan.
+async function applyOutlineHeading(sel, level) {
+  const tab = await getTab();
+  if (!isInjectable(tab)) return;
+  if (level === 'button' || level === 'link') {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, world: 'MAIN',
+        func: (sel, role) => {
+          const u1 = window.u1 || window.U1 || window.user1st;
+          try { if (u1 && u1.fix && u1.fix[role]) u1.fix[role](sel, { selectors: { element: sel } }); } catch (e) {}
+          let els = []; try { els = Array.from(document.querySelectorAll(sel)); } catch (e) {}
+          els.forEach((el) => {
+            el.setAttribute('role', role);   // over any role="heading" an older mapping wrote
+            el.removeAttribute('aria-level');
+            if (!el.matches('a[href],button,input,select,textarea,[tabindex]')) el.setAttribute('tabindex', '0');
+          });
+        },
+        args: [sel, level],
+      });
+    } catch {}
+    return;
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: (sel, level) => {
+        const u1 = window.u1 || window.U1 || window.user1st;
+        try { if (u1 && u1.fix && u1.fix.heading) { u1.fix.heading(sel, { level: String(level), selectors: { heading: sel } }); } } catch (e) {}
+        // Whatever the library does, the level is on the page now.
+        let els = []; try { els = Array.from(document.querySelectorAll(sel)); } catch (e) {}
+        els.forEach((el) => {
+          // Whatever a button/link mapping wrote before is taken off: a heading
+          // is not a control, and an <h2 role="button" tabindex="0"> read as one.
+          const r = el.getAttribute('role');
+          if (r === 'button' || r === 'link') {
+            el.removeAttribute('role');
+            if (/^H[1-6]$/.test(el.tagName) || !el.matches('a[href],button,input,select,textarea')) el.removeAttribute('tabindex');
+            el.classList.remove('u1st-tabbable-element');
+          }
+          if (/^H[1-6]$/.test(el.tagName) && +el.tagName[1] === level) el.removeAttribute('aria-level');
+          else { if (!/^H[1-6]$/.test(el.tagName)) el.setAttribute('role', 'heading'); el.setAttribute('aria-level', String(level)); }
+        });
+      },
+      args: [sel, level],
+    });
+  } catch {}
+}
+async function refreshOutlineLevels(ol) {
+  if (!ol) return;
+  const items = Array.from(ol.querySelectorAll('li[data-hl-sel]'));
+  const tab = await getTab();
+  if (!isInjectable(tab) || !items.length) return;
+  const levels = await inPage(tab.id, (rows) => rows.map(([sel, idx]) => {
+    let el = null; try { el = document.querySelectorAll(sel)[idx]; } catch (e) {}
+    if (!el) return 0;
+    const role = el.getAttribute('role');
+    if (role === 'button' || role === 'link') return role;
+    return +el.getAttribute('aria-level') || (/^H[1-6]$/.test(el.tagName) ? +el.tagName[1] : 0);
+  }), [items.map((li) => [li.dataset.hlSel, Number(li.dataset.hlIdx) || 0])]).catch(() => null);
+  if (!levels) return;
+  items.forEach((li, i) => {
+    const n = levels[i]; if (!n) return;
+    const isRole = typeof n === 'string';
+    if (!isRole) li.style.setProperty('--lvl', n);
+    const badge = li.querySelector('.sc-h-lvl'); if (badge) badge.textContent = isRole ? n.toUpperCase() : 'H' + n;
+    const sel = li.querySelector('.sc-h-level'); if (sel) sel.value = String(n);
+    const btn = li.querySelector('.sc-h-change'); if (btn) btn.dataset.level = String(n);
+  });
+}
+// The heading mappings that already reach the same element(s). Two mappings
+// on one element contradict each other — an older AI-built
+// `heading [class*="Disclaimer_disclaimerTitle__"]` kept writing
+// role="heading" aria-level="2" over the button the outline had just made
+// (Orel, 2026-10-08). The new choice REPLACES them.
+async function conflictingHeadingMappings(sel, keepPrimary, keepType) {
+  const key = storageKey('mappings', currentHostname);
+  // heading, button and link are the three things the outline can make an
+  // element; a new choice replaces whichever of them already reach it — an
+  // h2 left with a button mapping AND an H3 mapping read "BUTTON" after the
+  // H3 was chosen (Orel, 2026-10-08).
+  const list = ((await U1Store.get([key]))[key] || []).filter((m) => m && typeof m === 'object' &&
+    (m.type === 'heading' || m.type === 'button' || m.type === 'link') &&
+    !((m.primary || m.firstArg) === keepPrimary && m.type === keepType));
+  if (!list.length) return [];
+  const tab = await getTab();
+  if (!isInjectable(tab)) return [];
+  const hits = await inPage(tab.id, (sel, sels) => {
+    let mine = []; try { mine = Array.from(document.querySelectorAll(sel)); } catch (e) { return []; }
+    return sels.map((s) => { try { return Array.from(document.querySelectorAll(s)).some((el) => mine.includes(el)); } catch (e) { return false; } });
+  }, [sel, list.map((m) => (m.config && m.config.selectors && (m.config.selectors.heading || m.config.selectors.element)) || m.primary || m.firstArg)]).catch(() => []);
+  return list.filter((m, i) => hits && hits[i]);
+}
+async function saveOutlineHeading(sel, level, label, noteEl) {
+  try {
+    const asRole = level === 'button' || level === 'link';
+    const tpl = asRole ? buildTemplate(level, sel, {}, {}) : buildTemplate('heading', sel, {}, { level });
+    const replaced = await conflictingHeadingMappings(sel, sel, asRole ? level : 'heading');
+    for (const m of replaced) { try { await deleteSavedMapping(mappingKey(m)); } catch {} }
+    // A heading level is a fact about THIS page's outline: the same class on
+    // another page sits in another outline (Orel, 2026-10-08). Page-only; the
+    // drawer's "applies" chip widens it when it really is site-wide.
+    tpl.scope = 'page';
+    await saveMappingEntry(tpl, { refreshUi: false });
+    await loadMappingsList();
+    refreshExportInfo();
+    await applyOutlineHeading(sel, level);
+    const ol = noteEl && noteEl.closest('ol');
+    await refreshOutlineLevels(ol);
+    const rep = replaced.length ? ` Replaced ${replaced.length} older mapping${replaced.length === 1 ? '' : 's'} on the same element (${replaced.map((m) => escapeHtml(m.type + ' ' + (m.primary || ''))).join(', ')}).` : '';
+    if (noteEl) noteEl.innerHTML = `<span class="sc-ok">✓ ${escapeHtml(label)} → ${asRole ? escapeHtml(level) : 'H' + level} — saved as a mapping for this page only and applied.${rep}</span>`;
+    // A heading turned into a button or a link is not in the outline any
+    // more — that is what a screen reader's heading list now says. Every row
+    // the mapping reached leaves it; one line says where they went.
+    if (asRole && ol) {
+      const gone = Array.from(ol.querySelectorAll('li[data-hl-sel]')).filter((li) => {
+        const b = li.querySelector('.sc-h-lvl');
+        return b && /^(BUTTON|LINK)$/.test(b.textContent.trim());
+      });
+      const mine = noteEl.closest('li');
+      if (mine && !gone.includes(mine)) gone.push(mine);
+      const names = gone.map((li) => (li.querySelector('.sc-h-txt') || {}).textContent || '').filter(Boolean);
+      const after = gone[gone.length - 1] && gone[gone.length - 1].nextElementSibling;
+      gone.forEach((li) => li.remove());
+      const msg = document.createElement('li');
+      msg.className = 'sc-h-removed';
+      msg.innerHTML = `<span class="sc-ok">✓ ${names.map((n) => '“' + escapeHtml(n) + '”').join(', ')} ${names.length === 1 ? 'is' : 'are'} now a ${escapeHtml(level)} — no longer in the heading outline. Saved as a mapping on this page.${rep}</span>`;
+      if (after) ol.insertBefore(msg, after); else ol.appendChild(msg);
+    }
+  } catch (err) {
+    if (noteEl) noteEl.innerHTML = `<span class="sc-bad">Could not save it: ${escapeHtml(err.message)}</span>`;
+  }
+}
+document.getElementById('scanResults')?.addEventListener('change', (e) => {
+  const cb = e.target.closest('.sc-h-pick');
+  if (!cb) return;
+  const ev = cb.closest('.sc-evidence'), bar = ev && ev.querySelector('.sc-h-bulk');
+  if (!bar) return;
+  const n = ev.querySelectorAll('.sc-h-pick:checked').length;
+  bar.hidden = n === 0;
+  bar.querySelector('.sc-h-bulk-n').textContent = `${n} selected`;
+});
+document.getElementById('scanResults')?.addEventListener('click', async (e) => {
+  const bulkClear = e.target.closest('.sc-h-bulk-clear');
+  if (bulkClear) {
+    const ev = bulkClear.closest('.sc-evidence');
+    ev.querySelectorAll('.sc-h-pick:checked').forEach((c) => { c.checked = false; });
+    ev.querySelector('.sc-h-bulk').hidden = true;
+    return;
+  }
+  const bulkGo = e.target.closest('.sc-h-bulk-go');
+  if (bulkGo) {
+    e.stopPropagation();
+    const ev = bulkGo.closest('.sc-evidence'), note = ev.querySelector('.sc-h-bulk-note');
+    if (isReadonly()) { note.textContent = 'Licence expired — new work is paused.'; return; }
+    const raw = ev.querySelector('.sc-h-bulk-level').value;
+    const level = raw === 'button' || raw === 'link' ? raw : Number(raw);
+    const rows = Array.from(ev.querySelectorAll('.sc-h-pick:checked')).map((c) => c.closest('li'));
+    bulkGo.disabled = true;
+    let done = 0; const skipped = [];
+    for (const li of rows) {
+      const btn = li.querySelector('.sc-h-change'); if (!btn) continue;
+      note.textContent = `Changing ${done + 1} of ${rows.length}…`;
+      const t = await outlineHeadingTarget(btn.dataset.sel, btn.dataset.idx);
+      if (!t) { skipped.push(btn.dataset.text + ' (not on the page)'); continue; }
+      if ((level === 'button' || level === 'link') && t.holds) { skipped.push(t.text + ' (holds a ' + t.holds + ')'); continue; }
+      // This heading alone: a shared class would also change rows nobody ticked.
+      const sel = t.others.length ? t.only : t.shared;
+      if (!sel) { skipped.push(t.text + ' (could not be pinned down)'); continue; }
+      await saveOutlineHeading(sel, level, '“' + t.text + '”', li.querySelector('.sc-h-note'));
+      done++;
+    }
+    bulkGo.disabled = false;
+    note.innerHTML = `<span class="sc-ok">✓ ${done} changed to ${typeof level === 'string' ? escapeHtml(level) : 'H' + level}.</span>` +
+      (skipped.length ? ` <span class="sc-warn">Left alone: ${skipped.map(escapeHtml).join('; ')}.</span>` : '');
+    ev.querySelectorAll('.sc-h-pick:checked').forEach((c) => { c.checked = false; });
+    return;
+  }
+  const pick = e.target.closest('[data-h-choice]');
+  if (pick) {
+    e.stopPropagation();
+    const li = pick.closest('li');
+    const lv = pick.dataset.level === 'button' || pick.dataset.level === 'link' ? pick.dataset.level : Number(pick.dataset.level);
+    await saveOutlineHeading(pick.dataset.sel, lv, pick.dataset.label, li && li.querySelector('.sc-h-note'));
+    return;
+  }
+  const btn = e.target.closest('.sc-h-change');
+  if (!btn) return;
+  e.stopPropagation();
+  const li = btn.closest('li'), note = li && li.querySelector('.sc-h-note');
+  if (isReadonly()) { if (note) note.textContent = 'Licence expired — new work is paused.'; return; }
+  const raw = li.querySelector('.sc-h-level').value;
+  const level = raw === 'button' || raw === 'link' ? raw : (Number(raw) || 2);
+  if (String(level) === String(btn.dataset.level)) { if (note) note.textContent = 'That is what it already is.'; return; }
+  const t = await outlineHeadingTarget(btn.dataset.sel, btn.dataset.idx);
+  if (!t) { if (note) note.textContent = 'This heading is not on the page right now.'; return; }
+  // A heading that WRAPS a control (an accordion's <h2><button>…</button></h2>)
+  // is already the right shape: the button is the control, the h2 its heading.
+  // Making the h2 a button too nests one control inside another.
+  if ((level === 'button' || level === 'link') && t.holds) {
+    note.innerHTML = `<span class="sc-warn">This heading already holds a ${escapeHtml(t.holds)} — that is the control. Making the heading a ${escapeHtml(level)} too would put one control inside another. Change its level instead, or leave it.</span>`;
+    return;
+  }
+  if (!t.others.length) { await saveOutlineHeading(t.shared, level, '“' + t.text + '”', note); return; }
+  const list = t.others.slice(0, 8).map((o) => `“${escapeHtml(o.text)}”${o.level ? ' (H' + o.level + ')' : ''}`).join(', ') + (t.others.length > 8 ? `, and ${t.others.length - 8} more` : '');
+  note.innerHTML = `<span class="sc-warn">The selector <code>${escapeHtml(t.shared)}</code> also matches ${t.others.length} other heading${t.others.length === 1 ? '' : 's'}: ${list}.</span> ` +
+    `<button type="button" class="btn-primary btn-xs" data-h-choice="all" data-sel="${escapeHtml(t.shared)}" data-level="${level}" data-label="all ${t.others.length + 1}">Change all ${t.others.length + 1} to ${typeof level === 'string' ? escapeHtml(level) : 'H' + level}</button> ` +
+    (t.only ? `<button type="button" class="btn-outline btn-xs" data-h-choice="one" data-sel="${escapeHtml(t.only)}" data-level="${level}" data-label="“${escapeHtml(t.text)}” only">Only this one</button>` : '');
+});
+
 /** The evidence block for a check that PASSED — what a person confirms. */
 function scanEvidenceHtml(check, inv) {
   if (!inv || !check.evidence) return '';
@@ -17440,9 +18564,19 @@ function scanEvidenceHtml(check, inv) {
       return inv.lang ? `<div class="sc-evidence"><span class="sc-ev-k">lang</span> <code>${esc(inv.lang)}</code> <span class="sc-ev-note">— confirm it matches the language of the text.</span></div>` : '';
     case 'headings': {
       if (!inv.headings || !inv.headings.length) return '';
-      return `<div class="sc-evidence"><span class="sc-ev-k">Outline</span> <span class="sc-ev-note">— read it top to bottom: does it describe the page?</span>` +
+      // Several at once: tick the rows, choose once, apply to all of them —
+      // each by a selector that names that heading alone (Orel, 2026-10-08).
+      const bulkOpts = [1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">H${n}</option>`).join('') +
+        '<optgroup label="Not a heading"><option value="button">Button</option><option value="link">Link</option></optgroup>';
+      return `<div class="sc-evidence"><span class="sc-ev-k">Outline</span> <span class="sc-ev-note">— read it top to bottom: does it describe the page? Tick rows to change several at once.</span>` +
+        `<div class="sc-h-bulk" hidden><span class="sc-h-bulk-n">0 selected</span> → <select class="sc-h-bulk-level" aria-label="New level for the selected headings">${bulkOpts}</select>` +
+        `<button type="button" class="btn-primary btn-xs sc-h-bulk-go">Change selected</button><button type="button" class="btn-ghost btn-xs sc-h-bulk-clear">Clear</button><div class="sc-h-bulk-note"></div></div>` +
         `<ol class="sc-outline">${inv.headings.map(h =>
-          `<li style="--lvl:${h.level}" data-hl-sel="${esc(h.selector || '')}" data-hl-idx="${h.idx || 0}" title="Hover to see it on the page"><span class="sc-h-lvl">H${h.level}</span> <span class="sc-h-txt">${esc(h.text || '(empty)')}</span></li>`).join('')}</ol></div>`;
+          `<li style="--lvl:${h.level}" data-hl-sel="${esc(h.selector || '')}" data-hl-idx="${h.idx || 0}" title="Hover to see it on the page"><input type="checkbox" class="sc-h-pick" aria-label="Select “${esc(h.text || 'heading')}”"><span class="sc-h-lvl">H${h.level}</span> <span class="sc-h-txt">${esc(h.text || '(empty)')}</span>` +
+          `<span class="sc-h-edit"><select class="sc-h-level" aria-label="Level for ${esc(h.text || 'this heading')}">${[1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}"${n === h.level ? ' selected' : ''}>H${n}</option>`).join('')}` +
+          `<optgroup label="Not a heading"><option value="button">Button</option><option value="link">Link</option></optgroup></select>` +
+          `<button type="button" class="btn-outline btn-xs sc-h-change" data-sel="${esc(h.selector || '')}" data-idx="${h.idx || 0}" data-text="${esc(h.text || '')}" data-level="${h.level}">Change</button></span>` +
+          `<div class="sc-h-note"></div></li>`).join('')}</ol></div>`;
     }
     case 'images': {
       if (!inv.images || !inv.images.length) return '';
@@ -17659,7 +18793,7 @@ function scanWantedLevel(r) {
   return m ? Math.min(6, +m[1] + 1) : 0;
 }
 // Findings whose whole fix is a name: an aria-label mapping settles them.
-const SCAN_NAMEABLE = new Set(['select-name', 'input-nolabel', 'aria-input-field-name', 'button-noname']);
+const SCAN_NAMEABLE = new Set(['select-name', 'input-nolabel', 'aria-input-field-name', 'button-noname', 'link-same-text']);
 function scanMapButtonHtml(r) {
   if (!r.selector) return '';
   if (r.resolved) return `<span class="scan-mapped">✓ mapped — gone from the page</span>`;
@@ -17690,7 +18824,7 @@ function scanMapButtonHtml(r) {
   // only way to fix it was to leave the scan and find it again in the Picker.
   if (SCAN_NAMEABLE.has(r.ruleId)) {
     return `<span class="scan-name-box">` +
-      `<input type="text" class="scan-name-input" placeholder="Type what this ${r.ruleId === 'button-noname' ? 'button does' : 'field is for'}" spellcheck="false" title="Becomes the element's aria-label">` +
+      `<input type="text" class="scan-name-input" placeholder="${r.ruleId === 'link-same-text' ? 'Type where this “' + escapeHtml((r.text || '').slice(0, 20)) + '” link goes' : 'Type what this ' + (r.ruleId === 'button-noname' ? 'button does' : 'field is for')}" spellcheck="false" title="Becomes the element's aria-label">` +
       `<button class="btn-primary btn-xs scan-map" data-map="label">Map it → name</button></span>`;
   }
   if (r.ruleId === 'img-alt-filename' && altOkIdOfFinding(r)) {
@@ -17742,7 +18876,32 @@ async function scanMapCore(r, kind, tabId, opts) {
     const el = (text && els[idx] && norm(els[idx].textContent) === norm(text) ? els[idx] : null)
       || els.find(e => norm(e.textContent) === norm(text)) || els[idx] || (els.length === 1 ? els[0] : null);
     if (!el) return '';
-    const out = S.robustSelector(el);
+    let out = S.robustSelector(el);
+    // Not keyed on the aria-label a name mapping is about to rewrite: once
+    // written, "a[aria-label="Help"]" would no longer find the element it named.
+    if (out && /\[aria-label=/.test(out)) {
+      const bare = out.replace(/\[aria-label="[^"]*"\]/g, '');
+      try { if (bare && document.querySelectorAll(bare).length === 1) out = bare; } catch (e) {}
+    }
+    // ONE element, or the mapping names more than the finding did: the
+    // logo on molinahealthcare.com reads aria-label="Help", and its robust
+    // selector a[aria-label="Help"] is also the header's and the footer's
+    // real Help links — naming it would have renamed all three.
+    let n = 0; try { n = out ? document.querySelectorAll(out).length : 0; } catch (e) { n = 0; }
+    if (n !== 1) {
+      const parts = [];
+      for (let e = el; e && e !== document.body; e = e.parentElement) {
+        if (e.id && /^[A-Za-z][\w-]*$/.test(e.id) && !/^u1st-|^u1p-/.test(e.id)) { parts.unshift('#' + e.id); break; }
+        const cls = (typeof e.className === 'string' ? e.className.trim().split(/\s+/) : [])
+          .filter((c) => /^[A-Za-z][\w-]*$/.test(c) && c !== 'undefined')
+          .map((c) => { const m = c.match(/^([A-Za-z][\w-]*?__)[A-Za-z0-9_-]{5}$/); return m ? '[class*="' + m[1] + '"]' : '.' + c; })[0];
+        parts.unshift(e.tagName.toLowerCase() + (cls || ''));
+        let hit = 0; try { hit = document.querySelectorAll(parts.join('>')).length; } catch (er) { hit = 0; }
+        if (hit === 1) break;
+      }
+      const path = parts.join('>');
+      try { if (document.querySelectorAll(path).length === 1) out = path; } catch (e) {}
+    }
     return (out && S.isU1Valid(out)) ? out : '';
   }, [r.selector, r.idx || 0, r.text || '']);
   if (!primary) throw new Error(`Could not pin down "${r.text || r.selector}" on the page — map it from the Picker.`);
@@ -18285,7 +19444,7 @@ async function dialogInteriorScan(tab) {
         (part && part.err ? ` (${part.err})` : ''), 'err');
       continue;
     }
-    aiCost += U1AI.estimateCost(part.usage) || 0;
+    aiCost += (aiLastCost = U1AI.estimateCost(part.usage) || 0);
     // The dialog itself is already mapped — this pass is about what it holds.
     let comps = (part.components || []).filter((c) =>
       c && c.containerSelector && c.containerSelector !== dSel &&
@@ -18714,8 +19873,32 @@ async function renderScanHistory() {
   });
 }
 
+// A scan reopened from "Scanned before" is shown on its own: the intro, the
+// other panes and the history list go away, and a bar at the top leads back
+// (Orel, 2026-10-08: "everything should disappear, the scan comes up, and
+// there is a way back to the history at the top").
+function setScanHistoryView(entry) {
+  const tab = document.getElementById('tab-scan');
+  const back = document.getElementById('scanHistoryBack');
+  if (!tab || !back) return;
+  tab.classList.toggle('scan-viewing-saved', !!entry);
+  back.hidden = !entry;
+  const page = document.getElementById('scanHistoryBackPage');
+  if (page) page.textContent = entry ? `${entry.title || entry.url} · ${new Date(entry.at).toLocaleString()}` : '';
+  if (entry) { try { (tab.closest('.tab-scroll') || document.scrollingElement || document.documentElement).scrollTop = 0; } catch {} window.scrollTo(0, 0); }
+}
+document.getElementById('scanHistoryBackBtn')?.addEventListener('click', () => {
+  setScanHistoryView(null);
+  const sec = document.getElementById('scanResultsSection');
+  if (sec) sec.style.display = 'none';
+  setScanChoicePane('content');
+  const list = document.getElementById('scanHistoryList');
+  if (list) list.scrollIntoView({ block: 'start' });
+});
+
 function reopenScanHistory(entry) {
   if (!entry) return;
+  setScanHistoryView(entry);
   scanResults = entry.results || [];
   scanEnginesRan = entry.enginesRan || [];
   scanInventory = entry.inventory || null;
@@ -18733,6 +19916,7 @@ function reopenScanHistory(entry) {
 }
 
 document.getElementById('scanBtn')?.addEventListener('click', async () => {
+  setScanHistoryView(null);
   const status = document.getElementById('scanStatus');
   const btn = document.getElementById('scanBtn');
   const progress = document.getElementById('scanProgress');
@@ -20184,11 +21368,14 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
   }
   if (template && template.custom === 'ariaLabel') {
     const h = template.config && template.config.headingSelector;
-    if (!h || !String(h).trim()) {
+    // A name typed by a person IS the name — nothing to borrow. Refusing it
+    // here meant "type your own description" could never be saved (Orel,
+    // 2026-10-08), from the builder or from the scan's "Map it → name".
+    const own = template.config && String(template.config.label || '').trim();
+    if (!own && (!h || !String(h).trim())) {
       throw new Error(
-        'An aria-label mapping needs the heading whose text finishes the name — that is the whole ' +
-        'point of it. Without one the button keeps saying "Read more". Point "Heading whose text is ' +
-        'added at the end" at the card\'s heading.');
+        'An aria-label mapping needs a name: type your own in "Your own name", or point "Heading ' +
+        'whose text is added at the end" at the card\'s heading so the name is built from it.');
     }
   }
 
@@ -20338,7 +21525,7 @@ async function saveMappingEntry(template, { editingKey = null, refreshUi = true 
     pageTitle: (tab && sameSiteUrl(tab.url)) ? (tab.title || '') : ((prev && sameSiteUrl(prev.pageUrl)) ? (prev.pageTitle || '') : ''),
     // Whole site unless it was already limited to its page (the drawer's
     // "applies" chip is where that is decided, after the mapping exists).
-    scope: (prev && prev.scope === 'page') ? 'page' : 'site',
+    scope: (prev && prev.scope === 'page') || template.scope === 'page' ? 'page' : 'site',
     pagePath: (prev && prev.pagePath) || pagePathOf((tab && sameSiteUrl(tab.url)) ? tab.url : ((prev && sameSiteUrl(prev.pageUrl)) ? prev.pageUrl : '')),
     capturedAt: Date.now(),
     // Stable chronological "Fix #N" shown in the UI, the exported script and the
@@ -20496,8 +21683,10 @@ async function applyAllMappings({ silent = false, only = null, tab = null } = {}
     const r = await applyUrsCompatAll(ursAll);
     if (r.ok) applied += ursAll.length; else failed += ursAll.length;
   }
+  const ideAll = custom.filter((m) => m.custom === 'ideCompat');
+  if (ideAll.length) { const r = await applyIdeCompatAll(ideAll); if (r.ok) applied += ideAll.length; else failed += ideAll.length; }
   for (const m of custom) {
-    if (m.custom === 'ursCompat') continue;
+    if (m.custom === 'ursCompat' || m.custom === 'ideCompat') continue;
     const r = await applyOne(m.type, m.firstArg || m.primary, m.config, m.custom, m);
     if (r.ok) applied++; else failed++;
   }
@@ -20908,7 +22097,7 @@ async function agentSend(key, box, text) {
   renderAgentThread(box, key);
 
   const out = await U1AI.chat({ ...t.ctx, history: t.history });
-  aiCost += U1AI.estimateCost(out.usage) || 0;
+  aiCost += (aiLastCost = U1AI.estimateCost(out.usage) || 0);
   t.busy = false;
   t.history.push(out.err
     ? { role: 'assistant', text: out.err }
@@ -21102,6 +22291,29 @@ document.getElementById('mappingsList')?.addEventListener('click', async (e) => 
 // The keyboard engines live in grid-nav.js. For DEPLOYMENT we inline their
 // source so the produced snippet runs on the live site with no extension.
 //
+// The minified form of each region, written by scripts/build.mjs next to the
+// file it came from (u1-patch.min.json …). The export ships these in place of
+// the comment-stripped source: same code, a third of the size. Missing — an
+// unbuilt checkout, or a region the minifier could not take — means the
+// stripped source for that region, so this can only ever cost size.
+const __minifiedRegions = {};
+async function getMinifiedRegions(file) {
+  if (file in __minifiedRegions) return __minifiedRegions[file];
+  let regions = null;
+  try {
+    const res = await fetch(chrome.runtime.getURL(file.replace(/\.js$/, '.min.json')));
+    if (res.ok) regions = await res.json();
+  } catch { regions = null; }
+  __minifiedRegions[file] = regions && typeof regions === 'object' ? regions : null;
+  return __minifiedRegions[file];
+}
+// One region as it ships. Joined with ';\n', never '\n' alone: minified code
+// drops its last semicolon, and a region ending in a call followed by one
+// starting with `(function` would otherwise parse as one call.
+function shippedRegion(min, name, source) {
+  return min && typeof min[name] === 'string' ? min[name] : stripComments(source);
+}
+
 // grid-nav.js holds three INDEPENDENT engines (grid/datepicker, make-clickable,
 // tab strip) marked off by //#region u1-engine:<kind>. Inlining the whole file
 // shipped all three to every client — roughly 26KB where a site using one of
@@ -21112,15 +22324,16 @@ async function getGridEngineSource(kinds) {
     const src = await res.text();
     const wanted = new Set(kinds && kinds.length ? kinds : ['grid', 'clickable', 'tabs', 'linklist']);
 
+    const min = await getMinifiedRegions('grid-nav.js');
     const picked = [];
-    const re = /\/\/#region u1-engine:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+    const re = /\/\/#region u1-engine:([a-z-]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
     let m;
-    while ((m = re.exec(src))) if (wanted.has(m[1])) picked.push(m[2]);
+    while ((m = re.exec(src))) if (wanted.has(m[1])) picked.push(shippedRegion(min, m[1], m[2]));
 
     // If the markers are ever lost to a bad edit, fall back to the whole file:
     // a deliverable that is larger than it needs to be still works, one missing
     // its engine does not.
-    return stripComments(picked.length ? `'use strict';\n${picked.join('\n\n')}` : src);
+    return picked.length ? `'use strict';\n${picked.join(';\n')}` : stripComments(src);
   } catch { return ''; }
 }
 
@@ -21139,9 +22352,10 @@ async function getUrsCompatSource() {
       const m = new RegExp(`//#region u1-engine:${kind}\\r?\\n([\\s\\S]*?)\\r?\\n//#endregion`).exec(src);
       return m ? m[1] : '';
     };
-    const jq = pick('jquery'), urs = pick('urs');
+    const jq = pick('jquery'), urs = pick('urs'), ide = pick('ide');
     if (!jq || !urs) return stripComments(src); // markers lost — ship it whole rather than broken
-    return jq + '\n' + stripComments(urs);
+    const min = await getMinifiedRegions('urs-compat.js');
+    return jq + ';\n' + (ide ? shippedRegion(min, 'ide', ide) + ';\n' : '') + shippedRegion(min, 'urs', urs);
   } catch { return ''; }
 }
 
@@ -21165,18 +22379,24 @@ async function getPatchSource(types) {
     // list live with the role rather than with one of its two callers. Without
     // this a combobox ships without them.
     if (wanted.has('combobox')) wanted.add('listbox');
+    // Opening a submenu when keyboard focus lands on its trigger. It acts only
+    // on a menu mapping saved with focusOpensSubmenu, so it rides with `menu`.
+    // Its name has a hyphen, which the old [a-z]+ pattern could not match — so
+    // it never shipped at all until 2026-10-11.
+    if (wanted.has('menu')) wanted.add('menu-focus-hover');
 
+    const min = await getMinifiedRegions('u1-patch.js');
     const picked = [];
-    const re = /\/\/#region u1-patch:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+    const re = /\/\/#region u1-patch:([a-z-]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
     let m;
-    while ((m = re.exec(src))) if (wanted.has(m[1])) picked.push(m[2]);
+    while ((m = re.exec(src))) if (wanted.has(m[1])) picked.push(shippedRegion(min, m[1], m[2]));
 
     // Only `core` matched means there is nothing type-specific to correct —
     // still worth shipping, because the wrapper and the skip-link fix apply to
     // every site. Nothing matched at all means the markers are gone; ship the
     // whole file rather than silently dropping the corrections.
     if (!picked.length) return stripComments(src);
-    return stripComments(`'use strict';\n${picked.join('\n\n')}`);
+    return `'use strict';\n${picked.join(';\n')}`;
   } catch { return ''; }
 }
 
@@ -21235,8 +22455,8 @@ function qaCheckFor(m) {
 // Builds the full, self-contained script the implementer pastes into the site
 // (after the U1 library tag). Everything here must run WITHOUT the extension.
 async function buildDeployableCode(list, hostname) {
-  const fixes = [], customs = [], grids = [], clickables = [], tabStrips = [],
-        linkLists = [], crumbs = [], statics = [], hides = [], orders = [], urs = [];
+  const fixes = [], customs = [], names = [], grids = [], clickables = [], tabStrips = [],
+        linkLists = [], crumbs = [], statics = [], hides = [], orders = [], urs = [], ide = [];
   // Every emitted block is preceded by its "Fix #N" header so the script can be
   // read against the close-out report line by line.
   const header = (m) => {
@@ -21254,8 +22474,12 @@ async function buildDeployableCode(list, hostname) {
   };
   // A page-scoped mapping's call runs only on its page. Compared the way the
   // panel compares it (pagePathOf): decoded pathname, no trailing slash.
+  // A site that changes page without a reload (Next.js, any SPA) never runs
+  // this file again: the check has to happen on every page change, not once
+  // at load — __u1OnPage runs the call now if this is its page, and again
+  // every time the person comes back to it (molinahealthcare.com, 2026-10-08).
   const guard = (m, code) => isPageScoped(m)
-    ? `if (__u1Here() === ${JSON.stringify(m.pagePath)}) {\n${code}\n}`
+    ? `__u1OnPage(${JSON.stringify(m.pagePath)}, function () {\n${code}\n});`
     : code;
   const sorted = list.slice().sort((a, b) => {
     const an = (a && a.fixNo) || 1e9, bn = (b && b.fixNo) || 1e9;
@@ -21267,6 +22491,7 @@ async function buildDeployableCode(list, hostname) {
     if (m.custom === 'keyboardGrid') grids.push(m);
     // Converted URS patterns: registered together, applied as one tree.
     else if (m.custom === 'ursCompat') urs.push(m);
+    else if (m.custom === 'ideCompat') ide.push(m);
     else if (m.custom === 'keyboardClickable') clickables.push(m);
     // Engine-carrying too: each call is nothing without its region.
     else if (m.custom === 'hideElement') hides.push(m);
@@ -21281,6 +22506,8 @@ async function buildDeployableCode(list, hostname) {
     // Declarations, not calls: a static fix switches on a corrector that lives
     // in the patch, so it has to be emitted BEFORE the patch runs.
     else if (m.custom === 'staticFix') { const c = mappingToCode(m); if (c) statics.push(header(m) + '\n' + c); }
+    // One line per name; the code behind them is written once (ARIA_NAME_RUNTIME).
+    else if (m.custom === 'ariaLabel') { if (m.primary) names.push(header(m) + '\n' + guard(m, ariaNameCall(m))); }
     else if (m.custom) { const c = mappingToCode(m); if (c) customs.push(header(m) + '\n' + guard(m, c)); } // regenerated, never stored m.code
     else { const c = mappingToCode(m); if (c) fixes.push(header(m) + '\n' + guard(m, c)); }
   }
@@ -21316,17 +22543,36 @@ async function buildDeployableCode(list, hostname) {
   // once when it is already there, otherwise poll briefly, then say clearly
   // what is missing rather than fail silently.
   if (sorted.some(isPageScoped)) {
-    fixesParts.push(`/* ---- This page ----\n` +
-      ` * Some mappings below apply on one page only. The page is compared as\n` +
-      ` * its decoded path with no trailing slash; the query is not part of it. */\n` +
+    fixesParts.push(`/* ---- This page: runs a this-page-only mapping on its page, including after in-site navigation ---- */\n` +
       `function __u1Here() {\n` +
       `  try { return decodeURIComponent(location.pathname).replace(/\\/+$/, '') || '/'; } catch (e) { return location.pathname; }\n` +
+      `}\n` +
+      `function __u1RunOnPage(e) {\n` +
+      `  var prev = window.__u1CallPage; window.__u1CallPage = e.path;\n` +
+      `  try { e.fn(); } catch (err) { console.error('[u1] a this-page-only fix failed on ' + e.path, err); }\n` +
+      `  finally { window.__u1CallPage = prev; }\n` +
+      `}\n` +
+      `function __u1OnPage(path, fn) {\n` +
+      `  var w = window, list = (w.__u1PageFns = w.__u1PageFns || []);\n` +
+      `  list.push({ path: path, fn: fn });\n` +
+      `  if (!w.__u1PageWatch) {\n` +
+      `    w.__u1PageWatch = true;\n` +
+      `    var last = __u1Here();\n` +
+      `    var check = function () {\n` +
+      `      var now = __u1Here(); if (now === last) return; last = now;\n` +
+      `      list.forEach(function (e) { if (e.path === now) __u1RunOnPage(e); });\n` +
+      `    };\n` +
+      `    ['pushState', 'replaceState'].forEach(function (k) {\n` +
+      `      var orig = history[k]; if (typeof orig !== 'function') return;\n` +
+      `      history[k] = function () { var r = orig.apply(this, arguments); setTimeout(check, 0); return r; };\n` +
+      `    });\n` +
+      `    w.addEventListener('popstate', function () { setTimeout(check, 0); });\n` +
+      `  }\n` +
+      `  if (__u1Here() === path) __u1RunOnPage({ path: path, fn: fn });\n` +
       `}`);
   }
-  if (fixes.length || customs.length) {
-    fixesParts.push(`/* ---- Wait for the U1 engine ----\n` +
-      ` * The calls below need window.u1.fix. If this file happens to run before\n` +
-      ` * the U1 library has loaded, the calls are held until it has. */\n` +
+  if (fixes.length || customs.length || names.length) {
+    fixesParts.push(`/* ---- Wait for the U1 library before running the calls below ---- */\n` +
       `function __u1WhenReady(fn) {\n` +
       `  if (window.u1 && window.u1.fix) { fn(); return; }\n` +
       `  var tries = 0;\n` +
@@ -21351,14 +22597,10 @@ async function buildDeployableCode(list, hostname) {
     const patch = await getPatchSource(mappedTypes);
     if (patch) {
       patchParts.push(
+        // Minified (scripts/minify-regions.mjs): nobody edits this file — the
+        // site's own work is in u1-fixes.js, which stays readable.
         fileBanner('U1 runtime extensions (u1-patch.js)',
-          'Load this BEFORE u1-fixes.js — it extends window.u1.fix.* first.') + '\n\n' +
-        `/* Extends window.u1.fix.* for the components mapped in u1-fixes.js,\n` +
-        ` * covering what the current U1 infrastructure does not reach yet:\n` +
-        ` * application to every match rather than one, additional keyboard\n` +
-        ` * keys, additional ARIA state, and fixers this build does not carry.\n` +
-        ` * Each extension checks the current state first, so it stands down on\n` +
-        ` * its own once U1 itself covers the same ground. */\n` +
+          'Load this BEFORE u1-fixes.js — it extends window.u1.fix.* first.') + '\n' +
         `(function () {\n${patch}\n})();`
       );
     }
@@ -21384,9 +22626,10 @@ async function buildDeployableCode(list, hostname) {
         `function __u1ApplyMappings() {\n` + patchCheck + fixes.join('\n\n') + `\n}\n__u1WhenReady(__u1ApplyMappings);`);
     }
   }
-  if (customs.length) {
+  if (customs.length || names.length) {
     fixesParts.push(`/* ---- Accessible names ---- */\n` +
-      `function __u1ApplyNames() {\n` + customs.join('\n\n') + `\n}\n__u1WhenReady(__u1ApplyNames);`);
+      (names.length ? ARIA_NAME_RUNTIME + '\n' : '') +
+      `function __u1ApplyNames() {\n` + customs.concat(names).join('\n\n') + `\n}\n__u1WhenReady(__u1ApplyNames);`);
   }
   if (grids.length || clickables.length || tabStrips.length || linkLists.length || crumbs.length || hides.length || orders.length) {
     // Only the engines these mappings actually call.
@@ -21403,26 +22646,26 @@ async function buildDeployableCode(list, hostname) {
     // Empty field → inline, exactly as before, so a client who will not load a
     // third-party script still gets something that works.
     const engine = await getGridEngineSource(kinds);
+    // formatJsObject, not JSON.stringify(…, null, 2): the same readable,
+    // editable config, without a line and an indent per key.
+    const cfg = (o) => formatJsObject(o || {});
     const calls = grids.map(g =>
-      header(g) + '\n' + guard(g, `window.__u1InstallGridFromMapping(${JSON.stringify(g.primary)}, ${JSON.stringify(g.config, null, 2)});`)
+      header(g) + '\n' + guard(g, `window.__u1InstallGridFromMapping(${JSON.stringify(g.primary)}, ${cfg(g.config)});`)
     ).concat(clickables.map(c =>
-      header(c) + '\n' + guard(c, `window.__u1MakeClickable(${JSON.stringify({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' }, null, 2)});`)
+      header(c) + '\n' + guard(c, `window.__u1MakeClickable(${cfg({ selector: c.primary, role: (c.config && c.config.role) || 'button', label: (c.config && c.config.label) || '', activates: (c.config && c.config.activates) || '' })});`)
     )).concat(tabStrips.map(t =>
-      header(t) + '\n' + guard(t, `window.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${JSON.stringify(t.config, null, 2)});`)
+      header(t) + '\n' + guard(t, `window.__u1InstallTabsFromMapping(${JSON.stringify(t.primary)}, ${cfg(t.config)});`)
     )).concat(linkLists.map(l =>
-      header(l) + '\n' + guard(l, `window.__u1FixLinkListFromMapping(${JSON.stringify(l.primary)}, ${JSON.stringify(l.config, null, 2)});`)
+      header(l) + '\n' + guard(l, `window.__u1FixLinkListFromMapping(${JSON.stringify(l.primary)}, ${cfg(l.config)});`)
     )).concat(crumbs.map(b =>
-      header(b) + '\n' + guard(b, `window.__u1InstallBreadcrumbFromMapping(${JSON.stringify(b.primary)}, ${JSON.stringify(b.config, null, 2)});`)
+      header(b) + '\n' + guard(b, `window.__u1InstallBreadcrumbFromMapping(${JSON.stringify(b.primary)}, ${cfg(b.config)});`)
     )).concat(hides.map(h =>
-      header(h) + '\n' + guard(h, `window.__u1HideFromAll(${JSON.stringify({ selector: h.primary }, null, 2)});`)
+      header(h) + '\n' + guard(h, `window.__u1HideFromAll(${cfg({ selector: h.primary })});`)
     )).concat(orders.map(o =>
-      header(o) + '\n' + guard(o, `window.__u1FocusOrderFromMapping(${JSON.stringify(o.primary)}, ${JSON.stringify({ order: (o.config && o.config.order) || '' }, null, 2)});`)
+      header(o) + '\n' + guard(o, `window.__u1FocusOrderFromMapping(${JSON.stringify(o.primary)}, ${cfg({ order: (o.config && o.config.order) || '' })});`)
     )).join('\n\n');
     fixesParts.push(
-      `/* ---- Engines (grid / clickable / tab strip / breadcrumb) ----\n` +
-      ` * Adds the ARIA roles, names and states each pattern needs, roving\n` +
-      ` * tabindex, arrow/Home/End/Enter/Space, a visible focus ring, and\n` +
-      ` * re-applies itself on every re-render and each time a widget opens. */\n` +
+      `/* ---- Keyboard and ARIA engines used by the calls below ---- */\n` +
       (engine ? `(function () {\n${engine}\n})();\n\n${calls}`
               : `/* !! Engine source unavailable — re-copy this script. */\n${calls}`)
     );
@@ -21434,16 +22677,13 @@ async function buildDeployableCode(list, hostname) {
   // inside its parent's element, so order and nesting both matter). The engine
   // is urs-compat.js inlined whole: unlike grid-nav.js there is no per-kind
   // slicing, because one URS site uses most of the legacy behaviours at once.
-  if (urs.length) {
+  if (urs.length || ide.length) {
     const engine = await getUrsCompatSource();
-    const calls = urs.map(u => header(u) + '\n' + guard(u, mappingToCode(u))).join('\n\n');
+    const calls = urs.map(u => header(u) + '\n' + guard(u, mappingToCode(u))).join('\n\n') +
+      (ide.length ? '\n\n' + ide.map(u => header(u) + '\n' + mappingToCode(u)).join('\n\n') + '\n\nwindow.__u1IdeApply();' : '');
     fixesParts.push(
-      `/* ---- URS compatibility (converted from uRemediate) ----\n` +
-      ` * Re-implements the legacy uRemediate client engine: pattern tree, roles,\n` +
-      ` * descriptions, tab-order rules, state binding and the per-pattern scripts,\n` +
-      ` * with keyboard and screen-reader behaviours always on and the colour\n` +
-      ` * behaviours following the visitor's own system settings. */\n` +
-      (engine ? `(function () {\n${engine}\n})();\n\n${calls}\n\nwindow.__u1UrsApply();`
+      `/* ---- URS compatibility (converted from uRemediate) ---- */\n` +
+      (engine ? `(function () {\n${engine}\n})();\n\n${calls}` + (urs.length ? `\n\nwindow.__u1UrsApply();` : '')
               : `/* !! urs-compat.js source unavailable — re-copy this script. */\n${calls}`)
     );
   }
@@ -21462,17 +22702,11 @@ async function buildDeployableCode(list, hostname) {
   // Only on a real width change — a phone firing resize as the address bar
   // hides must not re-run this on every scroll. Height changes are ignored for
   // the same reason.
-  if (fixes.length || customs.length) {
+  if (fixes.length || customs.length || names.length) {
     const reapply = [fixes.length ? '__u1ApplyMappings' : null,
-                     customs.length ? '__u1ApplyNames' : null].filter(Boolean);
+                     customs.length || names.length ? '__u1ApplyNames' : null].filter(Boolean);
     fixesParts.push(
-      `/* ---- Responsive re-apply ----\n` +
-      ` * u1 decorates an element once per page load. A responsive site swaps its\n` +
-      ` * navigation at a breakpoint, and the menu that appears was never seen by\n` +
-      ` * u1 — so it arrives with no roles, no aria and no keyboard support.\n` +
-      ` * This re-runs the same calls after a real WIDTH change. Elements u1 has\n` +
-      ` * already processed are skipped by the library itself, so nothing is done\n` +
-      ` * twice. */\n` +
+      `/* ---- Re-apply after a width change (a breakpoint can swap in elements U1 has not seen) ---- */\n` +
       `(function () {\n` +
       `  var lastWidth = window.innerWidth;\n` +
       `  var t = null;\n` +
@@ -21501,22 +22735,24 @@ async function buildDeployableCode(list, hostname) {
   const checks = [];
   for (const m of sorted) { const c = qaCheckFor(m); if (c) checks.push(c); }
   if (checks.length) {
+    // Each check as [id, type, field, selector, page] rather than an object
+    // with its keys spelled out every time. The line it logs is unchanged —
+    // the monitor parses it (U1-VALIDATION-ERROR | k=v | …), so it must not.
+    const rows = checks.map((c) => [c.id, c.type, c.field, c.selector, c.page]);
     monitoringParts.push(
-      fileBanner('monitoring hook (u1-monitoring.js)', 'Inert unless the page loads with ?u1qa=1 — safe to load anywhere.') + '\n\n' +
+      `/* U1 monitoring hook (u1-monitoring.js) · ${commentSafe(hostname)} · inert unless the page loads with ?u1qa=1 */\n` +
       `(function () {\n` +
       `  try {\n` +
       `    if (new URLSearchParams(location.search).get('u1qa') !== '1') return;\n` +
-      `    var CHECKS = ${JSON.stringify(checks)};\n` +
+      `    var C = ${JSON.stringify(rows)};\n` +
       `    var here = (location.pathname || '/').replace(/\\/+$/, '') || '/';\n` +
-      `    function run() {\n` +
-      `      CHECKS.forEach(function (c) {\n` +
-      `        try {\n` +
-      `          if (c.page && c.page !== here) return; // page-specific mapping — only validate on its own page\n` +
-      `          var ok = false; try { ok = !!document.querySelector(c.selector); } catch (e) { ok = false; }\n` +
-      `          if (!ok) console.error('U1-VALIDATION-ERROR | domain=' + location.hostname + ' | type=' + c.type + ' | id=' + c.id + ' | field=' + c.field + ' | selector=' + c.selector + ' | page=' + location.pathname);\n` +
-      `        } catch (e) {}\n` +
+      `    var run = function () {\n` +
+      `      C.forEach(function (c) {\n` +
+      `        if (c[4] && c[4] !== here) return;\n` +
+      `        var ok = false; try { ok = !!document.querySelector(c[3]); } catch (e) {}\n` +
+      `        if (!ok) console.error('U1-VALIDATION-ERROR | domain=' + location.hostname + ' | type=' + c[1] + ' | id=' + c[0] + ' | field=' + c[2] + ' | selector=' + c[3] + ' | page=' + location.pathname);\n` +
       `      });\n` +
-      `    }\n` +
+      `    };\n` +
       `    if (document.readyState === 'complete') setTimeout(run, 800);\n` +
       `    else window.addEventListener('load', function () { setTimeout(run, 800); });\n` +
       `  } catch (e) {}\n` +
@@ -22577,7 +23813,10 @@ async function loadMappingsList() {
     const pageUrl = (m && typeof m === 'object' && m.pageUrl) ? m.pageUrl : '';
     const here = pageUrl && cleanPageUrl(pageUrl) === hereUrl;
     const pathOf = (u) => { try { const x = new URL(u); return x.pathname + x.search || '/'; } catch { return u; } };
-    const gotoChip = pageUrl
+    // Captured HERE says nothing worth a chip — it sat beside "whole site"
+    // and read as a second scope option (Orel, 2026-10-06). Only a link to
+    // ANOTHER page is shown.
+    const gotoChip = pageUrl && !here
       ? `<span class="mh-flag mh-goto${here ? ' here' : ''}" data-goto="${escapeHtml(pageUrl)}" role="${here ? 'note' : 'button'}" tabindex="${here ? '-1' : '0'}" title="${escapeHtml(here
             ? 'Captured on this page: ' + pageUrl
             : 'Open the page this was captured on: ' + (m.pageTitle ? m.pageTitle + ' — ' : '') + pageUrl)}">↗ ${escapeHtml(here ? 'this page' : pathOf(pageUrl).slice(0, 28) + (pathOf(pageUrl).length > 28 ? '…' : ''))}</span>`
@@ -22586,15 +23825,23 @@ async function loadMappingsList() {
     // header; "this page only" is an exception, so it does.
     const scoped = !legacy && isPageScoped(m);
     const scopePath = scoped ? m.pagePath : (pageUrl ? pagePathOf(pageUrl) : '');
-    // One chip, always lit, saying where the mapping applies NOW; a click
-    // switches to the other. Orel wanted the current state readable at a
-    // glance, not two options to choose between.
+    // Two radio options, the lit one is where the mapping applies NOW; a
+    // press on the other switches. Orel (2026-10-06): "this or that, I press
+    // one" — a single toggle chip beside the "captured here" chip read as
+    // two options already, the wrong two.
     const scopeChip = legacy ? '' :
-      `<span class="mh-flag mh-flag-toggle mh-scope on" data-scope-toggle="${idx}" role="button" tabindex="0" title="${scoped
-          ? 'Applies on this page only: ' + escapeHtml(scopePath) + '. Click to apply on the whole site.'
-          : 'Applies on the whole site — every page where the selector matches. Click to limit it to ' + (scopePath ? escapeHtml(scopePath) : 'the page it was captured on') + '.'}">${scoped ? '⌖ this page only' : '⊕ whole site'}</span>`;
-    // In the collapsed header only the exception shows, and as a plain fact.
-    const headScopeChip = scoped ? `<span class="mh-flag mh-scope on" title="Applies on this page only: ${escapeHtml(m.pagePath)}">⌖ this page only</span>` : '';
+      `<span class="mh-scope-radio" role="radiogroup" aria-label="Where this mapping applies">` +
+        `<span class="mh-flag mh-flag-toggle mh-scope${scoped ? '' : ' on'}" data-scope-set="site" data-scope-idx="${idx}" role="radio" aria-checked="${scoped ? 'false' : 'true'}" tabindex="0" title="Applies on the whole site — every page where the selector matches.">⊕ whole site</span>` +
+        `<span class="mh-flag mh-flag-toggle mh-scope${scoped ? ' on' : ''}" data-scope-set="page" data-scope-idx="${idx}" role="radio" aria-checked="${scoped ? 'true' : 'false'}" tabindex="0" title="${escapeHtml(scoped
+          ? 'Applies on this page only: ' + scopePath
+          : 'Limit it to ' + (scopePath || 'the page it was captured on') + '.')}">⌖ this page only</span>` +
+      `</span>`;
+    // The collapsed header says where EVERY mapping applies, as a plain fact
+    // — Orel (2026-10-06): mark "whole site" the way "this page only" is
+    // marked, so the list reads the same for all rows.
+    const headScopeChip = legacy ? '' : scoped
+      ? `<span class="mh-flag mh-scope on" title="Applies on this page only: ${escapeHtml(m.pagePath)}">⌖ this page only</span>`
+      : `<span class="mh-flag mh-scope" title="Applies on the whole site — every page where the selector matches.">⊕ whole site</span>`;
     const headScope = headScopeChip;
     const focusChip = type === 'menu'
       ? `<span class="mh-flag mh-flag-toggle ${focusOpen ? 'on' : 'off'}" data-toggle-focusopen="${idx}" role="button" tabindex="0" aria-pressed="${focusOpen ? 'true' : 'false'}" title="${focusOpen
@@ -22641,8 +23888,11 @@ async function loadMappingsList() {
     // rides on the chip's tooltip.
     const ursPat = m && m.custom === 'ursCompat' && m.config && m.config.pattern ? m.config.pattern : null;
     const URS_TYPE_LABEL = { menuWidget: 'menu', body: 'site', header: 'header', footer: 'footer', main: 'main', siteNav: 'navigation', search: 'search', complementary: 'aside', blockedTooltip: 'tooltip', popup: 'dialog' };
-    const typeLabel = ursPat ? ((URS_TYPE_LABEL[ursPat.patternType] || ursPat.patternType || 'pattern') + ' · URS') : type;
-    const typeTitle = ursPat ? `URS pattern “${ursPat.name || ''}” (${ursPat.patternType}) — ${(m.config.metadata || []).length} fixes, ${(m.config.scripts || []).length} scripts` : '';
+    const ideScript = m && m.custom === 'ideCompat' && m.config && m.config.script ? m.config.script : null;
+    const typeLabel = ursPat ? ((URS_TYPE_LABEL[ursPat.patternType] || ursPat.patternType || 'pattern') + ' · URS')
+      : ideScript ? ('script ' + ideScript.index + ' · IDE')
+      : (m && m.source === 'ide' ? type + ' · IDE' : m && m.source === 'u1-markers' ? type + ' · markers' : type);
+    const typeTitle = ideScript ? `IDE script ${ideScript.index} — ${(ideScript.calls || []).join(', ') || 'free JavaScript'}` : ursPat ? `URS pattern “${ursPat.name || ''}” (${ursPat.patternType}) — ${(m.config.metadata || []).length} fixes, ${(m.config.scripts || []).length} scripts` : '';
     return `
       <div class="mapping-item${legacy ? ' legacy' : ''}${rv ? ' reviewed' : ''}" data-idx="${idx}">
         <button class="mapping-head" aria-expanded="false" data-idx="${idx}">
@@ -22919,13 +24169,15 @@ async function loadMappingsList() {
     });
   });
 
-  container.querySelectorAll('.mh-flag-toggle[data-scope-toggle]').forEach(chip => {
+  container.querySelectorAll('.mh-flag-toggle[data-scope-set]').forEach(chip => {
     const toggle = async (e) => {
       e.stopPropagation();
-      const idx = parseInt(chip.dataset.scopeToggle, 10);
+      const idx = parseInt(chip.dataset.scopeIdx, 10);
       const m = list[idx];
       if (!m || typeof m !== 'object') return;
-      if (m.scope !== 'page') {
+      const want = chip.dataset.scopeSet;
+      if ((want === 'page') === (m.scope === 'page')) return;   // already there
+      if (want === 'page') {
         // Limiting needs a page to limit to. A mapping imported without one
         // has to be re-captured on its page first; saying so beats guessing.
         const path = m.pagePath || pagePathOf(m.pageUrl || '');
@@ -23131,6 +24383,7 @@ document.querySelectorAll('.export-view [data-exportback]').forEach((b) => {
 });
 
 async function refreshExportInfo() {
+  loadHandoverZipChoice().catch(() => {});
   const mKey   = storageKey('mappings', currentHostname);
   const platKey = storageKey('platform', currentHostname);
   const stored = await U1Store.get([mKey, platKey]);
@@ -23141,15 +24394,27 @@ async function refreshExportInfo() {
 
   const sel = document.getElementById('platformSelect');
   const detectedLabel = document.getElementById('platformDetected');
-  // Prefer a saved override; otherwise auto-detect the platform.
-  if (stored[platKey]) {
-    sel.value = stored[platKey];
-    if (detectedLabel) detectedLabel.textContent = '';
-  } else {
-    const tab = await getTab();
-    const detected = await detectSiteType(tab);
+  // Detect first (when the tab is on this site); a manual choice stands only
+  // while the detection it was made against still holds — see above.
+  const tab = await getTab();
+  const detected = (tab && tabIsThisSite(tab)) ? await detectSiteType(tab) : '';
+  if (detected) lastDetectedPlatform = detected;
+  const savedRaw = typeof stored[platKey] === 'string' ? stored[platKey] : '';
+  const [savedValue, savedAgainst] = savedRaw.includes('@') ? savedRaw.split('@') : [savedRaw, null];
+  const manualStands = savedValue && (
+    (savedAgainst !== null && (!detected || savedAgainst === detected)) ||   // chosen knowingly, nothing new detected
+    (savedAgainst === null && !detected));                                  // old bare value, nothing to compare
+  if (manualStands) {
+    sel.value = savedValue;
+    if (detectedLabel) detectedLabel.textContent = detected && detected !== savedValue ? ` — manual (detected: ${detected})` : ' — manual';
+  } else if (detected) {
     sel.value = detected;
-    if (detectedLabel) detectedLabel.textContent = ` — detected: ${detected}`;
+    if (detectedLabel) detectedLabel.textContent = ` — detected: ${({ wordpress: 'WordPress', js: 'HTML / JavaScript', react: 'React', angular: 'Angular' })[detected] || detected}`;
+    // A stale bare choice is dropped, so it cannot come back when the tab is elsewhere.
+    if (savedRaw && savedAgainst === null) U1Store.set({ [platKey]: '' }).catch(() => {});
+  } else {
+    sel.value = 'js';
+    if (detectedLabel) detectedLabel.textContent = ' — open the site to detect';
   }
 
   // The backup picker lists every site with saved work, not just this one, so
@@ -23197,6 +24462,7 @@ async function refreshDelivery() {
       : `${cloud.length} Cloud domain${cloud.length === 1 ? '' : 's'}, nothing published yet.`;
   }
   await renderCloudView();
+  refreshPreviewState().catch(() => {});
 }
 
 /** Has anything that shapes the published code changed since this domain's live version? */
@@ -23264,9 +24530,13 @@ async function renderCloudView() {
       line.classList.add('cloud-warn');
     } else {
       const changed = dom.main ? await cloudChangedSince(dom.livePublishedAt) : false;
+      // Builds are date-stamped (2026-10-04b) and sort as strings.
+      const mine = await getPatchBuildStamp();
+      const behind = !!(mine && dom.livePatchBuild && dom.livePatchBuild < mine);
       line.textContent = `Live: version ${dom.liveVersion}, ${fmtStamp(dom.livePublishedAt)}${dom.livePublishedBy ? ` by ${dom.livePublishedBy}` : ''}.` +
-        (changed ? ' There are changes here that are not live yet.' : '');
-      if (changed) line.classList.add('cloud-warn');
+        (changed ? ' There are changes here that are not live yet.' : '') +
+        (behind ? ` It runs patch ${dom.livePatchBuild}; this Studio has ${mine}. Publish to update it.` : '');
+      if (changed || behind) line.classList.add('cloud-warn');
     }
     card.appendChild(line);
 
@@ -23352,6 +24622,56 @@ async function cloudSetLive(hostname, version, btn) {
   }
 }
 
+// The four files Cloud serves — the handover's own, so a Cloud site runs what
+// a Satellite one would have been sent. null when there is nothing to send.
+async function cloudFiles() {
+  const { config, skipLinks, built } = await collectExportInputs();
+  if (!built.fixes && !(config && Object.keys(config).length)) return null;
+  return {
+    config: buildConfigFileContent(config, skipLinks, 'wordpress'),
+    patch: built.patch || '',
+    fixes: built.fixes || '',
+    monitoring: built.monitoring || '',
+  };
+}
+
+async function refreshPreviewState() {
+  const tab = await getTab();
+  const stop = document.getElementById('cloudPreviewStopBtn');
+  const note = document.getElementById('cloudPreviewNote');
+  if (!tab || !stop) return;
+  let st = null;
+  try { st = await chrome.runtime.sendMessage({ action: 'previewState', tabId: tab.id }); } catch (e) {}
+  const on = !!(st && st.preview);
+  stop.hidden = !on;
+  if (note) note.textContent = on ? 'This tab is showing the preview, not the extension\'s own fixes.' : '';
+}
+
+document.getElementById('cloudPreviewBtn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('cloudPreviewBtn');
+  const status = document.getElementById('cloudStatus');
+  btn.disabled = true;
+  try {
+    const files = await cloudFiles();
+    if (!files) { showNotice(status, 'Nothing to preview yet. Map something first.', 'error', 4000); return; }
+    const r = await U1Sync.preview(currentHostname, { files, patchBuild: await getPatchBuildStamp() });
+    const tab = await getTab();
+    await chrome.runtime.sendMessage({ action: 'startPreview', tabId: tab.id, url: r.url, hostname: currentHostname });
+    showNotice(status, 'Preview loading in this tab. Only you see it; the live site is unchanged. A purple badge marks the page. It ends when you stop it, leave the site, or in an hour.', 'success', 8000);
+    await refreshPreviewState();
+  } catch (e) {
+    showNotice(status, `Preview failed: ${(e && e.message) || e}`, 'error', 0);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('cloudPreviewStopBtn')?.addEventListener('click', async () => {
+  const tab = await getTab();
+  try { await chrome.runtime.sendMessage({ action: 'stopPreview', tabId: tab.id }); } catch (e) {}
+  await refreshPreviewState();
+});
+
 document.getElementById('cloudPublishBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('cloudPublishBtn');
   const status = document.getElementById('cloudStatus');
@@ -23363,19 +24683,14 @@ document.getElementById('cloudPublishBtn')?.addEventListener('click', async () =
   const label = btn.textContent;
   btn.textContent = 'Building…';
   try {
-    const { config, skipLinks, built } = await collectExportInputs();
-    if (!built.fixes && !(config && Object.keys(config).length)) {
+    const files = await cloudFiles();
+    if (!files) {
       showNotice(status, 'Nothing to publish yet. Map something first.', 'error', 4000);
       return;
     }
     btn.textContent = 'Publishing…';
     const r = await U1Sync.publish(currentHostname, {
-      files: {
-        config: buildConfigFileContent(config, skipLinks, 'wordpress'),
-        patch: built.patch || '',
-        fixes: built.fixes || '',
-        monitoring: built.monitoring || '',
-      },
+      files,
       note: (document.getElementById('cloudNote').value || '').trim(),
       patchBuild: await getPatchBuildStamp(),
       targets,
@@ -23396,12 +24711,24 @@ document.getElementById('cloudPublishBtn')?.addEventListener('click', async () =
   }
 });
 
-// Persist a manual platform override per site.
+// The guide follows the site's technology on its own (Orel, 2026-10-08: "detect
+// which guide it needs by the technology"). A manual choice is kept WITH what
+// was detected when it was made ("js@react"): it stands while the detection
+// still says the same thing, and a different detection — the site moved
+// platform, or detection learned it (Next.js used to read as plain JS) —
+// wins again. A bare old value has no such record and does not outvote a
+// detection.
+let lastDetectedPlatform = '';
 document.getElementById('platformSelect').addEventListener('change', async (e) => {
-  await U1Store.set({ [storageKey('platform', currentHostname)]: e.target.value });
+  await U1Store.set({ [storageKey('platform', currentHostname)]: `${e.target.value}@${lastDetectedPlatform || ''}` });
   const detectedLabel = document.getElementById('platformDetected');
-  if (detectedLabel) detectedLabel.textContent = ' — manual';
+  if (detectedLabel) detectedLabel.textContent = lastDetectedPlatform && lastDetectedPlatform !== e.target.value
+    ? ` — manual (detected: ${lastDetectedPlatform})` : ' — manual';
 });
+function tabIsThisSite(tab) {
+  try { const h = new URL(tab.url).hostname.replace(/^www\./, ''); return !!currentHostname && (h === currentHostname || h.endsWith('.' + currentHostname)); }
+  catch { return false; }
+}
 
 // Everything an export needs, read once and the same way for the whole
 // package and for a single file — so the u1-fixes.js downloaded on its own is
@@ -23585,7 +24912,7 @@ document.getElementById('exportMonitoringBtn')?.addEventListener('click', async 
     generateAndDownloadMonitoringGuide(currentHostname, src, platform);
     showNotice(statusEl, src
       ? 'Monitoring guide downloaded — how to install the hook, the hook itself, and the ' +
-        'three firewall addresses, in one document.'
+        'four firewall addresses, in one document.'
       : 'Firewall allowlist downloaded. There are no mappings on this site yet, so the ' +
         'monitoring hook is not in it — re-export once there are.',
       'success', 9000);
@@ -23681,6 +25008,25 @@ async function waitForReportRendered(budgetMs = 15000) {
   throw new Error('the report did not finish rendering');
 }
 
+// ── What goes in the client's zip ─────────────────────────────────────────────
+// Chosen per site, remembered on this machine (local-only: a preference about
+// one handover, not shared work). The client's Drive folder is unaffected.
+function handoverZipKey() { return 'handoverZip_' + currentHostname; }
+function handoverZipChoice() {
+  const boxes = document.querySelectorAll('#handoverZipPick input[data-zipkind]');
+  return new Set(Array.from(boxes).filter((b) => b.checked).map((b) => b.dataset.zipkind));
+}
+async function loadHandoverZipChoice() {
+  const box = document.getElementById('handoverZipPick');
+  if (!box || !currentHostname) return;
+  let saved = null;
+  try { saved = (await U1Store.get([handoverZipKey()]))[handoverZipKey()] || null; } catch {}
+  box.querySelectorAll('input[data-zipkind]').forEach((b) => { b.checked = !saved || saved.includes(b.dataset.zipkind); });
+}
+document.getElementById('handoverZipPick')?.addEventListener('change', () => {
+  U1Store.setLocalOnly({ [handoverZipKey()]: Array.from(handoverZipChoice()) }).catch(() => {});
+});
+
 document.getElementById('finishProjectBtn')?.addEventListener('click', async () => {
   const btn = document.getElementById('finishProjectBtn');
   const status = document.getElementById('finishStatus');
@@ -23721,10 +25067,16 @@ document.getElementById('finishProjectBtn')?.addEventListener('click', async () 
     // and Chrome names the second copy of one "u1-patch (1).js", so a folder
     // fetched twice is a folder nobody can tell apart afterwards. The zip is
     // the whole handover in one click, beside the files it contains.
-    const zip = buildHandoverZip(...args);
-    files.push({ name: zip.name, mime: 'application/zip', data: zip.bytes });
+    // The zip carries what was chosen for the client; the loose files above
+    // stay complete. Nothing chosen: no zip at all.
+    const zipKinds = handoverZipChoice();
+    const zip = zipKinds.size ? buildHandoverZip(...args, zipKinds) : null;
+    if (zip && zip.names.length) files.push({ name: zip.name, mime: 'application/zip', data: zip.bytes });
 
     const lines = [];
+    lines.push(zip && zip.names.length
+      ? `${zip.name} holds: ${zip.names.join(', ')}.`
+      : 'No zip — nothing was chosen for it. The files are in the folder on their own.');
     if (pdf) lines.push('Close-out report included as a PDF.');
     else if (pdfErr) lines.push(`No PDF — ${pdfErr}. Everything else was still produced.`);
     else lines.push('No PDF — this site has no mappings to report on yet.');
@@ -23770,14 +25122,24 @@ document.getElementById('finishProjectBtn')?.addEventListener('click', async () 
       // Never leave the specialist with nothing. The bundle is produced and
       // downloaded whatever the server did, and the reason is stated rather
       // than swallowed.
-      const { bytes, name } = zip;
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
-      const a = document.createElement('a');
-      a.href = url; a.download = name;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-
-      lines.unshift(`Not uploaded (${uploadErr}) — ${name} downloaded instead.`);
+      // Locally there is no client folder to keep everything in: the zip
+      // chosen for the client, and — when that is not already everything — a
+      // full copy beside it, so nothing is lost.
+      const save = (bytes, name) => {
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+        const a = document.createElement('a');
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      };
+      const full = buildHandoverZip(...args);
+      const saved = [];
+      if (zip && zip.names.length) { save(zip.bytes, zip.name); saved.push(zip.name); }
+      if (!zip || zip.names.length !== full.names.length) {
+        const allName = full.name.replace(/\.zip$/, '-all.zip');
+        save(full.bytes, allName); saved.push(allName);
+      }
+      lines.unshift(`Not uploaded (${uploadErr}) — downloaded instead: ${saved.join(', ')}.`);
       renderApplyReport(status, 'Handover ready (local)', lines, 'error');
     }
   } catch (e) {
@@ -23787,6 +25149,138 @@ document.getElementById('finishProjectBtn')?.addEventListener('click', async () 
     btn.textContent = label;
   }
 });
+
+// ── What the CLIENT has to fix ────────────────────────────────────────────────
+// The notes the scan raises (touch targets, contrast, duplicate ids, field
+// edges, unnamed landmarks) are fixes in the site's own CSS/HTML: nothing a
+// mapping or U1 can change, so they are the client's (Orel, 2026-10-08).
+// Taken from the saved scans, one per page: the most complete (most engines
+// ran), newest among equals. Ignored and already-fixed ones are left out.
+// Grouped per page and per kind of fault, with a few examples each — a table
+// of 300 identical "too small" rows is a table nobody acts on.
+// Notes that ARE ours to fix: a landmark gets its name from an aria-label
+// mapping (or the scan's Fix all), so it is not the client's to-do.
+const OURS_TO_FIX = new Set(['landmark-noname', 'landmark-unique']);
+async function buildClientActions() {
+  const key = scanHistoryKey();
+  const list = ((await U1Store.get([key]))[key] || []).filter((e) => e && e.url && Array.isArray(e.results));
+  await loadIgnored();
+  const best = new Map();
+  for (const e of list) {
+    const p = pagePathOf(e.url) || e.url;
+    const cur = best.get(p);
+    const n = (e.enginesRan || []).length, cn = cur ? (cur.enginesRan || []).length : -1;
+    if (!cur || n > cn || (n === cn && e.at > cur.at)) best.set(p, e);
+  }
+  // WHERE each one is, in words a developer can find: the component and part
+  // its CSS-module class names ("FontSizeAdjustor_decreaseFont__DJSDx" →
+  // FontSizeAdjustor › decreaseFont), what kind of element it is, and the
+  // selector itself to paste into DevTools. "24×20px" alone was not findable.
+  const KIND = { a: 'link', button: 'button', input: 'field', select: 'dropdown', textarea: 'text box', img: 'image', script: 'script', div: 'block', span: 'text' };
+  const where = (r) => {
+    const sel = String(r.selector || '');
+    const tag = (r.tag || (/^([a-z][a-z0-9]*)/i.exec(sel) || [])[1] || '').toLowerCase();
+    const cls = (/\.([A-Za-z][\w-]*)/.exec(sel) || [])[1] || '';
+    const m = /^([A-Z][A-Za-z0-9]*?)(?:HC)?_([A-Za-z0-9_]+?)(?:__[A-Za-z0-9_-]{4,})?$/.exec(cls);
+    const id = (/#([\w-]+)/.exec(sel) || [])[1];
+    const label = m ? `${m[1]} › ${m[2].replace(/_/g, ' ')}` : id ? `#${id}` : cls ? cls.replace(/__[A-Za-z0-9_-]{4,}$/, '') : '';
+    if (!label) return tag ? `a <${tag}> ${KIND[tag] && KIND[tag] !== tag ? `(${KIND[tag]}) ` : ''}element` : 'an element';
+    return `${label}${KIND[tag] ? ` (${KIND[tag]})` : ''}`;
+  };
+  const example = (r) => {
+    const what = where(r);
+    if (r.data && r.data.fgColor) return `${what} — ${r.data.fgColor} on ${r.data.bgColor || '?'} (${r.data.contrastRatio || '?'}:1)`;
+    const t = (r.text || '').trim(), d = (r.detail || '').trim();
+    const said = [t ? `“${t.slice(0, 60)}”` : '', d].filter(Boolean).join(' ');
+    return said ? `${what} — ${said}` : what;
+  };
+  const clientWords = (fix) => String(fix || '').replace(/^A note for the developers:\s*/i, '').replace(/\s*Nothing to map\.?\s*$/i, '').trim();
+  const titleOf = (r) => String(r.issue || '').replace(/\s*\((note|note for the developers)\)\s*$/i, '');
+  // Per page: each open note with its example.
+  const perPage = [];
+  for (const [path, e] of [...best.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const notes = e.results.filter((r) => r && r.note && !r.resolved && !isIgnored(r) && !OURS_TO_FIX.has(String(r.ruleId || '').replace(/^axe\./, '')))
+      .map((r) => ({ r, k: r.ruleId || r.issue, ex: example(r) }));
+    if (notes.length) perPage.push({ path, e, notes });
+  }
+  // The same fault with the same example on most pages is the shared header
+  // or footer: said ONCE, as "every page", not repeated under each one.
+  const seen = new Map();
+  for (const p of perPage) for (const n of new Set(p.notes.map((x) => x.k + '\u0001' + x.ex))) seen.set(n, (seen.get(n) || 0) + 1);
+  const sharedAt = Math.max(2, Math.ceil(perPage.length / 2));
+  const isShared = (x) => perPage.length >= 2 && (seen.get(x.k + '\u0001' + x.ex) || 0) >= sharedAt;
+  // Counted by ELEMENT, not by finding: the same element reported twice is
+  // one thing to fix, and every one of them is listed — a count the client
+  // cannot check against the list is a count they will not trust.
+  const group = (rows) => {
+    const groups = new Map();
+    for (const { r, k } of rows) {
+      if (!groups.has(k)) groups.set(k, { issue: titleOf(r), wcag: r.wcag || '', fix: clientWords(r.fix), count: 0, _seen: new Set(), _by: new Map() });
+      const g = groups.get(k);
+      const el = (r.selector || '') + '#' + (r.idx || 0) + '|' + (r.text || '') + (r.detail || '');
+      if (g._seen.has(el)) continue;
+      g._seen.add(el);
+      g.count++;
+      // the same selector N times is ONE component repeated: one line, ×N
+      const sk = r.selector || example(r);
+      if (!g._by.has(sk)) g._by.set(sk, { r, n: 0, said: [] });
+      const e = g._by.get(sk);
+      e.n++;
+      const said = r.data && r.data.fgColor ? `${r.data.fgColor} on ${r.data.bgColor || '?'} (${r.data.contrastRatio || '?'}:1)` : [r.text, r.detail].filter(Boolean).join(' ').trim();
+      if (said && e.said.length < 4 && !e.said.includes(said)) e.said.push(said);
+    }
+    return [...groups.values()].map((g) => {
+      const lines = [...g._by.entries()].map(([sk, e]) => ({
+        ex: `${where(e.r)}${e.n > 1 ? ` ×${e.n}` : ''}${e.said.length ? ` — ${e.said.map((x) => `“${x.slice(0, 60)}”`).join(', ')}` : ''}`,
+        sel: e.r.selector || '',
+      }));
+      return { issue: g.issue, wcag: g.wcag, fix: g.fix, count: g.count, examples: lines.map((l) => l.ex), selectors: lines.map((l) => l.sel) };
+    }).sort((x, y) => y.count - x.count);
+  };
+  const pages = [];
+  const sharedRows = [], sharedKeys = new Set();
+  for (const p of perPage) for (const x of p.notes) if (isShared(x) && !sharedKeys.has(x.k + '\u0001' + x.ex)) { sharedKeys.add(x.k + '\u0001' + x.ex); sharedRows.push(x); }
+  if (sharedRows.length) pages.push({ path: '*', url: '', title: `Every page (${perPage.length} scanned) — the shared header, footer or menu`, items: group(sharedRows) });
+  for (const p of perPage) {
+    const own = p.notes.filter((x) => !isShared(x));
+    if (own.length) pages.push({ path: p.path, url: p.e.url, title: p.e.title || p.e.url, at: p.e.at, items: group(own) });
+  }
+  return pages;
+}
+function clientActionsText(pages) {
+  if (!pages.length) return '';
+  const out = ['', 'What we need from your team', '',
+    'These items are in the site’s own CSS and HTML, so they cannot be fixed from our side. Each one, per page:'];
+  for (const p of pages) {
+    out.push('', p.url ? `${p.title} — ${p.url}` : p.title);
+    for (const it of p.items) {
+      out.push(`  • ${it.issue}${it.count > 1 ? ` (×${it.count})` : ''}${it.wcag ? ` — WCAG ${it.wcag}` : ''}`);
+      it.examples.forEach((ex, i) => out.push(`      ${i + 1}. ${ex}${it.selectors[i] ? `   [${it.selectors[i]}]` : ''}`));
+      if (it.fix) out.push(`    How: ${it.fix}`);
+    }
+  }
+  return out.join('\n');
+}
+function clientActionsHtml(pages) {
+  if (!pages.length) return '';
+  const td = 'style="border:1px solid #ccc;padding:6px 8px;vertical-align:top;text-align:left;"';
+  const th = 'style="border:1px solid #ccc;padding:6px 8px;background:#f2f2f2;text-align:left;"';
+  const rows = [];
+  for (const p of pages) {
+    p.items.forEach((it, i) => {
+      rows.push(`<tr>${i === 0 ? `<td ${td} rowspan="${p.items.length}">${p.url ? `<a href="${escapeHtml(p.url)}">${escapeHtml(p.title)}</a>` : `<strong>${escapeHtml(p.title)}</strong>`}</td>` : ''}` +
+        `<td ${td}>${escapeHtml(it.issue)}${it.count > 1 ? ` <strong>×${it.count}</strong>` : ''}</td>` +
+        `<td ${td}><ol style="margin:0;padding-left:18px;">${it.examples.map((ex, j) => `<li>${escapeHtml(ex)}${it.selectors[j] ? `<br><code style="font-size:11px;color:#555;">${escapeHtml(it.selectors[j])}</code>` : ''}</li>`).join('')}</ol></td>` +
+        `<td ${td}>${escapeHtml(it.wcag)}</td>` +
+        `<td ${td}>${escapeHtml(it.fix)}</td></tr>`);
+    });
+  }
+  return `<p><strong>What we need from your team</strong></p>` +
+    `<p>These items are in the site’s own CSS and HTML, so they cannot be fixed from our side:</p>` +
+    `<table style="border-collapse:collapse;font-size:13px;">` +
+    `<tr><th ${th}>Page</th><th ${th}>What to fix</th><th ${th}>Where (each element)</th><th ${th}>WCAG</th><th ${th}>How</th></tr>` +
+    rows.join('') + `</table>`;
+}
 
 // Standalone from Finish project on purpose: the email only needs to say
 // what's in the handover, not actually build the docx/PDF/zip bytes, so it
@@ -23815,10 +25309,30 @@ document.getElementById('copyClientEmailBtn')?.addEventListener('click', async (
     // PDF at all — mirrored here rather than actually rendering one just to
     // decide whether the email should mention it.
     const hasPdf = mappings.length > 0;
-    const text = buildClientEmailText(currentHostname, has, mappings.length, platform, hasPdf);
-    await navigator.clipboard.writeText(text);
+    const base = buildClientEmailText(currentHostname, has, mappings.length, platform, hasPdf);
+    // The client's own to-do, from the saved scans, before the sign-off —
+    // as a real table where the mail client takes HTML, as text where not.
+    const actions = await buildClientActions().catch(() => []);
+    const sign = '\n\nBest regards,';
+    const head = base.endsWith(sign.trim()) ? base.slice(0, base.lastIndexOf('Best regards,')).replace(/\s+$/, '') : base;
+    const text = head + clientActionsText(actions) + sign;
+    const html = `<div style="font-family:Arial,sans-serif;font-size:14px;">` +
+      head.split('\n').map((l) => l ? escapeHtml(l) : '').join('<br>') +
+      (actions.length ? '<br><br>' + clientActionsHtml(actions) : '') +
+      `<br><br>Best regards,</div>`;
+    try {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' }),
+      })]);
+    } catch {
+      await navigator.clipboard.writeText(text);
+    }
     btn.textContent = 'Copied!';
-    showNotice(status, 'Email copied — paste it into your mail client.', 'success', 4000);
+    const n = actions.reduce((a, p) => a + p.items.length, 0);
+    showNotice(status, actions.length
+      ? `Email copied, with a table of ${n} thing${n === 1 ? '' : 's'} for the client to fix across ${actions.length} page${actions.length === 1 ? '' : 's'} (from the saved scans) — paste it into your mail client.`
+      : 'Email copied — no client-side items in the saved scans. Paste it into your mail client.', 'success', 6000);
   } catch (err) {
     showNotice(status, 'Error: ' + err.message, 'error', 5000);
   } finally {
@@ -24406,7 +25920,12 @@ async function onTabChanged(tab) {
   // the drawer next redrew for an unrelated reason. Redrawn here, cheaply:
   // both functions bail immediately when their own container is not in the
   // DOM (the panel is on a different tab) or a naming pause owns the list.
-  if (document.getElementById('tab-picker')?.classList.contains('active')) {
+  // Only on the Whole-page route. Both renderers end by setting the stage,
+  // and renderSweepScreens sets it to NONE on any other route — so on
+  // Automatic this redraw, running from the scan's own finally block, took
+  // the found list down the moment it had been drawn: "it scans and then
+  // just goes back to the empty screen" (molinahealthcare.com, 2026-10-04).
+  if (mapMode === 'sweep' && document.getElementById('tab-picker')?.classList.contains('active')) {
     if (aiSweep.phase === 'components') renderSweepPicks(); else renderSweepScreens();
   }
 

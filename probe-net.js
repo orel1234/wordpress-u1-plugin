@@ -41,12 +41,39 @@
     } catch (e) {}
   };
 
+  var isPrefetch = function (input, init) {
+    try {
+      var h = (init && init.headers) || (input && typeof input === 'object' && input.headers) || null;
+      if (!h) return false;
+      var get = function (k) {
+        if (typeof h.get === 'function') return h.get(k);
+        if (Array.isArray(h)) {
+          for (var i = 0; i < h.length; i++) if (String(h[i][0]).toLowerCase() === k) return h[i][1];
+          return null;
+        }
+        for (var key in h) if (key.toLowerCase() === k) return h[key];
+        return null;
+      };
+      return /prefetch/i.test(String(get('purpose') || get('sec-purpose') || '')) ||
+             String(get('x-middleware-prefetch') || '') === '1' ||
+             String(get('next-router-prefetch') || '') === '1';
+    } catch (e) { return false; }
+  };
+
   try {
     var fetchWas = window.fetch;
     if (fetchWas) {
       window.fetch = function (input, init) {
         if (active()) {
-          note('fetch', typeof input === 'string' ? input : (input && input.url));
+          // A PREFETCH is the router warming its cache for links that came
+          // into view — not anything the press did. Measured on
+          // molinahealthcare.com (Next.js): scrolling the tiles into view
+          // fired /_next/data/…/providers.json with `purpose: prefetch`,
+          // and the press that happened to be running was blamed for
+          // "navigating". Still blocked (it is a request); noted under its
+          // own name so nobody mistakes it for the press leaving.
+          note(isPrefetch(input, init) ? 'prefetch' : 'fetch',
+               typeof input === 'string' ? input : (input && input.url));
           // NOT a rejection. Measured on vio.com (Next.js): the router's
           // getRouteInfo awaits fetch for the route data on every link press;
           // a rejected promise there is a fatal data-fetch error, and Next

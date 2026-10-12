@@ -1,0 +1,45 @@
+{
+  "url": "https://www.molinahealthcare.com/",
+  "note": [
+    "Pin #3: molinahealthcare.com's 2026 Next.js home page, captured",
+    "2026-10-04 at 1280px as the DOM a user meets — scripts stripped, the CSS",
+    "the page actually uses inlined (CSS-module hashes are frozen with the",
+    "capture). Inert: only the hint layer can testify here; the behaviour-only",
+    "rows below document the live walk of the same day and sit outside the",
+    "floor.",
+    "",
+    "Why this pin exists: the live survey came back with ONE component for",
+    "this page. The mega bar was filed as a nested part of a class-named",
+    "wrapper (HeaderHC_menu_container) that resolves to the top bar's list;",
+    "the language selector's list is born on the press (React) and the walk",
+    "never saw it; and the card grid read 'dialog?' off the word Modal in",
+    "CardModalHC. Each is pinned here."
+  ],
+  "components": [
+    {
+      "type": "menu",
+      "root": "ul[class*=\"PrimaryNavigationMenu_menu_wrapper__\"]",
+      "why": "The top bar: four buttons, three of which navigate (Medicare / Medicaid / Individual & Family) and one (More Sites) opens a drop-down of four more. Live: 'pressing one navigated — items lead away, a menu'.",
+      "fields": {}
+    },
+    {
+      "type": "menu",
+      "root": "ul[class*=\"Megamenu_menu__\"]",
+      "why": "The mega bar inside nav.Megamenu_mega_menu: four buttons each opening a panel of link columns. Was nested under the wrapper's menu hint; R0 says a standing bar of ≥2 top-level items is a MENU, and it sits in the header.",
+      "fields": {}
+    },
+    {
+      "type": "listbox",
+      "root": "[class*=\"HeaderHC_icon_section__\"] div.dropdown",
+      "why": "The language selector: ONE button (aria-haspopup) over ONE flat list of language buttons that exists only while open (born on the press). R0: listbox by trigger count. Behaviour-only — an inert pin has no list to read; the hint layer sees 'menu?' off the class word dropdown. Outside the floor.",
+      "fields": { "trigger": "button.dropdown-toggle" },
+      "hidden": true
+    },
+    {
+      "type": "none",
+      "root": "[class*=\"CardModalHC_maincontent_wrapper__\"]",
+      "why": "The card grid. Its class carries the word Modal and it was read 'dialog?' — a visible, in-flow section is not a dialog. Confirmed negative."
+    }
+  ],
+  "viewport": { "width": 1280, "height": 800 }
+}

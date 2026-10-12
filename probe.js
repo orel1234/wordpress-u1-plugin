@@ -610,17 +610,83 @@
       hiddenBefore.set(el, (el.getAttribute('aria-hidden') || '') + '|' +
                            (el.hasAttribute('inert') ? '1' : '0'));
     });
-    try { el.click(); } catch (e) { return { skipped: true, why: 'could not be pressed' }; }
+    // What the press INSERTS — see bornParent. Watched page-wide: a portal
+    // renders its list at the end of <body>, nowhere near the trigger.
+    var births = [];
+    var birthObs = null;
+    try {
+      if (root.MutationObserver && doc.body) {
+        birthObs = new root.MutationObserver(function (recs) { births = births.concat(recs); });
+        birthObs.observe(doc.body, { childList: true, subtree: true });
+      }
+    } catch (e) { birthObs = null; }
+    var netAt0 = net ? net.blocked.length : 0;
+    try { el.click(); } catch (e) {
+      try { if (birthObs) birthObs.disconnect(); } catch (e2) {}
+      return { skipped: true, why: 'could not be pressed' };
+    }
     await raf();
     if (settle) await wait(settle);
+    // Did THIS press (not the item press below) start leaving the page?
+    var leftBy = net ? net.blocked.slice(netAt0) : [];
+    var left = leftBy.some(function (b) { return !/^prefetch /.test(b) && LEAVE_RE.test(b); });
     var after = fingerprint(els);
     var classAfter = classesOf(els);
     var d = diff(before, after);
     var slidRaw = shifted(whereBefore, geometry(els));
+    var swapped = replaced(textBefore, contentOf(els));
+    // A SLOW transition: nothing at all has changed yet after the settle —
+    // owl-carousel's rail takes 250ms to slide, and at 80ms the geometry is
+    // where it was. One more look, for geometry only, before concluding
+    // that the press did nothing.
+    if (!d.appeared.length && !d.vanished.length && !d.changed.length && !slidRaw.length && !swapped.length &&
+        railish(el)) {
+      await wait(300);
+      slidRaw = shifted(whereBefore, geometry(els));
+    }
+    try {
+      if (birthObs) { births = births.concat(birthObs.takeRecords()); birthObs.disconnect(); }
+      // A press that started a route change inserts the ROUTER's things — a
+      // progress bar, a loading shell — not a panel of its own.
+      var newborn = left ? [] : newbornsOf(births, els);
+      // Born into a container whose contents were REPLACED (text changed,
+      // child count not grown) they are the re-render, not a reveal: the
+      // locator's detail pane is rebuilt on every store press. A list that
+      // GREW (molina's .dropdown: one child, then two) is a reveal.
+      // Read off the DIRECT parent's child count (the fingerprint has it):
+      // not grown = redrawn. An outer container's text changes either way.
+      newborn = newborn.filter(function (n) {
+        var par = n.parentElement;
+        if (!par) return true;
+        var wb = (before.get(par) || '').split('|')[1], nb0 = (after.get(par) || '').split('|')[1];
+        if (wb === undefined || nb0 === undefined) return true;
+        return Number(nb0) > Number(wb);
+      });
+      for (var nb = 0; nb < newborn.length; nb++) {
+        var inside = false;
+        for (var na = 0; na < d.appeared.length && !inside; na++) {
+          if (d.appeared[na].contains(newborn[nb])) inside = true;
+        }
+        if (!inside) d.appeared.push(newborn[nb]);
+      }
+    } catch (e) {}
     var slid = outermost(slidRaw);
+    // A TRACK that slid with its items: outermost keeps the track and drops
+    // the items, and a run of one is no rail (owl-carousel's .owl-stage).
+    // The items that moved are the finding.
+    try {
+      var expanded = [];
+      for (var sx = 0; sx < slid.length; sx++) {
+        var kidsMoved = [];
+        for (var sk = 0; sk < slid[sx].children.length; sk++) {
+          if (slidRaw.indexOf(slid[sx].children[sk]) !== -1) kidsMoved.push(slid[sx].children[sk]);
+        }
+        if (kidsMoved.length >= 2) expanded = expanded.concat(kidsMoved); else expanded.push(slid[sx]);
+      }
+      slid = expanded;
+    } catch (e) {}
     // outermost() returns a fresh array — carry the slide magnitude across.
     slid.maxDx = slidRaw.maxDx;
-    var swapped = replaced(textBefore, contentOf(els));
     // 7.8: did a visible list GROW — three-plus new children joining the
     // ones already showing? Read off the fingerprint's own child counts;
     // brand-new nodes never enter the watched set, so `appeared` cannot say
@@ -762,7 +828,18 @@
           }
         }
         var ipRealLinks = panel.querySelectorAll('a[href]:not([href="#"])').length;
-        if (ipItems.length >= 2 && ipRealLinks < ipItems.length) {
+        // R0: a trigger that is ONE OF a standing bar (two or more pressable
+        // top-level siblings, through the li climb, clusters of visible
+        // controls excluded — the same count classify makes) has its type
+        // decided by the bar: the panel is that menu's submenu. The item
+        // press would answer a question nobody is asking, and on a
+        // single-page app it is the riskiest press of the walk: a submenu
+        // item is a link wearing a button (molina's "Providers" started a
+        // route change, after which the mega bar's own buttons went dead).
+        var ipBar = !!barKinOf(el, panel).bar;
+        if (ipBar && ipItems.length >= 2) {
+          itemPress = { tried: false, bar: true };
+        } else if (ipItems.length >= 2 && ipRealLinks < ipItems.length) {
           var ipEl = ipItems[0];
           var ipNet = armNet();
           var ipNavBefore = ipNet && ipNet.blocked ? ipNet.blocked.length : 0;
@@ -953,15 +1030,45 @@
     // the page, did focus go into it — were written below it first, and both
     // answered no every single time, because by then it was shut.
     var restored = false;
+    // The ITEM PRESS may have shut the panel already (a drop-down closes on
+    // choosing). Pressing the trigger again then RE-OPENS it — molina's
+    // "More Sites" list was left showing after every walk, and its items
+    // were pressed as strangers on the next section.
+    var shutByItem = false;
+    try { shutByItem = !!(panel && itemPress && itemPress.closed && !shown(panel)); } catch (e) {}
     try {
-      el.click();
+      // A trigger REPLACED by what it opened cannot be pressed again:
+      // molina's search button is swapped for the search bar, the undo
+      // click landed on a detached node, and the bar stayed open over the
+      // mega menu for the rest of the walk — whose buttons then "did
+      // nothing". What opened carries its own way shut: its close control.
+      var gone = !el.isConnected || !shown(el);
+      // A press that started LEAVING and opened nothing has nothing to undo
+      // — pressing it again only starts leaving again.
+      if (!gone && !shutByItem && !(left && !panel)) el.click();
       await raf();
       if (settle) await wait(settle);
       restored = same(before, fingerprint(els));
       if (!restored) {
-        doc.dispatchEvent(new root.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        // From the focused element, so a handler on the field inside the
+        // panel sees it as well as one delegated on the document.
+        var escAt = doc.activeElement || doc;
+        escAt.dispatchEvent(new root.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         await raf();
         restored = same(before, fingerprint(els));
+      }
+      // Still open: what opened carries its own way shut — its close
+      // control. molina's search bar answers neither its button (a second
+      // press does nothing) nor Escape; it stayed open over the mega bar
+      // for the rest of the walk, whose buttons then "did nothing".
+      if (!restored && panel && shown(panel)) {
+        var closer = closeControlIn(panel);
+        if (closer) {
+          try { closer.click(); } catch (e) {}
+          await raf();
+          if (settle) await wait(settle);
+          restored = same(before, fingerprint(els));
+        }
       }
     } catch (e) { restored = false; }
     // What an incomplete restore LEFT BEHIND — recorded, not fixed (that is
@@ -1024,7 +1131,128 @@
       restored: restored,
       residue: residue,
       held: held,
+      // A route change started by the press itself (see LEAVE_RE).
+      left: left,
     };
+  }
+
+  /**
+   * The elements a press CREATED and that are showing now — outermost only.
+   *
+   * A re-render is not a birth: React swapping a list item for a fresh copy
+   * removes an element of the same tag from the same parent in the same
+   * breath, and that is the page redrawing what it already had, not
+   * revealing anything. Only insertions with no such twin count. Our own
+   * overlay layers never count.
+   */
+  function newbornsOf(records, watchedEls) {
+    var out = [];
+    var known = new Set(watchedEls);
+    // A twin is the same tag AND the same first class: a list item swapped
+    // for a fresh copy of itself. molina's search button is REPLACED by the
+    // search bar — a <div> out, a <div class="Search_long_search_parent">
+    // in — and that is a reveal, not a redraw.
+    var makeOf = function (e) {
+      var c = typeof e.className === 'string' ? e.className : '';
+      return e.tagName + '.' + (c.split(/\s+/)[0] || '');
+    };
+    var removedTags = new Map();   // parent → { TAG.class: n }
+    for (var i = 0; i < records.length; i++) {
+      var rc = records[i];
+      if (rc.type !== 'childList') continue;
+      for (var j = 0; j < rc.removedNodes.length; j++) {
+        var rn = rc.removedNodes[j];
+        if (rn.nodeType !== 1) continue;
+        var m = removedTags.get(rc.target);
+        if (!m) { m = {}; removedTags.set(rc.target, m); }
+        m[makeOf(rn)] = (m[makeOf(rn)] || 0) + 1;
+      }
+    }
+    var added = new Set();
+    for (var k0 = 0; k0 < records.length; k0++) {
+      if (records[k0].type !== 'childList') continue;
+      for (var a0 = 0; a0 < records[k0].addedNodes.length; a0++) added.add(records[k0].addedNodes[a0]);
+    }
+    for (var k = 0; k < records.length; k++) {
+      var rec = records[k];
+      if (rec.type !== 'childList') continue;
+      for (var a = 0; a < rec.addedNodes.length; a++) {
+        var n = rec.addedNodes[a];
+        if (n.nodeType !== 1 || !n.isConnected || known.has(n)) continue;
+        var twins = removedTags.get(rec.target);
+        if (twins && twins[makeOf(n)] > 0) { twins[makeOf(n)]--; continue; }
+        // A new ITEM joining brothers that were already there is a list
+        // growing — load-more's evidence (grewList), not a reveal.
+        var grows = false;
+        try {
+          var sibs = n.parentElement ? n.parentElement.children : [];
+          var addedHere = 0;
+          for (var sg = 0; sg < sibs.length && !grows; sg++) {
+            if (sibs[sg] === n) continue;
+            if (added.has(sibs[sg])) { if (sibs[sg].tagName === n.tagName) addedHere++; continue; }
+            if (makeOf(sibs[sg]) === makeOf(n)) grows = true;
+          }
+          // Three or more of a kind arriving together into a list that
+          // already had members is load-more, whatever the class (grewList
+          // reads it off the parent's child count).
+          if (!grows && addedHere >= 2 && (sibs.length - addedHere - 1) >= 1) grows = true;
+        } catch (e) {}
+        if (grows) continue;
+        try {
+          if (n.closest('#__u1_mark_layer__,#__u1_mark_hilite__')) continue;
+        } catch (e) {}
+        if (!shown(n)) continue;
+        out.push(n);
+      }
+    }
+    var top = outermost(out);
+    for (var t = 0; t < top.length; t++) {
+      if (top[t].parentElement) bornParent.set(top[t], top[t].parentElement);
+    }
+    return top;
+  }
+
+  /** Could this press slide a rail — an arrow, or a control of a slider? */
+  function railish(el) {
+    try {
+      if (arrowRole(el)) return true;
+      var cls = String(el.className || '');
+      if (/prev|next|arrow|slide|owl-|swiper|slick|glide|splide|carousel/i.test(cls)) return true;
+      return !!(el.closest && el.closest('[class*="carousel" i],[class*="slider" i],[class*="swiper" i],[class*="owl-" i],[class*="slick" i],[class*="glide" i],[class*="splide" i],[class*="ticker" i]'));
+    } catch (e) { return false; }
+  }
+
+  /** How many controls in here SEND — a submit, or a button named for it. */
+  function countSendsIn(panel) {
+    var n = 0;
+    try {
+      var bs = panel.querySelectorAll('button,input[type="submit"],input[type="image"],[role="button"]');
+      for (var i = 0; i < bs.length; i++) {
+        var b = bs[i];
+        var type = (b.getAttribute('type') || '').toLowerCase();
+        if (type === 'submit' || type === 'image') { n++; continue; }
+        var face = (b.getAttribute('aria-label') || b.textContent || '').replace(/\s+/g, ' ').trim();
+        if (/(^|\s)(submit|send|search|find|apply|go|שלח|חפש|החל)(\s|$)/i.test(face)) n++;
+      }
+    } catch (e) {}
+    return n;
+  }
+
+  /** The control inside a panel that shuts it, by its face or its name. */
+  function closeControlIn(panel) {
+    var CLOSE = /(^|[\s_-])(close|dismiss|cancel|סגור|ביטול)([\s_-]|$)|^[×✕✖╳x]$/i;
+    try {
+      var cands = panel.querySelectorAll('button,[role="button"],a[href="#"],a:not([href])');
+      for (var i = 0; i < cands.length; i++) {
+        var c = cands[i];
+        if (!shown(c)) continue;
+        var face = (c.getAttribute('aria-label') || c.getAttribute('title') || c.textContent || '')
+          .replace(/\s+/g, ' ').trim();
+        var cls = String(c.className || '');
+        if (CLOSE.test(face) || /(^|[\s_-])(close|dismiss)([\s_-]|$)/i.test(cls)) return c;
+      }
+    } catch (e) {}
+    return null;
   }
 
   /** Does this look like a VEIL — fixed, page-covering, see-through? */
@@ -1048,9 +1276,73 @@
    * rooting the dialog on its own backdrop is how #auditLeaveBackdrop became
    * a false positive while the real box went unmatched.
    */
+  /**
+   * An ICON, not a panel: an svg/img/i, or a tiny wordless box. Opening
+   * molina's mega panels also swaps the button's chevron (down-svg out,
+   * up-svg in), the new chevron came first in document order, and the mega
+   * bar was judged by an <svg> — "no links in this panel" — and filed as
+   * an accordion. Structural only: by classify time the panel is closed and
+   * has no box to measure.
+   */
+  var ICON_TAGS = { svg: 1, SVG: 1, I: 1, PATH: 1, USE: 1, G: 1, CIRCLE: 1, RECT: 1, LINE: 1, POLYGON: 1 };
+  function iconish(el) {
+    try {
+      if (ICON_TAGS[el.tagName]) return true;
+      // A wrapper that holds nothing but an icon. An image is NOT an icon
+      // here — a carousel reveals its slides as <img>s — and neither is an
+      // empty box (a pane that fills later).
+      if ((el.textContent || '').trim()) return false;
+      var kids = el.querySelectorAll('*');
+      if (!kids.length || kids.length > 3) return false;
+      for (var i = 0; i < kids.length; i++) {
+        if (!ICON_TAGS[kids[i].tagName] && kids[i].tagName !== 'SPAN') return false;
+      }
+      return !!el.querySelector('svg,i');
+    } catch (e) { return false; }
+  }
+
+  /**
+   * An image that APPEARED because its placeholder was swapped for it —
+   * Next/Image replaces a <span> with the <img> as it lazy-loads, and a
+   * press that happened to be running was credited with "opening" seven
+   * images across the page (molina's tile row read as an accordion on it).
+   * The tell: something that is not an image vanished from the same parent,
+   * or wearing the same class, in the same press.
+   */
+  function lazySwap(el, vanished) {
+    try {
+      if (el.tagName !== 'IMG' && el.tagName !== 'PICTURE') return false;
+      if (!vanished || !vanished.length) return false;
+      var cls = String(el.className || '').split(/\s+/)[0] || '';
+      for (var i = 0; i < vanished.length; i++) {
+        var v = vanished[i];
+        if (v.tagName === 'IMG' || v.tagName === 'PICTURE') continue;
+        if (v.parentElement && v.parentElement === el.parentElement) return true;
+        if (cls && (String(v.className || '').split(/\s+/)[0] || '') === cls) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  /**
+   * Did the press reveal anything that is not an icon or an image? Lazy
+   * images loading in while a tile row is pressed (Next/Image swapping its
+   * placeholder <span> for the <img>) "opened" seven images and closed seven
+   * spans — and four link tiles were filed as an accordion on it.
+   */
+  function realOpen(r) {
+    if (!r.opened || !r.opened.length) return false;
+    for (var i = 0; i < r.opened.length; i++) {
+      if (!iconish(r.opened[i]) && !lazySwap(r.opened[i], r.closed)) return true;
+    }
+    return false;
+  }
+
   function panelOf(d) {
     var opened = outermost(d.appeared);
     if (!opened.length) return null;
+    var real = opened.filter(function (el) { return !iconish(el) && !lazySwap(el, d.vanished); });
+    if (real.length && real.length < opened.length) opened = real;
     if (opened.length > 1 && looksLikeVeil(opened[0])) {
       for (var i = 1; i < opened.length; i++) {
         if (!looksLikeVeil(opened[i])) return opened[i];
@@ -1087,6 +1379,25 @@
   // 4.5: fields the walk has already typed into — one letter each is plenty.
   var everTyped = new WeakSet();
 
+  // NEWBORNS. A React/Next dropdown is not hidden while closed — it does not
+  // EXIST: `{open && <ul>…</ul>}` inserts the list on the press and removes
+  // it on the next one. The fingerprint watches the elements that were there
+  // BEFORE the press, so a list created by the press was invisible to every
+  // rule: molinahealthcare.com's language selector (aria-haspopup, its own
+  // aria-expanded flipping) came back "rerendered a <div>", typed nothing.
+  // probeOne now records what the press INSERTED; this map remembers where
+  // each newborn was born, because by classify time the undo press has
+  // removed it again and a detached node has no ancestors to root a
+  // component on — see liveOf.
+  var bornParent = new WeakMap();
+  function liveOf(el) {
+    if (!el || el.isConnected) return el;
+    var p = bornParent.get(el);
+    // The parent may itself have been a newborn (a portal wrapper).
+    for (var i = 0; p && !p.isConnected && i < 4; i++) p = bornParent.get(p) || p.parentElement;
+    return (p && p.isConnected) ? p : el;
+  }
+
   // The run's ledger. A strip pressed half in one section and half in the
   // next produced two fragments, and each section's classify saw singleton
   // groups — the strip that classifies perfectly when pressed together
@@ -1121,6 +1432,7 @@
     runResults = []; runPressed = []; runExtras = []; runPlan = null;
     runCarry = []; runStarved = []; runResidue = []; runDots = []; runDotsSeen = new Set();
     everPressed = new WeakSet();
+    everPressedKeys = new Set();
     everTyped = new WeakSet();
   }
   function classifyRun() {
@@ -1174,12 +1486,34 @@
   // 7.1: an <a> whose href is DEAD is a press candidate too — it exists to
   // be clicked, not followed. Real links stay out: pressing them is
   // navigation, and the net would only have to catch it.
+  // What LEAVING looks like in the net's ledger — as opposed to any blocked
+  // request. An analytics beacon on a tab press is not navigation; a router
+  // asking for the next page's data is, even before it reaches pushState
+  // (molina's Next.js router never does: the data fetch hangs under the net
+  // and the press is only ever "fetch /_next/data/…/medicare.json").
+  //   Next pages router /_next/data/ · Next app router ?_rsc= · Remix ?_data=
+  //   SvelteKit __data.json · Nuxt _payload.json
+  var LEAVE_RE = /^(history\.(pushState|replaceState)|location\.|window\.open)|\/_next\/data\/|[?&]_rsc=|[?&]_data=|__data\.json|_payload\.json/;
+
   var PRESS_POOL = 'button,[role="button"],[role="tab"],[aria-expanded],[aria-haspopup],[aria-controls],summary,[tabindex],a[href="#"],a[href^="javascript:"],a:not([href])';
 
   // A skip-link TARGET is not a control. tabindex="-1" exists to receive
   // programmatic focus — #main-content, a heading a router focuses — and it
   // was eating press-budget slots at every section it rode into. A real
   // control keeps its seat whatever its tabindex says.
+  /**
+   * A pointer-cursor wrapper around a REAL control is that control's
+   * clickable area, not a second candidate. molina's `li.main_menu_item`
+   * carries cursor:pointer around its <button>; both were planned, both
+   * pressed, and the four-item bar reported "8 sibling controls".
+   */
+  function holdsControl(el) {
+    try {
+      var c = el.querySelector(PRESS_POOL);
+      return !!(c && c !== el && shown(c));
+    } catch (e) { return false; }
+  }
+
   function skipTabstop(el) {
     try {
       return el.getAttribute('tabindex') === '-1' &&
@@ -1223,8 +1557,11 @@
       // `dec` feeds 5.2's adaptive budget, and it is measured HERE, at
       // snapshot time — the budget must be a function of the plan alone,
       // or the stability gate's "identical every run" promise dies.
+      // `key` is how the entry survives a RE-RENDER — see relive.
+      var key = null;
+      try { key = pressKey(el); } catch (e) {}
       plan.push({ el: el, docY: y, rank: rank, seeded: !!seeded,
-                  dec: !!declaresOpen(el) });
+                  dec: !!declaresOpen(el), key: key });
     };
     (opts.seeds || []).forEach(function (el) { push(el, 1, true); });
     var rec = root.__u1EventMap;
@@ -1259,6 +1596,7 @@
         var p = el.parentElement;
         if (root.getComputedStyle(el).cursor !== 'pointer') continue;
         if (p && root.getComputedStyle(p).cursor === 'pointer') continue;
+        if (holdsControl(el)) continue;
         push(el, 3);
       }
     } catch (e) {}
@@ -1371,6 +1709,7 @@
           var mine = root.getComputedStyle(el).cursor === 'pointer';
           if (!mine) continue;
           if (p && root.getComputedStyle(p).cursor === 'pointer') continue;
+          if (holdsControl(el)) continue;
           add(el, 3);
         }
       } catch (e) {}
@@ -1390,6 +1729,9 @@
 
   var commonAncestor = function (els) {
     if (!els.length) return null;
+    // A newborn the undo press removed has no ancestors left; it is rooted
+    // where it was born (see bornParent).
+    els = els.map(function (e) { return liveOf(e); });
     var a = els[0];
     for (var i = 1; i < els.length; i++) {
       var b = els[i];
@@ -1570,6 +1912,147 @@
    * literal parents, because this climb is part of the stage-3 decision and
    * the section pass is a live preview.
    */
+  /**
+   * A press's identity that survives a RELOAD — the element objects do not.
+   * Tag, face and first class, plus which occurrence of that triple it is in
+   * document order, so two identical "Learn more" buttons stay two.
+   */
+  var keyFace = function (e) {
+    return ((e.getAttribute('aria-label') || e.textContent || '') + '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  };
+  var keyCls = function (e) { return String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className || '').split(/\s+/)[0] || ''; };
+  // The parent's make keeps a bar's "Member resources" apart from the
+  // column titled "Member resources" inside its own panel.
+  var keyParent = function (e) { var p = e.parentElement; return p ? p.tagName + '.' + keyCls(p) : ''; };
+  function pressKey(el) {
+    var base = el.tagName + '|' + keyFace(el) + '|' + keyCls(el) + '|' + keyParent(el);
+    var nth = 0;
+    try {
+      var same = doc.getElementsByTagName(el.tagName);
+      for (var i = 0; i < same.length && same[i] !== el; i++) {
+        if (keyCls(same[i]) === keyCls(el) && keyFace(same[i]) === keyFace(el) && keyParent(same[i]) === keyParent(el)) nth++;
+      }
+    } catch (e) {}
+    return base + '|' + nth;
+  }
+
+  /**
+   * The LIVE element for a planned entry whose element is gone — the same
+   * control, re-rendered. A React page redraws a whole bar when something
+   * else on it changes: on molinahealthcare.com pressing Medicare (a route
+   * attempt) re-rendered the mega bar, its four planned buttons were
+   * detached before their turn, and the walk counted them planMissing and
+   * pressed nothing — while four identical buttons stood on the page.
+   * Resolved by pressKey, the identity that was recorded for exactly this.
+   */
+  function relive(entry) {
+    if (!entry || !entry.key) return null;
+    var parts = entry.key.split('|');
+    if (parts.length < 5) return null;
+    var tag = parts[0], face = parts[1], cls = parts[2], par = parts[3], nth = Number(parts[4]) || 0;
+    try {
+      var same = doc.getElementsByTagName(tag);
+      var seen = 0, first = null;
+      for (var i = 0; i < same.length; i++) {
+        if (keyCls(same[i]) !== cls || keyFace(same[i]) !== face || keyParent(same[i]) !== par) continue;
+        if (!shown(same[i])) continue;
+        if (!first) first = same[i];
+        if (seen === nth) return same[i];
+        seen++;
+      }
+      // Fewer copies than before (a re-render dropped one): the first
+      // showing one is the control, not nothing.
+      return first;
+    } catch (e) {}
+    return null;
+  }
+  // Keys already pressed this run — a re-rendered copy of a pressed control
+  // is not a new control (everPressed is by element and cannot know).
+  var everPressedKeys = new Set();
+
+  /**
+   * Built the same way — the same tag and at least one shared class (or
+   * neither has a class). molina's Medicare / Medicaid / Individual & Family
+   * share `…_menu_items__…`; "More Sites", which opens a drop-down rather
+   * than leaving, is `main_menu_item` and is not their kin. React's literal
+   * `undefined` class is nobody's family name.
+   */
+  function sameMake(a, b) {
+    if (!a || !b || a.tagName !== b.tagName) return false;
+    var toks = function (e) {
+      return String(typeof e.className === 'string' ? e.className : '').split(/\s+/)
+        .filter(function (t) { return t && t !== 'undefined' && t !== 'null'; });
+    };
+    var ta = toks(a), tb = toks(b);
+    if (!ta.length && !tb.length) return true;
+    for (var i = 0; i < ta.length; i++) if (tb.indexOf(ta[i]) !== -1) return true;
+    return false;
+  }
+
+  /**
+   * The BAR a trigger stands in, and how many items it has: the trigger's
+   * anchor (through the li climb) and its siblings that each show a
+   * pressable — the panel itself excluded, and so is a sibling that is a
+   * CLUSTER of visible controls (molina's font-size −/+ pair beside the
+   * language button is a widget of its own, not a bar item). Shared by the
+   * item press (skipped in a bar) and classify (a bar's panel is a submenu).
+   */
+  function barKinOf(trigger, panel) {
+    var out = { bar: null, kin: 0, items: [] };
+    try {
+      var anchor = stripAnchor(trigger);
+      var par = anchor.parentElement;
+      if (!par) return out;
+      for (var i = 0; i < par.children.length; i++) {
+        var sib = par.children[i];
+        // The anchor first: it usually CONTAINS the panel (li > button + ul).
+        if (sib === anchor) { out.kin++; out.items.push(trigger); continue; }
+        if (panel && (sib === panel || sib.contains(panel) || panel.contains(sib))) continue;
+        var vis = [];
+        try {
+          var ps = sib.matches(PRESS_POOL) ? [sib] : sib.querySelectorAll(PRESS_POOL);
+          for (var v = 0; v < ps.length && vis.length < 2; v++) if (shown(ps[v])) vis.push(ps[v]);
+        } catch (e) {}
+        if (vis.length >= 2) continue;
+        if (vis.length) { out.kin++; out.items.push(vis[0]); }
+      }
+      // Items of a bar are built alike. A brand link beside a hamburger
+      // button (Bootstrap's navbar) is not a two-item bar — and the
+      // hamburger's panel is then read on its own, as the hamburger menu.
+      var alikePair = false;
+      for (var k = 0; k < out.items.length && !alikePair; k++) {
+        for (var k2 = k + 1; k2 < out.items.length && !alikePair; k2++) if (sameMake(out.items[k], out.items[k2])) alikePair = true;
+      }
+      // molina's top bar: three alike buttons and a differently built "More
+      // Sites" — still a bar, More Sites included.
+      out.bar = alikePair && out.kin >= 2 ? par : null;
+      if (!out.bar) out.kin = Math.min(out.kin, 1);
+    } catch (e) {}
+    return out;
+  }
+
+  /** Inside the page's footer — where a row of link lists is NOT a menu. */
+  function inFooter(el) {
+    try {
+      if (el.closest && el.closest('footer,[role="contentinfo"]')) return true;
+      for (var p = el, i = 0; p && p !== doc.body && i < 12; p = p.parentElement, i++) {
+        var c = typeof p.className === 'string' ? p.className : '';
+        if (/(^|[\s_-])(footer|contentinfo)/i.test(c)) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  /** Inside the page's header or a navigation region — where menus live. */
+  function inNavBar(el) {
+    if (el.closest && el.closest('header,nav,[role="banner"],[role="navigation"]')) return true;
+    for (var p = el, i = 0; p && p !== doc.body && i < 12; p = p.parentElement, i++) {
+      var c = typeof p.className === 'string' ? p.className : '';
+      if (/(^|[\s_-])(header|masthead|topbar|navbar)/i.test(c)) return true;
+    }
+    return false;
+  }
+
   function stripAnchor(el) {
     var node = el;
     for (var i = 0; i < 4 && node.parentElement; i++) {
@@ -1616,12 +2099,44 @@
       // more things and re-rendered a container is a reveal too — the strip
       // that rebuilds its region in place (dealTabs) produced opened:[] on
       // every press and classified as nothing at all.
+      // A row in the header or a nav where pressing a member LEFT the page
+      // is a navigation row whatever else it did — the menu verdict below
+      // needs no panels and no mutual exclusion (its members were mostly
+      // spared, see navKin). Only where a menu can BE (detection-decisions:
+      // header, nav): a row of link tiles in the page body whose presses
+      // navigate is a row of links — already native, nothing to map — and
+      // there a navigating press is admitted exactly as before.
+      var inBarG = false;
+      try { inBarG = !!(groupKey && inNavBar(groupKey)); } catch (e) {}
       var group = results.filter(function (r) {
-        return siblings.indexOf(r.trigger) !== -1 &&
-          (r.opened.length ||
-           ((r.closed || []).length >= 2 && (r.rerendered || []).length));
+        if (siblings.indexOf(r.trigger) === -1) return false;
+        // A press that took its OWN row away (a cookie bar's Accept /
+        // Decline) dismissed something; it is not a tab of anything.
+        try {
+          if ((r.closed || []).some(function (c) { return c !== r.trigger && c.contains(r.trigger); })) return false;
+        } catch (e) {}
+        return realOpen(r) || (r.navigated && inBarG) ||
+           ((r.closed || []).length >= 2 && (r.rerendered || []).length);
       });
       if (!group.length) return;
+      var navRow = inBarG && group.some(function (r) { return r.navigated; });
+      // A strip's members are built alike. A toolbar (a Log In div, a Log
+      // In button, a Menu button) is not a strip — each is read on its own.
+      // Decided HERE, before anything below claims the triggers as used.
+      var alikePairT = false;
+      try {
+        for (var a1 = 0; a1 < siblings.length && !alikePairT; a1++) {
+          for (var a2 = a1 + 1; a2 < siblings.length && !alikePairT; a2++) if (sameMake(siblings[a1], siblings[a2])) alikePairT = true;
+        }
+      } catch (e) {}
+      if (!alikePairT) return;
+      // Page numbers are the pagination rule's, below — a strip whose faces
+      // are running numbers is never tabs.
+      try {
+        var numbered0 = 0;
+        for (var n0 = 0; n0 < siblings.length; n0++) if (/^\d{1,3}$/.test((siblings[n0].textContent || '').trim())) numbered0++;
+        if (numbered0 >= 2) return;
+      } catch (e) {}
       // Siblings that each reveal something are not automatically a tab strip.
       // A header toolbar is exactly that shape — Search, Wishlist and Cart each
       // open their own overlay — and it was being reported as tabs.
@@ -1630,13 +2145,18 @@
       // showing one hides another. A toolbar's overlays are independent, and
       // pressing one closes nothing.
       var exclusive = group.some(function (r) { return r.closed && r.closed.length; });
-      if (!exclusive) return;
+      if (!exclusive && !navRow) return;
       var panels = [];
       group.forEach(function (r) {
+        if (r.navigated && !r.opened.length) return;
         var mine = r.opened.length ? r.opened : (r.rerendered || []);
+        // The chevron that flipped with the press is not one of the panels
+        // (see iconish) — unless an icon is all there is.
+        var realMine = mine.filter(function (el) { return !iconish(el) && !lazySwap(el, r.closed); });
+        if (realMine.length) mine = realMine;
         mine.forEach(function (el) { if (panels.indexOf(el) === -1) panels.push(el); });
       });
-      if (!panels.length) return;
+      if (!panels.length && !navRow) return;
       // A CAROUSEL, if the controls are cycling a set bigger than themselves.
       var revealed = [];
       group.forEach(function (r) { r.opened.forEach(function (el) {
@@ -1760,14 +2280,56 @@
       }
       var anyNav = group.some(function (r) { return r.navigated; });
       var allLinks = panels.length > 0 && panels.every(function (p) { return mostlyLinks(p); });
-      var sameParent = panels.length > 1 && panels.every(function (p) {
-        return p.parentElement === panels[0].parentElement;
+      // A footer's row of link lists is not a menu (detection-decisions).
+      if (allLinks && stripRoot && inFooter(stripRoot)) allLinks = false;
+      // A MEGA MENU: a row in the page's header or navigation whose every
+      // panel is a block of real links. mostlyLinks weighs the free text
+      // and a mega panel carries prose beside its columns — molina's has a
+      // title, a sentence and a button over three columns of links — so it
+      // read "accordion". Where it SITS is the agreed menu test
+      // (detection-decisions: "it sits inside the page header"); the links
+      // are what keep a header's FAQ or tab strip out of it.
+      var megaRow = false;
+      // …and its items are built alike: a toolbar (a Log In div, a Log In
+      // button, a Menu button) is not a row of menu items.
+      var alike = 0;
+      try { for (var ak = 0; ak < tabs.length; ak++) if (sameMake(tabs[ak], tabs[0])) alike++; } catch (e) {}
+      if (!allLinks && panels.length && alike >= 2) {
+        try {
+          var barHost = !!stripRoot && inNavBar(stripRoot);
+          megaRow = !!barHost && panels.every(function (p) {
+            var n = 0, ls = p.querySelectorAll('a[href]');
+            for (var li = 0; li < ls.length && n < 3; li++) {
+              var hv = ls[li].getAttribute('href') || '';
+              if (hv && hv !== '#' && !/^javascript:/i.test(hv)) n++;
+            }
+            return n >= 3;
+          });
+        } catch (e) { megaRow = false; }
+      }
+      var parentOf = function (p) { return p.parentElement || bornParent.get(p) || null; };
+      var sameParent = panels.length > 1 && !!parentOf(panels[0]) && panels.every(function (p) {
+        return parentOf(p) === parentOf(panels[0]);
       });
-      var stripType = (anyNav || allLinks) ? 'menu'
+      // An accordion's regions sit BESIDE their headers. Sibling controls
+      // whose panels live elsewhere — a header toolbar whose Menu, Log In
+      // and Search each open their own thing (molina mobile) — are not a
+      // strip at all; each is read on its own below.
+      var adjacent = panels.length > 0 && group.some(function (r) {
+        var mine = r.opened.length ? r.opened : (r.rerendered || []);
+        var anchor = stripAnchor(r.trigger);
+        return mine.some(function (p) {
+          var pp = parentOf(p);
+          return pp === anchor.parentElement || pp === anchor || anchor.contains(p);
+        });
+      });
+      if (!anyNav && !allLinks && !megaRow && !(panels.length === 1 || sameParent) && !adjacent) return;
+      var stripType = (anyNav || allLinks || megaRow) ? 'menu'
         : (panels.length === 1 || sameParent) ? 'tabs'
         : 'accordion';
       var stripWhy = stripType === 'menu'
         ? (anyNav ? tabs.length + ' sibling controls and pressing one navigated — items lead away, a menu'
+           : megaRow ? tabs.length + ' sibling controls in the page\u2019s navigation bar, each opening a panel of links — a mega menu'
                   : tabs.length + ' sibling controls each revealing a panel of links — a menu')
         : stripType === 'tabs'
         ? tabs.length + ' sibling controls swapping ' +
@@ -1777,6 +2339,8 @@
       comps.push({
         type: stripType,
         shape: 'strip',
+        // Its items LEAVE: the end-of-run strip restore must not press one.
+        navRow: anyNav || undefined,
         // The group key IS the strip — the <ul> whose children are the <li>
         // rows. The literal parent would be one trigger's own <li>.
         root: stripRoot,
@@ -1887,7 +2451,7 @@
     });
 
     results.forEach(function (r) {
-      if (used.has(r.trigger) || !r.opened.length) return;
+      if (used.has(r.trigger) || !realOpen(r)) return;
       // 7.9: what appeared was a spinner that already hid itself — the
       // press-loop emitted the loading comp; there is no panel here to type.
       if (r.transient) return;
@@ -1919,12 +2483,59 @@
       } catch (e) {}
       if (r.nearSmall) saysDialog = false;
       var linksPanel = mostlyLinks(panel);
+      // A trigger that DECLARES a list popup (aria-haspopup true/menu/
+      // listbox) over a panel that IS a list has said what it opens. That
+      // outranks "it floats": every drop-down floats. molina's language
+      // selector — haspopup=true over a <ul> of language buttons — was
+      // filed as a dialog on the float alone. The stronger dialog signals
+      // (a layer, the word, a backdrop, the page shut out) still win.
+      var declaresList = false;
+      try {
+        var hp0 = (r.trigger.getAttribute('aria-haspopup') || '').toLowerCase();
+        declaresList = !!hp0 && hp0 !== 'false' && hp0 !== 'dialog' &&
+          (/^(UL|OL)$/.test(panel.tagName) || panel.matches('[role="listbox"],[role="menu"],[role="list"]'));
+      } catch (e) {}
+      // A trigger that stands in a BAR of two or more (see barKinOf) opens
+      // that bar's submenu; a submenu floats by nature and is never a
+      // dialog on the float alone. Read here, ahead of the ladder, because
+      // after a reload the bar's other members are not pressed again and
+      // the strip rule above has nothing to group — molina's "More Sites"
+      // came back a "dialog" on its own.
+      var bar44 = barKinOf(r.trigger, panel);
+      // …and only over a LIST: a submenu is a list; a chat window with a
+      // form in it, opened from a header's row of icon buttons, is not.
+      var panelIsList = false;
+      try {
+        panelIsList = /^(UL|OL)$/.test(panel.tagName) ||
+          panel.matches('[role="menu"],[role="listbox"],[role="list"]') ||
+          (panel.children.length >= 2 && panel.querySelectorAll('ul,ol').length > 0 &&
+           !panel.querySelector('input:not([type="hidden"]),textarea,select'));
+      } catch (e) {}
+      // detection-decisions (menu): a footer's link columns are not a menu,
+      // whatever their shape — molina's mobile footer is four toggles over
+      // four lists of links, an accordion. The bar rung below is off there.
+      if (bar44.bar && inFooter(bar44.bar)) bar44 = { bar: null, kin: 0, items: [] };
+      // detection-decisions (menu): "it opens from a hamburger button". A
+      // trigger that SAYS hamburger (its name, its class) over a panel that
+      // holds a list block of links is the site's menu, however the panel
+      // is laid out — molina's mobile menu covers the page and was a
+      // dialog on the overlay alone.
+      var hamburger = false;
+      try {
+        var hFace = (r.trigger.getAttribute('aria-label') || r.trigger.textContent || '').replace(/\s+/g, ' ').trim();
+        var hCls = String(r.trigger.className || '');
+        var hCtl = r.trigger.getAttribute('aria-controls') || '';
+        hamburger = (/^(menu|main menu|navigation|toggle navigation|open menu|תפריט|פתח תפריט)$/i.test(hFace) ||
+                     /(^|[\s_-])(hamburger|burger|navbar-toggler|nav-toggle|menu-toggle|menu-btn|menu-button)([\s_-]|$)/i.test(hCls) ||
+                     /nav|menu/i.test(hCtl)) &&
+                    panel.querySelectorAll('a[href]').length >= 3;
+      } catch (e) { hamburger = false; }
       var dialogBy = r.overlay ? 'it opened a layer over the page'
         : saysDialog ? 'it opened a panel the page itself calls a dialog'
         : r.backdrop ? 'it opened behind a backdrop — a veil over the rest of the page'
         : (r.hidOthers && r.hidOthers.length) ? 'it hid the rest of the page from assistive tech (aria-hidden/inert)'
         : r.scrollLocked ? 'it locked the page’s scroll while open'
-        : (r.floating && !linksPanel && !r.nearSmall) ? 'it opened a panel that floats over the page'
+        : (r.floating && !linksPanel && !r.nearSmall && !declaresList && !(bar44.bar && panelIsList)) ? 'it opened a panel that floats over the page'
         : null;
       // 4.2: <details>/<summary> is the browser's own disclosure. It needs no
       // mapping and no fix — reporting it was noise, not detection.
@@ -1942,7 +2553,9 @@
       try {
         saysError = !!(panel.closest && panel.closest('[role="alert"],[role="status"],[aria-live]')) ||
           /(^|[\s_-])(error|invalid|danger|warning|validation)([\s_-]|$)/i.test(String(panel.className || '')) ||
-          /error|invalid/i.test(String(panel.id || ''));
+          /error|invalid/i.test(String(panel.id || '')) ||
+          // A TOAST is the page talking too — a status line, not a dialog.
+          /toast|snackbar|notification/i.test(String(panel.className || '') + ' ' + String(panel.id || ''));
       } catch (e) {}
       if (saysError) return;
       // 7.4: a panel that IS a month — running day numbers plus a second
@@ -2014,8 +2627,43 @@
       // engine). A standing bar with two or more top-level items, or a
       // hamburger that reveals such a bar, is a MENU. Trigger count
       // decides, not item content. verify-signin IS this doctrine.
-      var lbType = null, lbWhy = '', lbOptions = null, lbOverwrite = null;
+      // 4.4's other half: a panel that holds a TYPEABLE FIELD is a form the
+      // press revealed, not a list of options — molina's search button opens
+      // a bar with an input, a Submit and a Close, and the counting rung
+      // read three controls as a listbox. The form voice carries it.
       if (!dialogBy) {
+        var fieldIn = null;
+        try {
+          fieldIn = panel.querySelector('input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="image"]),textarea');
+          if (fieldIn && !shown(fieldIn) && !panel.isConnected) fieldIn = fieldIn; // closed again: text survives
+        } catch (e) { fieldIn = null; }
+        // The agreed shape (detection-decisions, form): a real <form>, or
+        // fields with a way to send them. A field with nothing that sends
+        // is a disclosure the ladder below may still name — but never a
+        // listbox (hasField, read there).
+        var hasField = !!fieldIn;
+        var formRoot = null;
+        try { formRoot = fieldIn && fieldIn.closest('form'); } catch (e) {}
+        if (formRoot && !panel.contains(formRoot)) formRoot = null;
+        if (fieldIn && (formRoot || countSendsIn(panel))) {
+          if (!formRoot) formRoot = panel;
+          comps.push({
+            type: 'form',
+            root: formRoot,
+            parts: { trigger: [r.trigger], form: [formRoot] },
+            stateClass: r.stateClass || null,
+            focusEntered: r.focusEntered,
+            why: 'pressing it revealed a form — a field to type in' +
+              (countSendsIn(panel) ? ' and a control that sends it' : '') +
+              (r.focusEntered === false ? '. Focus stayed outside it when it opened' : ''),
+          });
+          return;
+        }
+      }
+      var lbType = null, lbWhy = '', lbOptions = null, lbOverwrite = null;
+      // detection-decisions (menu): a footer's link columns are ordinary
+      // links; a toggle over one of them is a disclosure, not a list.
+      if (!dialogBy && !hasField && !inFooter(r.trigger)) {
         try {
           var optEls = panel.querySelectorAll('[role="option"]');
           var menuItemEls = panel.querySelectorAll('[role="menuitem"]');
@@ -2054,19 +2702,7 @@
           // Is this trigger ONE OF a standing bar — two or more pressable
           // top-level siblings (through the li climb)? Then the panel is
           // that menu's SUBMENU, and the strip rules own the strip.
-          var famKin = 0;
-          try {
-            var anchor44 = stripAnchor(r.trigger);
-            var par44 = anchor44.parentElement;
-            if (par44) for (var fk44 = 0; fk44 < par44.children.length; fk44++) {
-              var sib44 = par44.children[fk44];
-              // The PANEL is not a bar-sibling of its own trigger.
-              if (sib44 === panel || sib44.contains(panel) || panel.contains(sib44)) continue;
-              try {
-                if (sib44.matches(PRESS_POOL) || sib44.querySelector(PRESS_POOL)) famKin++;
-              } catch (e4) {}
-            }
-          } catch (e2) {}
+          var famKin = bar44.kin;
 
           // Is the panel FLAT — one list of leaf items — or a BAR: nested
           // lists of their own, or a second content block beside the list?
@@ -2172,6 +2808,11 @@
       // R0: linksPanel and headerDropdown no longer force MENU for a lone
       // trigger — item content does not decide the type; the ladder above
       // does. linksPanel keeps gating the dialog's floating rung only.
+      if (hamburger && !lbType) {
+        dialogBy = null;
+        lbType = 'menu';
+        lbWhy = 'a hamburger button revealing a bar of links — the site\u2019s menu';
+      }
       var type = dialogBy ? 'dialog'
         : lbType ? lbType
         : accEvidence ? 'accordion'
@@ -2199,6 +2840,11 @@
           (type === 'dialog' || type === 'menu' || type === 'accordion')) {
         why += '. Focus stayed outside it when it opened';
       }
+      // A submenu seen through ONE of its bar's triggers is that BAR's
+      // observation: rooted on the bar, every item listed, this panel its
+      // submenu — the same shape the strip rule produces when it sees the
+      // whole row pressed, so the two meet in one row (dedup by root).
+      var barMenu = type === 'menu' && bar44.bar && !badCarouselRoot(bar44.bar);
       comps.push({
         type: type,
         overwriteRole: type === 'listbox' && lbOverwrite ? lbOverwrite : undefined,
@@ -2206,10 +2852,12 @@
         single: type === 'accordion' && accSingle ? true : undefined,
         root: type === 'dialog' ? panel
             : type === 'listbox' ? panel
+            : barMenu ? bar44.bar
             : commonAncestor([r.trigger, panel]),
         parts: type === 'listbox'
           ? (lbOptions ? { trigger: [r.trigger], listbox: [panel], options: lbOptions }
                        : { trigger: [r.trigger], listbox: [panel] })
+          : barMenu ? { items: bar44.items.slice(), submenus: [panel] }
           : { trigger: [r.trigger], panel: [panel] },
         stateClass: r.stateClass || null,
         focusEntered: r.focusEntered,
@@ -2217,6 +2865,56 @@
       });
     });
 
+    // Sibling disclosures are ONE accordion: four footer toggles, each
+    // read on its own as a single disclosure, under one parent, are the
+    // footer's accordion — rooted on that parent, every header and region
+    // listed.
+    try {
+      var byPar = new Map();
+      comps.forEach(function (c) {
+        // Accordions, and the odd sibling the ladder could not name (its
+        // trigger was already open when pressed) — the same shape.
+        if ((c.type !== 'accordion' && c.type) || !c.root || !c.root.parentElement) return;
+        if (!c.parts || !c.parts.trigger) return;
+        var par = c.root.parentElement;
+        if (!byPar.has(par)) byPar.set(par, []);
+        byPar.get(par).push(c);
+      });
+      byPar.forEach(function (list, par) {
+        if (list.length < 2 || par === doc.body || par === doc.documentElement) return;
+        if (!list.some(function (c) { return c.type === 'accordion'; })) return;
+        var trig = [], pan = [];
+        list.forEach(function (c) {
+          (c.parts.trigger || []).forEach(function (t) { if (trig.indexOf(t) === -1) trig.push(t); });
+          (c.parts.panel || []).forEach(function (p) { if (pan.indexOf(p) === -1) pan.push(p); });
+          comps.splice(comps.indexOf(c), 1);
+        });
+        comps.push({
+          type: 'accordion',
+          root: par,
+          parts: { trigger: trig, panel: pan },
+          why: list.length + ' sibling disclosures, each its own header and region — one accordion',
+        });
+      });
+    } catch (e) {}
+
+    // Newborns, once more (see bornParent): a list that exists only while
+    // open was removed by the undo press, so its root and parts are named by
+    // the element it is born into — the one thing that is still there when
+    // somebody comes to map it.
+    comps.forEach(function (c) {
+      if (c.root && !c.root.isConnected) {
+        var live = liveOf(c.root);
+        if (live !== c.root) {
+          c.root = live;
+          c.bornOnOpen = true;
+          c.why = (c.why || '') + ' — its panel exists only while open, so it is named by the element it is born into';
+        }
+      }
+      if (c.parts) Object.keys(c.parts).forEach(function (k) {
+        if (Array.isArray(c.parts[k])) c.parts[k] = c.parts[k].map(function (e) { return liveOf(e); });
+      });
+    });
     return comps;
   }
 
@@ -2974,6 +3672,48 @@
     // failure aborted the run at the first tab and left the strip undiscovered.
     var wholeScope = watched(scope, opts.limit);
     var start = fingerprint(wholeScope);
+    // PAGE LOSS. A single-page app can REPLACE the page in place: on
+    // molinahealthcare.com (Next.js) pressing a second top-bar button let the
+    // router render its not-found view over the home page — 767 elements down
+    // to 18 — while the URL stayed `/`, because the net had swallowed the
+    // pushState. The panel's recovery watches the URL, so it never noticed,
+    // and every later section pressed nothing on a dead page. Half the
+    // elements this run started with gone from the document is a page that
+    // is not the one being surveyed any more: stop, say so, let the panel
+    // reload it.
+    var liveAtStart = 0;
+    for (var ls = 0; ls < wholeScope.length; ls++) if (wholeScope[ls].isConnected) liveAtStart++;
+    var pageGone = function () {
+      if (liveAtStart < 40) return false;
+      var live = 0;
+      for (var lg = 0; lg < wholeScope.length; lg++) if (wholeScope[lg].isConnected) live++;
+      return live < liveAtStart * 0.5;
+    };
+    // The milder loss: a press that started LEAVING re-rendered part of the
+    // page into another page's — molina's Medicare press swapped the home
+    // header's mega bar for the Medicare section's (other items, other
+    // panels) while the URL stayed `/`. Measured as planned controls that
+    // left the document during that one press: three or more is not a
+    // chevron flipping, it is the page being replaced under the walk.
+    var planLive = function () {
+      var n = 0;
+      if (!runPlan) return 0;
+      for (var pl = 0; pl < runPlan.length; pl++) if (runPlan[pl].el.isConnected) n++;
+      return n;
+    };
+    var pageLost = false, lostKey = null, pressedKeys = [];
+    // opts.trace: one line per press for the harnesses — what it revealed,
+    // whether it left, whether its element had to be re-resolved.
+    var trace = opts.trace ? [] : null;
+    var skipKeys = opts.skipKeys ? new Set(opts.skipKeys) : null;
+    // A NAVIGATION FAMILY is pressed once. When one member of a row of
+    // siblings tried to leave the page, the brothers built the same way are
+    // the same kind of item — "pressing one navigated" already makes the row
+    // a menu — and every further press is another chance for a router to
+    // tear the page down (molina's wreck came on the SECOND navigating
+    // press). They join the strip as members, unpressed.
+    var navKin = new Set();
+    var spared = 0;
     try {
       var list, planMissing = 0, usedPlan = false;
       // 5.2: the budget adapts to what the page DECLARES. Base opts.max,
@@ -3008,7 +3748,11 @@
         runCarry = [];
         for (var ki = 0; ki < carryIn.length; ki++) {
           var ce = carryIn[ki];
-          if (!ce.el.isConnected) continue;
+          if (!ce.el.isConnected) {
+            var ceLive = relive(ce);
+            if (!ceLive) continue;
+            ce.el = ceLive;
+          }
           if (!opts.repeat && everPressed.has(ce.el)) continue;
           if (!shown(ce.el) || !safeToClick(ce.el).ok) continue;
           if (list.length >= budgetMax) { runStarved.push(ce); continue; }
@@ -3017,7 +3761,13 @@
         for (var pi = 0; pi < runPlan.length; pi++) {
           var pe = runPlan[pi];
           if (pe.docY < opts.sectionY.from || pe.docY >= opts.sectionY.to) continue;
-          if (!pe.el.isConnected) { planMissing++; continue; }
+          if (!pe.el.isConnected) {
+            var peLive = relive(pe);
+            if (!peLive) { planMissing++; continue; }
+            pe.el = peLive;
+            runPlanKnown.add(peLive);
+            if (trace) trace.push({ relived: pe.key });
+          }
           if (!opts.repeat && everPressed.has(pe.el)) continue;
           if (!shown(pe.el) || !safeToClick(pe.el).ok) continue;
           // A rank-4 candidate (a dead-href anchor) is pressed when there is
@@ -3032,6 +3782,7 @@
         var fresh = pressable(scope, opts);
         for (var fi2 = 0; fi2 < fresh.length && list.length < budgetMax; fi2++) {
           if (runPlanKnown.has(fresh[fi2]) || list.indexOf(fresh[fi2]) !== -1) continue;
+          try { if (everPressedKeys.has(pressKey(fresh[fi2]))) continue; } catch (e) {}
           list.push(fresh[fi2]);
         }
       } else {
@@ -3078,7 +3829,38 @@
           list.push(mem); inList.add(mem);
         }
       };
+      // Keys for the whole list, taken now while every member is on the
+      // page: a press EARLIER IN THIS BAND can re-render a later member
+      // (molina's Medicare press redrew the mega bar), and a detached
+      // element's key can no longer be computed.
+      var listKeys = [];
+      for (var lk0 = 0; lk0 < list.length; lk0++) {
+        try { listKeys[lk0] = pressKey(list[lk0]); } catch (e) { listKeys[lk0] = null; }
+      }
       for (var i = 0; i < list.length; i++) {
+        if (listKeys[i] === undefined) {
+          try { listKeys[i] = list[i].isConnected ? pressKey(list[i]) : null; } catch (e) { listKeys[i] = null; }
+        }
+        // Re-rendered since the list was made: the same control, re-resolved
+        // by its key (see relive). Pressing the detached original does
+        // nothing and reads as "nothing opened".
+        if (!list[i].isConnected) {
+          var liveNow = relive({ key: listKeys[i] });
+          if (!liveNow || everPressed.has(liveNow) || everPressedKeys.has(listKeys[i])) { planMissing++; continue; }
+          list[i] = liveNow;
+          runPlanKnown.add(liveNow);
+          if (trace) trace.push({ relived: listKeys[i] });
+        }
+        if (navKin.has(list[i])) continue;
+        // Already pressed this run — a re-rendered copy reached through its
+        // key AND through the family of a later press is one control.
+        if (everPressed.has(list[i])) continue;
+        if (skipKeys && skipKeys.has(pressKey(list[i]))) continue;
+        if (pageGone()) {
+          pageLost = true;
+          lostKey = pressedKeys.length ? pressedKeys[pressedKeys.length - 1] : null;
+          break;
+        }
         // Each press is measured in its own neighbourhood, not across the whole
         // page — see localScope. The run-wide restore check below still uses
         // the full scope, because that is a guarantee about the page.
@@ -3101,12 +3883,48 @@
         // across one press pins the attempt on that press, and a press that
         // navigated is not a press that revealed something.
         var navBefore = net.blocked.length;
+        var planBefore = planLive();
         var r = await probeOne(list[i], { scope: near, settle: opts.settle, limit: opts.limit });
-        r.navigated = net.blocked.length > navBefore;
+        // A router's PREFETCH (probe-net.js names it) is the page warming
+        // its cache for links scrolled into view, not this press leaving.
+        // Leaving only (LEAVE_RE): a blocked analytics XHR on a press is not
+        // navigation — molina's font-size buttons made a "menu" of it.
+        r.navigated = !!r.left;
         if (r.skipped) { skipped++; continue; }
         everPressed.add(list[i]);
         pressed.push(list[i]);
         runPressed.push(list[i]);
+        try { var pk = pressKey(list[i]); pressedKeys.push(pk); everPressedKeys.add(pk); } catch (e) {}
+        if (trace) {
+          var tr = { key: pk || '', fromPlan: runPlanKnown.has(list[i]), connected: list[i].isConnected,
+                     opened: r.opened.length, closed: (r.closed || []).length,
+                     rerendered: (r.rerendered || []).length, moved: (r.moved || []).length,
+                     left: !!r.left, navigated: !!r.navigated, restored: r.restored,
+                     panel: r.panel ? (r.panel.tagName + '.' + String(r.panel.className || '').split(' ')[0]) : '' };
+          try { tr.openedTags = r.opened.slice(0, 4).map(function (e) { return e.tagName + '.' + String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className || '').split(' ')[0]; }); } catch (e) {}
+          trace.push(tr);
+        }
+        if (r.left) {
+          try {
+            var navFam = familyOf(list[i]);
+            if (navFam) navFam.members.forEach(function (m) {
+              if (m !== list[i] && sameMake(m, list[i]) && !everPressed.has(m)) {
+                navKin.add(m);
+                // Accounted for NOW — as members of the row (classify groups
+                // by what was pressed, and the loss check below may end the
+                // band before the loop reaches them) and, after a reload,
+                // by key.
+                everPressed.add(m); pressed.push(m); runPressed.push(m); spared++;
+                try { pressedKeys.push(pressKey(m)); } catch (e) {}
+              }
+            });
+          } catch (e) {}
+        }
+        if (pageGone() || (r.left && planBefore - planLive() >= 3)) {
+          pageLost = true;
+          lostKey = pk || null;
+          break;
+        }
         if (r.restored === false) runResidue.push({ el: list[i], residue: r.residue || null });
         finishFamily(list[i]);
         // 7.1: a press that changed something, went nowhere and revealed
@@ -3248,7 +4066,7 @@
             runExtras.push(btnComp);
           }
         }
-        if (r.opened.length || r.moved.length || r.rerendered.length) {
+        if (r.opened.length || r.moved.length || r.rerendered.length || r.navigated) {
           var entry = { trigger: list[i], panel: r.panel, transient: r.transient, itemPress: r.itemPress,
                         opened: r.opened, closed: r.closed,
                         moved: r.moved, rerendered: r.rerendered,
@@ -3277,6 +4095,9 @@
       // does not work", each time costing a debugging session. Appending
       // removes the trap rather than remembering to avoid it.
       comps = comps.concat(classify(results, pressed));
+      // A lost page has nothing left to watch idle or type into, and its
+      // strips are not there to press back.
+      if (pageLost) opts = Object.assign({}, opts, { idle: 0, typing: false });
 
       // Something that put ITSELF over the page: a coupon, a cookie notice, a
       // newsletter box that waits five seconds. Nobody pressed anything, so
@@ -3430,7 +4251,7 @@
 
       if (!same(start, fingerprint(wholeScope))) {
         for (var g = 0; g < comps.length; g++) {
-          if (comps[g].shape !== 'strip') continue;
+          if (comps[g].shape !== 'strip' || comps[g].navRow) continue;
           // The strip's controls live under whichever part name its TYPE
           // uses — items (menu), tab (tabs), trigger (accordion). The
           // restore must not care which.
@@ -3448,10 +4269,17 @@
     } finally {
       net.disarm();
     }
-    var restored = same(start, fingerprint(wholeScope));
-    return { components: comps, pressed: pressed.length, skipped: skipped,
+    var restored = !pageLost && same(start, fingerprint(wholeScope));
+    return { components: comps, pressed: pressed.length - spared, skipped: skipped,
              restored: restored, blocked: net.blocked.slice(),
-             planMissing: planMissing };
+             planMissing: planMissing,
+             // Page loss (see pageGone): the panel reloads and re-runs this
+             // band once, skipping what was already pressed and the press
+             // that was last before the page went.
+             pageLost: pageLost, lostKey: lostKey, pressedKeys: pressedKeys,
+             // Family members that joined a navigating strip unpressed.
+             spared: spared,
+             trace: trace || undefined };
   }
 
   root.__u1Probe = {
@@ -3462,6 +4290,7 @@
     probeOne: probeOne,
     probeAll: probeAll,
     pressable: pressable,
+    pressKey: pressKey,
     classify: classify,
     classifyRun: classifyRun,
     resetRun: resetRun,

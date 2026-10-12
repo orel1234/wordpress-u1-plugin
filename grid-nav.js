@@ -122,7 +122,7 @@ if (!window.__u1GridWatchers[containerSel]) {
   let scheduled = false;
   const debounced = () => { if (scheduled) return; scheduled = true; requestAnimationFrame(() => { scheduled = false; scan(); }); };
   const docMo = new MutationObserver(debounced);
-  docMo.observe(document.documentElement, { childList: true, subtree: true });
+  docMo.observe(document, { childList: true, subtree: true });   // the Document: a hydrating framework replaces <html> (see u1-patch core)
   window.__u1GridWatchers[containerSel] = docMo;
 }
 
@@ -593,7 +593,7 @@ window.__u1MakeClickable = function (opts) {
       if (queued) return; queued = true;
       requestAnimationFrame(() => { queued = false; wire(); });
     });
-    mo.observe(document.documentElement, { childList: true, subtree: true });
+    mo.observe(document, { childList: true, subtree: true });   // the Document: a hydrating framework replaces <html> (see u1-patch core)
     window.__u1ClickWatchers[sel] = mo;
   }
   return { ok: true, wired, role, activatesFound, missedActivates: missCount };
@@ -785,7 +785,7 @@ window.__u1InstallTabs = function (opts) {
       queued = true;
       requestAnimationFrame(() => { queued = false; wire(); });
     });
-    mo.observe(document.documentElement, { childList: true, subtree: true });
+    mo.observe(document, { childList: true, subtree: true });   // the Document: a hydrating framework replaces <html> (see u1-patch core)
     window.__u1TabWatchers[key] = mo;
   }
 
@@ -961,7 +961,7 @@ window.__u1FixLinkList = function (opts) {
       queued = true;
       requestAnimationFrame(() => { queued = false; run(); });
     });
-    mo.observe(document.documentElement, { childList: true, subtree: true });
+    mo.observe(document, { childList: true, subtree: true });   // the Document: a hydrating framework replaces <html> (see u1-patch core)
     window.__u1LinkListWatchers[containerSel] = mo;
   }
 
@@ -1053,7 +1053,16 @@ window.__u1Breadcrumb = function (opts) {
 
   const qsa = (root, s) => {
     if (!s) return [];
-    try { return Array.from(root.querySelectorAll(s)); } catch (e) { return []; }
+    let out = [];
+    try { out = Array.from(root.querySelectorAll(s)); } catch (e) { return []; }
+    // A selector written from the page down (".bc>nav>span>a", the shape a
+    // mapping stores) names the trail itself in its first step; not every
+    // engine resolves that from the trail's own querySelectorAll. Asked of
+    // the document and kept to the trail, it means the same thing anywhere.
+    if (!out.length && root !== document) {
+      try { out = Array.from(document.querySelectorAll(s)).filter((el) => root.contains(el)); } catch (e) {}
+    }
+    return out;
   };
   const set = (el, n, v) => { if (el && el.getAttribute(n) !== String(v)) el.setAttribute(n, String(v)); };
 
@@ -1074,38 +1083,66 @@ window.__u1Breadcrumb = function (opts) {
     let items = 0, currents = 0, seps = 0;
 
     for (const root of roots) {
-      roleFor(root, 'navigation');
+      const links = itemSel ? qsa(root, itemSel) : qsa(root, 'a[href]');
+      // The landmark is the trail's own <nav> when it has one inside the
+      // mapped wrapper — molina's container is a <div> around
+      // <nav aria-label="breadcrumb">, and making the div a navigation too
+      // nested two "breadcrumb" landmarks, one inside the other.
+      const innerNav = root.querySelector('nav,[role="navigation"]');
+      const land = innerNav && links.length && links.every((l) => innerNav.contains(l)) ? innerNav : root;
+      if (land !== root && root.getAttribute('role') === 'navigation') root.removeAttribute('role');
+      roleFor(land, 'navigation');
       // Only if the page has not named it itself. A site that wrote
       // aria-label="You are here" said something deliberate in its own
       // language, and replacing it with our English default is a downgrade.
-      if (!(root.getAttribute('aria-label') || '').trim() &&
-          !(root.getAttribute('aria-labelledby') || '').trim()) {
-        set(root, 'aria-label', label);
+      if (!(land.getAttribute('aria-label') || '').trim() &&
+          !(land.getAttribute('aria-labelledby') || '').trim()) {
+        set(land, 'aria-label', label);
       }
-
-      const links = itemSel ? qsa(root, itemSel) : qsa(root, 'a[href]');
       if (!links.length) continue;
 
       // The list wrapper: whatever actually holds the items. Usually an <ol> or
       // <ul> the page already wrote; when the trail is bare divs, the items'
       // common parent stands in for one.
-      const holder = links[0].closest('ol,ul') ||
-                     (links[0].parentElement === root ? root : links[0].parentElement);
+      // The holder is what holds ALL the crumbs — not the first link's own
+      // wrapper. molinahealthcare.com wraps each crumb in a <span>, and the
+      // first link's parent was taken for the list: role="list" on a span
+      // holding "Home" alone (2026-10-08).
+      let holder = links[0].closest('ol,ul');
+      if (!holder) {
+        holder = links[0].parentElement;
+        while (holder && holder !== root && !links.every((l) => holder.contains(l))) holder = holder.parentElement;
+        if (!holder) holder = root;
+        // One link: its wrapper's parent, so the plain-text crumbs beside it count.
+        if (links.length === 1 && holder !== root && holder.parentElement && root.contains(holder.parentElement)) holder = holder.parentElement;
+      }
       if (holder && holder !== root) roleFor(holder, 'list');
+      // The crumbs, in order: the holder's children that say something and are
+      // not a separator ("/", "›", "»", "|").
+      const isSepText = (t) => /^[\s/\\>›»|·•‣→-]*$/.test(t);
+      const crumbs = Array.prototype.filter.call(holder.children, (c) => !isSepText(c.textContent || ''));
 
       for (const link of links) {
         items++;
         // The item wrapper, not the link — role="listitem" belongs on the child
         // of the list, and on most trails that is the <li> around the <a>.
         const li = link.closest('li');
+        const wrap = crumbs.find((c) => c.contains(link));
         if (li && holder && holder.contains(li)) roleFor(li, 'listitem');
+        else if (wrap && wrap.parentElement === holder) roleFor(wrap, 'listitem');
         else if (link.parentElement === holder) roleFor(link, 'listitem');
       }
 
       // Which one is the current page. An explicit selector wins; otherwise it
-      // is the last item, which is what a breadcrumb means by definition.
+      // is the LAST CRUMB — which is often not a link at all: the page you are
+      // on is written as plain text after the last link (molina's "Plans and
+      // Benefits"), and marking the last LINK told a screen reader the parent
+      // page was the current one.
       const explicit = currentSel ? qsa(root, currentSel) : [];
-      const current = explicit.length ? explicit : [links[links.length - 1]];
+      const lastCrumb = crumbs[crumbs.length - 1];
+      const tail = lastCrumb && !links.some((l) => lastCrumb.contains(l)) ? lastCrumb : null;
+      if (tail && tail.parentElement === holder && !tail.closest('li')) roleFor(tail, 'listitem');
+      const current = explicit.length ? explicit : tail ? [tail] : [links[links.length - 1]];
       for (const el of current) {
         set(el, 'aria-current', 'page');
         currents++;
@@ -1148,7 +1185,7 @@ window.__u1Breadcrumb = function (opts) {
       scheduled = true;
       requestAnimationFrame(() => { scheduled = false; apply(); });
     });
-    mo.observe(document.documentElement, { childList: true, subtree: true });
+    mo.observe(document, { childList: true, subtree: true });   // the Document: a hydrating framework replaces <html> (see u1-patch core)
     window.__u1BreadcrumbWatchers[sel] = mo;
   }
 
@@ -1213,7 +1250,7 @@ window.__u1HideFromAll = function (opts) {
       clearTimeout(R.timer);
       R.timer = setTimeout(() => R.sels.forEach((s) => { try { document.querySelectorAll(s).forEach(one); } catch (e) {} }), 120);
     });
-    R.obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['tabindex', 'aria-hidden'] });
+    R.obs.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['tabindex', 'aria-hidden'] });
   }
   return n ? { ok: true, count: n } : { ok: false, count: 0, err: 'nothing on the page matches ' + sel };
 };

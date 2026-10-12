@@ -39,3 +39,14 @@ never touched. Copied as-is from the legacy repository
 | File | Library | Version | SHA-256 |
 |---|---|---|---|
 | `jquery-1.7.2.min.js` | jQuery | 1.7.2 | `ce664505b5de12a7e02f075cffc7ccaa34a8444498b17767423904e5136ad858` |
+
+## acorn 8.15.0 for the IDE converter
+
+`acorn.js` is the JavaScript parser the panel uses to read a site's IDE
+scripts (ide-convert.js): it turns each `api.<fixer>({...})` call whose
+arguments are plain data into a native Studio mapping. Copied as-is from the
+npm package's `dist/acorn.js` (UMD, exposes `acorn`). MIT, see `acorn.LICENSE`.
+
+| File | Library | Version | SHA-256 |
+|---|---|---|---|
+| `acorn.js` | acorn | 8.15.0 | `fdb08546776ec6228b03e8d02b40d4ab3255bae5f401adba7ff5dad927ac5c9c` |

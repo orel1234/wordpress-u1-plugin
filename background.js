@@ -69,6 +69,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // but a script injected into the isolated world could, so check explicitly.
   if (sender.id !== chrome.runtime.id) return false;
 
+  // ── Cloud preview (panel.js: startCloudPreview) ─────────────────────────
+  // The tab runs the bundle Publish WOULD make live, fetched from the CRM, in
+  // place of this extension's own auto-apply — so what is on screen is what
+  // visitors would get, not the extension's reconstruction of it.
+  if (msg.action === 'startPreview') {
+    setPreview(msg.tabId, { url: msg.url, hostname: msg.hostname })
+      .then(() => chrome.tabs.reload(msg.tabId))
+      .then(() => sendResponse({ ok: true }), (e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (msg.action === 'stopPreview') {
+    setPreview(msg.tabId, null)
+      .then(() => chrome.tabs.reload(msg.tabId))
+      .then(() => sendResponse({ ok: true }), (e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (msg.action === 'previewState') {
+    previewFor(msg.tabId).then((p) => sendResponse({ ok: true, preview: p }));
+    return true;
+  }
+
   if (msg.action === 'injectConfigOnReload') {
     const { tabId, config } = msg;
     pendingInjections.set(tabId, { config });
@@ -181,6 +202,8 @@ async function injectConfig(tabId, config) {
       // A copy the engine cannot wipe (setConfiguration replaces u1.config):
       // the patch renders the config's own skip links from here.
       window.__u1SkipLinks = Array.isArray(cfg.skipLinks) ? cfg.skipLinks : [];
+      // "hide": the patch removes the skip links the engine adds by itself.
+      window.__u1SkipLinksEngine = cfg.skipLinksEngine || '';
       window.__u1StudioDebug && console.log('[U1 Studio] preset window.u1.config =', cfg);
 
       // Assign synthetic ids for CSS-selector skip-link targets. Runs at DOM
@@ -276,20 +299,45 @@ async function injectMappings(tabId, mappings) {
           else if (typeof v === 'object') { stripEmpty(v); if (!Object.keys(v).length) delete o[k]; }
         }
       };
+      // This-page-only mappings arrive for EVERY page of the site and run
+      // only on theirs — now if this is it, and again each time the site
+      // changes to it without a reload (Next.js: molinahealthcare.com). Same
+      // rule as the exported u1-fixes.js (__u1OnPage); __u1CallPage tells
+      // u1-patch.js which page each call belongs to.
+      const here = () => { try { return decodeURIComponent(location.pathname).replace(/\/+$/, '') || '/'; } catch (e) { return location.pathname; } };
+      const pageOf = (it) => (it && it.scope === 'page' && it.pagePath) ? it.pagePath : null;
+      const callOne = (raw, it) => {
+        const page = pageOf(it);
+        const prev = window.__u1CallPage;
+        window.__u1CallPage = page || undefined;
+        try {
+          if (typeof raw.fix[it.type] === 'function') {
+            stripEmpty(it.config && it.config.selectors);
+            raw.fix[it.type](it.firstArg || it.primary, it.config);
+            return 1;
+          }
+        } catch (e) { /* keep going */ } finally { window.__u1CallPage = prev; }
+        return 0;
+      };
       const applyAll = () => {
         const raw = window.u1 !== undefined ? window.u1
                   : window.U1 !== undefined ? window.U1 : window.user1st;
         if (!raw || !raw.fix) return false;
         let applied = 0;
-        list.forEach(it => {
-          try {
-            if (typeof raw.fix[it.type] === 'function') {
-              stripEmpty(it.config && it.config.selectors);
-              raw.fix[it.type](it.firstArg || it.primary, it.config);
-              applied++;
-            }
-          } catch (e) { /* keep going */ }
+        const now = here();
+        list.forEach(it => { const p = pageOf(it); if (!p || p === now) applied += callOne(raw, it); });
+        let last = now;
+        const onRoute = () => {
+          const at = here(); if (at === last) return; last = at;
+          const r = window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
+          if (!r || !r.fix) return;
+          list.forEach(it => { if (pageOf(it) === at) callOne(r, it); });
+        };
+        ['pushState', 'replaceState'].forEach((k) => {
+          const orig = history[k]; if (typeof orig !== 'function') return;
+          history[k] = function () { const res = orig.apply(this, arguments); setTimeout(onRoute, 0); return res; };
         });
+        window.addEventListener('popstate', () => setTimeout(onRoute, 0));
         window.__u1StudioDebug && console.log('[U1 Studio] auto-applied', applied, 'of', list.length, 'mappings');
         return true;
       };
@@ -398,10 +446,12 @@ async function injectAriaLabels(tabId, list) {
         return ABOUT[lang] || ABOUT[lang.split('-')[0]] || 'about';
       };
       var clean = function (s) { return (s || '').replace(/\s+/g, ' ').trim().replace(/[.。:：…]+$/, ''); };
-      const run = () => items.forEach(({ target, label, middleText, headingSel }) => {
+      const here = () => { try { return decodeURIComponent(location.pathname).replace(/\/+$/, '') || '/'; } catch (e) { return location.pathname; } };
+      const run = () => items.forEach(({ target, label, middleText, headingSel, page }) => {
+        if (page && here() !== page) return;   // this-page-only, and the site changed page without a reload
         let els; try { els = document.querySelectorAll(target); } catch (e) { return; }
         els.forEach((el) => {
-          if (label && label.trim()) { el.setAttribute('aria-label', label.trim()); return; }
+          if (label && label.trim()) { if (el.getAttribute('aria-label') !== label.trim()) el.setAttribute('aria-label', label.trim()); return; }
           const ownText = clean(el.textContent);
           let headingText = '';
           if (headingSel) {
@@ -411,12 +461,24 @@ async function injectAriaLabels(tabId, list) {
             if (!headingText) return;
           }
           const parts = [ownText, aboutFor(el, middleText), headingText].filter(Boolean);
-          if (parts.length) el.setAttribute('aria-label', parts.join(' '));
+          const want = parts.join(' ');
+          if (parts.length && el.getAttribute('aria-label') !== want) el.setAttribute('aria-label', want);
         });
       });
       run();
-      // Elements the site renders after load: try again shortly, once.
-      setTimeout(run, 1500);
+      // Elements the site renders after load — and RE-renders: a paginated
+      // card list (molinahealthcare.com/knowledge-center/blog) draws new
+      // cards on every page and the names stayed on page 1 alone
+      // (2026-10-08). Re-run on every change to the tree, debounced; the
+      // writes are attributes, which this observer does not watch, so it
+      // cannot loop. characterData too: a list keyed by index keeps its
+      // elements and React rewrites only their text — a new heading under the
+      // same "Learn more" link, which childList alone never reports.
+      // One observer per tab, replaced on re-injection.
+      if (window.__u1AriaLabelObs) { try { window.__u1AriaLabelObs.disconnect(); } catch (e) {} }
+      let t = 0;
+      window.__u1AriaLabelObs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(run, 150); });
+      window.__u1AriaLabelObs.observe(document, { childList: true, subtree: true, characterData: true });
     },
     args: [list],
   });
@@ -424,7 +486,8 @@ async function injectAriaLabels(tabId, list) {
 function ariaLabelsOf(list) {
   return list.filter(m => m && typeof m === 'object' && m.custom === 'ariaLabel' && m.primary).map(m => {
     const c = m.config || {}; const sel = c.selectors || {};
-    return { target: m.primary, label: c.label || '', middleText: sel.middleText || c.middleText || '', headingSel: sel.headingSelector || c.headingSelector || '' };
+    return { target: m.primary, label: c.label || '', middleText: sel.middleText || c.middleText || '', headingSel: sel.headingSelector || c.headingSelector || '',
+             page: (m.scope === 'page' && m.pagePath) ? m.pagePath : '' };
   });
 }
 function staticsOf(list) {
@@ -453,6 +516,55 @@ function forThisPage(list, url) {
   return (list || []).filter((m) => !(m && typeof m === 'object' && m.scope === 'page' && m.pagePath && here && m.pagePath !== here));
 }
 
+// Which tabs are previewing, kept in storage.session so a service-worker
+// restart mid-preview does not silently drop the tab back to auto-apply.
+// Per tab, never per site: a preview is one person looking, not a mode the
+// site is in.
+const previewKey = (tabId) => '__preview_' + tabId;
+async function previewFor(tabId) {
+  try { return (await chrome.storage.session.get(previewKey(tabId)))[previewKey(tabId)] || null; } catch (e) { return null; }
+}
+async function setPreview(tabId, value) {
+  if (value) await chrome.storage.session.set({ [previewKey(tabId)]: value });
+  else await chrome.storage.session.remove(previewKey(tabId));
+}
+chrome.tabs.onRemoved.addListener((tabId) => { setPreview(tabId, null).catch(() => {}); });
+
+/**
+ * Load the preview bundle the way a client's page loads the live link: after
+ * the U1 library, as a <script src>. Waits for window.u1.fix first because the
+ * bundle's u1-config.js does `window.u1 = window.u1 || {}` — run before the
+ * library, the library's own assignment would replace it. Gives up waiting
+ * after 15s and loads anyway, so a page without U1 shows the bundle's own
+ * "library never loaded" error rather than nothing.
+ */
+async function injectPreview(tabId, url, hostname) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (src, host) => {
+      if (document.getElementById('u1PreviewScript')) return;
+      const badge = document.createElement('div');
+      badge.id = 'u1PreviewBadge';
+      badge.setAttribute('role', 'status');
+      badge.textContent = 'U1 preview: not live (' + host + ')';
+      badge.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483647;background:#4f46e5;color:#fff;font:600 12px/1.4 system-ui,sans-serif;padding:4px 10px;border-radius:999px;pointer-events:none;opacity:.92';
+      document.documentElement.appendChild(badge);
+      const started = Date.now();
+      (function load() {
+        if (!(window.u1 && window.u1.fix) && Date.now() - started < 15000) { setTimeout(load, 100); return; }
+        const s = document.createElement('script');
+        s.id = 'u1PreviewScript';
+        s.src = src;
+        s.async = false;
+        s.onerror = () => { badge.textContent = 'U1 preview could not load. The site\'s Content-Security-Policy may block the CRM domain; the live link would be blocked the same way.'; badge.style.background = '#b91c1c'; };
+        document.head.appendChild(s);
+      })();
+    },
+    args: [url, hostname],
+  });
+}
+
 chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
   if (isSystemUrl(tab?.url)) return;
   if (!isTrustedInjectionUrl(tab.url)) {
@@ -464,6 +576,27 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
       window.__u1StudioDebug && console.log('[U1 Studio] not injecting on', tab.url, '— not https (or localhost); saved config/mappings for this hostname were not sent.');
     }
     return;
+  }
+
+  // ── Preview tabs run the candidate bundle and nothing of ours ───────────
+  // Leaving the previewed domain ends the preview — its bundle refuses to run
+  // anywhere else anyway, and the next site deserves its normal auto-apply.
+  if (info.status === 'loading' || info.status === 'complete') {
+    const pv = await previewFor(tabId);
+    if (pv) {
+      if (getHostnameFromTab(tab) !== pv.hostname) {
+        await setPreview(tabId, null);
+      } else {
+        if (info.status === 'complete') {
+          const host = pv.hostname;
+          const st = await U1Store.get([`manualInject_${host}`]);
+          const inj = st[`manualInject_${host}`];
+          if (inj && isSafeHttpUrl(inj.cssLink) && isSafeHttpUrl(inj.jsLink)) await injectEngineTags(tabId, inj);
+          try { await injectPreview(tabId, pv.url, host); } catch {}
+        }
+        return;
+      }
+    }
   }
 
   // ── At page-start: inject config (explicit reload request OR persistent
@@ -512,7 +645,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     // Arm the mappings poll as early as possible (document_start) so fix.* runs
     // the instant window.u1.fix appears — before U1's first scan when possible.
     const earlyAll = forThisPage(stored[`mappings_${hostname}`], tab.url);
-    const early = earlyAll.filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
+    // Every u1.fix mapping, this-page-only ones included: injectMappings
+    // runs each on its own page, also after an in-site page change.
+    const early = (stored[`mappings_${hostname}`] || []).filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
     if (early.length) { try { await injectMappings(tabId, early); } catch {} }
     // Arm the custom keyboard-grid engine early too (idempotent — it guards itself).
     const earlyGrids = earlyAll.filter(m => m && typeof m === 'object' && (m.custom === 'keyboardGrid' || m.custom === 'keyboardClickable' || m.custom === 'keyboardTabs' || m.custom === 'linkList' || m.custom === 'breadcrumb' || m.custom === 'hideElement' || m.custom === 'focusOrder') && m.primary);
@@ -530,7 +665,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
 
     // Auto-apply mappings (independent of manual-inject — the site may load U1 itself).
     const all = forThisPage(stored[`mappings_${hostname}`], tab.url);
-    const mappings = all.filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
+    const mappings = (stored[`mappings_${hostname}`] || []).filter(m => m && typeof m === 'object' && m.type && (m.primary || m.firstArg) && !m.custom);
     if (mappings.length) { try { await injectMappings(tabId, mappings); } catch {} }
 
     // Custom keyboard-grid mappings run our own engine — apply them too.
@@ -538,46 +673,61 @@ chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
     if (grids.length) { try { await injectKeyboardGrids(tabId, grids); } catch {} }
     const statics = staticsOf(all);
     if (Object.keys(statics).length) { try { await injectStatics(tabId, statics); } catch {} }
-    const names = ariaLabelsOf(all);
+    // All of them: each carries its page, and the in-page runner skips the
+    // ones that are not for the page currently showing.
+    const names = ariaLabelsOf(stored[`mappings_${hostname}`] || []);
     if (names.length) { try { await injectAriaLabels(tabId, names); } catch {} }
     // A site converted from URS: its patterns run through the compatibility
     // engine, as one tree, on every load — the way the legacy snippet (which
     // rules.json keeps off the page) used to.
     const urs = all.filter(m => m && typeof m === 'object' && m.custom === 'ursCompat' && m.primary);
     if (urs.length) { try { await injectUrsCompat(tabId, urs); } catch {} }
+    // Converted IDE scripts: run once per load in the page's own world (they
+    // were written for it), through the same engine's IDE layer.
+    const ide = all.filter(m => m && typeof m === 'object' && m.custom === 'ideCompat' && m.config);
+    if (ide.length) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', files: ['urs-compat.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: (its) => { if (!window.__u1IdeRegister) return; its.forEach((i) => window.__u1IdeRegister(i)); window.__u1IdeApply(); }, args: [ide.map(m => ({ id: m.id, config: m.config }))] });
+      } catch {}
+    }
 
     const injectData = stored[`manualInject_${hostname}`];
     if (!injectData) return;
     // Defense in depth: never inject a non-http(s) URL even if one reached storage.
     if (!isSafeHttpUrl(injectData.cssLink) || !isSafeHttpUrl(injectData.jsLink)) return;
-
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (href) => {
-          if (!document.getElementById('u1Css')) {
-            const link = document.createElement('link');
-            link.id = 'u1Css'; link.rel = 'stylesheet'; link.href = href;
-            document.head.appendChild(link);
-          }
-        },
-        args: [injectData.cssLink],
-      });
-    } catch {}
-
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        world: 'MAIN',
-        func: (src) => {
-          if (!document.getElementById('u1Js')) {
-            const s = document.createElement('script');
-            s.id = 'u1Js'; s.src = src; s.type = 'text/javascript';
-            document.body.appendChild(s);
-          }
-        },
-        args: [injectData.jsLink],
-      });
-    } catch {}
+    await injectEngineTags(tabId, injectData);
   }
 });
+
+// The U1 library's own two tags, for a site that does not load U1 itself.
+async function injectEngineTags(tabId, injectData) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (href) => {
+        if (!document.getElementById('u1Css')) {
+          const link = document.createElement('link');
+          link.id = 'u1Css'; link.rel = 'stylesheet'; link.href = href;
+          document.head.appendChild(link);
+        }
+      },
+      args: [injectData.cssLink],
+    });
+  } catch {}
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (src) => {
+        if (!document.getElementById('u1Js')) {
+          const s = document.createElement('script');
+          s.id = 'u1Js'; s.src = src; s.type = 'text/javascript';
+          document.body.appendChild(s);
+        }
+      },
+      args: [injectData.jsLink],
+    });
+  } catch {}
+}

@@ -910,6 +910,18 @@ button {
   align-items: center;
 }
 .selector-test-row .primary-selector-input { flex: 1; }
+/* The wrap is the flex child; without this it shrank to its content and the
+   selector showed as ".IconGridHC_tile__0T…" in a 170px box. */
+.selector-test-row .sel-strength-wrap { flex: 1 1 auto; min-width: 0; }
+.selector-test-row { align-items: flex-start; }
+textarea.primary-selector-input {
+  resize: vertical;
+  min-height: 34px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: hidden;
+}
 
 .sel-test {
   flex-shrink: 0;
@@ -1042,12 +1054,14 @@ button {
    bars + the word STRONG, which on a ~150px input left the selector itself
    unreadable — the one thing the row exists to show. The word now lives in the
    focus hint and the title attribute. */
-.sel-strength-wrap input[type="text"] {
+.sel-strength-wrap input[type="text"],
+.sel-strength-wrap textarea.primary-selector-input {
   width: 100%;
   box-sizing: border-box;
   padding-right: 26px;
   text-overflow: ellipsis;
 }
+.sel-strength-wrap textarea.primary-selector-input ~ .sel-strength { top: 17px; }
 
 .sel-strength {
   position: absolute;
@@ -2266,6 +2280,12 @@ button {
   border-color: var(--u1-primary, #6c4cf1);
   background: var(--u1-primary, #6c4cf1);
 }
+/* Where it applies: two radio chips joined into one control, the lit one
+   is the current state. */
+.mapping-item .mh-scope-radio { display: inline-flex; flex: 0 0 auto; }
+.mapping-item .mh-scope-radio .mh-flag:first-child { border-radius: 999px 0 0 999px; border-right-width: 0; }
+.mapping-item .mh-scope-radio .mh-flag:last-child { border-radius: 0 999px 999px 0; }
+.mapping-item .mh-scope-radio .mh-flag:not(.on) { opacity: .75; }
 /* Clickable variant: a real toggle, not just a status readout. */
 .mapping-item .mapping-head .mh-flag-toggle, .mapping-item .mapping-meta .mh-flag-toggle {
   cursor: pointer;
@@ -4175,6 +4195,18 @@ button.u1-readonly-off {
   font-size: 10.5px;
   color: var(--u1-text-dim);
 }
+.ai-scope-count {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--u1-text-dim);
+}
+.ai-scope-count strong { color: var(--u1-text); font-size: 12.5px; }
+.ai-scope-count.is-none strong { color: var(--u1-danger, #e5484d); }
+.ai-scope-count .ai-scope-nav { margin-left: auto; display: flex; gap: 4px; }
+.ai-scope-count .ai-scope-nav button { min-width: 26px; padding: 2px 6px; }
 .ai-run .btn-primary {
   width: 100%;
   padding: 10px 12px;
@@ -6372,3 +6404,54 @@ input[type="radio"]:disabled { cursor: not-allowed; opacity: .45; }
 .cloud-history summary { cursor: pointer; color: var(--u1-text-muted); }
 .cloud-version { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0; border-top: 1px solid var(--u1-border); color: var(--u1-text); }
 .cloud-version > span:first-child { flex: 1; min-width: 160px; }
+.cloud-preview-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0 12px; }
+.cloud-preview-note { font-size: 11px; color: var(--u1-warn); }
+
+/* ── Scan → Pages: the site's inventory ─────────────────────────────────── */
+.pages-summary { margin: 10px 0 6px; font-size: 11.5px; color: var(--u1-text-dim); }
+.pages-summary strong { color: var(--u1-text); }
+.pages-list { display: flex; flex-direction: column; gap: 6px; }
+.pages-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center;
+  padding: 8px 10px; border: 1px solid var(--u1-border); border-radius: var(--u1-radius-md); background: var(--u1-overlay);
+}
+.pages-row.is-ok { border-color: var(--u1-success); }
+.pages-row .pages-path { font-family: var(--u1-font-mono); font-size: 11.5px; color: var(--u1-info); cursor: pointer; word-break: break-all; }
+.pages-row .pages-path:hover { text-decoration: underline; }
+.pages-row .pages-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 10.5px; color: var(--u1-text-dim); }
+.pages-row .pages-meta .mh-flag { font-size: 9px; }
+.pages-row .pages-actions { display: flex; gap: 4px; align-items: center; }
+.pages-row .pages-ok { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--u1-border-strong); background: transparent; color: var(--u1-text-dim); cursor: pointer; }
+.pages-row.is-ok .pages-ok { background: var(--u1-success); border-color: var(--u1-success); color: #fff; }
+
+/* Scan → heading outline: a level picker on each row */
+.sc-outline li { position: relative; }
+.sc-outline .sc-h-edit { display: none; margin-left: 8px; gap: 4px; align-items: center; }
+.sc-outline li:hover .sc-h-edit, .sc-outline li:focus-within .sc-h-edit { display: inline-flex; }
+.sc-outline .sc-h-level { font-size: 10.5px; padding: 1px 4px; background: var(--u1-surface-2); color: var(--u1-text); border: 1px solid var(--u1-border-strong); border-radius: 4px; }
+.sc-outline .sc-h-note:empty { display: none; }
+.sc-outline .sc-h-note { margin: 4px 0 2px; font-size: 10.5px; line-height: 1.45; color: var(--u1-text-dim); }
+.sc-outline .sc-h-note code { font-family: var(--u1-font-mono); color: var(--u1-info); }
+.sc-outline .sc-h-note .sc-warn { color: var(--u1-warn); }
+.sc-outline .sc-h-note .sc-ok { color: var(--u1-success); }
+.sc-outline .sc-h-note button { margin: 3px 4px 0 0; }
+.sc-outline .sc-h-removed { list-style: none; font-size: 10.5px; margin: 2px 0; }
+.sc-outline .sc-h-pick { margin: 0 6px 0 0; vertical-align: middle; accent-color: var(--u1-primary, #6c4cf1); }
+.sc-evidence .sc-h-bulk { position: sticky; top: 52px; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; padding: 6px 8px; border: 1px solid var(--u1-primary, #6c4cf1); border-radius: var(--u1-radius-md); background: var(--u1-surface-2); font-size: 11px; }
+.sc-evidence .sc-h-bulk[hidden] { display: none; }
+.sc-evidence .sc-h-bulk select { font-size: 11px; padding: 1px 4px; background: var(--u1-surface); color: var(--u1-text); border: 1px solid var(--u1-border-strong); border-radius: 4px; }
+.sc-evidence .sc-h-bulk-note { flex-basis: 100%; font-size: 10.5px; color: var(--u1-text-dim); }
+.sc-evidence .sc-h-bulk-note:empty { display: none; }
+
+
+/* A scan reopened from history, on its own (setScanHistoryView). */
+#tab-scan.scan-viewing-saved > :not(#scanResultsSection) { display: none !important; }
+#tab-scan.scan-viewing-saved #scanResultsSection { display: block !important; }
+.scan-history-back { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border, rgba(255,255,255,.12)); }
+.scan-history-back[hidden] { display: none; }
+.scan-history-back-page { font-size: 12px; opacity: .75; min-width: 0; overflow-wrap: anywhere; }
+
+/* Finish project: what goes in the client's zip. */
+.handover-zip-pick { border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 10px; padding: 10px 12px 12px; margin: 0 0 14px; display: grid; gap: 6px; }
+.handover-zip-pick legend { padding: 0 6px; font-weight: 600; font-size: 13px; }
+.handover-zip-pick label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }

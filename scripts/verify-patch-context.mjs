@@ -17,7 +17,7 @@ const SRC = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
 const slice = (types) => {
   const wanted = new Set(['core', ...types]);
   const picked = [];
-  const re = /\/\/#region u1-patch:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+  const re = /\/\/#region u1-patch:([a-z-]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
   let m; while ((m = re.exec(SRC))) if (wanted.has(m[1])) picked.push(m[2]);
   return `'use strict';\n${picked.join('\n\n')}`;
 };

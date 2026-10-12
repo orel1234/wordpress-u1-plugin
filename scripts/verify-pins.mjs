@@ -28,6 +28,10 @@ const FLOORS = {
   // frozen page behaves). The R1 gate lives here: #navbarHeader read
   // LISTBOX before round 2, and must stay MENU forever.
   'bootstrap-album': { found: 2, typed: 2 },
+  // 3/3 found, 2/2 typed of the visible labels at capture (2026-10-04). The
+  // language selector is behaviour-only (its list is born on the press) and
+  // sits outside the floor; the hint layer reads it 'menu?' off `dropdown`.
+  'molina-home': { found: 3, typed: 2 },
 };
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };

@@ -66,11 +66,29 @@
           suggestion: robustSelector(cont || el) });
       }
     } else if (type === 'form') {
+      // A form is a real <form>, OR a region that holds a field and a way to
+      // send it — a hero's "Select a State" + "Find a plan" has no <form>
+      // tag and is still a form (detection-decisions; Orel, 2026-10-08:
+      // "it will not always look like a form"). Only a root that is itself
+      // a field, or holds no field at all, is sent to the <form>.
       if (el.tagName !== 'FORM') {
         const form = el.closest('form');
-        notes.push({ level: 'err',
-          msg: 'For a form, the root must be the <form> element itself — not an input or wrapper.',
-          suggestion: form ? robustSelector(form) : '(no <form> ancestor found)' });
+        const isField = /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(el.tagName);
+        const fields = el.querySelectorAll('input:not([type="hidden"]),select,textarea').length;
+        const sends = el.querySelectorAll('button,[type="submit"],[role="button"],a[href]').length;
+        if (isField || !fields) {
+          notes.push({ level: 'err',
+            msg: isField ? 'For a form, the root is the element AROUND the fields — this is a field itself.'
+                         : 'For a form, the root must hold the fields — this element holds none.',
+            suggestion: form ? robustSelector(form) : '(no <form> ancestor found)' });
+        } else if (form && form !== el) {
+          notes.push({ level: 'info',
+            msg: 'There is a <form> around this; pointing at it is usually the cleaner root.',
+            suggestion: robustSelector(form) });
+        } else if (!sends) {
+          notes.push({ level: 'warn',
+            msg: 'No button or link inside — a form needs something that sends it (submitButton).' });
+        }
       }
     } else if (type === 'table' || type === 'grid') {
       const isTable = el.tagName === 'TABLE' || el.getAttribute('role') === 'grid';
@@ -208,6 +226,17 @@
       const isMenubar = type === 'menubar' || cfg.menubar === true;
       const role = root.getAttribute('role');
       const items = qa(sel.items, root);
+      // The mapping itself is the wrong shape — say so in words, first, so
+      // the failure below reads as "delete or retype this", not as a broken
+      // site. molinahealthcare.com's AI-built set had both (2026-10-08).
+      if (/^(BUTTON|A|INPUT|SELECT)$/.test(root.tagName) || root.getAttribute('role') === 'button') {
+        steps.push(F('A menu, not one control', `The menu container is a single <${root.tagName.toLowerCase()}> — a menu is the bar that holds the items.`, '4.1.2',
+          'This mapping points a menu at one button, so there is nothing to walk and nothing to open. The bar this button sits in is usually mapped already; delete this mapping, or point it at the bar.'));
+      }
+      if (/breadcrumb/i.test((root.getAttribute('aria-label') || '') + ' ' + (root.className || ''))) {
+        steps.push(F('A breadcrumb is not a menu', 'The container is the page\u2019s breadcrumb trail.', '1.3.1',
+          'A breadcrumb is a list of links read in order, not an application menu: as a menu it gets menuitem roles and arrow keys a screen-reader user does not expect there. Map it with the breadcrumb type instead, and delete this mapping.'));
+      }
       if (isMenubar) {
         steps.push(['menu', 'menubar'].includes(role) ? P('Container role', `role="${role}".`, '4.1.2')
           : W('Container role', `Container has role="${role || '(none)'}" (expected menu/menubar).`, '4.1.2'));
@@ -264,6 +293,15 @@
         // Informational (a pass, not a warning) — explains why "menuitem" is absent.
         steps.push(P('menubar is false → navigation-menu mode', 'role="menuitem" is not expected here.', '',
           'With menubar:false U1 treats this as a navigation menu: items stay ordinary links and DON\'T get role="menuitem". That role is only for an application menubar (menubar:true). So a missing "menuitem" here is correct, not a bug.'));
+      }
+    } else if (type === 'accordion') {
+      const heads = qa(sel.headerSelector, document), conts = qa(sel.contentSelector, document);
+      if (heads.length && conts.length && conts.every((c) => heads.some((h) => c === h || h.contains(c) || c.contains(h)))) {
+        steps.push(F('Content is the panel, not the header', `"${sel.contentSelector}" matches the header itself.`, '4.1.2',
+          'The content selector must name the region the header opens, outside the header. Here it names the header (or its open-state class), so the library treats the button as the panel: role="region" on the button and its real aria-expanded overwritten — a screen reader hears no change of state. The patch refuses this mapping; fix the content selector or delete the mapping.'));
+      } else if (heads.length && heads.every((h) => h.getAttribute('aria-expanded') !== null && h.getAttribute('aria-controls') && document.getElementById(h.getAttribute('aria-controls')))) {
+        steps.push(W('Already accessible', 'Every header carries aria-expanded and aria-controls that resolves — the site wires this accordion itself.', '4.1.2',
+          'Nothing for a mapping to add; the patch leaves it alone. The mapping can be deleted.'));
       }
     } else if (type === 'form') {
       steps.push(root.tagName === 'FORM' ? P('Root is a <form>', '', '1.3.1')

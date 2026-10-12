@@ -1597,6 +1597,244 @@
       return { ok: true, registered: n, applied: applied };
     } catch (e) { return { ok: false, err: e && e.message ? e.message : String(e) }; }
   };
+  // ══ IDE (uRemediate Studio / UFE) compatibility ═══════════════════════════
+  // The `api` IDE scripts were written against (window.u1st), re-done on u1:
+  // component calls are translated by U1Ide._translate (ide-convert.js, the
+  // same function the converter uses) and handed to window.u1.fix; the helper
+  // calls (description.*, executeScript, moveFocus, setVisibility,
+  // setAttributeToAll, heading, state.*, getLocalization, restrict) follow the
+  // IDE library's own behaviour. Deliberate differences: no continuous
+  // aria-hidden/tabindex rewriting of everything a subscription matches (the
+  // IDE ChangeDetection side effect), heading tags are replaced properly
+  // (the IDE replaced every "h2" substring in outerHTML), and an element can
+  // trigger several subscriptions (IDE marked it for the first one only).
+  var IDE = { scripts: [], loc: {}, ran: false, subs: [], timer: null, tokens: {}, tokenN: 0 };
+  var ideVisible = function (el) {
+    if (!el || el.nodeType !== 1 || !document.documentElement.contains(el)) return false;
+    for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+      var cs = getComputedStyle(n);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0' || cs.width === '0px') return false;
+      if (cs.height === '0px' && /auto|hidden/.test(cs.overflow)) return false;
+    }
+    var r = el.getBoundingClientRect(); return r.right >= 0 && r.left <= (window.innerWidth || 0);
+  };
+  var ideAll = function (sel, ctx) { try { return (ctx && ctx !== 'body' ? $(sel, ctx) : $(sel)).toArray(); } catch (e) { warn('IDE selector', sel, e.message); return []; } };
+  // One 1s poll for every subscription — the IDE ChangeDetection, including
+  // the two rules that decided what a site actually got:
+  //  * one mark per ELEMENT, shared by all subscriptions: selectors are walked
+  //    in the order they were subscribed and the first that sees an unmarked
+  //    visible element claims it, running every callback under that selector;
+  //    later selectors matching the same element skip it. The mark is dropped
+  //    when the element is hidden, so it fires again when shown.
+  //  * a second subscription with the same (selector, name) is ignored.
+  // Converted native calls still claim their element here (`claim`), in their
+  // original order, because in IDE their fixers did too.
+  IDE.bySel = {}; IDE.selOrder = []; IDE.marked = typeof WeakSet === 'function' ? new WeakSet() : null; IDE.markedList = [];
+  var ideIsMarked = function (el) { return IDE.marked ? IDE.marked.has(el) : IDE.markedList.indexOf(el) > -1; };
+  var ideMark = function (el, on) { if (IDE.marked) { if (on) IDE.marked.add(el); else IDE.marked.delete(el); } else { var i = IDE.markedList.indexOf(el); if (on && i < 0) IDE.markedList.push(el); if (!on && i > -1) IDE.markedList.splice(i, 1); } };
+  var ideTick = function () {
+    IDE.selOrder.forEach(function (key) {
+      var entry = IDE.bySel[key];
+      ideAll(entry.sel, entry.ctx).forEach(function (el) {
+        var vis = ideVisible(el);
+        if (!vis) { if (ideIsMarked(el)) ideMark(el, false); return; }
+        if (ideIsMarked(el)) return;
+        ideMark(el, true);
+        entry.subs.forEach(function (sub) { if (sub.fn) { try { sub.fn(el); } catch (e) { warn('IDE callback on', entry.sel, 'threw:', e && e.message); } } });
+      });
+    });
+  };
+  var ideSubscribe = function (sel, ctx, fn, name) {
+    if (typeof sel !== 'string' || !sel) return;
+    ctx = ctx || 'body';
+    var key = ctx + '\u0001' + sel;
+    var entry = IDE.bySel[key];
+    if (!entry) { entry = IDE.bySel[key] = { sel: sel, ctx: ctx, subs: [] }; IDE.selOrder.push(key); }
+    if (name && entry.subs.some(function (s) { return s.name === name; })) return; // IDE: dropped
+    entry.subs.push({ name: name || '', fn: fn });
+    if (!IDE.timer) IDE.timer = setInterval(ideTick, 1000);
+  };
+  // A selector u1 refuses (spaces, pseudo-classes, jQuery-only syntax) is
+  // resolved here and every match stamped; u1 gets the stamp's selector.
+  var U1_SAFE = /^[^\s:]+$/;
+  var ideStamp = function (sel) {
+    if (typeof sel !== 'string' || !sel.trim()) return sel;
+    var groups = sel.split(/\s*,\s*/);
+    if (groups.every(function (g) { return U1_SAFE.test(g); })) return groups.join(',');
+    var tok = IDE.tokens[sel] || (IDE.tokens[sel] = 'i' + (++IDE.tokenN));
+    var stampNow = function () { ideAll(sel).forEach(function (el) { var v = (el.getAttribute('data-u1ide') || '').split(/\s+/); if (v.indexOf(tok) < 0) { v.push(tok); el.setAttribute('data-u1ide', v.join(' ').trim()); } }); };
+    stampNow();
+    if (!IDE.stampTimer) IDE.stampTimer = setInterval(function () { Object.keys(IDE.tokens).forEach(function (s2) { var t2 = IDE.tokens[s2]; ideAll(s2).forEach(function (el) { var v = (el.getAttribute('data-u1ide') || '').split(/\s+/); if (v.indexOf(t2) < 0) { v.push(t2); el.setAttribute('data-u1ide', v.join(' ').trim()); } }); }); }, 1000);
+    return '[data-u1ide~="' + tok + '"]';
+  };
+  var ideStampAll = function (o) { var r = {}; Object.keys(o).forEach(function (k) { r[k] = o[k] && typeof o[k] === 'object' ? ideStampAll(o[k]) : ideStamp(o[k]); }); return r; };
+  var ideWhenU1 = function (fn) { var n = 0; (function wait() { if (window.u1 && window.u1.fix) return fn(); if (++n < 75) setTimeout(wait, 200); else warn('IDE: the u1 library never appeared; component calls were not applied'); })(); };
+  var ideComponent = function (name, ctx) {
+    return function (props) {
+      var args = [].slice.call(arguments);
+      var t = window.U1Ide && window.U1Ide._translate(name, args);
+      if (!t) { warn('IDE api.' + name + ': this shape has no u1 equivalent; skipped'); return; }
+      if (t.dropped && t.dropped.length) debug('IDE api.' + name + ': not carried', t.dropped.join(', '));
+      if (t.claim) ideSubscribe(t.claim, ctx, null, t.claimName);
+      var cfg = JSON.parse(JSON.stringify(t.config)); cfg.selectors = ideStampAll(cfg.selectors);
+      var first = ideStamp(t.firstArg);
+      ideWhenU1(function () { try { var f = window.u1.fix[t.type]; if (f) f(first, cfg); else warn('IDE: u1.fix.' + t.type + ' missing'); } catch (e) { warn('IDE u1.fix.' + t.type + ' threw:', e.message); } });
+      // dialog onOpen / onClose callbacks: fired on the dialog's visibility changes
+      if (name === 'dialog' && props && (typeof props.onOpen === 'function' || typeof props.onClose === 'function') && props.selectors && props.selectors.dialog) {
+        var open = false;
+        setInterval(function () { var d = ideAll(props.selectors.dialog)[0]; var v = !!(d && ideVisible(d)); if (v !== open) { open = v; try { (v ? props.onOpen : props.onClose) && (v ? props.onOpen : props.onClose)(d); } catch (e) { warn('IDE dialog callback threw:', e.message); } } }, 300);
+      }
+    };
+  };
+  // string descriptions, by tag (IDE Handlers/configuration.ts)
+  var SR_ONLY_CSS = 'position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;';
+  var ideSpanDescription = function (el, text) {
+    if (el.getAttribute('u1st-added-description')) return;
+    el.setAttribute('u1st-added-description', 'true');
+    [].slice.call(el.childNodes).forEach(function (n) {
+      if (n.nodeType === 3 && n.nodeValue.trim()) { var sp = document.createElement('span'); sp.setAttribute('aria-hidden', 'true'); sp.textContent = n.nodeValue; el.replaceChild(sp, n); }
+      else if (n.nodeType === 1) n.setAttribute('aria-hidden', 'true');
+    });
+    var s2 = document.createElement('span'); s2.className = 'u1st-sr-only'; s2.style.cssText = SR_ONLY_CSS; s2.textContent = text; el.appendChild(s2);
+  };
+  var ideLabel = function (el, text) { el.setAttribute('aria-label', text); el.removeAttribute('aria-labelledby'); };
+  var ideValidity = function (el, text) { if (el.hasAttribute('required')) { el.oninvalid = function () { el.setCustomValidity('Please fill out ' + text + ' field.'); }; el.oninput = function () { el.setCustomValidity(''); }; } };
+  var ideDescribe = function (el, text, fixBy, descriptor) {
+    var tag = el.tagName.toUpperCase();
+    if (tag === 'INPUT' && /^(button|submit|reset)$/i.test(el.type)) { el.value = text; return; }
+    if (/^(DIV|SPAN|P|LI|LABEL)$/.test(tag)) { if (descriptor && tag === 'LABEL') return; if (fixBy === 'aria-label') ideLabel(el, text); else ideSpanDescription(el, text); return; }
+    if (/^(A|BUTTON)$/.test(tag)) { ideLabel(el, text); return; }
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test(tag)) {
+      if (descriptor) {
+        if (descriptor.tagName === 'LABEL') { if (!el.id) el.id = 'u1st-' + Math.random().toString(36).slice(2, 10); descriptor.setAttribute('for', el.id); }
+        else { if (!descriptor.id) descriptor.id = 'u1st-' + Math.random().toString(36).slice(2, 10); el.setAttribute('aria-labelledby', descriptor.id); }
+      } else ideLabel(el, text);
+      ideValidity(el, text); return;
+    }
+    if (tag === 'TABLE') { if (!el.querySelector('caption.u1st-sr-only')) { var c = document.createElement('caption'); c.className = 'u1st-sr-only'; c.style.cssText = SR_ONLY_CSS; c.textContent = text; el.insertBefore(c, el.firstChild); } return; }
+    if (tag === 'SVG') { ideLabel(el, text); el.setAttribute('role', 'img'); return; }
+    if (tag === 'IMG') { el.setAttribute('alt', text); return; }
+  };
+  var ideWaitable = function (waitFor, ctx, run) { if (waitFor === undefined || waitFor === null || waitFor === '') run(); else ideSubscribe(waitFor, 'body', function () { run(); }, 'DescriptionFixer'); };
+  var ideApi = function (ctx) {
+    ctx = ctx || 'body';
+    var api = {
+      description: {
+        manual: function (sel, key, waitFor, fixBy) {
+          var text = IDE.loc[key]; if (text === undefined || text === null) return;
+          ideWaitable(waitFor, ctx, function () { ideAll(sel, ctx).forEach(function (el) { try { ideDescribe(el, String(text), fixBy); } catch (e) { /* noop */ } }); });
+        },
+        selector: function (target, descSel, waitFor, fixBy) {
+          ideWaitable(waitFor, ctx, function () {
+            var d = ideAll(descSel)[0]; if (!d) return;
+            var text = (d.textContent || d.innerText || '').replace(/\s+/g, ' ').trim();
+            ideAll(target, ctx).forEach(function (el) { try { ideDescribe(el, text, fixBy, /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) ? d : null); } catch (e) { /* noop */ } });
+          });
+        },
+        expression: function (target, cb, waitFor) {
+          ideWaitable(waitFor, ctx, function () { ideAll(target, ctx).forEach(function (el, i) { try { ideDescribe(el, String(cb(el, i))); } catch (e) { warn('IDE description.expression threw:', e.message); } }); });
+        },
+      },
+      executeScript: function (waitFor, fn) { if (typeof fn === 'function') ideSubscribe(waitFor, ctx, function (el) { fn(el); }, 'executeScript'); },
+      heading: function (sel, level) {
+        ideSubscribe(sel, ctx, function (el) {
+          if (/^H[1-6]$/.test(el.tagName)) { if (el.tagName !== 'H' + level) { var cs = getComputedStyle(el); var n = replaceTag(el, 'h' + level); n.style.fontSize = cs.fontSize; n.style.fontFamily = cs.fontFamily; n.style.fontWeight = cs.fontWeight; } }
+          else { el.setAttribute('role', 'heading'); el.setAttribute('aria-level', String(level)); }
+        }, 'HeadingFixer');
+      },
+      moveFocus: function (props) {
+        props = props || {}; var counter = 0, key = (props.key || 'enter');
+        var go = function () {
+          var iv = setInterval(function () {
+            if (counter >= 7000) clearInterval(iv);
+            [].concat(props.target || []).forEach(function (t) { var el = ideAll(t)[0]; if (el && ideVisible(el)) { try { el.focus(); } catch (e) { /* noop */ } clearInterval(iv); } });
+            counter += 200;
+          }, 200);
+        };
+        var bind = function () {
+          ideAll(props.trigger).forEach(function (el) {
+            if ($(el).data('u1ide-mf')) return; $(el).data('u1ide-mf', true);
+            if (props.type === 'click') el.addEventListener('click', go);
+            else el.addEventListener('keydown', function (e) { if (String(e.code || '').toLowerCase() === key) go(); });
+          });
+        };
+        bind(); ideSubscribe(props.trigger, ctx, bind, 'moveFocusUtility');
+      },
+      setVisibility: {
+        auto: function (sel) { ideSubscribe(sel, ctx, function () {}, 'setVisibility'); setInterval(function () { ideAll(sel, ctx).forEach(function (el) { el.setAttribute('aria-hidden', ideVisible(el) ? 'false' : 'true'); }); }, 1000); },
+        manual: function (sel, isVisible) { ideAll(sel).forEach(function (el) { el.setAttribute('aria-hidden', String(!isVisible)); }); },
+      },
+      setAttributeToAll: function (props) { if (props && props.selector && props.name) ideSubscribe(props.selector, ctx, function (el) { el.setAttribute(props.name, props.value); }, props.name); },
+      state: {},
+      isMobileDevice: /Android|Phone|Mobile/i.test(navigator.userAgent),
+      getLocalization: function (key) { var v = IDE.loc[key]; return v == null ? '' : v; },
+      restrict: function (white, black) {
+        var ok = /^(?!http|https|http:\/\/)(?!\/\/)(?!www)([?a-zA-Z0-9-+]{2,256}\.[a-zA-Z.]{2,5}(\/[a-zA-Z-]+[*]?|\/\*)*\/?)$/;
+        var cur = location.hostname + location.pathname;
+        var m = function (list) { return (list || []).filter(function (e) { return ok.test(e); }).some(function (e) { return new RegExp(e.replace(/\*/g, '[a-zA-Z0-9/-]*')).test(cur); }); };
+        try { return m(white) && !m(black); } catch (e) { return undefined; }
+      },
+      logger: { error: function (m) { warn('IDE script:', m && m.message ? m.message : m); }, info: function (m) { debug('IDE script:', m); } },
+      // a native mapping now does this fixer's work; its element is still claimed
+      __claim: function (sel, name) { ideSubscribe(sel, ctx, null, name); },
+    };
+    ['checked', 'expanded', 'pressed'].forEach(function (st) {
+      api.state[st] = function (props) {
+        var sel = props && props.selectors && props.selectors.element; if (!sel) return;
+        var attr = 'aria-' + st;
+        var handle = function (el, v) {
+          if (el.getAttribute(attr) !== String(v)) el.setAttribute(attr, String(v));
+          if ($(el).data('u1ide-st-' + st)) return; $(el).data('u1ide-st-' + st, true);
+          var flip = function () { if (el.hasAttribute(attr)) el.setAttribute(attr, el.getAttribute(attr) === 'true' ? 'false' : 'true'); };
+          if (typeof props.stateHandler !== 'function') {
+            el.addEventListener('keypress', function (e) { if (e.code === 'Enter' || e.code === 'Space') { flip(); e.preventDefault(); } });
+            el.addEventListener('click', flip);
+          }
+        };
+        ideSubscribe(sel, ctx, function (el) {
+          if (typeof props.stateHandler === 'function') {
+            new MutationObserver(function () { var v = !!props.stateHandler(el); if (el.getAttribute(attr) !== String(v)) handle(el, v); }).observe(el, { attributes: true, childList: true, subtree: true });
+            return;
+          }
+          var s = props.selectors, t = s.trueState ? $(el).is(s.trueState) : false, f = s.falseState ? $(el).is(s.falseState) : false;
+          if (t !== f) handle(el, t);
+        }, 'StateFixer');
+      };
+    });
+    ['button', 'link', 'toggleButton', 'listbox', 'combobox', 'menu', 'dialog', 'accordion', 'tabs', 'form', 'checkbox', 'radio', 'interactiveTable', 'table', 'carousel', 'datepicker'].forEach(function (n) { api[n] = ideComponent(n, ctx); });
+    return api;
+  };
+  window.u1st = window.u1st || {};
+  window.u1st.evaluate = function (ctx) { return ideApi(ctx); };
+  window.u1st.logger = window.u1st.logger || { error: function (m) { warn('IDE:', m); }, info: function () {} };
+  window.u1st.landmarks = function (o) { Object.keys(o || {}).forEach(function (role) { if (!o[role]) return; var el = ideAll(o[role])[0]; if (el) el.setAttribute('role', role); }); };
+  window.u1st.language = { fix: function () {} };
+  window.__u1IdeRegister = function (m) {
+    if (!m || !m.config || !m.config.script) return;
+    if (m.config.site) {
+      IDE.loc = m.config.site.localization || {}; window.u1st.localization = IDE.loc;
+      // scripts whose every call became a native mapping: only their claims remain
+      (m.config.site.claims || []).forEach(function (c, i) { if (!IDE.scripts.some(function (x) { return x.id === 'claims-' + c.index + '-' + i; })) IDE.scripts.push({ id: 'claims-' + c.index + '-' + i, script: { index: c.index, context: 'body', apiName: 'api', code: c.text } }); });
+    }
+    if (!IDE.scripts.some(function (x) { return x.id === m.id; })) IDE.scripts.push({ id: m.id, script: m.config.script });
+  };
+  window.__u1IdeApply = function () {
+    if (IDE.ran) return { ok: true, already: true };
+    var run = function () {
+      IDE.ran = true;
+      IDE.scripts.sort(function (a, b) { return a.script.index - b.script.index; }).forEach(function (s) {
+        try { new Function(s.script.apiName || 'api', s.script.code)(ideApi(s.script.context)); }
+        catch (e) { warn('IDE script ' + s.script.index + ' threw:', e && e.message ? e.message : e); }
+      });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run();
+    return { ok: true, scripts: IDE.scripts.length };
+  };
+  window.__u1IdeApplyOne = function (m) {
+    try { new Function(m.config.script.apiName || 'api', m.config.script.code)(ideApi(m.config.script.context)); return { ok: true, applied: 1, note: 'IDE script ' + m.config.script.index + ' ran on this page.' }; }
+    catch (e) { return { ok: false, err: e && e.message ? e.message : String(e) }; }
+  };
+
   window.__u1UrsHover = function (sel, out) { var it = $(sel)[0]; var bar = $(it).data('u1st-mwBar'); fireHover(it, bar, out ? HOVER_OUT : HOVER_IN); return !!bar; };
   window.__u1UrsMenuDump = function () {
     return R.menuWidgets.map(function (w) {

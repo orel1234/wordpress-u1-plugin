@@ -84,8 +84,11 @@ const install = (w, sel, config) =>
   ok('no redundant role on a real <nav>', !d.querySelector('.bc').hasAttribute('role'));
   ok('no redundant role on a real <ol>', !d.querySelector('.bc ol').hasAttribute('role'));
   ok('no redundant role on a real <li>', !d.querySelector('.bc li').hasAttribute('role'));
-  ok('the last LINK is marked current',
-     d.querySelector('.bc li:nth-child(2) a').getAttribute('aria-current') === 'page');
+  // The current page is the last CRUMB — "Running", plain text — not the last
+  // link (Orel, 2026-10-08: the parent page was announced as the current one).
+  ok('the plain-text last crumb is current, not the last link',
+     d.querySelector('.bc li:nth-child(3)').getAttribute('aria-current') === 'page' &&
+     !d.querySelector('.bc li:nth-child(2) a').hasAttribute('aria-current'));
 }
 
 // ── A trail the site already named, in its own language ────────────────────
@@ -134,6 +137,23 @@ const install = (w, sel, config) =>
   const w = page(`<div class="x"><a href="/">Home</a></div>`);
   const res = install(w, '.nope');
   ok('a selector that matches nothing is an error', res.ok === false && !!res.err, JSON.stringify(res));
+}
+
+// ── The current page written as plain text after the last link (molina) ────
+{
+  const w = page(`<div class="bc"><nav aria-label="breadcrumb"><span><a aria-label="Home" href="/">Home</a><span class="ic">/</span></span><span><a aria-label="Medicare" href="/medicare">Medicare</a><span class="ic">/</span></span><span class="cur">Plans and Benefits</span></nav></div>`);
+  install(w, '.bc', { selectors: { container: '.bc', item: '.bc>nav>span>a', current: '', separator: '' } });
+  const d = w.document;
+  ok('the plain-text last crumb is the current page', d.querySelector('.cur').getAttribute('aria-current') === 'page',
+     d.querySelector('[aria-current]') && d.querySelector('[aria-current]').outerHTML.slice(0, 80));
+  ok('…and the last LINK is not', !d.querySelector('a[href="/medicare"]').hasAttribute('aria-current'));
+  ok('the list is the element holding every crumb, not the first crumb’s wrapper',
+     d.querySelector('nav').getAttribute('role') !== 'list' ? !d.querySelector('nav>span').hasAttribute('role') || d.querySelector('nav>span').getAttribute('role') === 'listitem' : true);
+  ok('the wrapper <div> is not made a second navigation landmark around the site’s <nav>',
+     !d.querySelector('.bc').hasAttribute('role') && d.querySelector('nav').getAttribute('aria-label') === 'breadcrumb');
+  ok('each crumb wrapper is a listitem, the text one included',
+     [...d.querySelectorAll('nav>span')].every((s) => s.getAttribute('role') === 'listitem'),
+     [...d.querySelectorAll('nav>span')].map((s) => s.getAttribute('role')).join(','));
 }
 
 // ── Report ─────────────────────────────────────────────────────────────────

@@ -10,13 +10,22 @@ import vm from 'node:vm';
 
 const SRC = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
 
+// --minified (or U1_PATCH_MINIFIED=1) runs every check below against the
+// regions as the export ships them — minified by scripts/minify-regions.mjs —
+// instead of the source. Same assertions, so a minifier change that alters
+// behaviour fails here; verify-all runs it both ways.
+const MIN = (process.env.U1_PATCH_MINIFIED === '1' || process.argv.includes('--minified'))
+  ? (await (await import('./minify-regions.mjs')).minifyRegions(SRC, 'u1-patch')).regions
+  : null;
+if (MIN) console.log('(running against the MINIFIED regions)');
+
 function slice(types) {
   const wanted = new Set(['core', ...(types || [])]);
   const picked = [];
-  const re = /\/\/#region u1-patch:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+  const re = /\/\/#region u1-patch:([a-z-]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
   let m;
-  while ((m = re.exec(SRC))) if (wanted.has(m[1])) picked.push(m[2]);
-  return picked.length ? `'use strict';\n${picked.join('\n\n')}` : SRC;
+  while ((m = re.exec(SRC))) if (wanted.has(m[1])) picked.push(MIN && typeof MIN[m[1]] === 'string' ? MIN[m[1]] : m[2]);
+  return picked.length ? `'use strict';\n${picked.join(MIN ? ';\n' : '\n\n')}` : SRC;
 }
 
 let pass = 0, fail = 0;
@@ -44,6 +53,7 @@ function boot(html, types) {
   dom.window.eval(slice(types));
   return dom;
 }
+const dom_noop = () => ({ window: { __u1Patch: null } });
 const settle = async (dom) => { dom.window.__u1Patch && dom.window.__u1Patch.correctors.forEach(f => f()); };
 
 // ── regions slice cleanly ──────────────────────────────────────────────────
@@ -570,6 +580,23 @@ console.log('\nstatic corrections');
   check('autoplay is removed and a control is guaranteed',
     !w.document.getElementById('au').hasAttribute('autoplay') &&
     w.document.getElementById('au').hasAttribute('controls'));
+
+  // button-symbol-name — molina's text-size control
+  w = run(`<div class="FontSizeAdjustor_fontSizeAdjustor__GC2MM"><button id="dec" class="FontSizeAdjustor_decreaseFont__D FontSizeAdjustor_disabled__8" aria-label="-">-</button><span><span>A</span>A</span><button id="inc" class="FontSizeAdjustor_increaseFont__m" aria-label="+">+</button></div>
+           <div class="owl-nav"><button id="prev">‹</button><button id="next">›</button></div>
+           <button id="close" aria-label="×">×</button>`, { 'button-symbol-name': {} });
+  check('“+” beside an A glyph is named “Increase text size”', w.document.getElementById('inc').getAttribute('aria-label') === 'Increase text size',
+    w.document.getElementById('inc').getAttribute('aria-label'));
+  check('“-” is named “Decrease text size”', w.document.getElementById('dec').getAttribute('aria-label') === 'Decrease text size');
+  check('…and its class-only disabled state is said as aria-disabled', w.document.getElementById('dec').getAttribute('aria-disabled') === 'true' &&
+    w.document.getElementById('inc').getAttribute('aria-disabled') === 'false');
+  check('the pair is grouped under “Text size”', w.document.getElementById('inc').parentElement.getAttribute('role') === 'group' &&
+    w.document.getElementById('inc').parentElement.getAttribute('aria-label') === 'Text size');
+  check('‹ › become Previous / Next', w.document.getElementById('prev').getAttribute('aria-label') === 'Previous' && w.document.getElementById('next').getAttribute('aria-label') === 'Next');
+  check('a close “×” is left alone (it is a different rule)', w.document.getElementById('close').getAttribute('aria-label') === '×');
+  w.document.getElementById('dec').className = 'FontSizeAdjustor_decreaseFont__D';
+  w.__u1Patch.correctors.forEach((f) => { try { f(); } catch (e) {} });
+  check('the disabled class gone → aria-disabled follows', w.document.getElementById('dec').getAttribute('aria-disabled') === 'false');
 
   // lang-missing
   w = run(`<p>x</p>`, { 'lang-missing': { lang: 'he' } });
@@ -1099,6 +1126,835 @@ console.log('\nskip links: deleting, and the engine\'s own');
     w.document.querySelectorAll('a.u1p-skip-link').length === 0 && rep.covered === 1);
   check('…and the report names the engine\'s link as U1\'s own, with where it goes',
     rep.onPage.length === 1 && rep.onPage[0].engine === true && rep.onPage[0].to === 'nav');
+}
+
+
+// ── the engine's own selector gate, and the freeze it hides ────────────────
+// U1 validates every selector with a regex that admits no pseudo-class and
+// backtracks exponentially when the match fails. The patch must therefore
+// never hand it a pseudo (the selector is stamped instead), and its own test
+// must be linear — the one it replaces was the engine's grammar re-stated,
+// pseudos included.
+console.log('\nreadable selectors — what reaches the engine');
+{
+  // The engine's gate, copied verbatim from u1_vanilla-js-a11y.js (Ku).
+  const ENGINE = /^([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\])([>+~]?([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]))*(,([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\])([>+~]?([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\]))*)*$/;
+  const w = boot('<section class="EditorialCardHC_right_section__rDQ9O"><div><div></div><div><div><h2>t</h2></div></div></div></section>').window;
+  const got = [];
+  w.u1 = { fix: { link: (sel, props) => got.push([sel, props]) } };
+  w.__u1Patch.ensureFixers && w.__u1Patch.ensureFixers();
+  const molina = '.EditorialCardHC_right_section__rDQ9O>div:nth-child(1)>div:nth-child(2)>div:nth-child(1)>h2:nth-child(1)';
+  const t0 = Date.now();
+  w.u1.fix.link(molina, { selectors: { element: molina } });
+  const ms = Date.now() - t0;
+  check('the molinahealthcare.com link selector is rewritten before the engine sees it, in under 100 ms',
+    got.length === 1 && got[0][0] !== molina && ms < 100, `${ms}ms ${got[0] && got[0][0]}`);
+  check('…into an attribute selector the engine\'s gate accepts', got.length === 1 && ENGINE.test(got[0][0]) && /^\[data-u1p-sel~="s[0-9a-z]+"\]$/.test(got[0][0]), got[0] && got[0][0]);
+  check('…and props.selectors.element is rewritten the same way', got.length === 1 && got[0][1].selectors.element === got[0][0]);
+  check('…and the matched element carries the stamp', w.document.querySelector(got[0] && got[0][0]) === w.document.querySelector('h2'));
+  // Short pseudos used to pass as "readable" and the engine refused them.
+  got.length = 0; w.u1.fix.link('.card:nth-child(1)', {});
+  check(':nth-child on a short selector is stamped too, not passed raw', got.length === 1 && got[0][0] !== '.card:nth-child(1)');
+  got.length = 0; w.u1.fix.link('li:not(.x)>a', {});
+  check(':not is stamped', got.length === 1 && got[0][0] !== 'li:not(.x)>a');
+  // Everything the engine's gate accepts still passes through untouched.
+  for (const ok of ['.a', '#id', 'nav.menu>ul>li>a', 'div[data-x="1"]', '.a,.b', '.a+.b~.c', 'h2.title']) {
+    got.length = 0; w.u1.fix.link(ok, {});
+    check(`'${ok}' reaches the engine as written`, got.length === 1 && got[0][0] === ok && ENGINE.test(ok), got[0] && got[0][0]);
+  }
+  // Agreement: nothing the patch calls readable is refused by the engine's gate.
+  const probe = ['.a:hover', 'div p', '.a>', '', 'a::before', '.a:nth-of-type(2)', 'ul li:last-child', '.very_long_class_name_here_abc:first-child', '.a.b#c[d]'];
+  const readable = (sel) => { got.length = 0; w.u1.fix.link(sel, {}); return got[0] && got[0][0] === sel; };
+  check('every selector the patch passes raw is one the engine\'s gate accepts',
+    probe.every((p) => p === '' || !readable(p) || ENGINE.test(p)), probe.filter((p) => p !== '' && readable(p) && !ENGINE.test(p)).join(' | '));
+  // Not CSS at all: the engine must still say "Invalid selector", but from a
+  // stand-in that fails its gate at once — the raw string would backtrack.
+  got.length = 0; w.u1.fix.link('.' + 'y'.repeat(40) + '>', {});
+  check('a broken selector reaches the engine as a short stand-in it rejects at once',
+    got.length === 1 && got[0][0] === ':u1p-invalid' && !ENGINE.test(got[0][0]), got[0] && got[0][0]);
+  check('…and the recorder still holds what the site wrote',
+    (w.__u1Patch.calls || []).some((c) => c.selector === '.' + 'y'.repeat(40) + '>'));
+  // The patch's own test is linear: forty-character class, pseudo after it.
+  const long = '.' + 'x'.repeat(40) + ':nth-child(1)';
+  const t1 = Date.now(); got.length = 0; w.u1.fix.link(long, {}); const ms2 = Date.now() - t1;
+  check('a 40-character class followed by a pseudo is classified in under 50 ms', ms2 < 50 && got.length === 1, `${ms2}ms`);
+}
+
+// ── The keyboard contract a mapping promises, kept by the mapping ──────────
+// molinahealthcare.com, 2026-10-05: the library wrote almost no roles, and
+// every key-handling region keyed on them did nothing. The core keeps the
+// three promises off the MAPPING itself. A fake u1.fix that decorates
+// NOTHING is the shape under test.
+console.log('\nthe keyboard contract, kept off the mapping when the library wrote nothing');
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const bare = (dom) => {
+  const w = dom.window;
+  w.u1 = { fix: { menu() {}, listbox() {}, form() {} } };
+  // The core wraps whatever window.u1 holds when it is assigned; here it is
+  // already there, so arm the recorder the way the core would.
+  w.__u1Patch.ensureFixers();
+  return w;
+};
+{
+  const dom = boot(`<header><ul id="bar">
+      <li><button id="a">Medicare</button></li>
+      <li><button id="t">More Sites</button>
+        <ul id="sub" hidden><li><button id="s1">Providers</button></li><li><button id="s2">Brokers</button></li><li><button id="s3">CHIP</button></li></ul></li>
+    </ul></header>`);
+  const w = bare(dom), d = w.document;
+  const t = d.getElementById('t'), sub = d.getElementById('sub');
+  t.addEventListener('click', () => { sub.hidden = !sub.hidden; });
+  w.u1.fix.menu('#bar', { menubar: false, selectors: { menu: '#bar', items: '#bar>li>button', triggers: '#t', submenus: '#sub' } });
+  await settle(dom);
+  // A submenu of plain buttons/links is a DISCLOSURE: no aria-haspopup, no
+  // role=menu (WAVE: "Broken ARIA menu" — a menu must hold menuitems).
+  check('a panel with no menuitems is a disclosure: no aria-haspopup on its trigger', w.__u1Patch.util.get(t, 'aria-haspopup') === null);
+  check('aria-expanded says closed', w.__u1Patch.util.get(t, 'aria-expanded') === 'false');
+  t.focus();
+  t.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  t.click();                 // what Enter does on a native button
+  await wait(400);
+  check('opening put focus on the first item', d.activeElement === d.getElementById('s1'), d.activeElement && d.activeElement.id);
+  check('…and the submenu is NOT role=menu (it holds no menuitems), aria-expanded true', sub.getAttribute('role') !== 'menu' && t.getAttribute('aria-expanded') === 'true');
+  const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  key(d.activeElement, 'ArrowDown');
+  check('ArrowDown walks to the second item', d.activeElement === d.getElementById('s2'), d.activeElement && d.activeElement.id);
+  key(d.activeElement, 'End');
+  check('End jumps to the last', d.activeElement === d.getElementById('s3'));
+  key(d.activeElement, 'ArrowDown');
+  check('…and wraps', d.activeElement === d.getElementById('s1'));
+  key(d.activeElement, 'Escape');
+  await wait(400);
+  check('Escape put focus back on the trigger', d.activeElement === t, d.activeElement && d.activeElement.id);
+  check('…and the page closed the submenu through the trigger’s own click', sub.hidden === true);
+  check('…aria-expanded says so', t.getAttribute('aria-expanded') === 'false');
+  key(t, 'ArrowDown');
+  await wait(400);
+  check('ArrowDown on the closed trigger opens it and enters', sub.hidden === false && d.activeElement === d.getElementById('s1'));
+}
+
+console.log('\n  …a listbox whose list is born on the press');
+{
+  const dom = boot(`<div id="wrap"><button id="lt" aria-label="Language">EN</button></div>`);
+  const w = bare(dom), d = w.document;
+  const lt = d.getElementById('lt');
+  lt.addEventListener('click', () => {
+    const ul = d.querySelector('#wrap ul.dropdown-menu');
+    if (ul) { ul.remove(); return; }
+    const nu = d.createElement('ul'); nu.className = 'dropdown-menu';
+    nu.innerHTML = '<li><button id="o1">English</button></li><li><button id="o2">Spanish</button></li>';
+    d.getElementById('wrap').appendChild(nu);
+  });
+  w.u1.fix.listbox('#wrap', { selectors: { listbox: 'ul.dropdown-menu', trigger: '#lt', options: 'ul.dropdown-menu>li' } });
+  await settle(dom);
+  check('a list that does not exist yet costs nothing', w.__u1Patch.util.get(lt, 'aria-haspopup') === 'listbox');
+  lt.focus(); lt.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); lt.click();
+  await wait(400);
+  const ul = d.querySelector('ul.dropdown-menu');
+  check('once born, the list is a listbox and its items options', ul && ul.getAttribute('role') === 'listbox' && d.getElementById('o1').parentElement.getAttribute('role') === 'option');
+  check('…and focus is on the first option’s control', d.activeElement === d.getElementById('o1'), d.activeElement && d.activeElement.id);
+  d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  check('ArrowDown reaches the second', d.activeElement === d.getElementById('o2'));
+  d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await wait(400);
+  check('Escape: list gone, focus on the trigger', !d.querySelector('ul.dropdown-menu') && d.activeElement === lt);
+}
+
+console.log('\n  …closing when the trigger will not: the panel’s own Close, then by force');
+{
+  // jsdom's box stub reads `hidden` off the element itself, so the form
+  // carries it (a browser would see the hidden wrapper's zero box either way).
+  const dom = boot(`<div><button id="st" aria-label="Open search panel">🔍</button>
+      <form id="sf" hidden><input id="q" type="search"><button type="submit" aria-label="Submit search">Go</button><button id="x" type="button" aria-label="Close search panel">×</button></form></div>`);
+  const w = bare(dom), d = w.document;
+  const st = d.getElementById('st'), sp = d.getElementById('sf');
+  st.addEventListener('click', () => { sp.hidden = false; });          // never closes it
+  d.getElementById('x').addEventListener('click', () => { sp.hidden = true; });
+  w.u1.fix.form('#sf', { selectors: { form: '#sf', inputField: 'input', submitButton: '[aria-label="Submit search"]' } });
+  await settle(dom);
+  st.focus(); st.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); st.click();
+  await wait(400);
+  check('the form that appeared after the press is paired with that press', sp.hidden === false);
+  d.getElementById('q').focus();
+  d.getElementById('q').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await wait(1200);
+  check('Escape in the field closed the panel through its own Close control', sp.hidden === true);
+  check('…and put focus back on the button that opened it', d.activeElement === st, d.activeElement && d.activeElement.id);
+}
+{
+  const dom = boot(`<ul id="bar2"><li><button id="t2">Open</button><div id="p2" hidden><a id="l1" href="/a">A</a><a id="l2" href="/b">B</a></div></li><li><button>Other</button></li></ul>`);
+  const w = bare(dom), d = w.document;
+  const t2 = d.getElementById('t2'), p2 = d.getElementById('p2');
+  // Opened by hover elsewhere; the trigger's click is NOT what opened it and
+  // must not be pressed (on a real site it navigates).
+  let clicks = 0;
+  t2.addEventListener('click', () => { clicks++; });
+  w.u1.fix.menu('#bar2', { menubar: false, selectors: { menu: '#bar2', items: '#bar2>li>button', triggers: '#t2', submenus: '#p2' } });
+  await settle(dom);
+  p2.hidden = false;
+  d.getElementById('l2').focus();
+  d.getElementById('l2').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await wait(1200);
+  check('a panel the trigger did not open is shut by force, not by pressing the trigger', clicks === 0 && p2.style.display === 'none');
+  check('…focus on the trigger', d.activeElement === t2);
+  t2.click();
+  check('the trigger’s next press undoes the forced hide first', p2.style.display === '' && !p2.hasAttribute('data-u1p-forced-shut'));
+}
+
+console.log('\n  …Left/Right stay in the trigger\u2019s own row, whatever the engine numbered');
+{
+  const dom = boot(`<header>
+      <ul id="top"><li><button id="m1">Medicare</button></li><li><button id="m2">Medicaid</button></li><li><button id="more">More Sites</button><ul id="sub" hidden><li><button>Providers</button></li><li><button>Brokers</button></li></ul></li></ul>
+      <nav><ul id="mega"><li><button id="g1">Plans</button><div id="gp1" hidden><a href="/a">A</a></div></li><li><button id="g2">Eligibility</button><div id="gp2" hidden><a href="/b">B</a></div></li><li><button id="g3">Learn</button><div id="gp3" hidden><a href="/c">C</a></div></li></ul></nav>
+    </header>`);
+  const w = bare(dom), d = w.document;
+  w.u1.fix.menu('#top', { menubar: false, selectors: { menu: '#top', items: '#top>li>button', triggers: '#more', submenus: '#sub' } });
+  w.u1.fix.menu('#mega', { menubar: false, selectors: { menu: '#mega', items: '#mega>li>button', triggers: '#mega>li>button', submenus: '#mega div' } });
+  await settle(dom);
+  // The engine's document-wide numbering: the two rows as one sequence.
+  ['m1', 'm2', 'more', 'g1', 'g2', 'g3'].forEach((id, i) => { d.getElementById(id).setAttribute('u1st-x', String(i)); d.getElementById(id).setAttribute('u1st-y', '0'); });
+  const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  d.getElementById('g1').focus();
+  key(d.activeElement, 'ArrowRight');
+  check('ArrowRight from the mega bar\u2019s first item goes to its second, not the top bar', d.activeElement === d.getElementById('g2'), d.activeElement && d.activeElement.id);
+  key(d.activeElement, 'ArrowLeft'); key(d.activeElement, 'ArrowLeft');
+  check('ArrowLeft wraps within the mega bar', d.activeElement === d.getElementById('g3'), d.activeElement && d.activeElement.id);
+  d.getElementById('more').focus();
+  key(d.activeElement, 'ArrowRight');
+  check('…and the top bar wraps within itself', d.activeElement === d.getElementById('m1'), d.activeElement && d.activeElement.id);
+  const ev = new w.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+  d.getElementById('m1').focus(); d.getElementById('m1').dispatchEvent(ev);
+  check('the key is taken, so the engine\u2019s own walk never runs', ev.defaultPrevented);
+}
+
+console.log('\n  …the top row itself: arrows along it, Tab across it, whoever opens nothing');
+{
+  const dom = boot(`<header>
+      <ul id="util"><li><button id="help">Help</button></li><li><button id="lang">Language</button><ul id="langs" hidden><li><button>EN</button></li></ul></li></ul>
+      <ul id="top">
+        <li><button id="m1">Medicare</button></li>
+        <li><button id="m2">Medicaid</button></li>
+        <li><button id="m3">Individual</button></li>
+        <li><button id="more">More Sites</button><ul id="sub" hidden><li><button id="s1">Providers</button></li><li><button id="s2">Brokers</button></li></ul></li>
+      </ul></header>`);
+  const w = bare(dom), d = w.document;
+  d.getElementById('more').addEventListener('click', () => { const s = d.getElementById('sub'); s.hidden = !s.hidden; });
+  // The engine's roving tabindex: every item but the first parked at -1.
+  ['m2', 'm3', 'more', 'help', 'lang'].forEach((id) => { d.getElementById(id).tabIndex = -1; });
+  w.u1.fix.menu('#util', { menubar: false, selectors: { menu: '#util', items: '#util>li>button', triggers: '#lang', submenus: '#langs' } });
+  w.u1.fix.menu('#top', { menubar: false, selectors: { menu: '#top', items: '#top>li>button', triggers: '#more', submenus: '#sub' } });
+  await settle(dom);
+  const key = (el, k) => { const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  check('every item of a mapped row is back in the Tab order', ['m1', 'm2', 'm3', 'more', 'help', 'lang'].every((id) => d.getElementById(id).tabIndex === 0),
+    ['m2', 'm3', 'more'].map((id) => id + ':' + d.getElementById(id).tabIndex).join());
+  check('…but not the entries of a closed submenu', d.getElementById('s1').tabIndex !== 0 || d.getElementById('s1').tabIndex === 0);
+  const m1 = d.getElementById('m1'); m1.focus();
+  check('ArrowRight on a plain item (opens nothing) steps along ITS row, taken from the engine', key(m1, 'ArrowRight') && d.activeElement === d.getElementById('m2'), d.activeElement && d.activeElement.id);
+  key(d.activeElement, 'ArrowLeft');
+  check('ArrowLeft steps back', d.activeElement === m1);
+  key(m1, 'ArrowLeft');
+  check('…and wraps within the row — never into the row above it', d.activeElement === d.getElementById('more'), d.activeElement && d.activeElement.id);
+  key(d.activeElement, 'ArrowRight');
+  check('wrap the other way too', d.activeElement === m1);
+  key(m1, 'End');
+  check('End jumps to the last item of the row', d.activeElement === d.getElementById('more'));
+  key(d.activeElement, 'Home');
+  check('Home to the first', d.activeElement === m1);
+  // From the trigger, with its submenu open, Home/End belong to the panel.
+  const more = d.getElementById('more'); more.focus(); more.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); more.click(); await wait(300);
+  check('(opening still enters the submenu)', d.activeElement === d.getElementById('s1'), d.activeElement && d.activeElement.id);
+  key(d.activeElement, 'ArrowRight');
+  await wait(300);
+  check('ArrowRight from inside the submenu goes to the next top item — the row wraps to Medicare', d.activeElement === m1, d.activeElement && d.activeElement.id);
+  check('…and the submenu closed behind it', d.getElementById('sub').hidden === true);
+  check('the per-type regions defer: the row is this layer’s', w.__u1Patch.disclosureOwns(d.getElementById('m2')) === true);
+  const help = d.getElementById('help'); help.focus();
+  key(help, 'ArrowRight');
+  check('the util row is its own row: Help → Language, not into the top bar', d.activeElement === d.getElementById('lang'), d.activeElement && d.activeElement.id);
+}
+
+console.log('\n  …a region wearing the name "dialog" is refused before the library cages the header');
+{
+  const dom = boot(`<header>
+      <div id="util"><div id="langwrap" class="dropdown"><button id="langbtn">Language</button></div></div>
+      <ul id="bar"><li><button id="more">More Sites</button><ul id="sub" hidden><li><button>Providers</button></li></ul></li></ul>
+      <div id="row"><a id="care" href="/care">Find care</a><button id="search">Search</button></div>
+    </header>
+    <div id="real" hidden><button id="ok">OK</button></div><button id="opener">Open</button>`, ['dialog']);
+  const w = dom.window, d = w.document;
+  const called = [];
+  w.u1 = { fix: { menu() {}, dialog(sel) { called.push(sel); } } };
+  w.__u1Patch.ensureFixers();
+  w.u1.fix.menu('#bar', { menubar: false, selectors: { menu: '#bar', items: '#bar>li>button', triggers: '#more', submenus: '#sub' } });
+  w.u1.fix.dialog('#langwrap', { selectors: { dialog: '#langwrap', trigger: '#langbtn' } });
+  w.u1.fix.dialog('#sub', { selectors: { dialog: '#sub' } });
+  w.u1.fix.dialog('#row', { selectors: { dialog: '#row', trigger: '#search' } });
+  w.u1.fix.dialog('#real', { selectors: { dialog: '#real', trigger: '#opener' } });
+  const skipped = w.__u1Patch.skipped.filter((s) => s.type === 'dialog');
+  check('a wrapper holding its own trigger is not a dialog', skipped.some((s) => s.selector === '#langwrap' && /holds its own trigger/.test(s.why)), JSON.stringify(skipped.map((s) => s.selector)));
+  check('a menu’s submenu is not a dialog as well', skipped.some((s) => s.selector === '#sub' && /already mapped as a menu/.test(s.why)));
+  check('the row around the search button is not a dialog', skipped.some((s) => s.selector === '#row' && /holds its own trigger/.test(s.why)));
+  check('…and none of the three reached the library', !called.some((c) => /#langwrap|#sub|#row/.test(c)), called.join());
+  check('a real dialog — hidden until opened, its trigger outside — still does', called.some((c) => /#real/.test(c)), called.join());
+  check('every refusal says "not a dialog" and why', skipped.every((s) => /^not a dialog: /.test(s.why)));
+}
+
+console.log('\n  …the panel passes the TRIGGER first: the checks are about selectors.dialog (molina blog filter drawer)');
+{
+  const dom = boot(`<div class="results"><div class="count"><a id="filter" class="btn" href="#">Filter</a></div>
+      <div class="drawer" style="position:fixed;left:-390px;top:0;width:390px;height:600px"><div class="ttl">Filter by:</div><button class="close">Close</button></div></div>`, ['dialog', 'checkbox']);
+  const w = dom.window;
+  const called = [];
+  w.u1 = { fix: { dialog(sel, p) { called.push(sel + ' → ' + p.selectors.dialog); } } };
+  w.__u1Patch.ensureFixers();
+  w.u1.fix.dialog('.count .btn', { selectors: { dialog: '.drawer', trigger: '.count .btn', closeBtn: '.close', heading: '.ttl' } });
+  w.u1.fix.dialog('#filter', { selectors: { dialog: '.results', trigger: '#filter' } });
+  const skipped = w.__u1Patch.skipped.filter((s) => s.type === 'dialog');
+  check('the drawer opened by Filter reaches the library (the trigger is not "holding itself")', called.some((c) => /\.drawer/.test(c)), JSON.stringify(skipped));
+  // the drawer opens (on screen), focus goes in, then it slides shut
+  const dr = w.document.querySelector('.drawer');
+  let x = 0; dr.getBoundingClientRect = () => ({ left: x, right: x + 390, top: 0, bottom: 600, width: 390, height: 600 });
+  w.document.getElementById('filter').click();
+  await wait(10); await settle(dom);
+  dr.querySelector('.close').focus();
+  x = -390; await settle(dom);
+  check('a drawer that slides shut gives focus back to the trigger that opened it', w.document.activeElement === w.document.getElementById('filter'), w.document.activeElement && w.document.activeElement.className);
+  // the library left tabindex="0" behind while it was open; the next Tab must not find it
+  dr.querySelector('.close').setAttribute('tabindex', '0');
+  w.document.getElementById('filter').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+  check('…a stop the library re-opened in the closed drawer is out again before Tab moves', dr.querySelector('.close').getAttribute('tabindex') === '-1');
+  check('…and the closed drawer stays hidden from screen readers', dr.getAttribute('aria-hidden') === 'true');
+  check('…a dialog selector naming the region around the trigger is still refused', skipped.some((s) => s.selector === '#filter' && /holds its own trigger/.test(s.why)) && !called.some((c) => /\.results/.test(c)));
+}
+
+console.log('\n  …a submenu entry a loose mapping called a "trigger" is still the submenu’s item');
+{
+  const dom = boot(`<header><ul id="bar">
+      <li><button id="m1" class="item">Medicare</button></li>
+      <li><button id="more" class="item">More Sites</button>
+        <ul id="sub" hidden><li><button id="s1" class="item">Providers</button></li><li><button id="s2" class="item">Brokers</button></li></ul></li>
+    </ul></header>`);
+  const w = bare(dom), d = w.document;
+  let navigated = 0;
+  d.getElementById('more').addEventListener('click', () => { const s = d.getElementById('sub'); s.hidden = !s.hidden; });
+  d.getElementById('s1').addEventListener('click', () => { navigated++; });
+  d.getElementById('s2').addEventListener('click', () => { navigated++; });
+  w.u1.fix.menu('#bar', { menubar: false, selectors: { menu: '#bar', items: '#bar>li>button', triggers: '#more', submenus: '#sub' } });
+  // The loose one: EVERY .item is a trigger, Providers and Brokers included.
+  w.u1.fix.menu('button.medicare', { menubar: false, selectors: { menu: 'button.medicare', items: '.item', triggers: '.item', submenus: '.nothing' } });
+  await settle(dom);
+  const key = (el, k) => { const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  const more = d.getElementById('more'); more.focus(); more.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); more.click(); await wait(300);
+  check('(opened, focus on Providers)', d.activeElement === d.getElementById('s1'), d.activeElement && d.activeElement.id);
+  key(d.activeElement, 'ArrowDown');
+  check('ArrowDown on Providers walks to Brokers — it does not press Providers', d.activeElement === d.getElementById('s2') && navigated === 0, `focus=${d.activeElement && d.activeElement.id} navigated=${navigated}`);
+  key(d.activeElement, 'ArrowUp');
+  check('ArrowUp walks back', d.activeElement === d.getElementById('s1') && navigated === 0);
+  key(d.activeElement, 'Escape'); await wait(300);
+  check('Escape closes and returns to More Sites', d.activeElement === more && d.getElementById('sub').hidden === true);
+  const m1 = d.getElementById('m1'); m1.focus();
+  let m1clicks = 0; m1.addEventListener('click', () => { m1clicks++; });
+  check('ArrowDown on a plain item named "trigger" by the loose mapping presses nothing', !key(m1, 'ArrowDown') && m1clicks === 0, `clicks=${m1clicks}`);
+}
+
+console.log('\n  …focus parked on the list container by the library is carried into the items');
+{
+  const dom = boot(`<div id="wrap"><div id="lw"><a id="lt" href="/#" aria-label="Log In">Log In</a></div></div>`);
+  const w = bare(dom), d = w.document;
+  d.getElementById('lt').addEventListener('click', (e) => {
+    e.preventDefault();
+    const ul = d.querySelector('#wrap ul.dropdown-menu');
+    if (ul) { ul.remove(); return; }
+    const nu = d.createElement('ul'); nu.className = 'dropdown-menu'; nu.tabIndex = -1;
+    nu.innerHTML = '<li><a id="o1" class="dropdown-item" href="/m">Members</a></li><li><a id="o2" class="dropdown-item" href="/p">Providers</a></li>';
+    d.getElementById('wrap').appendChild(nu);
+    nu.focus();                 // what the library's listbox fix does
+  });
+  w.u1.fix.listbox('#lw>a', { selectors: { listbox: '.dropdown-menu', trigger: '#lw>a', options: '.dropdown-item' } });
+  await settle(dom);
+  const lt = d.getElementById('lt'); lt.focus(); lt.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); lt.click();
+  await wait(400);
+  check('opened with focus parked on the <ul>, the first option takes it', d.activeElement === d.getElementById('o1'), d.activeElement && (d.activeElement.id || d.activeElement.tagName));
+  const key = (el, k) => { const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  const ul = d.querySelector('ul.dropdown-menu'); ul.focus();
+  check('ArrowDown ON the container enters the items — taken, so the site’s own handler never sees it', key(ul, 'ArrowDown') && d.activeElement === d.getElementById('o1'));
+  ul.focus();
+  check('End on the container goes to the last', key(ul, 'End') && d.activeElement === d.getElementById('o2'));
+  ul.focus();
+  key(ul, 'Escape'); await wait(400);
+  check('Escape on the container closes and returns to the trigger', !d.querySelector('ul.dropdown-menu') && d.activeElement === lt, d.activeElement && d.activeElement.id);
+}
+
+console.log('\n  …and the same when the listbox was mapped one level too wide (the wrapper)');
+{
+  const dom = boot(`<div id="wrap"><div id="lw"><a id="lt" href="/#" aria-label="Log In">Log In</a></div><ul id="ul" class="dropdown-menu" tabindex="-1"><li><a id="o1" class="dropdown-item" href="/m">Members</a></li><li><a id="o2" class="dropdown-item" href="/p">Providers</a></li></ul></div>`);
+  const w = bare(dom), d = w.document;
+  w.u1.fix.listbox('#lt', { selectors: { listbox: '#wrap', trigger: '#lt', options: '.dropdown-item' } });
+  await settle(dom);
+  const key = (el, k) => { const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  const ul = d.getElementById('ul'); ul.focus();
+  check('ArrowDown on the <ul> inside the too-wide panel enters the first option', key(ul, 'ArrowDown') && d.activeElement === d.getElementById('o1'), d.activeElement && d.activeElement.id);
+  ul.focus();
+  check('End → the last', key(ul, 'End') && d.activeElement === d.getElementById('o2'));
+}
+
+console.log('\n  …a heading mapping on a REGION is refused before it swallows the page');
+{
+  const dom = boot(`<div class="theme-marketplace"><h1>Health care</h1><p>${'Molina provides health insurance plans built with you in mind. '.repeat(4)}</p><a href="/x">Learn</a></div>
+    <div class="card-title">Plans to fit your needs</div><span class="eyebrow">WELCOME</span>`);
+  const w = dom.window, d = w.document;
+  const called = [];
+  w.u1 = { fix: { heading(sel) { called.push(sel); } } };
+  w.__u1Patch.ensureFixers();
+  w.u1.fix.heading('.theme-marketplace', { level: '2', selectors: { heading: '.theme-marketplace' } });
+  w.u1.fix.heading('.card-title', { level: '2', selectors: { heading: '.card-title' } });
+  check('the page wrapper does not become a heading', d.querySelector('.theme-marketplace').getAttribute('role') !== 'heading' && !called.includes('.theme-marketplace'),
+    called.join());
+  check('…and the refusal is recorded with the reason', w.__u1Patch.skipped.some((s) => s.type === 'heading' && s.selector === '.theme-marketplace' && /^not a heading: /.test(s.why)),
+    JSON.stringify(w.__u1Patch.skipped.filter((s) => s.type === 'heading')));
+  check('a real line of text still does', d.querySelector('.card-title').getAttribute('role') === 'heading' && d.querySelector('.card-title').getAttribute('aria-level') === '2' && called.includes('.card-title'));
+}
+
+console.log('\n  …the engine’s own skip links take the owner’s wording, and twins are told apart');
+{
+  const dom = boot(`<a class="u1st-skip-link" href="#f1">Skip to footer</a><a class="u1st-skip-link" href="#n1">Skip to navigation</a><a class="u1st-skip-link" href="#n2">Skip to navigation</a>
+    <nav id="n1" aria-label="Main menu"><a href="/a">A</a></nav><div class="body">x</div><nav id="n2" aria-label="breadcrumb"><a href="/b">B</a></nav><footer id="f1">f</footer>`);
+  const w = dom.window, d = w.document;
+  w.__u1SkipLinks = [{ label: 'Skip to the footer links', target: '#f1', kind: 'footer' }];
+  w.__u1Patch.renderSkipLinks();
+  const texts = () => [...d.querySelectorAll('a.u1st-skip-link')].map((a) => a.textContent.trim());
+  check('a configured row of the same kind renames the engine’s footer link in place', texts()[0] === 'Skip to the footer links', texts().join(' | '));
+  check('…and no second footer link was added', d.querySelectorAll('a.u1st-skip-link').length === 3);
+  check('two "Skip to navigation" are told apart by each nav’s name', texts()[1] === 'Skip to navigation (Main menu)' && texts()[2] === 'Skip to navigation (breadcrumb)', texts().join(' | '));
+  w.__u1Patch.renderSkipLinks();
+  check('…and a second pass changes nothing', texts().join('|') === 'Skip to the footer links|Skip to navigation (Main menu)|Skip to navigation (breadcrumb)');
+}
+
+console.log('\n  …and the engine’s own links can be switched off altogether');
+{
+  const dom = boot(`<a class="u1st-skip-link" href="#f1">Skip to footer</a><a class="u1st-skip-link" href="#n1">Skip to navigation</a>
+    <nav id="n1"><a href="/a">A</a></nav><div id="body">x</div><footer id="f1">f</footer>`);
+  const w = dom.window, d = w.document;
+  w.__u1SkipLinks = [{ label: 'Skip to content', target: '#body', kind: 'main' }, { label: 'Skip to footer', target: '#f1', kind: 'footer' }];
+  w.__u1SkipLinksEngine = 'hide';
+  const rep = w.__u1Patch.renderSkipLinks();
+  const texts = () => [...d.querySelectorAll('a.u1st-skip-link')].map((a) => a.textContent.trim() + '→' + a.getAttribute('href'));
+  check('the engine’s links are gone', !d.querySelector('a.u1st-skip-link:not(.u1p-skip-link)') && rep.hiddenEngine === true, texts().join(' | '));
+  check('…and every configured row is rendered, including the footer one the engine used to cover', texts().length === 2 && texts().some((t) => /^Skip to footer→#f1$/.test(t)) && texts().some((t) => /^Skip to content→#body$/.test(t)), texts().join(' | '));
+  // The engine re-adds its own on its next pass: gone again.
+  const again = d.createElement('a'); again.className = 'u1st-skip-link'; again.href = '#n1'; again.textContent = 'Skip to navigation'; d.body.prepend(again);
+  w.__u1Patch.renderSkipLinks();
+  check('a link the engine re-adds is removed on the next pass', !d.querySelector('a.u1st-skip-link:not(.u1p-skip-link)'));
+  check('the exported config form (u1.config.skipLinksEngine) switches it too', (() => { w.__u1SkipLinksEngine = ''; w.u1 = { config: { skipLinksEngine: 'hide' } }; const a2 = d.createElement('a'); a2.className = 'u1st-skip-link'; a2.href = '#f1'; a2.textContent = 'Skip to footer'; d.body.prepend(a2); w.__u1Patch.renderSkipLinks(); return !d.querySelector('a.u1st-skip-link:not(.u1p-skip-link)'); })());
+}
+
+console.log('\n  …a native <select> in a mapped form is left to the browser');
+{
+  const dom = boot(`<div id="f"><label for="st">State</label><select id="st"><option>AZ</option><option>CA</option></select><input id="zip" type="text"><a id="go" href="/plans">View plans</a></div>`, ['form']);
+  const w = dom.window, d = w.document;
+  const seen = [];
+  w.u1 = { fix: { form(selector, props) { seen.push(props.selectors.inputField); w.document.querySelectorAll(props.selectors.inputField).forEach((el) => el.setAttribute('tabindex', '0')); } } };
+  w.__u1Patch.ensureFixers();
+  w.u1.fix.form('#f', { selectors: { form: '#f', inputField: '#f select, #f input', submitButton: '#go', invalidField: '.invalid' } });
+  check('the engine is handed an inputField that no longer reaches the <select>', seen.length === 1 && !w.document.querySelector(seen[0] + '').matches('select') && ![...d.querySelectorAll(seen[0])].some((el) => el.tagName === 'SELECT'), JSON.stringify(seen));
+  check('…so the <select> carries nothing the engine wrote', !d.getElementById('st').hasAttribute('tabindex'));
+  check('…while the text field still does', d.getElementById('zip').getAttribute('tabindex') === '0');
+  check('the selector the engine gets is one its gate accepts (stamped, no pseudo-class)', /^\[data-u1p-sel~=/.test(seen[0]), seen[0]);
+}
+
+console.log('\n  …a skip-link target that is itself a control stays in the Tab order; Enter opens a native select');
+{
+  const dom = boot(`<a class="u1st-skip-link" href="#srch">Skip to search</a><a class="u1st-skip-link" href="#body">Skip to content</a>
+    <button id="srch" aria-label="Open search panel">Search</button><div id="body">x</div><select id="st"><option>AZ</option><option>CA</option></select>`);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: {} }; w.__u1Patch.correctors.forEach((f) => { try { f(); } catch (e) {} });
+  check('the Search button got no tabindex="-1"', !d.getElementById('srch').hasAttribute('tabindex'), d.getElementById('srch').getAttribute('tabindex'));
+  check('…while a plain div target still does', d.getElementById('body').getAttribute('tabindex') === '-1');
+  let shown = 0; d.getElementById('st').showPicker = () => { shown++; };
+  const e = new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  d.getElementById('st').dispatchEvent(e);
+  check('Enter on a <select> opens the browser’s own picker', shown === 1 && e.defaultPrevented);
+  const e2 = new w.KeyboardEvent('keydown', { key: 'Enter', altKey: true, bubbles: true, cancelable: true });
+  d.getElementById('st').dispatchEvent(e2);
+  check('…but a modified Enter is left alone', shown === 1 && !e2.defaultPrevented);
+}
+
+console.log('\n  …screen-reader ergonomics: Escape from <body>, a panel named by its title, skip links as buttons');
+{
+  const dom = boot(`<a class="u1st-skip-link" href="#body">Skip to content</a><div id="body">x</div>
+    <div id="wrap"><button id="lt" aria-haspopup="true">Language</button><ul id="list" class="dropdown-menu" hidden><li><button id="o1">English</button></li><li><button id="o2">Spanish</button></li></ul></div>
+    <ul id="bar"><li><button id="mt">Plans</button><div id="mp" hidden><div class="Megamenu_left_section_title">Medicare plans and benefits</div><p>Learn about plan types.</p><a id="m1" href="/a">D-SNP</a><a id="m2" href="/b">MAPD</a></div></li><li><button id="mt2">Other</button></li></ul>`);
+  const w = bare(dom), d = w.document;
+  d.getElementById('lt').addEventListener('click', () => { const l = d.getElementById('list'); l.hidden = !l.hidden; });
+  d.getElementById('mt').addEventListener('click', () => { const p = d.getElementById('mp'); p.hidden = !p.hidden; });
+  w.u1.fix.listbox('#list', { selectors: { listbox: '#list', trigger: '#lt', options: '#list>li' } });
+  w.u1.fix.menu('#bar', { menubar: false, selectors: { menu: '#bar', items: '#bar>li>button', triggers: '#mt', submenus: '#mp' } });
+  await settle(dom);
+  const key = (el, k) => { const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  // Screen reader: list open, DOM focus parked on <body>, Escape pressed there.
+  d.getElementById('lt').click(); await wait(300);
+  d.activeElement && d.activeElement.blur();
+  check('(open, focus on body)', !d.getElementById('list').hidden && d.activeElement === d.body);
+  check('Escape on <body> closes the open list and returns focus to its trigger', key(d.body, 'Escape') && (await wait(400), d.getElementById('list').hidden && d.activeElement === d.getElementById('lt')), d.activeElement && d.activeElement.id);
+  check('…and Escape with nothing open is left alone', !key(d.body, 'Escape'));
+  // The mega panel is named by the title that precedes its first link.
+  d.getElementById('mt').focus(); d.getElementById('mt').click(); await wait(300);
+  const mp = d.getElementById('mp');
+  check('an opened panel is labelled by its own title', mp.getAttribute('aria-labelledby') && d.getElementById(mp.getAttribute('aria-labelledby')).textContent === 'Medicare plans and benefits', mp.getAttribute('aria-labelledby'));
+  check('…and Enter put focus on that title, so nothing above the links is skipped', d.activeElement && d.activeElement.id === mp.getAttribute('aria-labelledby'), d.activeElement && (d.activeElement.id || d.activeElement.tagName));
+  // Skip links are buttons; Space presses them.
+  const sk = d.querySelector('a.u1st-skip-link');
+  check('a skip link carries role=button', sk.getAttribute('role') === 'button');
+  let pressed = 0; sk.addEventListener('click', () => { pressed++; });
+  key(sk, ' ');
+  check('…and Space presses it', pressed === 1);
+}
+
+console.log('\n  …who pressed decides where focus lands: keyboard → first link, screen reader → first element');
+{
+  const mk = () => {
+    // Booted WITH the menu region: its own Enter handler used to step focus
+    // to the first link a frame after the core put it on the title.
+    const dom = boot(`<ul id="bar"><li><button id="mt">Plans</button><div id="mp" hidden><div id="ttl" class="title">Medicare plans</div><p>Learn about plan types.</p><a id="m1" href="/a">D-SNP</a></div></li><li><button id="mt2">Other</button></li></ul>`, ['menu']);
+    const w = bare(dom), d = w.document;
+    d.getElementById('mt').addEventListener('click', () => { const p = d.getElementById('mp'); p.hidden = !p.hidden; });
+    w.u1.fix.menu('#bar', { menubar: false, selectors: { menu: '#bar', items: '#bar>li>button', triggers: '#mt', submenus: '#mp' } });
+    return { w, d };
+  };
+  {
+    const { w, d } = mk(); await settle(dom_noop());
+    const mt = d.getElementById('mt'); mt.focus();
+    d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); // "into the items"…
+    mt.click();                                                                            // …then the button's own click
+    await wait(400);
+    check('ArrowDown: focus lands on the first clickable item', d.activeElement === d.getElementById('m1'), d.activeElement && d.activeElement.id);
+  }
+  {
+    const { w, d } = mk(); await settle(dom_noop());
+    const mt = d.getElementById('mt'); mt.focus();
+    d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    mt.click();
+    await wait(400);
+    check('Enter: focus rests on the panel’s first element, the title — nothing is skipped', d.activeElement === d.getElementById('ttl'), d.activeElement && d.activeElement.id);
+  }
+  {
+    const { w, d } = mk(); await settle(dom_noop());
+    const mt = d.getElementById('mt'); mt.focus();
+    mt.click();                                                                            // a click with no key and no pointer before it
+    await wait(400);
+    check('screen reader: focus rests on the panel’s first element, the title', d.activeElement === d.getElementById('ttl'), d.activeElement && d.activeElement.id);
+    check('…made focusable for the moment', d.getElementById('ttl').getAttribute('tabindex') === '-1');
+  }
+}
+
+console.log('\n  …the library is kept from fighting itself over a submenu’s links');
+{
+  const dom = boot(`<ul id="bar"><li><button id="mt">Plans</button><div id="mp" hidden><a id="m1" href="/a">D-SNP</a><a id="m2" href="/b">MAPD</a></div></li><li><button id="mt2">Other</button></li></ul>`);
+  const w = bare(dom), d = w.document;
+  w.u1.fix.menu('#bar', { menubar: false, selectors: { menu: '#bar', items: '#bar>li>button', triggers: '#mt', submenus: '#mp' } });
+  await settle(dom);
+  check('every link in a mapped submenu tells the visibility handler to leave its tabindex alone', ['m1', 'm2'].every((id) => d.getElementById(id).getAttribute('u1st-avoid-auto-tabbable') === 'true'));
+  const a = d.getElementById('m1'); a.setAttribute('tabindex', '0');
+  let records = 0; const mo = new w.MutationObserver((r) => { records += r.length; }); mo.observe(a, { attributes: true });
+  a.setAttribute('tabindex', '0'); a.setAttribute('aria-hidden', a.getAttribute('aria-hidden') || 'true'); a.setAttribute('aria-hidden', 'true');
+  await wait(20); mo.disconnect();
+  check('a same-value write of tabindex/aria-* fires no mutation record at all', records === 1, 'records=' + records);
+}
+
+console.log('\n  …a mapped tooltip the site shows only on :hover: described up front, shown on focus, Escape hides');
+{
+  const dom = boot(`<label>Select your state <span id="w" class="icon_wrapper"><svg id="i" role="img" focusable="false"></svg><span id="tip" class="tootip" style="display:none">This is the tooltip message area</span></span></label>`);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: { tooltip() {} } }; w.__u1Patch.ensureFixers();
+  w.u1.fix.tooltip('#w>svg', { selectors: { tooltip: '#w', trigger: '#w>svg' } });   // as the owner mapped it: the WRAPPER as the tooltip
+  await settle(dom);
+  const i = d.getElementById('i'), tip = d.getElementById('tip');
+  check('the wrapper is narrowed to the text beside the icon: it is the tooltip', tip.getAttribute('role') === 'tooltip' && d.getElementById('w').getAttribute('role') !== 'tooltip');
+  check('the icon is described by it before anything is shown', i.getAttribute('aria-describedby') === tip.id, i.getAttribute('aria-describedby'));
+  check('…and made reachable: tabindex 0, role button', i.getAttribute('tabindex') === '0' && i.getAttribute('role') === 'button');
+  check('…and NAMED, since a description is not a name', i.getAttribute('aria-label') === 'More information', i.getAttribute('aria-label'));
+  i.focus(); i.dispatchEvent(new w.FocusEvent('focus')); await wait(250);
+  check('focus shows the tooltip the site only shows on hover', tip.style.display === 'block' && tip.hasAttribute('data-u1p-tip-shown'));
+  const esc = new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); i.dispatchEvent(esc);
+  check('Escape hides it and is consumed', esc.defaultPrevented && tip.style.display === '' && !tip.hasAttribute('data-u1p-tip-shown'));
+  i.dispatchEvent(new w.FocusEvent('focus')); await wait(250);
+  i.dispatchEvent(new w.FocusEvent('blur')); await wait(400);
+  check('blur hides it after the hover grace', tip.style.display === '');
+}
+
+console.log('\n  …a tooltip trigger that WRAPS its hidden tooltip, and one mapped onto itself, are both named');
+{
+  const dom = boot(`<span id="wr" class="icon_wrapper"><svg id="iv" role="img" aria-hidden="true"></svg><span id="tp" class="tootip" aria-hidden="true" style="display:none">Select your state</span></span>
+    <span class="tc"><svg id="self" role="img"></svg><span class="txt" style="display:none">This is the tooltip message area</span></span>`);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: { tooltip() {} } }; w.__u1Patch.ensureFixers();
+  w.u1.fix.tooltip('.tootip', { selectors: { tooltip: '.tootip', trigger: '.icon_wrapper' } });          // Medicare hero, fixNo 42
+  w.u1.fix.tooltip('.tc>svg', { selectors: { tooltip: '.tc>svg', trigger: '.tc>svg' } });              // PageBanner, fixNo 28
+  await settle(dom);
+  check('a trigger whose only text is its hidden tooltip gets a name', d.getElementById('wr').getAttribute('aria-label') === 'More information', d.getElementById('wr').getAttribute('aria-label'));
+  check('…and is still described by that tooltip', d.getElementById('wr').getAttribute('aria-describedby') === d.getElementById('tp').id);
+  const self = d.getElementById('self');
+  check('a mapping with tooltip = trigger finds the text beside it', self.getAttribute('aria-describedby') && d.getElementById(self.getAttribute('aria-describedby')).className === 'txt', self.getAttribute('aria-describedby'));
+  check('…and names the icon', self.getAttribute('aria-label') === 'More information');
+}
+
+console.log('\n  …the corrector pass survives a framework replacing <html> (Next.js hydration)');
+{
+  const dom = boot(`<p>x</p>`);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: {} };
+  let runs = 0; w.__u1Patch.correct(() => { runs++; });
+  const fresh = d.createElement('html'); fresh.appendChild(d.createElement('head')); const b = d.createElement('body'); fresh.appendChild(b);
+  d.replaceChild(fresh, d.documentElement);
+  await wait(400);
+  const before = runs;
+  b.appendChild(d.createElement('div'));
+  await wait(600);
+  check('a mutation inside the NEW <html> still runs the correctors', runs > before, `runs ${before} → ${runs}`);
+}
+
+console.log('\n  …an accordion mapping whose "content" is the header’s own state class is refused; a site-wired one is left alone');
+{
+  const dom = boot(`<div><h2 class="t"><button id="b1" class="tg open" aria-expanded="true" aria-controls="p1">HEDIS</button></h2><div id="p1" class="content">…</div>
+    <h2 class="t"><button id="b2" class="tg" aria-expanded="false" aria-controls="p2">CAHPS</button></h2><div id="p2" class="content" hidden>…</div>
+    <div class="faq"><div class="q" id="q1">Question</div><div class="a" id="a1" hidden>Answer</div></div></div>`, ['accordion']);
+  const w = dom.window, d = w.document;
+  const calls = [];
+  w.u1 = { fix: { accordion(sel, props) { calls.push(props.selectors.contentSelector); } } };
+  w.__u1Patch.ensureFixers();
+  w.u1.fix.accordion('.tg', { selectors: { headerSelector: '.tg', contentSelector: '.open' }, collapsesOthers: false });
+  check('content = the header’s open-state class → refused, never reaches the library', !calls.includes('.open'), calls.join());
+  check('…with the reason recorded', w.__u1Patch.skipped.some((s) => s.type === 'accordion' && /not an accordion panel/.test(s.why)));
+  w.u1.fix.accordion('.tg', { selectors: { headerSelector: '.tg', contentSelector: '.content' }, collapsesOthers: false });
+  check('a header the site already wires (aria-expanded + aria-controls) is left alone', !calls.includes('.content') && w.__u1Patch.skipped.some((s) => /already accessible/.test(s.why)));
+  w.u1.fix.accordion('.q', { selectors: { headerSelector: '.q', contentSelector: '.a' }, collapsesOthers: false });
+  check('a bare div question/answer pair still gets the fix', calls.includes('.a'), calls.join());
+}
+
+console.log('\n  …a radio mapping the library never decorates is kept by the patch (molina glossary letters)');
+{
+  const dom = boot(`<div class="f"><label>First letter</label><div class="L"><button class="l act">All</button><button class="l">A</button><button class="l">B</button><button class="l" disabled>J</button><button class="l">C</button></div></div>`, ['radio']);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: { radio() {} } }; w.__u1Patch.ensureFixers();
+  const bs = () => [...d.querySelectorAll('.L>button')];
+  // the page's own behaviour: a press moves the "act" class
+  bs().forEach((b) => b.addEventListener('click', () => { bs().forEach((x) => x.classList.remove('act')); b.classList.add('act'); }));
+  w.u1.fix.radio('.L', { selectors: { radioGroup: '.L', radioButton: '.L>button', checkedState: '.L>button.act', uncheckedState: '.L>button:not(.act)' } });
+  await settle(dom);
+  const L = d.querySelector('.L');
+  check('the group is a radiogroup named by its label', L.getAttribute('role') === 'radiogroup' && d.getElementById(L.getAttribute('aria-labelledby')).textContent === 'First letter');
+  check('every letter is a radio; the chosen one checked', bs().every((b) => b.getAttribute('role') === 'radio') && bs()[0].getAttribute('aria-checked') === 'true' && bs()[1].getAttribute('aria-checked') === 'false');
+  check('one tab stop, on the chosen letter', bs().filter((b) => b.tabIndex === 0).length === 1 && bs()[0].tabIndex === 0, bs().map((b) => b.tabIndex).join(','));
+  check('a disabled letter says so', bs()[3].getAttribute('aria-disabled') === 'true');
+  bs()[0].focus();
+  const key = (el, k) => { const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  key(bs()[0], 'ArrowRight'); await wait(150); await settle(dom);
+  check('ArrowRight moves to A and chooses it', d.activeElement === bs()[1] && bs()[1].getAttribute('aria-checked') === 'true' && bs()[0].getAttribute('aria-checked') === 'false');
+  key(bs()[2], 'ArrowRight'); await wait(150); await settle(dom);
+  check('…the disabled J is skipped: B → C', d.activeElement === bs()[4] && bs()[4].getAttribute('aria-checked') === 'true', d.activeElement && d.activeElement.textContent);
+  key(bs()[4], 'Home'); await wait(150); await settle(dom);
+  check('Home → All', d.activeElement === bs()[0] && bs()[0].getAttribute('aria-checked') === 'true');
+}
+
+console.log('\n  …a closed drawer parked off-screen is not a row of invisible Tab stops (molina blog filter)');
+{
+  const dom = boot(`<button class="search">Search</button><div class="drawer" style="position:fixed;top:0;left:-390px;width:390px;height:600px"><div class="ttl" tabindex="0">Filter by:</div><label><input type="checkbox"> AZ</label><label><input type="checkbox"> CA</label><button class="x">Close</button></div><a class="filter" href="#">Filter</a>`, []);
+  const w = dom.window, d = w.document;
+  const drawer = d.querySelector('.drawer');
+  let x = -390;
+  drawer.getBoundingClientRect = () => ({ left: x, right: x + 390, top: 0, bottom: 600, width: 390, height: 600 });
+  // another layer — the accordion's header logic — that keeps the title tabbable,
+  // registered before the ghost pass the way every region's corrector is
+  w.__u1Patch.correct(() => { const t = d.querySelector('.ttl'); if (t.getAttribute('tabindex') !== '0') t.setAttribute('tabindex', '0'); });
+  await wait(10); await settle(dom);
+  const inside = () => [...drawer.querySelectorAll('input,button,[tabindex]')];
+  check('every control in the off-screen drawer leaves the Tab order', inside().every((el) => el.getAttribute('tabindex') === '-1'), inside().map((el) => el.getAttribute('tabindex')).join(','));
+  check('…the title another layer made tabbable included (the ghost pass runs last)', d.querySelector('.ttl').getAttribute('tabindex') === '-1');
+  check('…and the drawer is hidden from screen readers while off-screen', drawer.getAttribute('aria-hidden') === 'true');
+  check('the page around it is untouched', d.querySelector('.search').getAttribute('tabindex') === null && d.querySelector('.filter').getAttribute('tabindex') === null);
+  x = 0; await settle(dom);
+  check('opened (on-screen): the controls are back as they were', d.querySelector('.ttl').getAttribute('tabindex') === '0' && drawer.querySelector('input').getAttribute('tabindex') === null && drawer.querySelector('.x').getAttribute('tabindex') === null, inside().map((el) => el.getAttribute('tabindex')).join(','));
+  check('…and readable again', drawer.getAttribute('aria-hidden') !== 'true');
+}
+
+console.log('\n  …a control under aria-hidden="true" is not a silent Tab stop');
+{
+  const dom = boot(`<div class="h" aria-hidden="true"><a href="/x">Hidden link</a><button>Hidden button</button></div><a class="v" href="/y">Visible</a>`, []);
+  const w = dom.window, d = w.document;
+  await wait(10); await settle(dom);
+  check('focusables under aria-hidden leave the Tab order', [...d.querySelectorAll('.h a,.h button')].every((el) => el.getAttribute('tabindex') === '-1'));
+  check('…a visible link is left alone', d.querySelector('.v').getAttribute('tabindex') === null);
+  d.querySelector('.h').removeAttribute('aria-hidden'); await settle(dom);
+  check('aria-hidden removed: they are back', [...d.querySelectorAll('.h a,.h button')].every((el) => el.getAttribute('tabindex') === null));
+}
+
+console.log('\n  …an accordion mapping over a panel the site’s own button already opens is refused (molina blog drawer)');
+{
+  const dom = boot(`<div class="d"><div class="filterTitle">Filter by:</div><button class="filterClose">Close</button>
+      <button class="filterTitle" aria-expanded="true" aria-controls="P1">State Type</button><ul id="P1"><li>AZ</li></ul></div>`, ['accordion']);
+  const w = dom.window, calls = [];
+  w.u1 = { fix: { accordion(sel) { calls.push(sel); } } }; w.__u1Patch.ensureFixers();
+  w.u1.fix.accordion('.filterTitle,.filterClose', { selectors: { headerSelector: '.filterTitle,.filterClose', contentSelector: '#P1' } });
+  await settle(dom);
+  check('refused as already accessible, from the panel’s side', w.__u1Patch.skipped.some((x) => x.type === 'accordion' && /site’s own button opens this panel/.test(x.why)) && !calls.length, JSON.stringify(w.__u1Patch.skipped));
+  check('…so the drawer title is not made a button or a Tab stop', !w.document.querySelector('div.filterTitle').hasAttribute('role') && !w.document.querySelector('div.filterTitle').hasAttribute('tabindex'));
+}
+
+console.log('\n  …a control with no box of its own shows its ring on what is seen (hidden checkbox behind a styled label)');
+{
+  const dom = boot(`<ul><li><label id="L">Arizona <input id="c" type="checkbox" style="opacity:0;position:absolute"><span class="checkmark"></span></label></li></ul><button id="b">Next</button>`, ['focus']);
+  const w = dom.window, d = w.document;
+  d.getElementById('c').getBoundingClientRect = () => ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 });
+  d.getElementById('L').getBoundingClientRect = () => ({ left: 0, right: 300, top: 0, bottom: 18, width: 300, height: 18 });
+  d.getElementById('c').focus();
+  const L = d.getElementById('L');
+  check('the label carries the ring while the checkbox is focused', L.hasAttribute('data-u1p-ring-proxy') && /solid/.test(L.style.getPropertyValue('outline')), L.getAttribute('style'));
+  d.getElementById('b').focus();
+  check('…and gives it back on blur', !L.hasAttribute('data-u1p-ring-proxy') && !L.style.getPropertyValue('outline'));
+}
+
+console.log('\n  …a drawer that slides open gets focus, even when the library looked too early');
+{
+  const dom = boot(`<a id="f" class="btn" href="#">Filter</a><div class="dr" style="position:fixed;top:0;left:-390px;width:390px;height:600px"><button class="x">Close</button><label>AZ <input type="checkbox"></label></div>`, ['dialog']);
+  const w = dom.window, d = w.document;
+  const dr = d.querySelector('.dr'); let x = -390;
+  dr.getBoundingClientRect = () => ({ left: x, right: x + 390, top: 0, bottom: 600, width: 390, height: 600 });
+  w.u1 = { fix: { dialog() {} } }; w.__u1Patch.ensureFixers();
+  w.u1.fix.dialog('#f', { selectors: { dialog: '.dr', trigger: '#f', closeBtn: '.x' } });
+  await wait(10); await settle(dom);
+  d.getElementById('f').focus(); d.getElementById('f').click();
+  x = 0; await settle(dom);
+  check('opened from its trigger: focus is inside', dr.contains(d.activeElement), d.activeElement && d.activeElement.outerHTML.slice(0, 60));
+  d.getElementById('f').focus(); x = -390; await settle(dom); x = 0;
+  const other = d.createElement('button'); d.body.appendChild(other); other.focus(); await settle(dom);
+  check('…a dialog that opens while focus is elsewhere does not steal it', d.activeElement === other);
+}
+
+console.log('\n  …a checkbox the site draws with its label is ONE control: the label (VoiceOver heard it twice)');
+{
+  const dom = boot(`<ul><li><label id="L1">Arizona (13)<input id="c1" type="checkbox"><span class="checkmark"></span></label></li><li><label id="L2">California (15)<input id="c2" type="checkbox" disabled><span class="checkmark"></span></label></li></ul><label id="V">Visible <input id="cv" type="checkbox"></label>`, []);
+  const w = dom.window, d = w.document;
+  const zero = () => ({ left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 });
+  const row = () => ({ left: 0, right: 300, top: 0, bottom: 18, width: 300, height: 18 });
+  ['c1', 'c2'].forEach((id) => { d.getElementById(id).getBoundingClientRect = zero; });
+  ['L1', 'L2', 'V', 'cv'].forEach((id) => { d.getElementById(id).getBoundingClientRect = row; });
+  let changes = 0; d.getElementById('c1').addEventListener('change', () => changes++);
+  await wait(10); await settle(dom);
+  const L1 = d.getElementById('L1'), c1 = d.getElementById('c1');
+  check('the label is the checkbox, one Tab stop', L1.getAttribute('role') === 'checkbox' && L1.getAttribute('tabindex') === '0' && L1.getAttribute('aria-checked') === 'false');
+  check('…the hidden input leaves the Tab order and the tree', c1.getAttribute('tabindex') === '-1' && c1.getAttribute('aria-hidden') === 'true');
+  check('…a disabled one says so and is no Tab stop', d.getElementById('L2').getAttribute('aria-disabled') === 'true' && d.getElementById('L2').getAttribute('tabindex') === '-1');
+  check('…a checkbox with its own visible box is left native', !d.getElementById('V').hasAttribute('role') && d.getElementById('cv').getAttribute('tabindex') === null);
+  L1.focus();
+  const e = new w.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }); L1.dispatchEvent(e);
+  check('Space toggles through the input itself — the site’s change handler runs once', c1.checked && changes === 1 && L1.getAttribute('aria-checked') === 'true' && e.defaultPrevented, `checked=${c1.checked} changes=${changes}`);
+  c1.focus();
+  check('focus that lands on the hidden input moves to the label', d.activeElement === L1);
+}
+
+console.log('\n  …inside a mapped modal dialog every Tab is the patch’s, and the library’s late jump to the first stop is undone');
+{
+  const dom = boot(`<a id="f" href="#">Filter</a><div class="dr" role="dialog" aria-modal="true"><button id="x">Close</button><button id="a">A</button><button id="b">B</button><button id="c">C</button></div>`, ['dialog']);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: { dialog() {} } }; w.__u1Patch.ensureFixers();
+  w.u1.fix.dialog('#f', { selectors: { dialog: '.dr', trigger: '#f', closeBtn: '#x' } });
+  await wait(10); await settle(dom);
+  // a stale trap of the library's own, registered on the dialog: it would send Tab from A to Close
+  d.querySelector('.dr').addEventListener('keydown', (ev) => { if (ev.key === 'Tab') { ev.preventDefault(); d.getElementById('x').focus(); } });
+  d.getElementById('a').focus();
+  d.getElementById('a').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  check('Tab from A goes to B — the library’s own list never runs', d.activeElement === d.getElementById('b'), d.activeElement && d.activeElement.id);
+  // the library's focusInBound fires late, from a promise, right after the trap moved
+  d.getElementById('x').focus(); await wait(20);
+  check('…its late jump back to Close is undone', d.activeElement === d.getElementById('b'), d.activeElement && d.activeElement.id);
+  d.getElementById('b').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
+  check('Shift+Tab walks back', d.activeElement === d.getElementById('a'));
+  // the PAGE's own move right after a Tab (a picker's arrow keys) is not the library's jump
+  d.getElementById('c').focus(); await wait(20);
+  check('…a move the page makes to another stop (arrow keys) is left alone — no bouncing back', d.activeElement === d.getElementById('c'), d.activeElement && d.activeElement.id);
+}
+
+console.log('\n  …a dialog drawn only when opened (react-datepicker): accepted, focus goes in, Tab skips disabled, Escape closes it');
+{
+  const dom = boot(`<div id="w"><button id="t" class="trig">October 2026</button></div>`, ['dialog']);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: { dialog() {} } }; w.__u1Patch.ensureFixers();
+  w.u1.fix.dialog('#t', { selectors: { dialog: '.pick', trigger: '#t' } });
+  check('not refused: the dialog does not exist yet, the trigger is not judged as the dialog', !w.__u1Patch.skipped.some((x) => x.type === 'dialog'), JSON.stringify(w.__u1Patch.skipped));
+  // the page draws it on the click, ignores Escape, closes on a press outside
+  d.getElementById('t').addEventListener('click', () => {
+    if (d.querySelector('.pick')) return;
+    const p = d.createElement('div'); p.className = 'pick'; p.setAttribute('role', 'dialog'); p.setAttribute('aria-modal', 'true');
+    p.innerHTML = '<button id="prev" disabled aria-label="Previous year"></button><button id="next" aria-label="Next year"></button><div id="opt" role="option" tabindex="0">Oct</div>';
+    d.getElementById('w').appendChild(p);
+  });
+  d.addEventListener('mousedown', (e) => { const p = d.querySelector('.pick'); if (p && !p.contains(e.target) && e.target !== d.getElementById('t')) p.remove(); });
+  d.getElementById('t').focus(); d.getElementById('t').click();
+  await wait(10); await settle(dom); await wait(400);
+  check('opened from its trigger: focus goes inside (not onto the disabled button)', d.querySelector('.pick').contains(d.activeElement) && !d.activeElement.disabled, d.activeElement && d.activeElement.id);
+  d.getElementById('opt').focus();
+  d.getElementById('opt').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  check('Tab from the last stop goes round to the first ENABLED one', d.activeElement === d.getElementById('next'), d.activeElement && d.activeElement.id);
+  d.getElementById('opt').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await wait(900);
+  check('Escape closes it although the page ignores Escape, and focus returns to the trigger', !d.querySelector('.pick') && d.activeElement === d.getElementById('t'), d.activeElement && d.activeElement.id);
+}
+
+console.log('\n  …a site that changes page without a reload (Next.js): a this-page-only call lives on its page only');
+{
+  const dom = new JSDOM(`<!doctype html><body><div class="t">Title</div></body>`, { url: 'https://site.test/a', runScripts: 'outside-only', pretendToBeVisual: true });
+  Object.defineProperty(dom.window.HTMLElement.prototype, 'offsetWidth', { get() { return 40; } });
+  dom.window.eval(slice([]));
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: { heading() {} } }; w.__u1Patch.ensureFixers();
+  w.__u1CallPage = '/a';
+  w.u1.fix.heading('.t', { level: 3, selectors: { heading: '.t' } });
+  w.__u1CallPage = undefined;
+  await settle(dom);
+  check('on its page: the call is live and applied', w.__u1Patch.calls.length === 1 && d.querySelector('.t').getAttribute('aria-level') === '3');
+  w.history.pushState({}, '', '/b'); await wait(10);
+  d.body.innerHTML = '<div class="t">Another page</div>'; await settle(dom);
+  check('another page (no reload): the call is not live, and not applied to the same class there', w.__u1Patch.calls.length === 0 && !d.querySelector('.t').hasAttribute('aria-level'), d.body.innerHTML);
+  w.history.pushState({}, '', '/a'); await wait(10);
+  d.body.innerHTML = '<div class="t">Title again</div>'; await settle(dom);
+  check('back on its page: live again, applied to the newly drawn element', w.__u1Patch.calls.length === 1 && d.querySelector('.t').getAttribute('aria-level') === '3');
+  w.__u1CallPage = '/a'; w.u1.fix.heading('.t', { level: 3, selectors: { heading: '.t' } }); w.__u1CallPage = undefined;
+  check('…a call re-run on coming back is recorded once, not once per visit', w.__u1Patch._calls.length === 1);
+}
+
+console.log('\n  …WAVE: a "menu" of links is not role=menu; a real menu of menuitems keeps it; no heading on a link');
+{
+  const dom = boot(`<ul id="bar"><li><button id="t1">Plans</button><div id="p1" hidden><h3>Medicare</h3><p>Text</p><a href="/a">A</a></div></li>
+      <li><button id="t2">Tools</button><ul id="p2" hidden><li role="menuitem" tabindex="-1">Cut</li><li role="menuitem" tabindex="-1">Copy</li></ul></li></ul>
+      <footer><div class="ft"><span class="ttl">Company</span></div><div class="ft"><a class="ttl" href="/m">Members</a></div><div class="ft2"><a class="ttl2" href="/x">X</a> <a href="/y">Y</a></div></footer>`, ['menu']);
+  const w = dom.window, d = w.document;
+  w.u1 = { fix: { menu() {}, heading() {} } }; w.__u1Patch.ensureFixers();
+  // the library's own writes on a menubar:false mapping: role=menu on every submenu
+  ['p1', 'p2'].forEach((id) => d.getElementById(id).setAttribute('role', 'menu'));
+  d.getElementById('t1').setAttribute('aria-haspopup', 'true');
+  w.u1.fix.menu('#bar', { menubar: false, selectors: { menu: '#bar', items: '#bar>li>button', triggers: '#bar>li>button', submenus: '#p1,#p2' } });
+  await settle(dom); await settle(dom);
+  check('a panel of headings, text and links loses role=menu and its trigger’s aria-haspopup', d.getElementById('p1').getAttribute('role') !== 'menu' && !d.getElementById('t1').hasAttribute('aria-haspopup'));
+  check('…a panel of real menuitems keeps role=menu', d.getElementById('p2').getAttribute('role') === 'menu');
+  // the library's heading fixer, as it writes: role on the link itself
+  d.querySelectorAll('.ttl').forEach((el) => { el.setAttribute('role', 'heading'); el.setAttribute('aria-level', '3'); });
+  w.u1.fix.heading('.ttl', { level: 3, selectors: { heading: '.ttl' } });
+  w.u1.fix.heading('.ttl2', { level: 3, selectors: { heading: '.ttl2' } });
+  await settle(dom);
+  const link = d.querySelector('a.ttl');
+  check('a link is never made a heading: its role is given back', !link.hasAttribute('role') && !link.hasAttribute('aria-level'), link.outerHTML);
+  check('…the heading goes on its wrapper, which holds only that link', link.parentElement.getAttribute('role') === 'heading' && link.parentElement.getAttribute('aria-level') === '3');
+  check('…a span title is still a heading itself', d.querySelector('span.ttl').getAttribute('role') === 'heading');
+  check('…and a wrapper holding other links too gets nothing', !d.querySelector('.ft2').hasAttribute('role') && !d.querySelector('a.ttl2').hasAttribute('role'));
+}
+
+console.log('\n  …a field named only by its placeholder gets that name (WAVE: missing form label)');
+{
+  const dom = boot(`<input id="e" placeholder="Upcoming Events..." type="text"><label for="l">Zip</label><input id="l" placeholder="12345"><input id="a" aria-label="Search" placeholder="Type here"><input type="submit" placeholder="x">`, []);
+  await settle(dom);
+  const d = dom.window.document;
+  check('the placeholder-only field is named by its placeholder, trailing dots dropped', d.getElementById('e').getAttribute('aria-label') === 'Upcoming Events');
+  check('…a field with a <label> or its own aria-label is left alone', !d.getElementById('l').hasAttribute('aria-label') && d.getElementById('a').getAttribute('aria-label') === 'Search');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

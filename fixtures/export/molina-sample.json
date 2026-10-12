@@ -1,0 +1,410 @@
+{
+ "site": "molinahealthcare.com",
+ "note": "Molina mappings as of 2026-10-04 (screenshots removed) plus 13 aria-label mappings, to measure the export size including the name fixes.",
+ "mappings": [
+  {
+   "capturedAt": 1790151619414,
+   "config": {
+    "level": "2",
+    "selectors": {
+     "heading": ".CookiesBanner_cookie_title__0clRU>h2"
+    }
+   },
+   "custom": null,
+   "firstArg": ".CookiesBanner_cookie_title__0clRU>h2",
+   "fixNo": 1,
+   "id": "m-25ae0d8e",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/",
+   "parent": null,
+   "primary": ".CookiesBanner_cookie_title__0clRU>h2",
+   "type": "heading"
+  },
+  {
+   "capturedAt": 1790151728473,
+   "config": {
+    "selectors": {
+     "carouselContainer": ".owl-stage>div:nth-child(1)>div:nth-child(1)>div:nth-child(1)",
+     "nextButton": ".owl-next",
+     "prevButton": ".owl-prev",
+     "slide": ".owl-stage>div"
+    }
+   },
+   "custom": null,
+   "firstArg": ".owl-stage>div",
+   "fixNo": 2,
+   "id": "m-78694635",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/",
+   "parent": null,
+   "primary": ".owl-stage>div:nth-child(1)>div:nth-child(1)>div:nth-child(1)",
+   "type": "carousel"
+  },
+  {
+   "capturedAt": 1790154068344,
+   "config": {
+    "focusOpensSubmenu": true,
+    "menubar": false,
+    "selectors": {
+     "items": ".PrimaryNavigationMenu_menu_items__W2yml,.PrimaryNavigationMenu_upICon__Z_vVN",
+     "menu": ".PrimaryNavigationMenu_menu_wrapper__6AN1E",
+     "submenus": ".PrimaryNavigationMenu_show__iu96Z",
+     "triggers": ".PrimaryNavigationMenu_upICon__Z_vVN"
+    }
+   },
+   "custom": null,
+   "firstArg": ".PrimaryNavigationMenu_menu_wrapper__6AN1E",
+   "fixNo": 3,
+   "id": "m-1cea0e82",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/",
+   "parent": null,
+   "primary": ".PrimaryNavigationMenu_menu_wrapper__6AN1E",
+   "type": "menu"
+  },
+  {
+   "capturedAt": 1790271565646,
+   "config": {
+    "focusOpensSubmenu": false,
+    "menubar": false,
+    "selectors": {
+     "horizontalMenu": ".Megamenu_menu__GnzK6",
+     "items": ".Megamenu_menu__GnzK6>.Megamenu_menu_item__naE0U>button,.Megamenu_mega_menu_content__m8pFV>.Megamenu_mega_menu_content_wrapper___zUB3>.Megamenu_middle_section__LBaWJ>.Megamenu_mega_menu_column__SZTFx>ul>li>a,.Megamenu_mega_menu_content__m8pFV>.Megamenu_mega_menu_content_wrapper___zUB3>.Megamenu_left_section__qilt0>.Megamenu_right_section_cta__E6j3T",
+     "menu": ".Megamenu_menu__GnzK6",
+     "submenus": ".Megamenu_mega_menu_content__m8pFV",
+     "triggers": ".Megamenu_menu__GnzK6>.Megamenu_menu_item__naE0U>button"
+    }
+   },
+   "custom": null,
+   "firstArg": ".Megamenu_menu__GnzK6",
+   "fixNo": 7,
+   "id": "m-fea2649f",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Mission, Vision & Values: Member-focused Care | Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/about/mission-values",
+   "parent": null,
+   "primary": ".Megamenu_menu__GnzK6",
+   "type": "menu"
+  },
+  {
+   "capturedAt": 1790154286513,
+   "config": {
+    "level": "2",
+    "selectors": {
+     "heading": ".card-title"
+    }
+   },
+   "custom": null,
+   "firstArg": ".card-title",
+   "fixNo": 5,
+   "id": "m-42848c55",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/",
+   "parent": null,
+   "primary": ".card-title",
+   "type": "heading"
+  },
+  {
+   "capturedAt": 1790154294930,
+   "config": {
+    "level": "2",
+    "selectors": {
+     "heading": ".ButtonTile_maincontent_wrapper__dKbQU>div>div>div>div.SectionHeader_section_header__SJz51>div>h2.SectionHeader_heading__LKLqZ"
+    }
+   },
+   "custom": null,
+   "firstArg": ".ButtonTile_maincontent_wrapper__dKbQU>div>div>div>div.SectionHeader_section_header__SJz51>div>h2.SectionHeader_heading__LKLqZ",
+   "fixNo": 6,
+   "id": "m-2a609a8b",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/",
+   "parent": null,
+   "primary": ".ButtonTile_maincontent_wrapper__dKbQU>div>div>div>div.SectionHeader_section_header__SJz51>div>h2.SectionHeader_heading__LKLqZ",
+   "type": "heading"
+  },
+  {
+   "capturedAt": 1790269662760,
+   "config": {
+    "focusOnInvalidField": false,
+    "selectors": {
+     "form": ".Search_long_search__NlU9L",
+     "inputField": ".Search_search_input__2XJfN",
+     "invalidField": ".invalid",
+     "submitButton": ".Search_search_btn__VoXXq"
+    }
+   },
+   "custom": null,
+   "firstArg": ".Search_long_search__NlU9L",
+   "fixNo": 8,
+   "id": "m-518b9e4e",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Mission, Vision & Values: Member-focused Care | Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/about/mission-values",
+   "parent": null,
+   "primary": ".Search_long_search__NlU9L",
+   "type": "form"
+  },
+  {
+   "capturedAt": 1790271355520,
+   "config": {
+    "label": "Breadcrumb",
+    "selectors": {
+     "container": ".Breadcrumb_bread_crumbbb__1RJhz",
+     "current": "",
+     "item": "",
+     "separator": ".Breadcrumb_icon_breadcrumb__UTWrP"
+    }
+   },
+   "custom": "breadcrumb",
+   "firstArg": ".Breadcrumb_bread_crumbbb__1RJhz",
+   "fixNo": 9,
+   "id": "m-f60ec6f4",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Mission, Vision & Values: Member-focused Care | Molina Healthcare",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/about/mission-values",
+   "parent": null,
+   "primary": ".Breadcrumb_bread_crumbbb__1RJhz",
+   "type": "breadcrumb"
+  },
+  {
+   "capturedAt": 1790271866762,
+   "config": {
+    "selectors": {
+     "dialog": ".Login_loginWrapper__bXvle",
+     "trigger": ".Login_loginWrapper__bXvle>a"
+    }
+   },
+   "custom": null,
+   "firstArg": ".Login_loginWrapper__bXvle>a",
+   "fixNo": 10,
+   "id": "m-12bef5c3",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Molina Healthcare Newsroom | News & Press Releases",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/about/newsroom",
+   "parent": null,
+   "primary": ".Login_loginWrapper__bXvle",
+   "type": "dialog"
+  },
+  {
+   "capturedAt": 1790272065740,
+   "config": {
+    "selectors": {
+     "element": ".EditorialCardHC_right_section__rDQ9O>div:nth-child(1)>div:nth-child(2)>div:nth-child(1)>h2:nth-child(1)"
+    }
+   },
+   "custom": null,
+   "firstArg": ".EditorialCardHC_right_section__rDQ9O>div:nth-child(1)>div:nth-child(2)>div:nth-child(1)>h2:nth-child(1)",
+   "fixNo": 11,
+   "id": "m-8b314a5c",
+   "note": null,
+   "overwriteRole": null,
+   "pageTitle": "Molina Healthcare Newsroom | News & Press Releases",
+   "pageUrl": "https://uat-pws.molinahealthcare.com/about/newsroom",
+   "parent": null,
+   "primary": ".EditorialCardHC_right_section__rDQ9O>div:nth-child(1)>div:nth-child(2)>div:nth-child(1)>h2:nth-child(1)",
+   "type": "link"
+  },
+  {
+   "capturedAt": 1791108616207,
+   "config": {
+    "level": "3",
+    "selectors": {
+     "heading": ".col.FooterHealthcareHC_content_wrap__1m1o4>.FooterHealthcareHC_content_title__HL6JX"
+    }
+   },
+   "custom": null,
+   "firstArg": ".col.FooterHealthcareHC_content_wrap__1m1o4>.FooterHealthcareHC_content_title__HL6JX",
+   "fixNo": 12,
+   "id": "m-087a83a5",
+   "note": null,
+   "overwriteRole": null,
+   "pagePath": "/",
+   "pageTitle": "Molina Healthcare",
+   "pageUrl": "https://www.molinahealthcare.com/",
+   "parent": null,
+   "primary": ".col.FooterHealthcareHC_content_wrap__1m1o4>.FooterHealthcareHC_content_title__HL6JX",
+   "scope": "site",
+   "type": "heading"
+  },
+  {
+   "id": "m-lbl00",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".content>div>p>a",
+   "firstArg": ".content>div>p>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".item>h4"
+   },
+   "fixNo": 12,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl01",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".landing-module>div>a",
+   "firstArg": ".landing-module>div>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".landing-module>h2"
+   },
+   "fixNo": 13,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl02",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".brokerBannerBTN>a",
+   "firstArg": ".brokerBannerBTN>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".brokerBanner>h3"
+   },
+   "fixNo": 14,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl03",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".card-body>a.read-more",
+   "firstArg": ".card-body>a.read-more",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".card-title"
+   },
+   "fixNo": 15,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl04",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".news-item>a",
+   "firstArg": ".news-item>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".news-item>h3"
+   },
+   "fixNo": 16,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl05",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".plan-card>a",
+   "firstArg": ".plan-card>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".plan-card>h2"
+   },
+   "fixNo": 17,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl06",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".resource>a",
+   "firstArg": ".resource>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".resource>h4"
+   },
+   "fixNo": 18,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl07",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".tile>a.more",
+   "firstArg": ".tile>a.more",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".tile>h3"
+   },
+   "fixNo": 19,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl08",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".faq-item>a",
+   "firstArg": ".faq-item>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".faq-item>h3"
+   },
+   "fixNo": 20,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-lbl09",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".program>a",
+   "firstArg": ".program>a",
+   "config": {
+    "middleText": "about",
+    "headingSelector": ".program>h2"
+   },
+   "fixNo": 21,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-typ00",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": "a.pdf-link",
+   "firstArg": "a.pdf-link",
+   "config": {
+    "label": "Download the member handbook (PDF)"
+   },
+   "fixNo": 31,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-typ01",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".chat-btn",
+   "firstArg": ".chat-btn",
+   "config": {
+    "label": "Open live chat"
+   },
+   "fixNo": 32,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  },
+  {
+   "id": "m-typ02",
+   "type": "aria-label",
+   "custom": "ariaLabel",
+   "primary": ".social>a.fb",
+   "firstArg": ".social>a.fb",
+   "config": {
+    "label": "Molina Healthcare on Facebook"
+   },
+   "fixNo": 33,
+   "pageUrl": "https://www.molinahealthcare.com/"
+  }
+ ]
+}

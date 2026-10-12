@@ -30,7 +30,8 @@ function page(html) {
   // jsdom gives everything a zero box; treat hidden as hidden and the rest as
   // on screen, which is what the fingerprint actually cares about.
   w.HTMLElement.prototype.getBoundingClientRect = function () {
-    const hidden = this.hasAttribute('hidden') || (this.closest && this.closest('[hidden]'));
+    // A detached element has no box in a browser either.
+    const hidden = !this.isConnected || this.hasAttribute('hidden') || (this.closest && this.closest('[hidden]'));
     return hidden ? { width: 0, height: 0 } : { width: 200, height: 40 };
   };
   w.eval(PROBE);
@@ -2597,6 +2598,229 @@ console.log('\ntext inside a clickable box is not a second candidate');
   const list = w.__u1Probe.pressable(d.getElementById('s'), {});
   check('only the element that OWNS the pointer is pressed',
     list.map(e => e.id).join() === 'btn', list.map(e => e.id).join());
+}
+
+// ── molinahealthcare.com, 2026-10-04: what a React/Next page does to a walk ──
+//
+// Every case below was measured on the live site (see fixtures/pins/
+// molina-home.labels.json for the pin). The page re-renders under the walk,
+// creates its drop-downs on the press, swaps lazy images in, and starts a
+// route change on a button that looks like any other.
+
+console.log('\na panel that is CREATED by the press (React: {open && <ul/>})');
+{
+  const w = page(`<div id="wrap"><button id="t" aria-haspopup="true">Language</button></div>
+                  <p>some other content on the page, so the scope is not tiny</p>`);
+  const d = w.document, t = d.getElementById('t');
+  let open = false;
+  t.addEventListener('click', () => {
+    open = !open;
+    if (open) {
+      const ul = d.createElement('ul'); ul.className = 'dropdown-menu';
+      ul.innerHTML = '<li><button type="button">English</button></li><li><button type="button">Spanish</button></li>';
+      t.parentElement.appendChild(ul);
+    } else {
+      const ul = d.querySelector('.dropdown-menu'); if (ul) ul.remove();
+    }
+  });
+  const r = await w.__u1Probe.probeOne(t, { settle: 0 });
+  check('the newborn list is what opened', r.opened.length === 1 && r.opened[0].className === 'dropdown-menu',
+    r.opened.map(e => e.tagName + '.' + e.className).join());
+  check('and it is the panel', r.panel && r.panel.className === 'dropdown-menu');
+  check('the page is put back (the list is gone again)', r.restored === true && !d.querySelector('.dropdown-menu'));
+  const comps = w.__u1Probe.classify([Object.assign({ trigger: t }, r)], [t]);
+  check('one trigger over one flat list of controls — a listbox', comps.length === 1 && comps[0].type === 'listbox',
+    comps.map(c => c.type).join());
+  check('…rooted where it is BORN, since the list itself no longer exists', comps[0] && comps[0].root === d.getElementById('wrap'),
+    comps[0] && comps[0].root && comps[0].root.outerHTML.slice(0, 60));
+  check('…and says so', !!(comps[0] && comps[0].bornOnOpen));
+}
+
+console.log('\nthe chevron that flips with the press is not the panel');
+{
+  const w = page(`<nav><ul id="bar">
+      <li><button id="b1">Insurance <svg id="dn" class="down"></svg><svg id="up" class="up" hidden></svg></button>
+          <div id="p1" hidden><a href="/a">A</a><a href="/b">B</a><a href="/c">C</a><p>Molina provides a lot of prose beside its columns of links, more than the links themselves say.</p></div></li>
+      <li><button id="b2">Members <svg class="down"></svg><svg class="up" hidden></svg></button>
+          <div id="p2" hidden><a href="/d">D</a><a href="/e">E</a><a href="/f">F</a><p>And a second paragraph of prose, long enough to outweigh the link text in this panel as well.</p></div></li>
+    </ul></nav>`);
+  const d = w.document;
+  for (const li of d.querySelectorAll('#bar > li')) {
+    const btn = li.querySelector('button'), panel = li.querySelector('div');
+    btn.addEventListener('click', () => {
+      const opening = panel.hidden;
+      for (const o of d.querySelectorAll('#bar div')) o.hidden = true;
+      for (const s of d.querySelectorAll('#bar svg.up')) s.hidden = true;
+      for (const s of d.querySelectorAll('#bar svg.down')) s.hidden = false;
+      if (opening) { panel.hidden = false; li.querySelector('svg.up').hidden = false; li.querySelector('svg.down').hidden = true; }
+    });
+  }
+  const r = await w.__u1Probe.probeOne(d.getElementById('b1'), { settle: 0 });
+  check('the panel is the region, not the icon that appeared first', r.panel && r.panel.id === 'p1',
+    r.panel && (r.panel.tagName + '#' + r.panel.id));
+  const out = await w.__u1Probe.probeAll(d.body, { settle: 0, idle: 0 });
+  const menu = out.components.find(c => c.type === 'menu');
+  check('a row in the nav whose panels are columns of links, prose and all — a MEGA MENU, not an accordion',
+    !!menu && menu.root.id === 'bar', out.components.map(c => c.type + ':' + (c.why || '').slice(0, 50)).join(' | '));
+}
+
+console.log('\nlazy images loading in during a press are not something it opened');
+{
+  const w = page(`<div id="row">
+      <div class="tile"><span class="ph"></span><div id="t1" tabindex="0">Providers</div></div>
+      <div class="tile"><span class="ph"></span><div id="t2" tabindex="0">Brokers</div></div>
+      <div class="tile"><span class="ph"></span><div id="t3" tabindex="0">Jobs</div></div>
+      <div class="tile"><span class="ph"></span><div id="t4" tabindex="0">Investors</div></div>
+    </div>`);
+  const d = w.document;
+  // Any press "loads" every placeholder: Next/Image swapping <span> for <img>.
+  for (const t of d.querySelectorAll('[tabindex]')) t.addEventListener('click', () => {
+    for (const s of d.querySelectorAll('span.ph')) { const img = d.createElement('img'); img.className = 'ph'; s.replaceWith(img); }
+  });
+  const out = await w.__u1Probe.probeAll(d.getElementById('row'), { settle: 0, idle: 0 });
+  check('four tiles whose presses only swapped images in are not an accordion',
+    !out.components.some(c => c.type === 'accordion' || c.type === 'tabs'),
+    out.components.map(c => c.type).join());
+}
+
+console.log('\na row where pressing one member LEAVES — the brothers built the same way are spared');
+{
+  const w = page(`<header><ul id="top">
+      <li><button class="item medicare">Medicare</button></li>
+      <li><button class="item medicaid">Medicaid</button></li>
+      <li><button class="item ifp">Individual</button></li>
+      <li><button class="more">More Sites</button><ul id="sub" hidden><li><button>Providers</button></li><li><button>Brokers</button></li></ul></li>
+    </ul></header>`);
+  const d = w.document;
+  let routed = 0;
+  for (const b of d.querySelectorAll('button.item')) b.addEventListener('click', () => { routed++; w.history.pushState({}, '', '/' + b.textContent.toLowerCase()); });
+  const more = d.querySelector('button.more');
+  more.addEventListener('click', () => { d.getElementById('sub').hidden = !d.getElementById('sub').hidden; });
+  w.__u1Probe.resetRun();
+  w.__u1Probe.planRun(d.body, {});
+  const out = await w.__u1Probe.probeAll(d.body, { settle: 0, idle: 0, sectionY: { from: 0, to: Infinity } });
+  check('only ONE of the three navigating brothers was pressed', routed === 1, 'routed ' + routed);
+  check('…and the two spared are counted as such', out.spared === 2, 'spared ' + out.spared);
+  check('the drop-down, built differently, was still pressed', out.pressed === 2, 'pressed ' + out.pressed);
+  const menu = out.components.find(c => c.type === 'menu' && c.root.id === 'top');
+  check('the row is a menu — items lead away', !!menu, out.components.map(c => c.type + '@' + (c.root.id || c.root.tagName)).join());
+  check('…with all four as its items', !!menu && menu.parts.items.length === 4, menu && menu.parts.items.length);
+  check('…and the drop-down as its submenu', !!menu && menu.parts.submenus && menu.parts.submenus[0].id === 'sub');
+  check('the spared brothers are in pressedKeys, so a reload skips them too', out.pressedKeys.length === 4, out.pressedKeys.length);
+  check('the page never left', w.location.pathname === '/start', w.location.pathname);
+}
+
+console.log('\na blocked request that is not a route change spares nobody');
+{
+  const w = page(`<header><ul id="top">
+      <li><button class="item">One</button></li><li><button class="item">Two</button></li><li><button class="item">Three</button></li>
+    </ul></header>`);
+  const d = w.document;
+  let sent = 0;
+  for (const b of d.querySelectorAll('button.item')) b.addEventListener('click', () => { sent++; try { new w.XMLHttpRequest().send(); } catch (e) {} });
+  w.__u1Probe.resetRun(); w.__u1Probe.planRun(d.body, {});
+  const out = await w.__u1Probe.probeAll(d.body, { settle: 0, idle: 0, sectionY: { from: 0, to: Infinity } });
+  check('an analytics XHR on a press is not leaving — all three pressed', out.pressed === 3 && out.spared === 0,
+    `pressed ${out.pressed} spared ${out.spared}`);
+}
+
+console.log('\nthe page replaced IN PLACE by a press — found by the plan it took with it');
+const lossPage = () => {
+  const w = page(`<header><ul id="top"><li><button id="go" class="item">Medicare</button></li></ul>
+      <ul id="mega"><li><button class="m">A</button></li><li><button class="m">B</button></li><li><button class="m">C</button></li><li><button class="m">D</button></li></ul></header>
+      <main><button id="x1">X1</button><button id="x2">X2</button><button id="x3">X3</button></main>`);
+  const d = w.document;
+  d.getElementById('go').addEventListener('click', () => {
+    w.history.pushState({}, '', '/medicare');
+    // The router re-renders the header for the other section.
+    const mega = d.getElementById('mega');
+    mega.innerHTML = '<li><button class="m">P</button></li><li><button class="m">Q</button></li>';
+  });
+  return w;
+};
+{
+  const w = lossPage(), d = w.document;
+  w.__u1Probe.resetRun(); w.__u1Probe.planRun(d.body, {});
+  const out = await w.__u1Probe.probeAll(d.body, { settle: 0, idle: 0, sectionY: { from: 0, to: Infinity } });
+  check('the walk stops and says the page was lost', out.pageLost === true);
+  check('…naming the press that lost it', /Medicare/.test(out.lostKey || ''), out.lostKey);
+  check('…and nothing after it was pressed on the replaced page', out.pressed === 1, 'pressed ' + out.pressed);
+  const w2 = lossPage(), d2 = w2.document;
+  w2.__u1Probe.resetRun(); w2.__u1Probe.planRun(d2.body, {});
+  const again = await w2.__u1Probe.probeAll(d2.body, { settle: 0, idle: 0, sectionY: { from: 0, to: Infinity }, skipKeys: out.pressedKeys });
+  check('after the reload, with its keys skipped, the culprit is not pressed again', again.pageLost === false && again.pressed === 7,
+    `lost ${again.pageLost} pressed ${again.pressed}`);
+}
+
+console.log('\na control re-rendered by an earlier press is pressed as itself');
+{
+  const w = page(`<div id="s">
+      <button id="first">Refresh</button>
+      <ul id="bar"><li><button class="m">Open panel</button><div class="pane" hidden>the panel, with text in it</div></li></ul>
+    </div>`);
+  const d = w.document;
+  const wire = () => {
+    const b = d.querySelector('#bar button.m'), p = d.querySelector('#bar .pane');
+    b.addEventListener('click', () => { p.hidden = !p.hidden; });
+  };
+  wire();
+  d.getElementById('first').addEventListener('click', () => {
+    // React swaps the whole bar for a fresh copy of itself.
+    const bar = d.getElementById('bar');
+    bar.innerHTML = '<li><button class="m">Open panel</button><div class="pane" hidden>the panel, with text in it</div></li>';
+    wire();
+  });
+  w.__u1Probe.resetRun(); w.__u1Probe.planRun(d.body, {});
+  const out = await w.__u1Probe.probeAll(d.body, { settle: 0, idle: 0, sectionY: { from: 0, to: Infinity } });
+  check('both were pressed — the second through its re-rendered copy', out.pressed === 2, 'pressed ' + out.pressed);
+  check('…and what the copy opened was seen', out.components.some(c => c.type === 'accordion'),
+    out.components.map(c => c.type).join());
+}
+
+console.log('\na submenu seen through one trigger is its BAR’s observation');
+{
+  const w = page(`<header><ul id="bar">
+      <li><button id="a">A</button></li>
+      <li><button id="b">B</button><ul id="sub" hidden><li><button>S1</button></li><li><button>S2</button></li></ul></li>
+      <li><button id="c">C</button></li>
+    </ul></header>`);
+  const d = w.document;
+  d.getElementById('b').addEventListener('click', () => { d.getElementById('sub').hidden = !d.getElementById('sub').hidden; });
+  w.__u1Probe.resetRun(); w.__u1Probe.planRun(d.body, {});
+  // A and C already pressed on a previous load (a reload skips them by key).
+  const skip = [d.getElementById('a'), d.getElementById('c')].map((e) => w.__u1Probe.pressKey(e));
+  const out = await w.__u1Probe.probeAll(d.body, { settle: 0, idle: 0, sectionY: { from: 0, to: Infinity }, skipKeys: skip });
+  check('only B was pressed', out.pressed === 1, 'pressed ' + out.pressed);
+  const menu = out.components.find(c => c.type === 'menu');
+  check('the component is the bar, not a dialog and not the one li', !!menu && menu.root.id === 'bar',
+    out.components.map(c => c.type + '@' + (c.root.id || c.root.tagName)).join());
+  check('…with every bar item listed', !!menu && menu.parts.items.map(e => e.id).join() === 'a,b,c', menu && menu.parts.items.map(e => e.id).join());
+  check('…and the panel as its submenu', !!menu && menu.parts.submenus[0].id === 'sub');
+  check('the item press is not made inside a bar — the bar decides the type', !!menu);
+}
+
+console.log('\na press that reveals a FORM is not a listbox of its controls');
+{
+  const w = page(`<div id="s"><button id="open" aria-label="Open search panel">🔍</button>
+      <div id="bar" hidden><form id="f" action="/search"><input type="search" name="q"><button type="submit" aria-label="Submit search">Go</button><button type="button" aria-label="Close search panel">×</button></form></div></div>`);
+  const d = w.document;
+  d.getElementById('open').addEventListener('click', () => { d.getElementById('bar').hidden = false; });
+  d.querySelector('[aria-label="Close search panel"]').addEventListener('click', () => { d.getElementById('bar').hidden = true; });
+  const out = await w.__u1Probe.probeAll(d.getElementById('s'), { settle: 0, idle: 0, typing: false });
+  const form = out.components.find(c => c.type === 'form');
+  check('a field to type in and a control that sends it — a form', !!form && form.root.id === 'f',
+    out.components.map(c => c.type).join());
+  check('…with the button that reveals it as its trigger', !!form && form.parts.trigger[0].id === 'open');
+  check('the bar was shut again through its own Close control — the trigger could not do it', out.restored === true);
+}
+
+console.log('\na pointer-cursor wrapper around a real control is that control’s, not a second candidate');
+{
+  const w = page(`<ul id="bar"><li id="li1"><button id="b1">One</button></li><li id="li2"><button id="b2">Two</button></li></ul>`);
+  w.getComputedStyle = (el) => ({ cursor: el.tagName === 'LI' ? 'pointer' : 'auto', position: 'static' });
+  w.eval(PROBE);
+  const list = w.__u1Probe.pressable(w.document.getElementById('bar'), {});
+  check('the buttons are pressed, the li wrappers are not', list.map(e => e.id).sort().join() === 'b1,b2', list.map(e => e.id).join());
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

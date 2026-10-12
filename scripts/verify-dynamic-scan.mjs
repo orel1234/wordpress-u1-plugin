@@ -23,6 +23,7 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const PATCH = read('u1-patch.js');
 const ENGINE = read('test-engine.js');
 const PANEL = read('panel.js');
+const BG = read('background.js');
 
 let pass = 0, fail = 0;
 const check = (n, c, x = '') => c ? (pass++, console.log(`  ok   ${n}`)) : (fail++, console.log(`  FAIL ${n} ${x}`));
@@ -30,7 +31,7 @@ const check = (n, c, x = '') => c ? (pass++, console.log(`  ok   ${n}`)) : (fail
 function slice(types) {
   const wanted = new Set(['core', ...(types || [])]);
   const picked = [];
-  const re = /\/\/#region u1-patch:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+  const re = /\/\/#region u1-patch:([a-z-]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
   let m;
   while ((m = re.exec(PATCH))) if (wanted.has(m[1])) picked.push(m[2]);
   return `'use strict';\n${picked.join('\n\n')}`;
@@ -375,6 +376,85 @@ console.log('\nvague links named by hand; skip links rendered before verifying')
   const v = PANEL.slice(PANEL.indexOf('async function verifySkipLinksOnPage'), PANEL.indexOf("document.getElementById('verifySkipBtn')"));
   check('"Verify on page" first puts the patch and the list on the page and renders, then looks', /files: \['u1-patch\.js'\]/.test(v) && /window\.__u1SkipLinks = items/.test(v) && /renderSkipLinks\(\)/.test(v));
   check('the renderer is exposed on the patch and still registered as a corrector', /P\.renderSkipLinks = function/.test(PATCH) && /P\.correct\(P\.renderSkipLinks\)/.test(PATCH));
+}
+
+// ── a paginated card list: the export names page 2's cards too ────────────
+console.log('\naria-label mappings follow a re-render (molina blog catalog, 2026-10-08)');
+{
+  const i = PANEL.indexOf('const ARIA_LABEL_RUNTIME');
+  const ctx = {}; const vm = (await import('node:vm')).default; vm.createContext(ctx);
+  vm.runInContext(PANEL.slice(i, PANEL.indexOf('// One place that answers', i)).replace('const ARIA_LABEL_RUNTIME', 'var ARIA_LABEL_RUNTIME'), ctx);
+  const cards = (titles) => titles.map((t) => `<div class="card"><h3 class="ttl">${t}</h3><div class="foot"><a href="#">Learn more</a></div></div>`).join('');
+  const dom = new JSDOM(`<!doctype html><body><div class="list">${cards(['Sleep well', 'Back to school'])}</div></body>`, { runScripts: 'outside-only' });
+  const w = dom.window, d = w.document;
+  w.eval(ctx.buildAriaLabelCode('.foot>a', 'about', '.ttl', ''));
+  const names = () => [...d.querySelectorAll('.foot>a')].map((a) => a.getAttribute('aria-label')).join(' | ');
+  check('page 1: each link is named after its card', names() === 'Learn more about Sleep well | Learn more about Back to school', names());
+  d.querySelector('.list').innerHTML = cards(['Protect your kidneys', 'What is epilepsy?']);
+  await new Promise((r) => setTimeout(r, 250));
+  check('page 2 (new cards drawn): named too', names() === 'Learn more about Protect your kidneys | Learn more about What is epilepsy?', names());
+  // a list keyed by index: React keeps the elements and rewrites only the text
+  d.querySelectorAll('.ttl').forEach((h, k) => { h.firstChild.nodeValue = ['Get your eyes checked!', 'Eat healthy'][k]; });
+  await new Promise((r) => setTimeout(r, 250));
+  check('page 3 (same elements, new text only): the names follow', names() === 'Learn more about Get your eyes checked! | Learn more about Eat healthy', names());
+  const typed = new JSDOM(`<!doctype html><body><div class="x"></div></body>`, { runScripts: 'outside-only' });
+  typed.window.eval(ctx.buildAriaLabelCode('a.ext', '', '', 'Crisis line website'));
+  typed.window.document.querySelector('.x').innerHTML = '<a class="ext" href="#">here</a>';
+  await new Promise((r) => setTimeout(r, 250));
+  check('a typed name reaches a link drawn after load', typed.window.document.querySelector('a.ext').getAttribute('aria-label') === 'Crisis line website');
+  check('the panel export passes the typed name through (it was dropped before)', /buildAriaLabelCode\(m\.primary,[^\n]*\(m\.config && m\.config\.label\) \|\| ''\)/.test(PANEL));
+  check('auto-apply in this browser re-runs on changes too, text included', /window\.__u1AriaLabelObs\.observe\(document, \{ childList: true, subtree: true, characterData: true \}\)/.test(BG));
+}
+
+// ── this-page-only mappings on a site that changes page without a reload ───
+console.log('\nthis-page-only mappings follow in-site navigation (Next.js)');
+{
+  check('the export runs a this-page-only mapping through __u1OnPage, not a once-at-load check', /\? `__u1OnPage\(\$\{JSON\.stringify\(m\.pagePath\)\}, function \(\) \{/.test(PANEL) && !/`if \(__u1Here\(\) === \$\{JSON\.stringify\(m\.pagePath\)\}\)/.test(PANEL));
+  check('…which re-runs on pushState/replaceState/popstate and names the page for u1-patch.js', /history\[k\] = function \(\) \{ var r = orig\.apply\(this, arguments\); setTimeout\(check, 0\); return r; \};/.test(PANEL) && /window\.__u1CallPage = e\.path;/.test(PANEL));
+  check('the exported names stay on their page and do not stack observers on return', /if \(page && here\(\) !== page\) return;/.test(PANEL) && /window\.__u1Follow = window\.__u1Follow \|\| \{\}/.test(PANEL));
+  check('the extension’s auto-apply passes this-page-only mappings for every page and runs them by route', /const early = \(stored\[`mappings_\$\{hostname\}`\] \|\| \[\]\)\.filter/.test(BG) && /list\.forEach\(it => \{ if \(pageOf\(it\) === at\) callOne\(r, it\); \}\);/.test(BG));
+}
+
+// ── the client's own to-do, in the copied email ────────────────────────────
+console.log('\nclient email: a table of what only the client can fix, from the saved scans');
+{
+  const vm = (await import('node:vm')).default;
+  const lift = (name) => { const i = PANEL.indexOf(name); if (name.startsWith('const ')) return PANEL.slice(i, PANEL.indexOf(';', i) + 1).replace('const ', 'var '); let d = 0, k = PANEL.indexOf('{', i); for (; k < PANEL.length; k++) { if (PANEL[k] === '{') d++; else if (PANEL[k] === '}') { d--; if (!d) break; } } return PANEL.slice(i, k + 1); };
+  const R = (ruleId, extra) => Object.assign({ ruleId, issue: ruleId === 'target-size-small' ? 'Touch target too small (note)' : ruleId, note: true, wcag: '2.5.8', fix: 'Make it bigger.', selector: 'a' }, extra);
+  const hist = [
+    { url: 'https://s.test/', title: 'Home', at: 1, enginesRan: ['axe'], results: [R('target-size-small', { text: '16×20px' }), R('target-size-small', { text: '10×18px' }), R('dup-ids', { text: 'id=x used 2×', fix: 'A note for the developers: give each element its own id. Nothing to map.' }), R('axe.landmark-unique', { text: 'nav' }), { ruleId: 'img-alt', issue: 'Image has no alt', severity: 'High', selector: 'img' }] },
+    { url: 'https://s.test/a', title: 'A', at: 2, enginesRan: ['axe'], results: [R('target-size-small', { text: '16×20px' }), R('dup-ids', { text: 'id=x used 2×' }), R('control-contrast', { text: 'Search', resolved: true })] },
+    { url: 'https://s.test/a?x=1', title: 'A (partial)', at: 3, enginesRan: [], results: [] },
+  ];
+  const ctx = { console, URL, currentHostname: 's.test', U1Store: { get: async () => ({ 'scanHistory_s.test': hist }) } };
+  vm.createContext(ctx);
+  for (const n of ['function pagePathOf(', 'function scanHistoryKey(', 'function escapeHtml(', 'const OURS_TO_FIX', 'async function buildClientActions(', 'function clientActionsText(', 'function clientActionsHtml(']) vm.runInContext(lift(n), ctx);
+  vm.runInContext('var scanIgnored = new Map(); async function loadIgnored() {} function isIgnored() { return false; }', ctx);
+  const pages = await vm.runInContext('buildClientActions()', ctx);
+  const text = vm.runInContext('clientActionsText', ctx)(pages), html = vm.runInContext('clientActionsHtml', ctx)(pages);
+  check('only notes reach the client’s table — a real fault (no alt) is ours, not theirs', !/no alt/.test(text) && /Touch target too small/.test(text));
+  check('…and a landmark name, which a mapping fixes, is left out too', !/landmark/.test(text), text);
+  check('the same fault on most pages is said once, as “Every page”', /^Every page \(2 scanned\)/m.test(text) && (text.match(/16×20px/g) || []).length === 1, text);
+  check('…and what is particular to a page stays under that page', /Home — https:\/\/s\.test\//.test(text) && /10×18px/.test(text));
+  check('per page, the most complete scan is used (a later empty one does not hide it)', /Every page \(2 scanned\)/.test(text));
+  check('an already-fixed one is left out; internal wording is not sent to the client', !/Search/.test(text) && !/Nothing to map/.test(text) && !/note for the developers/i.test(text));
+  check('each element is named where it is (component › part, kind) with its selector — a size alone is not findable', /FontSizeAdjustor › decreaseFont \(button\)/.test(vm.runInContext('clientActionsText', ctx)(await vm.runInContext(`(async () => { U1Store.get = async () => ({ 'scanHistory_s.test': [{ url: 'https://s.test/z', title: 'Z', at: 9, enginesRan: ['axe'], results: [{ ruleId: 'target-size-small', issue: 'Touch target too small (note)', note: true, selector: 'button.FontSizeAdjustor_decreaseFont__DJSDx', text: '16×20px', fix: 'x' }] }] }); return buildClientActions(); })()`, ctx))));
+  {
+    const many = [1, 2, 3].map((i) => ({ ruleId: 'target-size-small', issue: 'Touch target too small (note)', note: true, selector: 'a.SocialLinks_socialIcon__xqU9N', idx: i, text: `${8 + i}×18px`, fix: 'x' }))
+      .concat([{ ruleId: 'target-size-small', issue: 'Touch target too small (note)', note: true, selector: 'a.SocialLinks_socialIcon__xqU9N', idx: 1, text: '9×18px', fix: 'x' }]);
+    ctx.__many = many;
+    const p2 = await vm.runInContext(`(async () => { U1Store.get = async () => ({ 'scanHistory_s.test': [{ url: 'https://s.test/q', title: 'Q', at: 9, enginesRan: ['axe'], results: __many }] }); return buildClientActions(); })()`, ctx);
+    const it = p2[0].items[0];
+    check('the count is ELEMENTS (a repeated report of one element is one), and a repeated component is one line ×N', it.count === 3 && it.examples.length === 1 && /×3/.test(it.examples[0]), JSON.stringify(it));
+  }
+  check('the email carries it as a real table (HTML) and as text', /<table/.test(html) && /<th [^>]*>What to fix<\/th>/.test(html) && /new ClipboardItem\(\{\s*\n\s*'text\/html'/.test(PANEL));
+}
+
+console.log('\nthe guide follows the site’s technology');
+{
+  check('Next.js reads as React', /document\.querySelector\('#__next'\) \|\| window\.__NEXT_DATA__/.test(PANEL));
+  check('a manual choice is kept with what was detected when it was made, and a new detection wins', /`\$\{e\.target\.value\}@\$\{lastDetectedPlatform \|\| ''\}`/.test(PANEL) && /savedAgainst !== null && \(!detected \|\| savedAgainst === detected\)/.test(PANEL));
+  check('…an old bare choice does not outvote a detection', /\(savedAgainst === null && !detected\)/.test(PANEL));
 }
 
 // ── documented where the question is asked; drawer by page; every skip link ─

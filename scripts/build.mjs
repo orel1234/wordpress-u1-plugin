@@ -24,7 +24,7 @@ const FILES = [
   // panel.html loads it, so leaving it out ships a panel that dies on a
   // missing script. verify.mjs now checks that list against this one.
   'sync.js',
-  'background.js', 'test-engine.js', 'grid-nav.js', 'urs-compat.js', 'urs-convert.js',
+  'background.js', 'test-engine.js', 'grid-nav.js', 'urs-compat.js', 'urs-convert.js', 'u1-markers.js', 'ide-convert.js', 'vendor/acorn.js', 'vendor/acorn.LICENSE',
   // Injected on demand to operate a component and watch what it does.
   // probe-net.js is probe.js's MAIN-world counterpart (see the comment atop
   // each) — without it in the package, panel.js's ensureProbeNet() injection
@@ -88,6 +88,28 @@ rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 for (const f of FILES) cpSync(join(ROOT, f), join(stage, f));
 
+// The code a customer's page loads, minified region by region (see
+// minify-regions.mjs). The export reads these and ships them in place of the
+// comment-stripped source — a third of the size, the same behaviour. A missing
+// JSON, or a region missing from one, falls back to the stripped source, so a
+// failure here costs size, never correctness.
+{
+  const { minifyRegions } = await import('./minify-regions.mjs');
+  for (const [file, prefix, keep] of [
+    ['u1-patch.js', 'u1-patch', []],
+    ['grid-nav.js', 'u1-engine', []],
+    // jQuery is already minified, and stripComments never touched it either.
+    ['urs-compat.js', 'u1-engine', ['jquery']],
+  ]) {
+    const { regions, failed, bytes } = await minifyRegions(read(file), prefix, { keep });
+    if (failed.length) console.warn(`${file}: shipped un-minified (falls back to stripped source): ${failed.join('; ')}`);
+    const out = file.replace(/\.js$/, '.min.json');
+    writeFileSync(join(stage, out), JSON.stringify(regions));
+    const [a, b] = Object.values(bytes).reduce((t, [x, y]) => [t[0] + x, t[1] + y], [0, 0]);
+    console.log(`${out}: ${Object.keys(regions).length} regions, ${a} → ${b} bytes`);
+  }
+}
+
 // Stamp the commit into the package.
 //
 // "I loaded the new version" and "the browser is running the new version" are
@@ -105,9 +127,15 @@ for (const f of FILES) cpSync(join(ROOT, f), join(stage, f));
       .toString().trim().length > 0;
     if (dirty) sha += '+';   // built from a tree with uncommitted changes
   } catch { sha = 'nogit'; }
+  // Two builds from the same dirty tree carry the same commit, and nobody
+  // could tell whether Chrome had reloaded the newer one (2026-10-05: a page
+  // kept running u1-patch 2026-10-04b after three rebuilds that all read
+  // "4d7b3c6+"). The build's own clock time settles it.
+  const now = new Date();
+  const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const manPath = join(stage, 'manifest.json');
   const man = JSON.parse(readFileSync(manPath, 'utf8'));
-  man.version_name = `${version} (${sha})`;
+  man.version_name = `${version} (${sha} ${hhmm})`;
   writeFileSync(manPath, JSON.stringify(man, null, 2) + '\n');
 }
 

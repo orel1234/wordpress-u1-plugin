@@ -455,7 +455,7 @@ add_action('wp_footer', 'u1_load_fix_files', 20);`
     ...fixFilesStep,
 
     // The firewall allowlist, only when the monitor is actually in the package.
-    // Asking for three addresses to be opened on a site that is not monitored
+    // Asking for four addresses to be opened on a site that is not monitored
     // would be asking for a change nobody needs.
     ...(files && files.monitoring ? monitoringSection(hostname, { level: 1 }) : []),
 
@@ -530,13 +530,17 @@ function jsObjSource(obj, indent = 0) {
 // broken — so the addresses to allow have to be IN the guide, next to the file
 // they belong to, rather than asked for over email once it has already failed.
 //
-// THREE addresses, not one, and the reason is worth stating plainly: Railway
-// (the platform running the backend) round-robins outbound traffic across a
-// fixed set of three. Allowing whichever one happened to appear in a log works
-// until the next request leaves from a different one, and then the block comes
-// back looking like a new, unrelated fault. Allowing one is the failure mode;
-// allowing all three is the fix.
-const MONITOR_IPS = ['152.55.180.240', '162.220.234.242', '152.55.180.243'];
+// FOUR addresses, not one, and the reason is worth stating plainly: Railway
+// (the platform running the backend) rotates outbound traffic across a fixed
+// set — and since 2026-10-01 a request the site blocked is retried through
+// the other User1st service's proxy, which leaves from ITS addresses
+// (user1st_project CLAUDE.md, "Outbound IPs — two services, four addresses":
+// the CRM's three plus 152.55.180.242). Allowing whichever one happened to
+// appear in a log works until the next request leaves from a different one,
+// and then the block comes back looking like a new, unrelated fault. Allowing
+// some is the failure mode; allowing all four is the fix. Re-read both Railway
+// dashboards before changing this list.
+const MONITOR_IPS = ['152.55.180.240', '162.220.234.242', '152.55.180.243', '152.55.180.242'];
 
 function monitoringSection(hostname, opts) {
   const o = opts || {};
@@ -547,20 +551,21 @@ function monitoringSection(hostname, opts) {
       ' from User1st\u2019s servers. If the site sits behind a firewall, a WAF or a CDN ' +
       '(Cloudflare, Imperva, Akamai, F5, AWS WAF and similar), that traffic is often ' +
       'blocked as unrecognised server-to-server requests \u2014 and a blocked monitor looks ' +
-      'exactly like a broken one. Allow these three addresses:', 'Normal'),
+      'exactly like a broken one. Allow all four of these addresses:', 'Normal'),
     emptyPara(),
   ];
   MONITOR_IPS.forEach((ip) => out.push(bullet(ip)));
   out.push(
     emptyPara(),
-    heading('Why three addresses and not one', level + 1),
-    para('Railway, the platform running the monitoring backend, balances outbound traffic ' +
-      'across these three fixed addresses in rotation. Any given request may leave from ' +
-      'any one of the three, and not always the same one.', 'Normal'),
-    para('This is why allowing a single address is not enough: it works while traffic ' +
-      'happens to leave from that address, and the block returns the moment a request ' +
-      'goes out through one of the other two \u2014 usually looking like a new and unrelated ' +
-      'fault. All three have to be allowed together for the block not to come back.', 'Normal'),
+    heading('Why four addresses and not one', level + 1),
+    para('The monitoring servers send their requests from a fixed set of addresses in ' +
+      'rotation, and a request the site has blocked is retried once from User1st\u2019s other ' +
+      'servers. Any given request may therefore leave from any one of these four, and not ' +
+      'always the same one.', 'Normal'),
+    para('This is why allowing a single address \u2014 or only some of them \u2014 is not enough: ' +
+      'it works while traffic happens to leave from an allowed address, and the block returns ' +
+      'the moment a request goes out through another one, usually looking like a new and ' +
+      'unrelated fault. All four have to be allowed together for the block not to come back.', 'Normal'),
     emptyPara(),
   );
   if (o.withFile !== false) {
@@ -646,14 +651,14 @@ add_action('wp_footer', 'u1_load_monitoring');`),
     para(src
       ? 'This document covers everything monitoring needs: installing the hook, the hook\u2019s ' +
         'own source, and the firewall addresses to allow. The install is one file; the ' +
-        'firewall change is three addresses. They are often done by different people, so ' +
+        'firewall change is four addresses. They are often done by different people, so ' +
         'each part stands on its own.'
       : 'This page is for whoever administers the firewall, WAF or CDN. It asks for one ' +
         'change and explains why. Nothing here needs to be installed on the site.', 'Normal'),
     emptyPara(),
     ...installParts,
     ...monitoringSection(hostname, { level: 1, withFile: !src }),
-    para('Once the three addresses are allowed, no further action is needed \u2014 the monitor ' +
+    para('Once the four addresses are allowed, no further action is needed \u2014 the monitor ' +
       'resumes on its next run.', 'Normal'),
   ]);
 }
@@ -851,7 +856,17 @@ function buildBodyPartsReact(hostname, cssLink, jsLink, files, skipLinks, config
       emptyPara(),
       para('HTML', 'CodeLabel'),
       codeBlock(scriptNames.map((n) => `<script src="%PUBLIC_URL%/${n}"></script>`).join('\n') +
-        '\n\n<!-- Vite / Next.js: replace %PUBLIC_URL% with "" — files in public/ are served from the site root. -->'),
+        '\n\n<!-- Vite: replace %PUBLIC_URL% with "" — files in public/ are served from the site root. -->'),
+      emptyPara(),
+      // Next.js has no public/index.html to put a <script> in, and its router
+      // replaces <html> while hydrating — the scripts belong in the root
+      // layout through next/script, loaded before the page becomes
+      // interactive and in this order (molinahealthcare.com is Next.js).
+      heading('Next.js (App Router or Pages Router)', 2),
+      para('Next.js has no public/index.html. Copy the same files into public/, then load them from the root layout with next/script — strategy="beforeInteractive" keeps them in this order and ahead of the page:', 'Normal'),
+      para('app/layout.tsx (App Router) — or pages/_document.tsx (Pages Router), inside <Head>', 'CodeLabel'),
+      codeBlock(`import Script from 'next/script';\n\n// inside <body> (App Router) or <Head> (_document):\n` +
+        scriptNames.map((n) => `<Script src="/${n}" strategy="beforeInteractive" />`).join('\n')),
       emptyPara(),
     ] : []),
 
@@ -1129,13 +1144,33 @@ function buildHandoverFiles(hostname, cssLink, jsLink, built, skipLinks, config,
   return out;
 }
 
-function buildHandoverZip(hostname, cssLink, jsLink, built, skipLinks, config, siteType, closeOutPdf) {
+// Which of the handover files a name is — the same kinds the Finish project
+// picker offers, so "what goes in the zip" can be chosen by kind whatever the
+// site and platform make the file names.
+function handoverKind(name) {
+  if (/^U1-Implementation-Guide-/.test(name)) return 'guide';
+  if (name === 'u1-config.js') return 'config';
+  if (name === 'u1-patch.js') return 'patch';
+  if (name === 'u1-fixes.js') return 'fixes';
+  if (name === 'u1-monitoring.js') return 'monitoring';
+  if (/^U1-Monitoring-.*\.docx$/.test(name)) return 'monitoringDoc';
+  if (/^U1-CloseOut-Report-.*\.pdf$/.test(name)) return 'report';
+  return 'other';
+}
+
+// `include` (optional): the kinds to put in the zip — what the specialist
+// chose to hand the client (Orel, 2026-10-08). The client's Drive folder
+// still gets EVERY file loose; only the zip is narrowed. Omitted: all of them.
+function buildHandoverZip(hostname, cssLink, jsLink, built, skipLinks, config, siteType, closeOutPdf, include) {
   const safeHost = safeFilenamePart(hostname);
   const pkg = new ZipWriter();
+  const names = [];
   for (const f of buildHandoverFiles(hostname, cssLink, jsLink, built, skipLinks, config, siteType, closeOutPdf)) {
+    if (include && !include.has(handoverKind(f.name))) continue;
     pkg.add(f.name, f.data);
+    names.push(f.name);
   }
-  return { bytes: pkg.toUint8Array(), name: `U1-Handover-${safeHost}.zip` };
+  return { bytes: pkg.toUint8Array(), name: `U1-Handover-${safeHost}.zip`, names };
 }
 
 // The email a specialist sends the client alongside the handover — written in

@@ -330,6 +330,14 @@ const U1Sync = (() => {
     });
   }
 
+  /** A private, hour-long URL for what publish() would make live. Changes nothing on the site. */
+  async function preview(hostname, { files, patchBuild }) {
+    return U1Auth.request(path(hostname, '/preview'), {
+      method: 'POST',
+      body: JSON.stringify({ files, patchBuild }),
+    });
+  }
+
   async function setLive(hostname, version) {
     return U1Auth.request(path(hostname, '/live'), {
       method: 'POST',
@@ -337,5 +345,5 @@ const U1Sync = (() => {
     });
   }
 
-  return { pull, pushMappings, pushSettings, pushSweep, fetchThumb, deleteSweep, forget, uploadHandover, delivery, publish, setLive };
+  return { pull, pushMappings, pushSettings, pushSweep, fetchThumb, deleteSweep, forget, uploadHandover, delivery, publish, preview, setLive };
 })();

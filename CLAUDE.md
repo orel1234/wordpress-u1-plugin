@@ -50,10 +50,12 @@ silently just because the gate was bypassed once.
 
 **How to tell, without guessing, whether the loaded extension is current:**
 `dist/u1-studio-<version>/manifest.json`'s `version_name` is stamped with the
-git commit the build was made from (`3.1.0 (2d638d8+)` — the `+` means the
-working tree had uncommitted changes when built). Compare that short SHA
-against `git log --oneline -1`. `chrome://extensions`'s Details page shows
-this same string.
+git commit the build was made from AND the build's clock time
+(`3.1.0 (2d638d8+ 09:12)` — the `+` means the working tree had uncommitted
+changes when built). Compare the SHA against `git log --oneline -1` and the
+time against the last build; two builds from one dirty tree differ only by
+the time. `chrome://extensions`'s Details page shows this same string, and
+for the patch specifically the page console answers `__u1Patch.build`.
 
 ## What this is
 
@@ -80,6 +82,23 @@ deploys. Not data-destructive (mappings stay local and re-sync on next
 login), but it reads as "the extension broke" to whoever hits it. Deploy the
 backend and roll out a rebuilt extension together, not the backend alone
 days ahead of specialists updating.
+
+## The files a customer embeds are minified at BUILD time
+
+`u1-patch.js`, the `grid-nav.js` engines and `urs-compat.js` ship minified:
+`scripts/build.mjs` runs `scripts/minify-regions.mjs` (terser, region by
+region, locals only) and writes `u1-patch.min.json` etc. into `dist/`;
+`getPatchSource`/`getGridEngineSource`/`getUrsCompatSource` in panel.js read
+those and fall back to the comment-stripped source when they are missing — so
+an export from an UNBUILT tree is bigger, not broken. `u1-fixes.js` is NOT
+minified: every mapping keeps its readable block (`/* ---- m-id ---- */` +
+selectors) because the client edits it and the CRM monitor locates file:line
+in it; accessible names are one `__u1Name({…})` line each over a runtime
+written once. `scripts/verify-export.mjs` (in verify-all) builds a real export
+from `fixtures/export/molina-sample.json` and holds the size budget;
+`verify-patch.mjs --minified` runs the patch suite against the minified
+regions. Region names may contain hyphens (`menu-focus-hover` never shipped
+until 2026-10-11 because the slicer matched `[a-z]+`).
 
 ## Conventions
 

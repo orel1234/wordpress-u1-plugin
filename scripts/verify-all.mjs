@@ -32,12 +32,17 @@ const SUITES = [
   ['verify-engines-manual', ['scripts/verify-engines-manual.mjs']],
   ['verify-checks', ['scripts/verify-checks.mjs']],
   ['verify-patch', ['scripts/verify-patch.mjs']],
+  // The same checks against the patch as the export ships it: minified.
+  ['verify-patch --minified', ['scripts/verify-patch.mjs', '--minified']],
+  // The files a customer embeds: minified, editable fixes, names written once.
+  ['verify-export', ['scripts/verify-export.mjs']],
   ['verify-patch-context', ['scripts/verify-patch-context.mjs']],
   ['verify-patch-focus', ['scripts/verify-patch-focus.mjs']],
   ['verify-patch-focusring', ['scripts/verify-patch-focusring.mjs']],
   ['verify-breadcrumb', ['scripts/verify-breadcrumb.mjs']],
   ['verify-sweep', ['scripts/verify-sweep.mjs']],
   ['verify-signin', ['scripts/verify-signin.mjs']],
+  ['verify-molina-nav', ['scripts/verify-molina-nav.mjs']],
   ['verify-stream', ['scripts/verify-stream.mjs']],
   ['verify-anon', ['scripts/verify-anon.mjs']],
   ['verify-visual-guard', ['scripts/verify-visual-guard.mjs']],

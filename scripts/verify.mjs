@@ -143,7 +143,8 @@ else pass('panel.html loads store.js before its users');
 console.log('\nEvery script panel.html loads is in the build:');
 {
   const build = read('scripts/build.mjs');
-  const listed = new Set([...build.matchAll(/'([\w.-]+\.(?:js|css|html|json|md))'/g)].map((m) => m[1]));
+  // paths may sit in a folder (vendor/acorn.js)
+  const listed = new Set([...build.matchAll(/'([\w./-]+\.(?:js|css|html|json|md))'/g)].map((m) => m[1]));
   const loadedSrcs = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
   const missing = loadedSrcs.filter((f) => !listed.has(f));
   if (missing.length) fail(`panel.html loads ${missing.join(', ')} but build.mjs does not package ${missing.length === 1 ? 'it' : 'them'}`);
@@ -193,7 +194,7 @@ console.log('\nShipped files parse as classic browser scripts:');
 const SCRIPTS = [
   'panel.js', 'selector-intel.js', 'ai-advisor.js', 'event-recorder.js',
   'test-engine.js', 'background.js', 'store.js', 'auth.js', 'config.js',
-  'grid-nav.js', 'urs-compat.js', 'urs-convert.js', 'docx-gen.js', 'report-gen.js', 'report-view.js',
+  'grid-nav.js', 'urs-compat.js', 'urs-convert.js', 'u1-markers.js', 'ide-convert.js', 'docx-gen.js', 'report-gen.js', 'report-view.js',
 ];
 let unparseable = 0;
 for (const name of SCRIPTS) {
@@ -457,26 +458,29 @@ console.log('\nAI modes are gated on the key, at the door:');
 
 // ── The monitoring allowlist reaches the client ─────────────────────────────
 //
-// The monitor calls the site from Railway, which round-robins outbound traffic
-// across three fixed addresses. A client who allows only the one they saw in a
-// log is unblocked until the next request leaves from a different one — and
-// the block then looks like a new, unrelated fault. All three, or it comes
-// back.
+// The monitor calls the site from Railway, which rotates outbound traffic
+// across fixed addresses, and a blocked request is retried through the other
+// User1st service's proxy (its addresses) — four in all (user1st_project
+// CLAUDE.md, "Outbound IPs"). A client who allows only some is unblocked until
+// the next request leaves from another — and the block then looks like a new,
+// unrelated fault. All four, or it comes back.
 {
   const gen = read('docx-gen.js');
-  const ips = ['152.55.180.240', '162.220.234.242', '152.55.180.243'];
-  const hasAll = ips.every((ip) => gen.includes(ip));
-  if (hasAll) pass('all three monitoring addresses are in the guide, not just one');
+  const ips = ['152.55.180.240', '162.220.234.242', '152.55.180.243', '152.55.180.242'];
+  const listed = /const MONITOR_IPS = \[([^\]]*)\]/.exec(gen);
+  const hasAll = !!listed && ips.every((ip) => listed[1].includes(`'${ip}'`));
+  if (hasAll) pass('all four monitoring addresses are in the guide, not just some');
   else fail(`monitoring IPs missing: ${ips.filter((ip) => !gen.includes(ip)).join(', ')}`);
 
-  // The reason has to travel WITH the addresses. "Allow these three" without
+  // The reason has to travel WITH the addresses. "Allow these four" without
   // the why invites a firewall admin to allow one and call it done.
-  const explains = /balances outbound traffic/.test(gen) && /rotation/.test(gen) &&
-                   /allowing a single address is not enough/.test(gen) && /Railway/.test(gen);
-  if (explains) pass('…and it says why three, so nobody allows one and calls it done');
+  const explains = /addresses in ' \+\s*'rotation/.test(gen) && /retried once from User1st/.test(gen) &&
+                   /allowing a single address \\u2014 or only some of them \\u2014 is not enough/.test(gen) &&
+                   /All four have to be allowed together/.test(gen);
+  if (explains) pass('…and it says why four, so nobody allows one and calls it done');
   else fail('the guide lists the addresses without explaining the round-robin');
 
-  // Only when the site is actually monitored — asking for three addresses to
+  // Only when the site is actually monitored — asking for four addresses to
   // be opened on a site with no monitor is asking for a change nobody needs.
   const gated = /files && files\.monitoring \? monitoringSection\(hostname/.test(gen);
   if (gated) pass('…and it is only asked for when the monitor is in the package');
@@ -766,6 +770,32 @@ console.log('\nAI modes are gated on the key, at the door:');
   if (/for \(const f of buildHandoverFiles\(/.test(gen))
     pass('…with the zip built from that same list, so the two cannot diverge');
   else fail('the zip and the upload are assembled separately and will drift');
+
+  // What goes in the CLIENT'S zip is chosen (Orel, 2026-10-08); the Drive
+  // folder still gets every file loose. Run for real: the zip holds exactly
+  // the chosen kinds, the file list stays whole.
+  {
+    const vm = await import('node:vm');
+    const ctx = { TextEncoder, Uint8Array, console };
+    vm.createContext(ctx);
+    let ran = false, names = [], all = [];
+    try {
+      vm.runInContext(gen, ctx);
+      vm.runInContext(`
+        var __built = { patch: '/* p */', fixes: '/* f */', monitoring: '/* m */' };
+        var __args = ['site.test', 'https://x/u1.css', 'https://x/u1.js', __built, [], null, 'js', new Uint8Array([37, 80, 68, 70])];
+        var __all = buildHandoverFiles.apply(null, __args).map(function (f) { return f.name; });
+        var __zip = buildHandoverZip.apply(null, __args.concat([new Set(['patch', 'fixes'])]));
+      `, ctx);
+      names = ctx.__zip.names; all = ctx.__all; ran = true;
+    } catch (e) { names = [String(e && e.message || e)]; }
+    if (ran && names.join() === 'u1-patch.js,u1-fixes.js' && all.length > names.length)
+      pass('…the client’s zip carries only the files chosen for it, while the folder keeps them all');
+    else fail('the zip does not follow the choice: ' + names.join(', ') + ' (all: ' + all.join(', ') + ')');
+    if (/handoverZipChoice\(\)/.test(pan) && /data-zipkind="report"/.test(htm) && /files\.map\(\(f\) => \(\{ name: f\.name, mime: f\.mime, b64:/.test(pan))
+      pass('…chosen in Finish project, and every loose file still goes up to Drive');
+    else fail('the zip choice is not wired into Finish project, or the loose files were narrowed too');
+  }
 
   // A project with no mappings has no report; that must not stop the code
   // files, which are the part the client cannot proceed without.

@@ -34,12 +34,101 @@
   // called, and nothing anywhere said so — the mapping simply had no effect,
   // which is indistinguishable from a wrong selector. The panel reads this
   // after an apply.
-  var P = (W.__u1Patch = { correctors: [], skipped: [], calls: [], build: '2026-10-04a' });
+  var P = (W.__u1Patch = { correctors: [], skipped: [], _calls: [], build: '2026-10-08v' });
+
+  // ── Which page a call belongs to ──────────────────────────────────────────
+  // A mapping set to "this page only" is called inside __u1OnPage (the
+  // exported u1-fixes.js, and the extension's auto-apply), which names the
+  // page in window.__u1CallPage while it runs. On a site that changes page
+  // WITHOUT a reload — Next.js and every other SPA, molinahealthcare.com
+  // among them — those calls must stop counting the moment the person
+  // leaves their page and count again when they come back. Every reader of
+  // P.calls gets the calls live HERE; P._calls keeps them all.
+  var here = function () {
+    try { return decodeURIComponent(location.pathname).replace(/\/+$/, '') || '/'; } catch (e) { return location.pathname; }
+  };
+  P.here = here;
+
+  // ── A heading is never put on a control ────────────────────────────────────
+  // role="heading" on <a href> takes the LINK away — it is announced as a
+  // heading and is no longer a link — and axe/WAVE report it as a role the
+  // element may not have. molinahealthcare.com's footer titles are a span on
+  // one column and a link on the next, under one class (2026-10-08). The
+  // heading goes on the control's wrapper when the wrapper holds that
+  // control and nothing else; otherwise nowhere.
+  var CONTROL = 'a[href],button,input,select,textarea,summary,[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"]';
+  P.headingHost = function (el) {
+    if (!el || !el.matches || !el.matches(CONTROL)) return el;
+    var p = el.parentElement;
+    if (!p || p === document.body || p.matches(CONTROL)) return null;
+    if (/^H[1-6]$/.test(p.tagName)) return p;
+    if (p.querySelectorAll(CONTROL).length !== 1) return null;
+    if ((p.textContent || '').replace(/\s+/g, ' ').trim() !== (el.textContent || '').replace(/\s+/g, ' ').trim()) return null;
+    return p;
+  };
+  P.live = function (c) { return !c || !c.page || c.page === here(); };
+  try {
+    Object.defineProperty(P, 'calls', {
+      get: function () { return P._calls.filter(P.live); },
+      set: function () {},
+      enumerable: true, configurable: true,
+    });
+  } catch (e) { P.calls = P._calls; }
+
+  // ── A page change without a reload ─────────────────────────────────────────
+  // history.pushState / replaceState (a framework's router) and popstate
+  // (Back/Forward). Each real change of path fires 'u1:route' on window and
+  // a corrector pass, so every page-aware layer re-reads what is live.
+  var lastPath = here();
+  var routeChanged = function () {
+    var now = here();
+    if (now === lastPath) return;
+    lastPath = now;
+    try { W.dispatchEvent(new CustomEvent('u1:route', { detail: { path: now } })); } catch (e) {}
+    if (P.schedule) P.schedule();
+  };
+  if (!W.__u1RouteHooked) {
+    W.__u1RouteHooked = true;
+    ['pushState', 'replaceState'].forEach(function (k) {
+      var orig = history[k];
+      if (typeof orig !== 'function') return;
+      history[k] = function () { var r = orig.apply(this, arguments); setTimeout(routeChanged, 0); return r; };
+    });
+    W.addEventListener('popstate', function () { setTimeout(routeChanged, 0); });
+  } else {
+    W.addEventListener('popstate', function () { setTimeout(routeChanged, 0); });
+  }
+  W.addEventListener('u1:route', function () { lastPath = here(); if (P.schedule) P.schedule(); });
 
   var qsa = function (sel, root) {
     try { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
     catch (e) { return []; }
   };
+
+  // ── A write that changes nothing is not made ──────────────────────────────
+  // The library re-asserts tabindex and aria-* on every pass of its visibility
+  // handler, same value or not: on molinahealthcare.com/medicaid, with the
+  // search open, 852 writes of tabindex="0", 213 of tabindex="-1" and 275 of
+  // aria-hidden="true" in three seconds, every one re-writing the value the
+  // element already had. A same-value setAttribute still fires a mutation
+  // record, and VoiceOver, which re-reads the element on every record, could
+  // not move off the search field (2026-10-06). Same-value writes of the
+  // attributes the library and the page fight over are dropped here, for
+  // every writer: a no-op write has no observer worth waking.
+  (function () {
+    var QUIET = /^(tabindex|aria-[a-z]+|role)$/;
+    var proto = W.Element && W.Element.prototype;
+    if (!proto || proto.setAttribute.__u1pQuiet) return;
+    var orig = proto.setAttribute;
+    var quiet = function (name, value) {
+      if (typeof name === 'string' && QUIET.test(name)) {
+        try { if (this.getAttribute(name) === String(value)) return; } catch (e) {}
+      }
+      return orig.apply(this, arguments);
+    };
+    quiet.__u1pQuiet = true;
+    try { proto.setAttribute = quiet; } catch (e) {}
+  })();
   var get = function (el, n) { return el && el.getAttribute ? el.getAttribute(n) : null; };
   var set = function (el, n, v) {
     // Writing an attribute that already holds the value would retrigger our own
@@ -177,8 +266,16 @@
   P.schedule = schedule;
 
   // U1 re-applies itself on re-render, so corrections have to follow it there.
+  //
+  // The DOCUMENT is watched, not its <html>: a framework that hydrates the
+  // whole document replaces <html> outright — molinahealthcare.com (Next.js)
+  // does, and an observer on the old element was left watching a detached
+  // node. No corrector ever ran again on its own there: "Fix all" on the
+  // new-tab links was pressed four times and undone by every reload
+  // (2026-10-08). A Document target with subtree covers the swap itself and
+  // everything below whatever <html> comes after it.
   try {
-    new MutationObserver(schedule).observe(document.documentElement, {
+    new MutationObserver(schedule).observe(document, {
       childList: true, subtree: true, attributes: true,
       // aria-expanded is here because the listbox region corrects it against
       // what the list is actually doing. Our own writes cannot loop: set()
@@ -193,6 +290,231 @@
     document.addEventListener('DOMContentLoaded', schedule);
   }
   schedule();
+
+  // ── Heading levels follow re-renders ──────────────────────────────────────
+  // fix.heading writes its level once, at the call, and the library's own
+  // change detection handles an element once per load. A list that draws new
+  // cards on the next page (molinahealthcare.com/knowledge-center/blog) kept
+  // its levels on page 1 alone (2026-10-08). Each recorded heading call is
+  // re-asserted on every pass: idempotent, so a pass with nothing new writes
+  // nothing.
+  P.correct(function () {
+    (P.calls || []).forEach(function (c) {
+      if (c.type !== 'heading') return;
+      var n = parseInt(c.props && c.props.level, 10);
+      var sel = (c.props && c.props.selectors && c.props.selectors.heading) || c.selector;
+      if (!(n >= 1 && n <= 6) || typeof sel !== 'string') return;
+      qsa(sel).forEach(function (el) {
+        var r = get(el, 'role');
+        // A control the library made a heading anyway: given back its own
+        // role, and the heading goes on its wrapper (P.headingHost).
+        if (r === 'heading' && el.matches('a[href],button,input,select,textarea,summary')) {
+          el.removeAttribute('role'); el.removeAttribute('aria-level');
+          r = null;
+        }
+        var host = P.headingHost(el);
+        if (host !== el) {
+          if (host && !/^H[1-6]$/.test(host.tagName)) { set(host, 'role', 'heading'); set(host, 'aria-level', String(n)); }
+          else if (host && +host.tagName.charAt(1) !== n) set(host, 'aria-level', String(n));
+          return;
+        }
+        if (r === 'button' || r === 'link') return;          // another mapping made it a control
+        if (/^H[1-6]$/.test(el.tagName)) {
+          if (+el.tagName.charAt(1) === n) { if (get(el, 'aria-level')) el.removeAttribute('aria-level'); }
+          else set(el, 'aria-level', String(n));
+        } else {
+          if (el.querySelector('a[href],button,input,select,textarea,h1,h2,h3,h4,h5,h6')) return;   // a region, not a heading
+          set(el, 'role', 'heading'); set(el, 'aria-level', String(n));
+        }
+      });
+    });
+  });
+
+  // ── No Tab stop nobody can see ─────────────────────────────────────────────
+  // A drawer that is "closed" by sliding it off the screen (position:fixed,
+  // translated out of the viewport) keeps every control in it in the Tab
+  // order: on molinahealthcare.com's blog, Tab from Search went into the
+  // closed filter drawer — "Filter by:" and fourteen checkboxes nobody could
+  // see — before reaching Filter (2026-10-08). And a control marked
+  // aria-hidden="true" but still focusable is a stop a screen reader is told
+  // does not exist.
+  //   · a fixed/absolute container wholly outside the viewport → its controls
+  //     leave the Tab order, the container is hidden from assistive tech;
+  //   · a focusable element under aria-hidden="true" → out of the Tab order.
+  // Recorded (data-u1p-ghost) and put back the moment the drawer comes on
+  // screen or the aria-hidden goes. Programmatic focus still works
+  // (tabindex -1), so a site that focuses into its drawer on open is not
+  // broken. Elements this patch's own layers manage are left to them.
+  var GHOST = 'data-u1p-ghost', GHOST_ROOT = 'data-u1p-ghost-root';
+  var TABBABLE = 'a[href],button,input:not([type="hidden"]),select,textarea,summary,[tabindex]';
+  var offScreen = function (el) {
+    var cs; try { cs = getComputedStyle(el); } catch (e) { return false; }
+    if (cs.position !== 'fixed' && cs.position !== 'absolute') return false;
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    var r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return false;
+    var vw = W.innerWidth || document.documentElement.clientWidth, vh = W.innerHeight || document.documentElement.clientHeight;
+    if (cs.position === 'fixed') return r.right <= 0 || r.left >= vw || r.bottom <= 0 || r.top >= vh;
+    return r.right <= 0 || r.left >= Math.max(vw, document.documentElement.scrollWidth);
+  };
+  var ghost = function (el) {
+    // kept out by the label-checkbox rule below — always, whatever was recorded
+    if (el.hasAttribute('data-u1p-cbx-in')) { el.removeAttribute(GHOST); if (el.getAttribute('tabindex') !== '-1') el.setAttribute('tabindex', '-1'); return; }
+    // Already recorded: another layer (the accordion's header) may have put
+    // tabindex="0" back since — take it out again, keep what was recorded.
+    if (el.hasAttribute(GHOST)) { if (el.getAttribute('tabindex') !== '-1') el.setAttribute('tabindex', '-1'); return; }
+    if (P.disclosureOwns && P.disclosureOwns(el)) return;
+    var cur = el.getAttribute('tabindex');
+    if (cur === '-1') return;
+    if (!el.matches(TABBABLE)) return;
+    el.setAttribute(GHOST, cur === null ? '' : cur);
+    el.setAttribute('tabindex', '-1');
+  };
+  var unghost = function (el) {
+    if (el.hasAttribute('data-u1p-cbx-in')) { el.removeAttribute(GHOST); el.setAttribute('tabindex', '-1'); return; }
+    var was = el.getAttribute(GHOST);
+    el.removeAttribute(GHOST);
+    if (was === '' || was === null) el.removeAttribute('tabindex'); else el.setAttribute('tabindex', was);
+  };
+  // Registered LAST (after every region's correctors, which are pushed while
+  // this file is still running): a region that writes tabindex="0" on its
+  // headers — the accordion's, on the drawer's "Filter by:" — ran after this
+  // in the same pass and put the stop back every time.
+  var ghostPass = function () {
+    // Off-screen fixed drawers.
+    qsa('body *').forEach(function (el) {
+      if (el.hasAttribute(GHOST_ROOT)) {
+        if (!offScreen(el)) {
+          el.removeAttribute(GHOST_ROOT);
+          if (el.getAttribute('data-u1p-ghost-aria') === '1') { el.removeAttribute('aria-hidden'); el.removeAttribute('data-u1p-ghost-aria'); }
+          qsa('[' + GHOST + ']', el).forEach(unghost);
+        } else {
+          qsa(TABBABLE, el).forEach(ghost);   // still closed: new or re-enabled controls leave too
+        }
+        return;
+      }
+      var cs; try { cs = getComputedStyle(el); } catch (e) { return; }
+      if (cs.position !== 'fixed') return;
+      if (!el.querySelector(TABBABLE) || !offScreen(el)) return;
+      el.setAttribute(GHOST_ROOT, '1');
+      if (get(el, 'aria-hidden') !== 'true') { el.setAttribute('aria-hidden', 'true'); el.setAttribute('data-u1p-ghost-aria', '1'); }
+      qsa(TABBABLE, el).forEach(ghost);
+    });
+    // Focusable under aria-hidden (outside the drawers handled above).
+    qsa('[aria-hidden="true"]').forEach(function (h) {
+      if (h.hasAttribute(GHOST_ROOT)) return;
+      [h].concat(qsa(TABBABLE, h)).forEach(function (el) { if (el.matches && el.matches(TABBABLE)) ghost(el); });
+    });
+    // …and back, once the aria-hidden is gone.
+    qsa('[' + GHOST + ']').forEach(function (el) {
+      if (el.closest('[' + GHOST_ROOT + ']')) return;
+      if (!el.closest('[aria-hidden="true"]')) unghost(el);
+    });
+  };
+  P.ghostPass = ghostPass;
+  P.offScreen = offScreen;
+  // The drawers already found, re-checked at the moment Tab is pressed —
+  // before the browser picks the next stop. While a drawer mapped as a
+  // dialog was open the library wrote tabindex="0" on everything in it, and
+  // after it slid shut those stops stayed until the next scheduled pass:
+  // the first Shift+Tab from Filter went back into the closed drawer
+  // (molinahealthcare.com blog, 2026-10-08). Known roots only, so it is cheap
+  // enough to run on every Tab.
+  var ghostKnown = function () {
+    qsa('[' + GHOST_ROOT + ']').forEach(function (el) {
+      if (offScreen(el)) qsa(TABBABLE, el).forEach(ghost);
+    });
+  };
+  P.ghostKnown = ghostKnown;
+  document.addEventListener('keydown', function (e) { if (e.key === 'Tab') { try { ghostKnown(); } catch (x) {} } }, true);
+  setTimeout(function () { P.correct(ghostPass); schedule(); }, 0);
+  // A drawer opens on a click or a transition, neither of which the core
+  // observer sees (class and transform are not in its filter).
+  document.addEventListener('click', function () { setTimeout(schedule, 60); setTimeout(schedule, 450); }, true);
+  document.addEventListener('transitionend', function () { schedule(); }, true);
+
+  // ── A field named only by its placeholder ──────────────────────────────────
+  // <input placeholder="Upcoming Events..."> with no <label>, aria-label,
+  // aria-labelledby or title: a placeholder is a hint that disappears as soon
+  // as someone types, and WAVE reports the field as "Missing form label"
+  // (molinahealthcare.com/about/events/az, 2026-10-08). Its placeholder
+  // becomes its name — the words the site itself chose for it — and only
+  // where the field has no name of any other kind.
+  P.correct(function () {
+    qsa('input[placeholder]:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]),textarea[placeholder]').forEach(function (f) {
+      if (f.hasAttribute('aria-label') || f.hasAttribute('aria-labelledby') || (f.getAttribute('title') || '').trim()) return;
+      if (f.closest('label') || (f.id && document.querySelector('label[for="' + (W.CSS && CSS.escape ? CSS.escape(f.id) : f.id) + '"]'))) return;
+      var name = (f.getAttribute('placeholder') || '').replace(/\s+/g, ' ').replace(/[\s.\u2026:]+$/, '').trim();
+      if (name) f.setAttribute('aria-label', name);
+    });
+  });
+
+  // ── A checkbox the site draws with its <label> ─────────────────────────────
+  // <label>Mississippi (1)<input type="checkbox" style="opacity:0;width:0">
+  // <span class="checkmark"></span></label> — the real control has no box,
+  // the label is what is seen and clicked. VoiceOver then finds TWO things:
+  // the hidden checkbox ("Mississippi (1), unchecked, checkbox") and the
+  // label's text ("Mississippi (1), clickable"), and its cursor and the focus
+  // ring sit on different boxes (molinahealthcare.com blog filter, Orel,
+  // 2026-10-08). The label becomes the checkbox: role="checkbox" (whose
+  // children are presentational, so the text is no stop of its own),
+  // aria-checked/aria-disabled read from the input, one Tab stop, Space
+  // toggles through the input itself — so the site's own change handling
+  // runs as it always does. The input leaves the Tab order and the tree.
+  // Only a lone checkbox in its label, only while the input has no box.
+  var CBX = 'data-u1p-cbx', CBX_IN = 'data-u1p-cbx-in';
+  var boxless = function (el) {
+    var cs, r;
+    try { cs = getComputedStyle(el); r = el.getBoundingClientRect(); } catch (e) { return false; }
+    return r.width < 2 || r.height < 2 || parseFloat(cs.opacity) === 0 || cs.visibility === 'hidden';
+  };
+  var cbxSync = function (lab, inp) {
+    var want = inp.indeterminate ? 'mixed' : inp.checked ? 'true' : 'false';
+    if (lab.getAttribute('aria-checked') !== want) lab.setAttribute('aria-checked', want);
+    if (inp.disabled) { if (lab.getAttribute('aria-disabled') !== 'true') lab.setAttribute('aria-disabled', 'true'); }
+    else if (lab.hasAttribute('aria-disabled')) lab.removeAttribute('aria-disabled');
+  };
+  var cbxPass = function () {
+    qsa('label input[type="checkbox"]').forEach(function (inp) {
+      var lab = inp.closest('label');
+      if (!lab) return;
+      if (lab.hasAttribute(CBX)) { cbxSync(lab, inp); if (inp.getAttribute('tabindex') !== '-1') inp.setAttribute('tabindex', '-1'); return; }
+      if (lab.hasAttribute('role') || lab.querySelectorAll('input,select,textarea,button,a[href]').length !== 1) return;
+      if (!boxless(inp) || boxless(lab)) return;
+      lab.setAttribute(CBX, '1');
+      inp.setAttribute(CBX_IN, inp.getAttribute('tabindex') === null ? '' : inp.getAttribute('tabindex'));
+      lab.setAttribute('role', 'checkbox');
+      // a closed drawer's label is a stop nobody sees: born out of the Tab order there
+      lab.setAttribute('tabindex', inp.disabled || inp.closest('[' + GHOST_ROOT + ']') ? '-1' : '0');
+      if (inp.closest('[' + GHOST_ROOT + ']')) lab.setAttribute(GHOST, '0');
+      inp.removeAttribute(GHOST);
+      inp.setAttribute('tabindex', '-1');
+      inp.setAttribute('aria-hidden', 'true');
+      cbxSync(lab, inp);
+    });
+  };
+  P.correct(cbxPass);
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t && t.hasAttribute && t.hasAttribute(CBX_IN)) { var lab = t.closest('label'); if (lab) cbxSync(lab, t); }
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    var lab = e.target;
+    if (!(lab && lab.hasAttribute && lab.hasAttribute(CBX))) return;
+    if (e.key !== ' ' && e.key !== 'Spacebar') return;
+    e.preventDefault();
+    var inp = lab.querySelector('input[' + CBX_IN + ']');
+    if (inp && !inp.disabled) { inp.click(); cbxSync(lab, inp); }
+  }, true);
+  // focus that lands on the hidden input (a mouse press on the label) belongs on the label
+  document.addEventListener('focusin', function (e) {
+    var t = e.target;
+    if (!(t && t.hasAttribute && t.hasAttribute(CBX_IN))) return;
+    if (t.getAttribute('tabindex') !== '-1') t.setAttribute('tabindex', '-1');
+    var lab = t.closest('label[' + CBX + ']');
+    // never into a closed drawer: there the focus is a mistake, not a press
+    if (lab && !t.closest('[' + GHOST_ROOT + ']')) { try { lab.focus(); } catch (x) {} }
+  }, true);
 
   // ── 2.4.11 Focus Not Obscured ──────────────────────────────────────────────
   // A browser scrolls a focused element into view on its own, but only for the
@@ -377,6 +699,36 @@
   // it to one that is. See the tabs region for the case that needs it.
   P.contextRoot = {};
 
+  // A heading is a LINE. molinahealthcare.com's AI-built set carried
+  // fix.heading('.theme-marketplace') — the wrapper around the whole page
+  // body — so the content area became role="heading", every landmark and
+  // control inside it lived "inside a heading" for a screen reader, and the
+  // main-content skip link could not make it the main landmark ("has a role
+  // already"). An element that holds controls, headings or blocks of text is
+  // a region, not a heading, and the mapping is refused and recorded.
+  var notHeadingWhy = function (el) {
+    if (/^H[1-6]$/.test(el.tagName)) return null;
+    try {
+      if (el.querySelector('a[href],button,input,select,textarea,[role="button"],h1,h2,h3,h4,h5,h6,[role="heading"],nav,main,header,footer,form,table,ul,ol')) {
+        return 'it holds controls, headings or structure — a region, not a line of text';
+      }
+      var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text.length > 240) return 'its text is ' + text.length + ' characters — a block, not a heading';
+      if (el.querySelectorAll('*').length > 40) return 'it holds ' + el.querySelectorAll('*').length + ' elements — a region, not a heading';
+    } catch (e) {}
+    return null;
+  };
+  var headingsOnly = function (els, selector) {
+    for (var i = 0; i < els.length; i++) {
+      var why = notHeadingWhy(els[i]);
+      if (why) {
+        P.skipped.push({ type: 'heading', selector: selector, why: 'not a heading: ' + why });
+        return false;
+      }
+    }
+    return true;
+  };
+
   // ── Fixers this build of U1 does not have ─────────────────────────────────
   //
   // U1 is delivered per client and not every build carries every fixer. Read
@@ -399,6 +751,7 @@
       var n = parseInt(lvl, 10);
       if (!(n >= 1 && n <= 6)) n = 2;
       var els = qsa(selector);
+      if (!headingsOnly(els, selector)) return 0;
       els.forEach(function (el) {
         // A real heading at the wrong LEVEL — an <h4> that should be an <h3>
         // under its <h2> — keeps its tag and gets aria-level, which every
@@ -406,6 +759,9 @@
         // <h4> already is one. (This used to skip native headings entirely,
         // so mapping "Get Active!" to H3 changed nothing and the scan kept
         // reporting the skip.) A non-heading gets both.
+        var host = P.headingHost(el);              // never a control (see P.headingHost)
+        if (!host) return;
+        el = host;
         if (/^H[1-6]$/.test(el.tagName)) {
           if (+el.tagName.charAt(1) === n) { if (get(el, 'aria-level')) el.removeAttribute('aria-level'); return; }
           set(el, 'aria-level', String(n));
@@ -442,6 +798,7 @@
       u1.fix[name].__u1PatchFilled = true;
       if (P.filled.indexOf(name) === -1) P.filled.push(name);
     });
+    (P.fixerHooks || []).forEach(function (fn) { try { fn(u1); } catch (e) {} });
     return P.filled;
   };
 
@@ -471,7 +828,8 @@
             if (r === false) {
               widened = true;
               P.skipped.push({ type: name, selector: selector,
-                               why: 'no ancestor holds this component and its parts together' });
+                               why: (resolve.lastWhy && resolve.lastWhy(el)) ||
+                                    'no ancestor holds this component and its parts together' });
               return;
             }
             // A resolver may hand back BOTH a root and props to call it with.
@@ -629,8 +987,11 @@
         try {
           var n = parseInt(props && props.level, 10);
           var sel = (props && props.selectors && props.selectors.heading) || selector;
+          if (typeof sel === 'string' && !headingsOnly(qsa(sel), sel)) return 0;   // see notHeadingWhy
           if (n >= 1 && n <= 6 && typeof sel === 'string') {
             qsa(sel).forEach(function (el) {
+              el = P.headingHost(el);              // never a control (see P.headingHost)
+              if (!el) return;
               if (/^H[1-6]$/.test(el.tagName)) {
                 if (+el.tagName.charAt(1) === n) { if (get(el, 'aria-level')) el.removeAttribute('aria-level'); }
                 else set(el, 'aria-level', String(n));
@@ -667,15 +1028,36 @@
     // below: the corrections see a selector they can read, and the recorder
     // sees the one the site wrote.
     var SEL_MARK = 'data-u1p-sel';
-    var U1_COMPOUND = /^(?:[\w-]+)?(?:\.[\w-]+|#[\w-]+|\[[^\]]*\]|::?[\w-]+(?:\([^()]*\))?)*$/;
-    var U1_PSEUDO = /^:(?:not|nth-child|nth-of-type|nth-last-child|nth-last-of-type|first-child|last-child|only-child)\b/;
+    // What U1 can read is decided by ITS gate, not by what jQuery could in
+    // principle resolve. The engine (Ku, in u1_vanilla-js-a11y.js) runs every
+    // selector it is handed through
+    //   ^([\w-]+|\.[\w-]+|#[\w-]+|\[[^\]]+\])([>+~]?(…same…))*(,…)*$
+    // before doing anything with it: no pseudo-class of any kind, and
+    // "Invalid selector" for one. The previous version of this check let the
+    // structural pseudos (:nth-child, :not, …) through on the belief that
+    // jQuery resolves them — it does, but the selector never reaches jQuery.
+    //
+    // Worse than the refusal: that regex has an OPTIONAL combinator between
+    // compounds, so a run of word characters can be split between its
+    // alternatives in exponentially many ways, and when the match FAILS the
+    // engine backtracks through all of them. Twenty-two characters before
+    // the first `:` cost 36 ms; every further character doubles it. The
+    // molinahealthcare.com mapping
+    //   .EditorialCardHC_right_section__rDQ9O>div:nth-child(1)>…>h2:nth-child(1)
+    // has thirty-six, and u1.fix.link() on it froze the tab for good, on
+    // every page load, with or without a match on the page (2026-10-04).
+    //
+    // So this test answers NO for anything that gate would reject — the
+    // selector is then stamped and the engine receives `[data-u1p-sel~=…]`,
+    // which it has always accepted — and it is linear itself: each compound
+    // is an optional tag followed by tokens that each begin with `.`, `#`
+    // or `[`, so there is only one way to match.
+    var U1_COMPOUND = /^[\w-]*(?:[.#][\w-]+|\[[^\]]+\])*$/;
     var u1Reads = function (s) {
       var n = String(s).trim().replace(/\s*([>+~,])\s*/g, '$1');
       return n.split(',').every(function (group) {
         return group !== '' && group.split(/[>+~]/).every(function (c) {
-          if (c === '' || !U1_COMPOUND.test(c)) return false;
-          var found = c.match(/::?[\w-]+(?:\([^()]*\))?/g);
-          return !found || found.every(function (p) { return U1_PSEUDO.test(p); });
+          return c !== '' && U1_COMPOUND.test(c);
         });
       });
     };
@@ -688,7 +1070,14 @@
     };
     P.readable = function (sel) {
       if (typeof sel !== 'string' || !sel.trim() || u1Reads(sel)) return sel;
-      try { document.querySelector(sel); } catch (e) { return sel; }
+      // Not CSS at all (a typo, a trailing `>`): there is nothing to stamp, and
+      // U1 should refuse it the way it always has — but not by being handed
+      // the string, because its gate backtracks exponentially on exactly this
+      // kind of failure when a long class name comes first. A stand-in that
+      // fails the gate on its first character gets the same "Invalid
+      // selector" out of the engine in constant time. The recorder, wrapped
+      // outside this, still sees what the site wrote.
+      try { document.querySelector(sel); } catch (e) { return ':u1p-invalid'; }
       var h = 5381;
       for (var i = 0; i < sel.length; i++) h = ((h * 33) ^ sel.charCodeAt(i)) >>> 0;
       var token = 's' + h.toString(36);
@@ -740,7 +1129,6 @@
     // the site actually passed rather than anything this patch rewrote. It
     // only observes — the original is called with `arguments` untouched, and
     // a throw here must never take the site's own fix down, hence the catch.
-    P.calls = P.calls || [];
     // The flags that say "this function is the patch's own" ride along onto
     // the recording wrapper — without that, ensureFixers could not tell its
     // own stand-in from a real engine fixer once it had been wrapped, and a
@@ -755,15 +1143,22 @@
       u1.fix[name] = keepFlags(inner, function (selector, props) {
         try {
           if (typeof selector === 'string') {
-            P.calls.push({
-              type: name,
-              selector: selector,
-              // Structured-cloned across the world boundary later, so it must
-              // be plain data. A props object holding a function or a node
-              // would make the whole list unreadable from the panel.
-              props: JSON.parse(JSON.stringify(props === undefined ? {} : props)),
-              at: Date.now(),
-            });
+            // Structured-cloned across the world boundary later, so it must
+            // be plain data. A props object holding a function or a node
+            // would make the whole list unreadable from the panel.
+            var plain = JSON.parse(JSON.stringify(props === undefined ? {} : props));
+            var page = typeof W.__u1CallPage === 'string' ? W.__u1CallPage : null;
+            // Coming back to a page re-runs its calls (__u1OnPage): the same
+            // call is recorded once, not once per visit.
+            var key = name + '\u0001' + selector + '\u0001' + (page || '') + '\u0001' + JSON.stringify(plain);
+            var dup = P._calls.some(function (c) { return c.key === key; });
+            if (!dup) P._calls.push({ type: name, selector: selector, props: plain, page: page, key: key, at: Date.now() });
+            // A new mapping changes what the correctors read (the
+            // disclosure layer's pairs and rows come off P.calls). Nothing
+            // else wakes them: on molinahealthcare.com the mega bar's items
+            // sat at the site's own tabindex=-1 for as long as nothing
+            // mutated, and Tab skipped the bar (2026-10-05).
+            schedule();
           }
         } catch (e) {}
         return inner.apply(this, arguments);
@@ -838,7 +1233,20 @@
     });
 
     u1.fix.__u1PatchWrapped = true;
+    // The regions that wrap a fixer of their own (form, accordion, checkbox)
+    // used to poll for the library every 250 ms — a mapping applied in the
+    // window between the library appearing and the next tick met the bare
+    // fixer. They register here instead and are called the moment the
+    // library is wrapped (and again from ensureFixers, which the panel calls
+    // before an apply).
+    P.fixerHooks.forEach(function (fn) { try { fn(u1); } catch (e) {} });
     return true;
+  };
+  P.fixerHooks = P.fixerHooks || [];
+  P.onFixers = function (fn) {
+    P.fixerHooks.push(fn);
+    var u1 = W.u1 !== undefined ? W.u1 : W.U1 !== undefined ? W.U1 : W.user1st;
+    if (u1 && u1.fix) { try { fn(u1); } catch (e) {} }
   };
 
   // ── Winning the race for the library ──────────────────────────────────────
@@ -949,9 +1357,9 @@
   // only where it differs, so the engine re-initialising (raw numbers back)
   // just gets renumbered again.
   P.correct(function () {
-    var menus = [];
-    for (var i = 0; i < P.calls.length; i++) {
-      var c = P.calls[i];
+    var menus = [], live = P.calls;
+    for (var i = 0; i < live.length; i++) {
+      var c = live[i];
       if (c.type === 'menu' && c.selector && menus.indexOf(c.selector) === -1) menus.push(c.selector);
     }
     if (menus.length < 2) return;
@@ -980,6 +1388,27 @@
     }
   });
 
+  // ── Enter opens a native <select> ─────────────────────────────────────────
+  // On macOS Chrome a <select> opens on Space and Alt+Down but not on Enter,
+  // and the owner's keyboard users press Enter (molina's state picker,
+  // 2026-10-06). showPicker() is the browser's own popup, run from a user
+  // gesture; where it does not exist nothing changes.
+  document.addEventListener('keydown', function (e) {
+    var el = e.target;
+    if (!el || el.tagName !== 'SELECT' || e.key !== 'Enter' || el.multiple || el.disabled) return;
+    // The guard every key handler carries. isTyping() counts a <select> as a
+    // field so Space is never taken from it; Enter on a <select> types
+    // nothing, and this handler is for a <select> only.
+    if (isTyping(el) && el.tagName !== 'SELECT') return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (typeof el.showPicker !== 'function') return;
+    var open = false;
+    try { open = el.matches(':open'); } catch (err) {}
+    if (open) return;
+    e.preventDefault();
+    try { el.showPicker(); } catch (err) {}
+  }, true);
+
   // ── Skip links ────────────────────────────────────────────────────────────
   // U1 gives the target an id and nothing else. Following `href="#id"` moves the
   // scroll position, but focus only moves if the target can hold it — so on most
@@ -989,9 +1418,22 @@
     qsa('a.u1st-skip-link[href^="#"]').forEach(function (link) {
       var target = document.getElementById(link.getAttribute('href').slice(1));
       if (!target) return;
-      if (!target.hasAttribute('tabindex')) set(target, 'tabindex', '-1');
+      // Only a target that cannot hold focus gets tabindex="-1". Written on a
+      // control that already can — molina's Search BUTTON, the target of a
+      // "Skip to search" row — it took the button OUT of the Tab order
+      // (2026-10-06).
+      var natively = false;
+      try { natively = target.matches(FOCUSABLE); } catch (e) {}
+      if (!natively && !target.hasAttribute('tabindex')) set(target, 'tabindex', '-1');
+      // A skip link acts on this page — it moves focus — and the owner wants
+      // it announced as a button, not a link (2026-10-06). role=button on
+      // every one, the engine's included; Space presses it like Enter.
+      set(link, 'role', 'button');
       if (link.__u1pSkip) return;
       link.__u1pSkip = true;
+      link.addEventListener('keydown', function (ev) {
+        if (ev.key === ' ' || ev.code === 'Space') { ev.preventDefault(); link.click(); }
+      });
       // Browsers disagree about whether the target receives focus; doing it
       // explicitly is the only behaviour that is the same everywhere. And the
       // move is made here rather than by following the href: the browser's
@@ -1145,8 +1587,39 @@
     if (!Array.isArray(list)) list = [];
     if (list.length) P.skipLinks = list; else if (authoritative) P.skipLinks = [];
     var engineLinks = qsa('a.u1st-skip-link:not(.u1p-skip-link)');
-    var engineHref = function (href) {
-      return engineLinks.some(function (e) { return e.getAttribute('href') === href; });
+    // The owner can switch the engine's own links OFF (Setup: "Hide the
+    // skip links U1 adds by itself"). The engine adds them unconditionally
+    // and re-adds them on its own passes, so they are removed on every
+    // pass here; the configured rows are then rendered in full, none of
+    // them "covered" by an engine link that is gone.
+    var hideEngine = W.__u1SkipLinksEngine === 'hide' || !!(cfg && cfg.skipLinksEngine === 'hide');
+    if (hideEngine) {
+      engineLinks.forEach(function (e) { try { e.remove(); } catch (err) {} });
+      engineLinks = [];
+      report.hiddenEngine = true;
+    }
+    var engineLinkFor = function (href) {
+      for (var i = 0; i < engineLinks.length; i++) if (engineLinks[i].getAttribute('href') === href) return engineLinks[i];
+      return null;
+    };
+    var engineHref = function (href) { return !!engineLinkFor(href); };
+    var phrase = function (label) {
+      label = String(label).trim();
+      // "sign in" → "Skip to sign in"; a label already phrased as one is kept.
+      if (!SAYS_SKIP.test(label)) label = (SKIP_TO[pageLang()] || SKIP_TO.en) + ' ' + label;
+      return label.charAt(0).toUpperCase() + label.slice(1);
+    };
+    // The engine's own links carry the engine's words ("Skip to navigation",
+    // once per <nav>, so twice on a page with a breadcrumb). A configured
+    // row of the SAME kind renames the engine's link to the owner's wording
+    // instead of adding a second link beside it; what is not renamed and
+    // still collides is told apart by its landmark's own name.
+    var renamed = {};
+    var rename = function (link, label) {
+      var want = phrase(label);
+      if ((link.textContent || '').trim() !== want) link.textContent = want;
+      link.setAttribute('data-u1p-renamed', '1');
+      renamed[link.getAttribute('href')] = true;
     };
     var all = qsa('a.u1st-skip-link');
     var after = all.length ? all[all.length - 1] : null;
@@ -1169,11 +1642,13 @@
       // <nav>: two identical links, one tab stop apart.
       if (sl.kind && ENGINE_KINDS[sl.kind]) {
         var lm = closest(target, LANDMARK_OF[sl.kind][1]);
-        if (lm && lm.id && engineHref('#' + lm.id)) { report.covered++; return; }
+        var eng = lm && lm.id ? engineLinkFor('#' + lm.id) : null;
+        if (eng) { rename(eng, sl.label); report.covered++; return; }
       }
       if (!target.id) target.id = sl.syntheticId || ('u1p-skip-' + Math.random().toString(36).slice(2, 8));
       href = '#' + target.id;
-      if (engineHref(href)) { report.covered++; return; }
+      var eng2 = engineLinkFor(href);
+      if (eng2) { rename(eng2, sl.label); report.covered++; return; }
       wanted[href] = true;
       var have = false;
       try { have = !!document.querySelector('a.u1p-skip-link[href="' + href.replace(/"/g, '\\"') + '"]'); } catch (e) {}
@@ -1181,10 +1656,7 @@
       var a = document.createElement('a');
       a.className = 'u1st-skip-link u1p-skip-link' + (pageRtl() ? ' rtl' : '');
       a.href = href;
-      var label = String(sl.label).trim();
-      // "sign in" → "Skip to sign in"; a label already phrased as one is kept.
-      if (!SAYS_SKIP.test(label)) label = (SKIP_TO[pageLang()] || SKIP_TO.en) + ' ' + label;
-      a.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+      a.textContent = phrase(sl.label);
       if (after && after.parentNode) after.insertAdjacentElement('afterend', a);
       else document.body.insertAdjacentElement('afterbegin', a);
       after = a;
@@ -1193,6 +1665,35 @@
     });
     qsa('a.u1p-skip-link').forEach(function (mine) {
       if (!wanted[mine.getAttribute('href')]) mine.remove();
+    });
+    // Two engine links with the same words (a page with two <nav>s) are
+    // told apart by the landmark's own name: "Skip to navigation
+    // (breadcrumb)". Only where the landmark has a name, and never one the
+    // owner renamed above.
+    var byText = {};
+    engineLinks.forEach(function (e) {
+      if (renamed[e.getAttribute('href')]) return;
+      var base = e.getAttribute('data-u1p-base') || (e.textContent || '').trim();
+      (byText[base] = byText[base] || []).push(e);
+    });
+    Object.keys(byText).forEach(function (text) {
+      var group = byText[text];
+      if (group.length < 2) return;
+      group.forEach(function (e) {
+        var id = (e.getAttribute('href') || '').slice(1);
+        var t = id ? document.getElementById(id) : null;
+        if (!t) return;
+        var name = get(t, 'aria-label') || '';
+        if (!name && get(t, 'aria-labelledby')) {
+          var lb = document.getElementById(get(t, 'aria-labelledby'));
+          name = lb ? (lb.textContent || '').trim() : '';
+        }
+        if (!name) { var h = t.querySelector('h1,h2,h3'); name = h ? (h.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40) : ''; }
+        if (!name) return;
+        if (!e.getAttribute('data-u1p-base')) e.setAttribute('data-u1p-base', text);
+        var want = text + ' (' + name + ')';
+        if ((e.textContent || '').trim() !== want) e.textContent = want;
+      });
     });
     // What is on the page now, whoever put it there — the panel lists the
     // engine's own beside the configured ones so a count never surprises.
@@ -1206,6 +1707,775 @@
     return report;
   };
   P.correct(P.renderSkipLinks);
+
+// ── The keyboard contract a MAPPING promises, kept by the mapping ───────────
+//
+// Measured on molinahealthcare.com (2026-10-05) with the engine, this patch
+// and the four mappings the survey produced, driven with real key presses:
+// Enter opened every component, focus reached the first item in the menus
+// but not in the language listbox, no arrow key moved anywhere, and Escape
+// put focus back on the trigger while every panel STAYED OPEN. Every region
+// below that handles these keys is keyed on what the library writes —
+// role="menu" on a submenu, aria-haspopup="listbox" on a trigger,
+// aria-expanded kept true while open — and on that site the library wrote
+// almost none of it: the submenus got no role, the listbox fix met a list
+// that is born on the press (React: {open && <ul/>}) and decorated nothing,
+// and aria-expanded is written once and never again.
+//
+// So this layer reads the MAPPING instead — the calls P.calls recorded —
+// and the page: a menu's triggers and the submenu inside each trigger's
+// item, a listbox's trigger and its list (resolved at the moment of the key,
+// since it may not exist until then), a form and the control that opened it
+// (remembered when a mapped form appears after a press). From those it keeps
+// the three promises itself, whether or not the library kept any:
+//
+//   1. OPENING puts focus on the first item — once the panel is showing,
+//      and only while focus is still on the trigger.
+//   2. ARROWS walk the panel's items (Up/Down, Home/End); ArrowDown on a
+//      closed trigger opens it.
+//   3. ESCAPE closes and puts focus back on the trigger. Closing is done
+//      the page's own way first — the trigger's click, when that is what
+//      opened it — then the panel's own Close control, and only as a last
+//      resort by hiding the panel directly (undone on the trigger's next
+//      press, so the page's state machine is not left lying).
+//
+// What it writes to the DOM is what the mapping asked the library for and
+// the library left off: aria-haspopup on the trigger, aria-expanded kept
+// TRUE to what is on screen, role="menu" / role="listbox" on the panel and
+// role="option" on a listbox's options. Nothing is written where the
+// library already did. Runs first (document capture, registered before the
+// per-type regions) and stops the key it handled, so a region keyed on a
+// role this layer stamped does not handle the same key a second time.
+(function () {
+  var SETTLE = [80, 260, 600];
+  var FORCED = 'data-u1p-forced-shut';
+  // Showing by GEOMETRY alone. The library writes aria-hidden="true" on a
+  // closed submenu and never again, so on molinahealthcare.com every open
+  // mega panel still said aria-hidden — and visible(), which trusts the
+  // attribute, called it closed: Escape "saw nothing to close".
+  var shown = function (el) {
+    if (!el) return false;
+    try {
+      var cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    } catch (e) {}
+    return !!(el.offsetWidth || el.offsetHeight || (el.getClientRects && el.getClientRects().length));
+  };
+  var sel1 = function (sel, root) {
+    if (!sel) return null;
+    try { return (root || document).querySelector(sel); } catch (e) { return null; }
+  };
+
+  // ── The pairs: trigger ↔ panel, read off the recorded calls each time ────
+  // Cheap (a page records a handful of calls) and always current: a list
+  // born after the mapping was applied is found at the moment of the key.
+  var formOpeners = [];   // [{ form, opener }] — see activation below
+  var submenuOf = function (t, subSel) {
+    var item = t.parentElement;
+    if (!item) return null;
+    var p = subSel ? sel1(subSel, item) : null;
+    if (!p && t.nextElementSibling && t.nextElementSibling !== t) {
+      var n = t.nextElementSibling;
+      if (n.matches && n.matches('ul,ol,div,section,nav,[role="menu"]')) p = n;
+    }
+    return p && !p.contains(t) && p !== t ? p : null;
+  };
+  // A `listbox` mapped one level too wide — the WRAPPER around the button
+  // and the list (molina's Log In, built by hand: listbox '[class*=
+  // "Login_dropdown__"]') — holds its own trigger, and is not the list. The
+  // list inside it that does not hold the trigger is.
+  var narrowList = function (l, t, optSel) {
+    if (!l || !l.contains(t)) return l;
+    var cands = qsa('[role="listbox"],[role="menu"],ul,ol,.dropdown-menu', l);
+    for (var i = 0; i < cands.length; i++) {
+      var c = cands[i];
+      if (c.contains(t)) continue;
+      if (optSel && !sel1(optSel, c)) continue;
+      return c;
+    }
+    return null;
+  };
+  var listOf = function (t, lbSel, root, optSel) {
+    var l = sel1(lbSel, root);
+    if (l && !l.contains(t)) return l;
+    if (l) { var n0 = narrowList(l, t, optSel); if (n0) return n0; }
+    var node = t.parentElement, hops = 0;
+    while (node && hops++ < 3) {
+      l = sel1(lbSel, node);
+      if (l && !l.contains(t)) return l;
+      if (l) { var n1 = narrowList(l, t, optSel); if (n1) return n1; }
+      node = node.parentElement;
+    }
+    // The wrapper IS the mapped list and stands above the trigger.
+    for (node = t.parentElement, hops = 0; node && hops++ < 4; node = node.parentElement) {
+      try { if (node.matches(lbSel)) return narrowList(node, t, optSel); } catch (e) { return null; }
+    }
+    return null;
+  };
+  var tooltipOf = function (t, tipSel) {
+    var cands = qsa(tipSel);
+    var tip = null;
+    for (var i = 0; i < cands.length; i++) {
+      var c = cands[i];
+      if (c === t) continue;
+      if (c.contains(t)) {
+        // The wrapper: the text beside the trigger is the tooltip.
+        var kids = c.children;
+        for (var k = 0; k < kids.length; k++) {
+          if (kids[k] !== t && !kids[k].contains(t) && (kids[k].textContent || '').trim()) { tip = kids[k]; break; }
+        }
+        if (tip) break;
+        continue;
+      }
+      // Nearest: the candidate sharing the trigger's parent, else the first.
+      if (!tip || (t.parentElement && t.parentElement.contains(c))) tip = c;
+    }
+    // A mapping that names the trigger itself as the tooltip (molina's
+    // PageBanner icon, fixNo 28: both selectors the same <svg>) has its text
+    // in the element beside the trigger.
+    if (!tip && t.parentElement) {
+      var sibs = t.parentElement.children;
+      for (var si = 0; si < sibs.length; si++) {
+        if (sibs[si] !== t && !sibs[si].contains(t) && (sibs[si].textContent || '').trim()) { tip = sibs[si]; break; }
+      }
+    }
+    return tip;
+  };
+  // The text a control is NAMED by: its own, without the tooltip it may hold
+  // and without anything hidden from assistive tech. A trigger that wraps its
+  // tooltip (molina's Medicare hero: <span role=button><svg/><span
+  // role=tooltip aria-hidden>Select your state</span></span>) reads as
+  // "button" and nothing else — its only text is the hidden tooltip.
+  var ownName = function (t, tip) {
+    if (get(t, 'aria-label') || get(t, 'aria-labelledby')) return 'named';
+    var out = '';
+    var walk = function (n) {
+      for (var c = n.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) { out += c.nodeValue; continue; }
+        if (c.nodeType !== 1 || c === tip || get(c, 'aria-hidden') === 'true') continue;
+        out += get(c, 'aria-label') || get(c, 'alt') || '';
+        walk(c);
+      }
+    };
+    walk(t);
+    return out.replace(/\s+/g, ' ').trim();
+  };
+  var pairsNow = function () {
+    var out = [];
+    var seenT = [];
+    var add = function (pair) {
+      if (seenT.indexOf(pair.trigger) !== -1) return;
+      seenT.push(pair.trigger);
+      out.push(pair);
+    };
+    (P.calls || []).forEach(function (c) {
+      var s = (c.props && c.props.selectors) || {};
+      if (c.type === 'menu') {
+        var trigs = s.triggers ? qsa(s.triggers) : [];
+        trigs.forEach(function (t) {
+          if (!(t.matches && t.matches(FOCUSABLE))) return;
+          add({ kind: 'menu', trigger: t, panel: function () { return submenuOf(t, s.submenus); } });
+        });
+      } else if (c.type === 'listbox' && s.trigger && s.listbox) {
+        var roots = qsa(c.selector);
+        if (!roots.length) roots = [document];
+        roots.forEach(function (r) {
+          var t = sel1(s.trigger, r) || (r === document ? null : sel1(s.trigger));
+          if (!t) return;
+          // The library's own listbox keeps focus on the LIST and moves a
+          // highlight (aria-activedescendant). The owner wants focus on the
+          // options themselves (molina Log In, 2026-10-05) — that is the
+          // default; only a mapping that asks for `enterSelects` (options
+          // that act the moment they get focus) keeps the highlight pattern.
+          add({ kind: 'listbox', trigger: t, options: s.options,
+                     highlight: !!(c.props && (c.props.enterSelects === true || c.props.enterSelects === 'true')),
+                     panel: function () { return listOf(t, s.listbox, r === document ? null : r, s.options); } });
+        });
+      }
+    });
+    // A TOOLTIP mapping: the trigger and the text it shows. The library only
+    // WAITS for the tooltip to appear (its change detection) and then stamps
+    // role/aria-describedby; it never shows it, and on focus it dispatches
+    // a synthetic mouseover the site's CSS :hover cannot hear. On
+    // molinahealthcare.com's "Select your state" info icon nothing ever
+    // happened: no description, no tooltip on focus (2026-10-08). A mapping
+    // that names the WRAPPER (icon and text together) as the tooltip is
+    // narrowed to the text inside it.
+    (P.calls || []).forEach(function (c) {
+      if (c.type !== 'tooltip') return;
+      var s = (c.props && c.props.selectors) || {};
+      var trigSel = s.trigger || c.selector, tipSel = s.tooltip;
+      if (!trigSel || !tipSel) return;
+      qsa(trigSel).forEach(function (t) {
+        add({ kind: 'tooltip', trigger: t, panel: function () { return tooltipOf(t, tipSel); } });
+      });
+    });
+    formOpeners.forEach(function (fo) {
+      if (!fo.form.isConnected || !fo.opener.isConnected) return;
+      add({ kind: 'form', trigger: fo.opener, panel: function () { return fo.form; } });
+    });
+    return out;
+  };
+  // The mapped menu ITEM a key landed on (selectors.items — the top row).
+  var menuItemOf = function (el) {
+    var calls = P.calls || [];
+    for (var i = 0; i < calls.length; i++) {
+      var c = calls[i];
+      if (c.type !== 'menu') continue;
+      var s = (c.props && c.props.selectors) || {};
+      if (!s.items) continue;
+      var items = qsa(s.items);
+      for (var j = 0; j < items.length; j++) {
+        if (items[j] === el || items[j].contains(el)) {
+          // Inside a SUBMENU (an item of a nested list) Left/Right are the
+          // submenu's keys, handled below; only the top row is a row.
+          var inSub = false;
+          try { inSub = !!(pairOfPanel(items[j])); } catch (e2) {}
+          return inSub ? null : items[j];
+        }
+      }
+    }
+    return null;
+  };
+  // Every item of a mapped top row stays in the TAB order. The engine's
+  // roving tabindex parks all but one item at -1, so Tab skipped the bar
+  // entirely and only the arrows could walk it; the owner wants both (the
+  // top layer reachable by Tab, molinahealthcare.com, 2026-10-05).
+  P.correct(function () {
+    (P.calls || []).forEach(function (c) {
+      if (c.type !== 'menu') return;
+      var s = (c.props && c.props.selectors) || {};
+      if (!s.items) return;
+      qsa(s.items).forEach(function (it) {
+        var ctl = it.matches && it.matches(FOCUSABLE) ? it : qsa(FOCUSABLE, it).filter(visible)[0];
+        // Only what is on screen: a loose `items` selector can reach the
+        // entries of a closed submenu, and a hidden control at tabindex 0
+        // is a Tab stop nobody can see.
+        if (ctl && visible(ctl) && ctl.tabIndex < 0 && !pairOfPanel(ctl)) ctl.tabIndex = 0;
+      });
+    });
+  });
+  var pairOfTrigger = function (el) {
+    var ps = pairsNow();
+    for (var i = 0; i < ps.length; i++) {
+      if (ps[i].trigger === el || ps[i].trigger.contains(el)) return ps[i];
+    }
+    return null;
+  };
+  // Items INSIDE a panel are owned; the panel container itself is not — a
+  // listbox focused as a whole (the enterSelects pattern: focus on the
+  // list, a highlight moving) is the listbox region's own.
+  var pairOfPanel = function (el) {
+    var ps = pairsNow();
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i].panel();
+      if (p && p !== el && p.contains(el)) return { pair: ps[i], panel: p };
+    }
+    return null;
+  };
+
+  // ── What is walked, and what is written ──────────────────────────────────
+  var itemsOf = function (pair, panel) {
+    if (pair.kind === 'listbox') {
+      var opts = (pair.options ? qsa(pair.options, panel) : qsa(':scope > *', panel)).filter(visible);
+      // An option holding a control (li > button, li > a) is walked by that
+      // control; a bare option is made focusable itself.
+      return opts.map(function (o) {
+        var inner = o.matches && o.matches(FOCUSABLE) ? o : qsa(FOCUSABLE, o).filter(visible)[0];
+        if (inner) return inner;
+        if (o.tabIndex < 0 && !o.hasAttribute('tabindex')) o.tabIndex = -1;
+        return o;
+      });
+    }
+    return qsa(FOCUSABLE, panel).filter(visible);
+  };
+  var TIP_FORCED = 'data-u1p-tip-shown';
+  var showTip = function (pair) {
+    var tip = pair.panel();
+    if (!tip) return;
+    pair.trigger.__u1pTipHide && clearTimeout(pair.trigger.__u1pTipHide);
+    // The site may show it itself (CSS :hover, its own JS); only what is
+    // still hidden a moment later is shown by hand, and marked so.
+    setTimeout(function () {
+      if (shown(tip)) return;
+      tip.setAttribute(TIP_FORCED, '1');
+      tip.style.display = 'block'; tip.style.visibility = 'visible'; tip.style.opacity = '1';
+      dlog('tooltip:shown', pair);
+    }, 120);
+  };
+  var hideTip = function (pair, now) {
+    var tip = pair.panel();
+    if (!tip) return;
+    var run = function () {
+      if (tip.hasAttribute(TIP_FORCED)) {
+        tip.removeAttribute(TIP_FORCED);
+        tip.style.display = ''; tip.style.visibility = ''; tip.style.opacity = '';
+      }
+    };
+    if (now) { run(); return; }
+    // 1.4.13 hoverable: a grace period to walk onto the tooltip.
+    pair.trigger.__u1pTipHide = setTimeout(function () {
+      if (tip.matches(':hover') || tip.contains(document.activeElement)) return;
+      run();
+    }, 300);
+  };
+  var stampTooltip = function (pair) {
+    var t = pair.trigger, tip = pair.panel();
+    var TIP_NAME = { en: 'More information', he: 'מידע נוסף', es: 'Más información', fr: 'Plus d\u2019informations', ar: 'مزيد من المعلومات', ru: 'Подробнее' };
+    // Named whatever else happens — even with no tooltip found, a control
+    // the library made role=button must not be "button" alone.
+    if (!ownName(t, tip)) set(t, 'aria-label', TIP_NAME[pageLang()] || TIP_NAME.en);
+    if (!tip) return;
+    if (!tip.id) tip.id = 'u1p-tip-' + Math.random().toString(36).slice(2, 9);
+    if (get(tip, 'role') !== 'tooltip') set(tip, 'role', 'tooltip');
+    // The description is tied up front: aria-describedby reads a hidden
+    // element too, so a screen reader hears the sentence on focus whether
+    // or not the bubble is on screen.
+    var have = (get(t, 'aria-describedby') || '').split(/\s+/).filter(Boolean);
+    if (have.indexOf(tip.id) === -1) { have.push(tip.id); set(t, 'aria-describedby', have.join(' ')); }
+    if (!t.matches(FOCUSABLE)) { set(t, 'tabindex', '0'); if (!get(t, 'role') || get(t, 'role') === 'img') set(t, 'role', 'button'); }
+    if (!t.__u1pTipWired) {
+      t.__u1pTipWired = true;
+      t.addEventListener('focus', function () { showTip(pair); });
+      t.addEventListener('mouseenter', function () { showTip(pair); });
+      t.addEventListener('blur', function () { hideTip(pair); });
+      t.addEventListener('mouseleave', function () { hideTip(pair); });
+      tip.addEventListener('mouseleave', function () { hideTip(pair); });
+    }
+  };
+  var stamp = function (pair, panel) {
+    var t = pair.trigger;
+    if (pair.kind === 'tooltip') { stampTooltip(pair); return; }
+    // A "menu" panel of links, headings and text — a site's mega menu — is a
+    // DISCLOSURE, not an ARIA menu: role="menu" requires menuitems, and WAVE
+    // reports every such panel as "Broken ARIA menu" (molinahealthcare.com:
+    // five, 2026-10-08), while a screen reader in a role="menu" skips the
+    // headings and text inside it. Only a panel that really holds menuitems
+    // keeps role="menu" and aria-haspopup; the rest are a button with
+    // aria-expanded and the panel it opens — the WAI disclosure navigation
+    // pattern. Undone here whoever wrote it (the library writes it on every
+    // submenu of a menubar:false mapping).
+    var notAMenu = pair.kind === 'menu' && panel &&
+      !panel.querySelector('[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"]');
+    if (pair.kind !== 'form') {
+      if (notAMenu) {
+        var hp = get(t, 'aria-haspopup');
+        if (hp === 'true' || hp === 'menu') t.removeAttribute('aria-haspopup');
+      } else if (!get(t, 'aria-haspopup')) set(t, 'aria-haspopup', pair.kind === 'listbox' ? 'listbox' : 'true');
+      set(t, 'aria-expanded', panel && shown(panel) ? 'true' : 'false');
+    }
+    if (!panel) return;
+    // An OPEN panel is not aria-hidden, whatever was written on it closed.
+    if (shown(panel) && get(panel, 'aria-hidden') === 'true') panel.removeAttribute('aria-hidden');
+    if (notAMenu) { if (get(panel, 'role') === 'menu') panel.removeAttribute('role'); }
+    else if (pair.kind === 'menu' && !get(panel, 'role')) set(panel, 'role', 'menu');
+    // The library fights ITSELF over the links in a mapped submenu: its menu
+    // fixer makes them tabbable (tabindex="0"), its visibility handler sees
+    // the closed panel and parks them (tabindex="-1"), and the two take
+    // turns on every change-detection tick — 196 vs 179 writes in three
+    // seconds on molinahealthcare.com/medicaid, enough mutation records for
+    // VoiceOver to lose its place on the search field (2026-10-06). The
+    // visibility handler honours `u1st-avoid-auto-tabbable`; a closed panel
+    // is display:none and its links are out of the Tab order anyway, so
+    // nothing is lost by telling it to leave them alone.
+    qsa(FOCUSABLE, panel).forEach(function (el) {
+      if (get(el, 'u1st-avoid-auto-tabbable') !== 'true') set(el, 'u1st-avoid-auto-tabbable', 'true');
+    });
+    // Named by its own title: a screen reader entering the first item then
+    // hears the panel's name and role first ("Medicare plans and benefits,
+    // menu, Dual-Eligible…, link"), the way it would read the panel from its
+    // top. Keyboard focus stays on the first item (the owner wants both,
+    // 2026-10-06). Only where nothing names the panel already, and only
+    // from text that comes BEFORE the first item.
+    if (!get(panel, 'aria-label') && !get(panel, 'aria-labelledby')) {
+      var firstItem = qsa(FOCUSABLE, panel).filter(visible)[0];
+      var titles = qsa('h1,h2,h3,h4,h5,h6,[class*="title" i],[class*="heading" i]', panel);
+      for (var ti = 0; ti < titles.length; ti++) {
+        var tt = titles[ti];
+        var words = (tt.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!words || words.length > 80) continue;
+        if (firstItem && (tt.contains(firstItem) || (tt.compareDocumentPosition(firstItem) & 2))) continue;   // 2 = PRECEDING: the item comes first
+        if (!tt.id) tt.id = 'u1p-title-' + Math.random().toString(36).slice(2, 8);
+        set(panel, 'aria-labelledby', tt.id);
+        break;
+      }
+    }
+    if (pair.kind === 'listbox') {
+      if (!get(panel, 'role')) set(panel, 'role', 'listbox');
+      (pair.options ? qsa(pair.options, panel) : qsa(':scope > *', panel)).forEach(function (o) {
+        if (!get(o, 'role')) set(o, 'role', 'option');
+      });
+    }
+  };
+  P.correct(function () {
+    pairsNow().forEach(function (pair) { stamp(pair, pair.panel()); });
+  });
+  // The per-type regions below ask this before handling a key: a trigger or
+  // panel this layer owns is handled here, once.
+  P.disclosureOwns = function (el) {
+    try { return !!(pairOfTrigger(el) || pairOfPanel(el) || menuItemOf(el)); } catch (e) { return false; }
+  };
+
+  // ── Opening: the page opens, this layer follows focus in ─────────────────
+  // HOW it was opened decides where focus lands (owner, 2026-10-06):
+  //   ArrowDown / ArrowUp on the trigger → the first / last CLICKABLE item:
+  //     the arrow is the keyboard user's "take me into the items".
+  //   Enter, Space, a click, a screen reader's activate → the panel's FIRST
+  //     ELEMENT, whatever it is (its title, its text), so whoever opened it
+  //     starts at the top and misses nothing; Tab or ArrowDown then reaches
+  //     the first item. Telling a screen reader apart from a keyboard was
+  //     tried (a click with no key before it) and failed where the reader
+  //     passes the key through (VoiceOver on the Medicaid panel: focus
+  //     jumped to "Shop state" past the title and the text).
+  //   mouse → the first clickable item; a pointer user does not read from
+  //     the top.
+  var lastInput = { kind: '', key: '', at: 0 };
+  document.addEventListener('keydown', function (e) { lastInput = { kind: 'key', key: e.key, at: Date.now() }; }, true);
+  document.addEventListener('pointerdown', function (e) { lastInput = { kind: 'pointer', at: Date.now() }; }, true);
+  document.addEventListener('mousedown', function (e) { lastInput = { kind: 'pointer', at: Date.now() }; }, true);
+  var pressedBy = function () {
+    if ((Date.now() - lastInput.at) >= 800) return 'top';            // no key, no pointer: a screen reader
+    if (lastInput.kind === 'pointer') return 'items';
+    if (lastInput.key === 'ArrowDown') return 'items';
+    if (lastInput.key === 'ArrowUp') return 'last';
+    return 'top';                                                       // Enter, Space
+  };
+  // The first element of a panel: its first element child that is showing
+  // (a title div, a paragraph, a list) — made focusable for the moment so a
+  // screen reader's focus can rest on it; the panel itself when it has none.
+  var firstElementOf = function (panel) {
+    var kids = panel.children;
+    for (var i = 0; i < kids.length; i++) if (shown(kids[i])) return kids[i];
+    return panel;
+  };
+  P.disclosureLog = [];
+  var dlog = function (what, pair, extra) {
+    try {
+      var t = pair && pair.trigger;
+      P.disclosureLog.push(Object.assign({ at: Date.now(), what: what, kind: pair && pair.kind,
+        trigger: t ? t.tagName + (t.getAttribute('aria-label') ? '[' + t.getAttribute('aria-label') + ']' : '') : '' }, extra || {}));
+      if (P.disclosureLog.length > 60) P.disclosureLog.shift();
+    } catch (e) {}
+  };
+  var activate = function (pair) {
+    var by = pressedBy();
+    dlog('activate', pair, { by: by });
+    pair.trigger.removeAttribute(FORCED);
+    var forced = pair.panel();
+    if (forced && forced.hasAttribute(FORCED)) {
+      forced.removeAttribute(FORCED);
+      forced.style.display = '';
+    }
+    var wasOpen = forced ? shown(forced) : false;
+    SETTLE.forEach(function (ms) {
+      setTimeout(function () {
+        var panel = pair.panel();
+        stamp(pair, panel);
+        if (!panel || !shown(panel)) { dlog('settle:closed', pair, { ms: ms }); return; }
+        if (!wasOpen) pair.trigger.setAttribute('data-u1p-opened-by-press', '1');
+        dlog('settle:open', pair, { ms: ms, focusOnTrigger: document.activeElement === pair.trigger });
+        // The library's listbox fix parks focus on the LIST container
+        // itself (tabindex=-1 on the <ul>), and from there its own arrows
+        // did nothing on molinahealthcare.com while the site's Bootstrap
+        // threw on every key (its dropdown handler expects a
+        // data-bs-toggle). Focus on the container is as good as on the
+        // trigger: the first item takes it.
+        var onContainer = document.activeElement === panel && !pair.highlight;
+        if (document.activeElement !== pair.trigger && !onContainer) return;
+        var items0 = itemsOf(pair, panel);
+        if (by === 'top') {
+          var head = firstElementOf(panel);
+          // A panel that is ONLY items (a plain drop-down list) has no top
+          // to read; its first item is the top.
+          if (items0.length && (head === items0[0] || head.contains(items0[0])) && !(head.textContent || '').replace(/\s+/g, ' ').trim().replace((items0[0].textContent || '').replace(/\s+/g, ' ').trim(), '').trim()) {
+            try { items0[0].focus(); } catch (e) {}
+            return;
+          }
+          if (!head.matches(FOCUSABLE) && !head.hasAttribute('tabindex')) { head.setAttribute('tabindex', '-1'); head.setAttribute('data-u1p-rest', '1'); }
+          try { head.focus(); } catch (e) {}
+          return;
+        }
+        var first = by === 'last' ? items0[items0.length - 1] : items0[0];
+        if (first) { try { first.focus(); } catch (e) {} }
+      }, ms);
+    });
+  };
+
+  // A mapped FORM that appears after a press was opened by that press: the
+  // control is remembered as its opener, so Escape can go back to it.
+  var mappedForms = function () {
+    var out = [];
+    (P.calls || []).forEach(function (c) {
+      if (c.type !== 'form') return;
+      var s = (c.props && c.props.selectors) || {};
+      qsa(s.form || c.selector).forEach(function (f) { if (out.indexOf(f) === -1) out.push(f); });
+    });
+    return out;
+  };
+  var watchForms = function (opener) {
+    var hidden = mappedForms().filter(function (f) { return !shown(f); });
+    var known = mappedForms();
+    SETTLE.forEach(function (ms) {
+      setTimeout(function () {
+        mappedForms().forEach(function (f) {
+          if (!shown(f)) return;
+          if (known.indexOf(f) !== -1 && hidden.indexOf(f) === -1) return;   // was showing already
+          if (formOpeners.some(function (fo) { return fo.form === f; })) return;
+          if (f.contains(opener)) return;
+          formOpeners.push({ form: f, opener: opener });
+        });
+      }, ms);
+    });
+  };
+
+  document.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest(FOCUSABLE) : null;
+    if (!t) return;
+    var pair = pairOfTrigger(t);
+    if (pair && pair.kind !== 'form') { activate(pair); return; }
+    if (t.matches('button,[role="button"],a[href],[tabindex]')) watchForms(t);
+  }, true);
+
+  // ── Closing: the page's way first, then the panel's, then ours ───────────
+  var closerIn = function (panel) {
+    var CLOSE = /(^|[\s_-])(close|dismiss|cancel|סגור|ביטול)([\s_-]|$)|^[×✕✖╳x]$/i;
+    var cands = qsa('button,[role="button"],a[href="#"],a:not([href])', panel);
+    for (var i = 0; i < cands.length; i++) {
+      var c = cands[i];
+      if (!visible(c)) continue;
+      var face = (get(c, 'aria-label') || get(c, 'title') || c.textContent || '').replace(/\s+/g, ' ').trim();
+      if (CLOSE.test(face) || /(^|[\s_-])(close|dismiss)([\s_-]|$)/i.test(String(c.className || ''))) return c;
+    }
+    return null;
+  };
+  var settled = function (el, cb) {
+    var last = -1, waited = 0;
+    var tick = function () {
+      var now = el.offsetHeight + ':' + el.offsetWidth;
+      if (now === last || waited >= 900) { cb(shown(el)); return; }
+      last = now; waited += 80;
+      setTimeout(tick, 80);
+    };
+    setTimeout(tick, 80);
+  };
+  // `landOn`: where focus ends up instead of the trigger — the neighbouring
+  // top item when Left/Right left the submenu. Closing is partly async
+  // (settled → the panel's Close → by force) and each step re-asserts the
+  // landing, so a late step cannot pull focus back to the trigger.
+  var close = function (pair, panel, landOn) {
+    var t = pair.trigger;
+    var land = function () { try { (landOn || t).focus(); } catch (e) {} };
+    land();
+    dlog('close', pair, { visible: !!(panel && shown(panel)), closing: !!(panel && panel.__u1pClosing),
+                          byPress: t.hasAttribute('data-u1p-opened-by-press') });
+    if (!panel || !shown(panel)) { stamp(pair, panel); return; }
+    if (panel.__u1pClosing) return;
+    panel.__u1pClosing = true;
+    var done = function () { panel.__u1pClosing = false; stamp(pair, panel); schedule(); };
+    var byForce = function () {
+      dlog('close:force', pair);
+      panel.setAttribute(FORCED, '1');
+      panel.style.display = 'none';
+      done();
+    };
+    var byCloser = function () {
+      var c = closerIn(panel);
+      dlog('close:closer', pair, { found: !!c });
+      if (!c) { byForce(); return; }
+      try { c.click(); } catch (e) {}
+      land();
+      settled(panel, function (still) { if (still) byForce(); else done(); });
+    };
+    // The trigger's click closes what the trigger's click opened. A trigger
+    // whose click does something else (a hover-menu's link) is not pressed.
+    if (t.hasAttribute('data-u1p-opened-by-press') && pair.kind !== 'form') {
+      try { t.click(); } catch (e) {}
+      land();
+      settled(panel, function (still) { if (still) byCloser(); else done(); });
+      return;
+    }
+    byCloser();
+  };
+
+  // ── Keys ─────────────────────────────────────────────────────────────────
+  var take = function (e) { e.preventDefault(); e.stopImmediatePropagation(); };
+  // Left/Right along the trigger's OWN row — its item's siblings, never
+  // another menu's. The engine numbers every menu's top row into one
+  // document-wide sequence (see "two menus share one coordinate space"), and
+  // on molinahealthcare.com/medicare ArrowRight from the mega bar's "Plans &
+  // benefits" landed on the top bar's "Medicare" (2026-10-05).
+  var rowNext = function (t, dir) {
+    var item = t.parentElement, row = item && item.parentElement;
+    if (!row) return null;
+    var controls = [];
+    for (var i = 0; i < row.children.length; i++) {
+      var ch = row.children[i];
+      var c = ch.matches && ch.matches(FOCUSABLE) && visible(ch) ? ch : qsa(FOCUSABLE, ch).filter(visible)[0];
+      if (c) controls.push(c);
+    }
+    var here = controls.indexOf(t);
+    if (here === -1 || controls.length < 2) return null;
+    var to;
+    if (dir === 'Home') to = controls[0];
+    else if (dir === 'End') to = controls[controls.length - 1];
+    else {
+      try { if (getComputedStyle(row).direction === 'rtl') dir = -dir; } catch (e) {}
+      to = controls[(here + dir + controls.length) % controls.length];
+    }
+    return to || null;
+  };
+  var rowStep = function (t, dir) {
+    var to = rowNext(t, dir);
+    if (!to) return false;
+    try { to.focus(); } catch (e) {}
+    return true;
+  };
+
+  document.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k !== 'Enter' && k !== ' ' && k !== 'Escape' && k !== 'ArrowDown' && k !== 'ArrowUp' &&
+        k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
+    var target = e.target;
+    if (!target || target.nodeType !== 1) return;
+    // Escape from OUTSIDE every pair — the screen-reader case: its virtual
+    // cursor is on an option while DOM focus sits on <body>, so the key never
+    // reached a handler keyed on the panel and the list stayed open (molina's
+    // language list, 2026-10-06). An open panel this layer owns closes, and
+    // focus returns to its trigger, wherever the key was pressed.
+    if (k === 'Escape' && !pairOfTrigger(target) && !pairOfPanel(target)) {
+      var ps9 = pairsNow(), closedAny = false;
+      for (var pi9 = 0; pi9 < ps9.length; pi9++) {
+        var pp9 = ps9[pi9].panel();
+        if (!pp9 || !shown(pp9) || pp9 === target || pp9.contains(target)) continue;
+        if (ps9[pi9].kind === 'form' && !ps9[pi9].trigger.hasAttribute('data-u1p-opened-by-press')) continue;
+        close(ps9[pi9], pp9);
+        closedAny = true;
+      }
+      if (closedAny) { take(e); return; }
+    }
+
+    // Left/Right on ANY item of a mapped menu's top row — a plain item
+    // (Medicare, Medicaid) as much as a trigger (More Sites).
+    if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'Home' || k === 'End') {
+      var rowItem = menuItemOf(target);
+      if (rowItem) {
+        var rowPair = pairOfTrigger(rowItem), rowPanel = rowPair && rowPair.panel();
+        // Home/End on a trigger whose panel is OPEN belong to the panel.
+        if ((k === 'Home' || k === 'End') && rowPanel && shown(rowPanel)) { /* fall through */ }
+        else { if (rowStep(rowItem, k === 'ArrowRight' ? 1 : k === 'ArrowLeft' ? -1 : k)) take(e); return; }
+      }
+    }
+
+    // On a tooltip's trigger: Escape dismisses (1.4.13), nothing else is its.
+    var tipPair = pairOfTrigger(target);
+    if (tipPair && tipPair.kind === 'tooltip') {
+      if (k === 'Escape') { var tp = tipPair.panel(); if (tp && shown(tp)) { take(e); hideTip(tipPair, true); } }
+      return;
+    }
+    // On a trigger.
+    var pair = pairOfTrigger(target);
+    // A "trigger" with no panel of its own that sits INSIDE another pair's
+    // panel is that panel's item, whatever a mapping called it. The owner's
+    // AI set on molinahealthcare.com named every `…_menu_items__` button a
+    // trigger — the submenu's Providers / Brokers / CHIP included — and
+    // ArrowDown on "Providers" pressed it to "open" it: the page navigated
+    // (2026-10-05).
+    if (pair && pair.kind !== 'form' && !pair.panel() && pairOfPanel(target)) pair = null;
+    if (pair && pair.kind !== 'form') {
+      var panel = pair.panel();
+      if (k === 'Escape') {
+        if (!panel || !shown(panel)) return;
+        take(e);
+        close(pair, panel);
+        return;
+      }
+      if (k === 'ArrowDown') {
+        // Nothing is pressed to open what cannot be found: a trigger whose
+        // panel is unknown is left to the page (pressing it could be a link).
+        if (!panel) return;
+        take(e);
+        if (shown(panel)) {
+          var first = itemsOf(pair, panel)[0];
+          if (first) first.focus();
+        } else {
+          try { pair.trigger.click(); } catch (err) {}
+          activate(pair);
+        }
+        return;
+      }
+      if (k === 'Enter' || k === ' ') {
+        // A native button clicks itself on Enter/Space; anything else is
+        // clicked here. Either way the page opens it and focus follows.
+        if (!isNative(pair.trigger)) { take(e); try { pair.trigger.click(); } catch (err) {} }
+        activate(pair);
+        return;
+      }
+      return;
+    }
+
+    // ON the panel container itself (focus parked there — see activate):
+    // Up/Down/Home/End enter the items, Escape closes. A container that
+    // highlights with aria-activedescendant (enterSelects) is the listbox
+    // region's own.
+    if (!pairOfTrigger(target)) {
+      var ps0 = pairsNow();
+      for (var pi0 = 0; pi0 < ps0.length; pi0++) {
+        if (ps0[pi0].highlight) continue;
+        var pp0 = ps0[pi0].panel();
+        // The panel itself — or a list INSIDE a panel that was mapped one
+        // level too wide (listbox: the wrapper), when the library parked
+        // focus on that list: the <ul> is not an item and holds the items.
+        var isCont = pp0 === target;
+        if (!isCont && pp0 && pp0.contains(target) && !(target.matches && target.matches(FOCUSABLE))) {
+          var its0 = itemsOf(ps0[pi0], pp0);
+          for (var ii0 = 0; ii0 < its0.length; ii0++) if (target.contains(its0[ii0]) && target !== its0[ii0]) { isCont = true; break; }
+        }
+        if (!isCont) continue;
+        if (ps0[pi0].kind === 'form') break;
+        if (k === 'Escape') { take(e); close(ps0[pi0], pp0); return; }
+        if (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End') {
+          var l0 = itemsOf(ps0[pi0], pp0);
+          if (!l0.length) break;
+          take(e);
+          try { l0[(k === 'ArrowUp' || k === 'End') ? l0.length - 1 : 0].focus(); } catch (err) {}
+          return;
+        }
+        break;
+      }
+    }
+
+    // Inside a panel.
+    var hit = pairOfPanel(target);
+    if (!hit) return;
+    if (k === 'Escape') {
+      take(e);
+      close(hit.pair, hit.panel);
+      return;
+    }
+    if (hit.pair.kind === 'form') return;
+    if (isTyping(target)) return;
+    if (k === 'ArrowLeft' || k === 'ArrowRight') {
+      // Out of the submenu to the neighbouring top-level item, as a menubar.
+      if (hit.pair.kind !== 'menu') return;
+      var next = rowNext(hit.pair.trigger, k === 'ArrowRight' ? 1 : -1);
+      if (next) { take(e); close(hit.pair, hit.panel, next); }
+      return;
+    }
+    if (k !== 'ArrowDown' && k !== 'ArrowUp' && k !== 'Home' && k !== 'End') return;
+    var list = itemsOf(hit.pair, hit.panel);
+    if (!list.length) return;
+    var here = list.indexOf(target);
+    if (here === -1) here = list.indexOf(closest(target, FOCUSABLE));
+    if (here === -1) here = k === 'ArrowUp' || k === 'End' ? 0 : -1;
+    var to = k === 'Home' ? 0
+           : k === 'End' ? list.length - 1
+           : k === 'ArrowDown' ? (here + 1) % list.length
+           : (here - 1 + list.length) % list.length;
+    take(e);
+    try { list[to].focus(); } catch (err) {}
+  }, true);
+})();
+
 })();
 //#endregion
 
@@ -1269,9 +2539,9 @@
   };
 
   P.correct(function () {
-    var containers = [];
-    for (var i = 0; i < P.calls.length; i++) {
-      var sel = P.calls[i].selector;
+    var containers = [], live = P.calls;
+    for (var i = 0; i < live.length; i++) {
+      var sel = live[i].selector;
       if (sel && containers.indexOf(sel) === -1) containers.push(sel);
     }
     for (var c = 0; c < containers.length; c++) {
@@ -1337,12 +2607,67 @@
     var orig = u1.fix.accordion;
     var wrapped = function (selector, props) {
       var sel = props && props.selectors;
+      // The SHAPE first. An accordion is a header and, apart from it, a
+      // region it opens. molinahealthcare.com's AI-built mapping named the
+      // header's own OPEN-STATE class as the content
+      // (`.AccordionHC_open__…`, added to the button when expanded): the
+      // library then made the BUTTON a role="region", labelled it by itself
+      // and wrote aria-expanded="false" over the site's "true" — a screen
+      // reader heard "button" and no change of state on every press
+      // (2026-10-08). Content that is the header, inside it or around it is
+      // refused and recorded; a header the site already wires (aria-expanded
+      // and an aria-controls that resolves) needs nothing and is left alone.
+      if (sel && typeof sel.headerSelector === 'string' && typeof sel.contentSelector === 'string') {
+        var heads = u.qsa(sel.headerSelector), conts = u.qsa(sel.contentSelector);
+        var why = null;
+        if (heads.length && conts.length && conts.every(function (c) {
+          return heads.some(function (h) { return c === h || h.contains(c) || c.contains(h); });
+        })) {
+          why = 'not an accordion panel: the content selector matches the header itself (or something inside or around it) — a panel is the region the header opens, outside the header. The site puts that class on the header when it is open.';
+        } else if (heads.length && conts.length === 0 && /^\.[\w-]+$/.test(sel.contentSelector.trim()) &&
+                   /(^|[_-])(open|active|expanded|show|is-open|isopen)([_-]|$)/i.test(sel.contentSelector)) {
+          // Nothing is open at load, so the content selector — a STATE class
+          // ("…_open__…", ".active", ".show") — matches nothing to compare.
+          // A state class is never a panel's selector.
+          why = 'not an accordion panel: "' + sel.contentSelector + '" is a state class (open/active/show), the class a header or panel wears while open — not the panel itself.';
+        } else if (heads.length && heads.every(function (h) {
+          // The panel may not exist until it opens (React: {open && <div/>}),
+          // so aria-controls is not required to resolve.
+          return u.get(h, 'aria-expanded') !== null && u.get(h, 'aria-controls');
+        })) {
+          why = 'already accessible: every header carries aria-expanded and an aria-controls that points at its panel — the site did this itself, and a second set of roles on top of it only muddles what a screen reader hears.';
+        } else if (conts.length && conts.every(function (c) {
+          // Judged from the PANEL's side: a panel the site's own button
+          // already opens and announces needs no header from a mapping, and
+          // whatever else the header selector caught is not its header.
+          // molinahealthcare.com's blog drawer: `.filterTitle,.clearall,
+          // .filterClose` over #StateFilter-panel — the site's "State Type"
+          // button wires that panel, and the mapping turned the drawer's
+          // title "Filter by:" and its Close button into accordion headers
+          // (role=button, a Tab stop, focus landing on the title) (2026-10-08).
+          if (!c.id) return false;
+          var ctl = null;
+          try { ctl = document.querySelector('[aria-controls~="' + c.id.replace(/"/g, '\\"') + '"][aria-expanded]'); } catch (e) { ctl = null; }
+          if (!ctl) return false;
+          // …the SITE's button: one an accordion mapping already captured here
+          // got its aria-controls from this patch, and re-applying that
+          // mapping must not read its own wiring as the site's.
+          return !configs.some(function (k) { try { return ctl.matches(k.header); } catch (e) { return false; } });
+        })) {
+          why = 'already accessible: the site\u2019s own button opens this panel (aria-expanded + aria-controls) — the panel needs no header from a mapping, and the other elements the header selector matches are not its header.';
+        }
+        if (why) {
+          P.skipped.push({ type: 'accordion', selector: sel.headerSelector, why: why });
+          return 0;
+        }
+      }
       if (sel && typeof sel.headerSelector === 'string' && typeof sel.contentSelector === 'string'
           && !already(sel.headerSelector, sel.contentSelector)) {
         configs.push({
           header: sel.headerSelector,
           content: sel.contentSelector,
           disabled: typeof sel.disabledElementsSelector === 'string' ? sel.disabledElementsSelector : null,
+          page: typeof window.__u1CallPage === 'string' ? window.__u1CallPage : null,   // see P.live
         });
         // A newly captured config has never been through P.correct — the core
         // loop only re-runs on a DOM mutation or the load-time pass that
@@ -1360,7 +2685,8 @@
   var currentU1 = function () {
     return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
   };
-  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  if (P.onFixers) P.onFixers(wrapOne);
+  else if (currentU1() && currentU1().fix) wrapOne(currentU1());
   else {
     var tries = 0;
     var poll = setInterval(function () {
@@ -1384,6 +2710,7 @@
 
   P.correct(function () {
     configs.forEach(function (cfg) {
+      if (!P.live(cfg)) return;
       var headers = u.qsa(cfg.header);
       var content = u.qsa(cfg.content);
       var n = Math.min(headers.length, content.length);
@@ -1451,6 +2778,222 @@
     });
   });
 
+  // ── A region that is not a dialog is refused before the library sees it ──
+  // molinahealthcare.com, 2026-10-05 (the owner's AI-built set): fix.dialog
+  // was mapped on the language selector's WRAPPER with the language button
+  // as its trigger, and on the mega bar's row with the search button as its
+  // trigger. The library made each a role=dialog with a focus trap, and the
+  // header became a cage: Tab on "Language" stayed on "Language", Tab from
+  // "Find care" went to "Search" and back forever, Shift+Tab could not leave.
+  // A dialog is a LAYER: it does not hold the control that opens it, it is
+  // not another mapping's submenu, and it is not a piece of the page's
+  // header or navigation sitting in the flow while it is "closed". Any of
+  // those is a region wearing the name, and the mapping is refused here and
+  // recorded in P.skipped so the panel can say why.
+  P.contextRoot.dialog = function (root, props) {
+    var sels = (props && props.selectors) || {};
+    var why = null;
+    try {
+      var trig = sels.trigger ? u.qsa(sels.trigger) : [];
+      // The checks are about the DIALOG — selectors.dialog when the mapping
+      // names one — not about the first argument: the panel passes the
+      // TRIGGER first (u1.fix.dialog('<trigger>', { selectors: { dialog } })),
+      // and a trigger always "holds" itself, so every such mapping was
+      // refused as "holds its own trigger" (molinahealthcare.com blog filter
+      // drawer, 2026-10-08). The first argument stands for the dialog only
+      // when no dialog selector is given.
+      var dlgs = [];
+      if (sels.dialog) { try { dlgs = u.qsa(sels.dialog); } catch (e0) { dlgs = []; } }
+      // A dialog the page draws only when it opens (react-datepicker's
+      // popup, born on the click) matches nothing yet: there is nothing to
+      // judge, and the trigger standing in for it was refused as "holding
+      // its own trigger" (molinahealthcare.com/about/events/az, 2026-10-08).
+      if (!dlgs.length && sels.dialog && sels.dialog !== (typeof root.id === 'string' && root.id ? '#' + root.id : null)) { var isTrig = false; try { isTrig = trig.indexOf(root) !== -1; } catch (e0) {} if (isTrig) return root; }
+      if (!dlgs.length) dlgs = [root];
+      for (var d = 0; d < dlgs.length && !why; d++) {
+        var dlg = dlgs[d];
+        for (var i = 0; i < trig.length && !why; i++) {
+          if (dlg.contains(trig[i])) why = 'the element holds its own trigger — a dialog is a layer the trigger opens, not the region around the trigger';
+        }
+        if (!why) {
+          var calls = P.calls || [];
+          for (var c = 0; c < calls.length && !why; c++) {
+            var cs = (calls[c].props && calls[c].props.selectors) || {};
+            var other = calls[c].type === 'menu' ? cs.submenus : calls[c].type === 'listbox' ? cs.listbox : null;
+            if (other && calls[c].selector !== undefined) {
+              try { if (dlg.matches(other)) why = 'already mapped as a ' + calls[c].type + '\u2019s panel (' + other + ') — one component, one type'; } catch (e2) {}
+            }
+          }
+        }
+        if (!why && u.visible(dlg) && !dlg.matches('dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"]')) {
+          var pos = '';
+          try { pos = getComputedStyle(dlg).position; } catch (e3) {}
+          var inFlow = pos !== 'fixed' && pos !== 'absolute';
+          if (inFlow && u.closest(dlg, 'header,nav,[role="banner"],[role="navigation"]')) {
+            why = 'on screen inside the page\u2019s header or navigation, sitting in the flow — not a layer that opens';
+          }
+        }
+      }
+    } catch (e) { why = null; }
+    if (why) { refused.push({ el: root, why: why }); return false; }
+    return root;
+  };
+  var refused = [];
+  P.contextRoot.dialog.lastWhy = function (el) {
+    for (var i = refused.length - 1; i >= 0; i--) if (refused[i].el === el) return 'not a dialog: ' + refused[i].why;
+    return null;
+  };
+
+  // ── A drawer that closes by sliding away gives focus back ─────────────────
+  // The library notices a dialog closing only when it stops being "visible",
+  // and a drawer closed by sliding it off the screen (molinahealthcare.com's
+  // blog filter: position:fixed, left -390px) never stops: after Escape or
+  // Close the drawer was gone and focus stayed on its invisible Close button
+  // (2026-10-08). Each mapped dialog is watched by geometry — on screen, then
+  // off it or hidden — and focus that was inside goes back to the trigger
+  // that opened it (the last one pressed; else the first one showing).
+  var wasOpen = typeof WeakMap === 'function' ? new WeakMap() : null;
+  var openedAt = typeof WeakMap === 'function' ? new WeakMap() : null;
+  P._wasOpen = wasOpen;
+  // The library's focusInBound() fires when ITS poll sees the dialog open —
+  // on a sliding drawer that can be a second after the person is already
+  // inside, and it puts focus back on the first stop: Tab to "California",
+  // then focus jumped to Close (u1_vanilla-js-a11y.js, yo.focusInBound:
+  // querySelectorAll(TABBABLE)[0].focus(), no "already inside?" check). In
+  // the first seconds after a mapped dialog opened, a move inside it that no
+  // key or press caused is undone: focus goes back where the person was.
+  // The trap below says where IT sent focus (trapTo); the library's jump
+  // comes a moment after, from a promise, so "a key was just pressed" is true
+  // for both and cannot tell them apart.
+  var lastPress = 0, trapTo = null, trapAt = 0, lastKey = 0;
+  ['mousedown', 'pointerdown', 'touchstart'].forEach(function (t) {
+    document.addEventListener(t, function () { lastPress = Date.now(); }, true);
+  });
+  document.addEventListener('keydown', function () { lastKey = Date.now(); }, true);
+  P.dialogTrapMoved = function (el) { trapTo = el; trapAt = Date.now(); };
+  document.addEventListener('focusin', function (e) {
+    if (!openedAt) return;
+    var from = e.relatedTarget, to = e.target;
+    if (!from || from === to || Date.now() - lastPress < 300) return;
+    if (to === trapTo && Date.now() - trapAt < 400) return;            // the trap's own move
+    dialogCalls().some(function (c) {
+      var dlg = null;
+      try { u.qsa(c.props.selectors.dialog || c.selector).some(function (d) { if (d.contains(to)) { dlg = d; return true; } return false; }); } catch (x) {}
+      if (!dlg || !dlg.contains(from)) return !!dlg;
+      // Only the library's own signature: focusInBound() focuses the FIRST
+      // tabbable element, always. A move anywhere else is the page's own —
+      // react-datepicker's arrow keys move October → November, and undoing
+      // every move near a Tab sent it straight back, focus bouncing between
+      // the two (molinahealthcare.com/about/events/az, 2026-10-08).
+      var firstStop = null;
+      try { firstStop = u.qsa(u.FOCUSABLE, dlg).filter(u.visible)[0] || null; } catch (x) {}
+      if (to !== firstStop) return true;
+      var at = openedAt.get(dlg);
+      var afterTrap = Date.now() - trapAt < 400 && trapTo && dlg.contains(trapTo);
+      var fresh = at && Date.now() - at < 3000 && Date.now() - lastKey > 120;
+      if (afterTrap || fresh) setTimeout(function () { try { from.focus(); } catch (x) {} }, 0);
+      return true;
+    });
+  }, true);
+  var lastTrigger = null, lastTriggerAt = 0;
+  var dialogCalls = function () { return (P.calls || []).filter(function (c) { return c.type === 'dialog' && c.props && c.props.selectors; }); };
+  document.addEventListener('click', function (e) {
+    dialogCalls().forEach(function (c) {
+      var t = c.props.selectors.trigger;
+      if (!t) return;
+      try { var hit = u.closest(e.target, t); if (hit) { lastTrigger = hit; lastTriggerAt = Date.now(); } } catch (x) {}
+    });
+  }, true);
+  P.correct(function () {
+    if (!wasOpen) return;
+    dialogCalls().forEach(function (c) {
+      var sels = c.props.selectors;
+      var dlgs = []; try { dlgs = u.qsa(sels.dialog || c.selector); } catch (x) { return; }
+      dlgs.forEach(function (dlg) {
+        // The aria-hidden the core puts on a drawer while it is off-screen
+        // (data-u1p-ghost-aria) is ours, and lifts a pass later: reading it
+        // as "closed" made focus wait for that next pass — sometimes too long.
+        var ours = dlg.getAttribute('data-u1p-ghost-aria') === '1';
+        var open = (ours ? !dlg.hasAttribute('hidden') && !!(dlg.offsetWidth || dlg.offsetHeight || dlg.getClientRects().length) : u.visible(dlg)) &&
+                   !(P.offScreen && P.offScreen(dlg));
+        var before = wasOpen.get(dlg);
+        wasOpen.set(dlg, open);
+        // Opened (seen closed before): focus goes in. The library moves focus
+        // into a dialog when it sees it open — and on a drawer that slides in
+        // it looks while the drawer is still off-screen, so sometimes focus
+        // stayed on Filter behind the open drawer (Orel, 2026-10-08: "focus
+        // does not always move to the dialog"). Only from the trigger (or
+        // nowhere): a dialog opening on its own does not steal focus.
+        // A dialog the page draws only when it opens (react-datepicker) is
+        // never seen closed: first seen already open, right after its
+        // trigger was pressed, counts as just opened.
+        if (open && before === undefined && lastTriggerAt && Date.now() - lastTriggerAt < 2500) before = false;
+        if (before === false && open) {
+          openedAt.set(dlg, Date.now());
+          var f = document.activeElement;
+          if (f && dlg.contains(f)) return;
+          var fromTrigger = f === document.body || f === lastTrigger;
+          if (!fromTrigger && sels.trigger) { try { fromTrigger = !!u.closest(f, sels.trigger); } catch (x) {} }
+          if (!fromTrigger) return;
+          var first = u.qsa('a[href],button:not([disabled]),input:not([type="hidden"]):not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"]),[data-u1p-ghost]', dlg)
+            .filter(function (el) { return u.visible(el) || (P.focusRing && P.focusRing.proxyOf && el.matches('input')); })[0];
+          if (!first) { if (!dlg.hasAttribute('tabindex')) dlg.setAttribute('tabindex', '-1'); first = dlg; }
+          var go = function () { if (!dlg.contains(document.activeElement)) { try { first.focus(); } catch (x) {} } };
+          go(); setTimeout(go, 350);
+          return;
+        }
+        if (!before || open) return;
+        var a = document.activeElement;
+        if (!(a && (dlg.contains(a) || a === document.body))) return;
+        var back = lastTrigger && lastTrigger.isConnected && u.visible(lastTrigger) ? lastTrigger : null;
+        if (!back && sels.trigger) { try { back = u.qsa(sels.trigger).filter(u.visible)[0] || null; } catch (x) {} }
+        if (back) { try { back.focus(); } catch (x) {} }
+        if (P.ghostKnown) { try { P.ghostKnown(); } catch (x) {} }
+      });
+    });
+  });
+
+  // ── Escape closes a mapped dialog, whatever the site did about it ─────────
+  // molinahealthcare.com/about/events/az: the month picker (role="dialog",
+  // aria-modal) ignores Escape completely — it stays open, focus inside
+  // (2026-10-08). A moment after Escape, a mapped dialog that is still open
+  // is closed the way a person would: its Close button, else the trigger
+  // that toggles it; focus goes back to the trigger.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var target = e.target;
+    dialogCalls().some(function (c) {
+      var sels = c.props.selectors, dlg = null;
+      try { u.qsa(sels.dialog || c.selector).some(function (d) { if (d.contains(target)) { dlg = d; return true; } return false; }); } catch (x) {}
+      if (!dlg) return false;
+      var rectOf = function () { try { var r = dlg.getBoundingClientRect(); return r.left + ',' + r.top + ',' + r.width; } catch (x) { return ''; } };
+      var r1 = '';
+      setTimeout(function () { r1 = rectOf(); }, 350);
+      setTimeout(function () {
+        var stillOpen = dlg.isConnected && u.visible(dlg) && !(P.offScreen && P.offScreen(dlg));
+        if (!stillOpen) return;
+        // Still sliding shut (a drawer's transition): the site DID handle
+        // Escape — an outside press now would hit its state mid-change.
+        if (rectOf() !== r1) return;
+        var trig = lastTrigger && lastTrigger.isConnected ? lastTrigger : null;
+        if (!trig && sels.trigger) { try { trig = u.qsa(sels.trigger).filter(u.visible)[0] || null; } catch (x) {} }
+        var close = null;
+        if (sels.closeBtn) { try { close = u.qsa(sels.closeBtn, dlg).filter(u.visible)[0] || null; } catch (x) {} }
+        try {
+          if (close) close.click();
+          else {
+            // react-datepicker closes on a press OUTSIDE it and on nothing else
+            // (the trigger does not toggle it): an outside press, the way a
+            // mouse user closes it.
+            ['mousedown', 'mouseup', 'click'].forEach(function (t) { document.body.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); });
+          }
+        } catch (x) {}
+        setTimeout(function () { if (trig && (!document.activeElement || dlg.contains(document.activeElement) || document.activeElement === document.body)) { try { trig.focus(); } catch (x) {} } }, 60);
+      }, 650);
+      return true;
+    });
+  }, true);
+
   // Our own trap. U1's cannot be removed — it lives in a closure — so its Tab
   // handling is swallowed in the capture phase and replaced here. Ours is
   // symmetric: the library guards the forward direction with a modal check and
@@ -1459,21 +3002,51 @@
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Tab') return;
     var dlg = u.closest(e.target, '[role="dialog"]');
-    if (!dlg || !u.visible(dlg)) return;
+    // A MAPPED dialog is ours from the moment it is open, before the library
+    // gets round to writing role="dialog" — its trap is already live by then,
+    // walking a list that skips stops (Tab from "Arizona" went to Close).
+    var mapped = false;
+    if (!dlg) {
+      dialogCalls().some(function (c) {
+        var hit = null;
+        try { u.qsa(c.props.selectors.dialog || c.selector).some(function (d) { if (d.contains(e.target)) { hit = d; return true; } return false; }); } catch (x) {}
+        if (hit && !(P.offScreen && P.offScreen(hit))) { dlg = hit; mapped = true; }
+        return !!dlg;
+      });
+    }
+    if (!dlg || (!mapped && !u.visible(dlg))) return;
 
-    var items = u.qsa(u.FOCUSABLE, dlg).filter(u.visible);
+    var items = u.qsa(u.FOCUSABLE, dlg).filter(function (el) { return el.tabIndex >= 0 && !el.disabled && u.get(el, 'aria-disabled') !== 'true' && u.visible(el); });
     if (!items.length) return;
 
-    var modal = u.get(dlg, 'aria-modal') === 'true';
+    var modal = mapped || u.get(dlg, 'aria-modal') === 'true';
     var first = items[0], last = items[items.length - 1];
     var atEdge = e.shiftKey ? e.target === first : e.target === last;
-    if (!atEdge) return;
 
     // A non-modal dialog must let focus leave in BOTH directions.
-    if (!modal) return;
+    if (!modal) {
+      if (!atEdge) return;
+      return;
+    }
+    // Modal: EVERY Tab is ours, not only the edges. The library walks its
+    // own list of stops, taken when the dialog opened; a stop it does not
+    // know — a label made the checkbox (core) — sent Tab from "Arizona" back
+    // to Close, skipping every other state (molinahealthcare.com, 2026-10-08).
     e.preventDefault();
     e.stopImmediatePropagation();
-    (e.shiftKey ? last : first).focus();
+    var i = items.indexOf(e.target);
+    if (i === -1) {
+      // focus is on something not in the list: the next stop after it in the document
+      i = items.length;
+      for (var k = 0; k < items.length; k++) {
+        if (e.target.compareDocumentPosition(items[k]) & 4) { i = k; break; }
+      }
+      var to = e.shiftKey ? items[(i - 1 + items.length) % items.length] : items[i % items.length];
+      P.dialogTrapMoved(to); to.focus();
+      return;
+    }
+    var nx = items[(i + (e.shiftKey ? -1 : 1) + items.length) % items.length];
+    P.dialogTrapMoved(nx); nx.focus();
   }, true);
 })();
 //#endregion
@@ -1505,10 +3078,28 @@
     var orig = u1.fix.form;
     var wrapped = function (selector, props) {
       var sel = props && props.selectors;
+      // A native <select> is left to the browser. The engine's form fixer
+      // writes tabindex="0" on every inputField, and on molinahealthcare.com's
+      // state picker (/medicare/plans-benefits) that write landing on the
+      // <select> as it was pressed kept its native list from opening — the
+      // owner "could not open the select" (2026-10-06). A <select> is
+      // focusable, labelled by its own <label>/aria-label and operated by the
+      // browser; a mapping has nothing to add to it, so it is taken out of
+      // inputField before the engine sees the selector.
+      if (sel && typeof sel.inputField === 'string' && sel.inputField.trim() && P.readable) {
+        var hasSelect = false;
+        try { hasSelect = u.qsa(sel.inputField).some(function (el) { return el.tagName === 'SELECT'; }); } catch (e) {}
+        if (hasSelect) {
+          var noSelect = sel.inputField.split(',').map(function (g) { return g.trim() + ':not(select)'; }).join(',');
+          sel = Object.assign({}, sel, { inputField: P.readable(noSelect) });
+          props = Object.assign({}, props, { selectors: sel });
+          arguments[1] = props;
+        }
+      }
       var formSel = (sel && typeof sel.form === 'string' && sel.form) || (typeof selector === 'string' ? selector : null);
       var reqSel = (sel && typeof sel.requiredField === 'string') ? sel.requiredField : null;
       if (formSel && !already(formSel, reqSel)) {
-        configs.push({ form: formSel, required: reqSel });
+        configs.push({ form: formSel, required: reqSel, page: typeof window.__u1CallPage === 'string' ? window.__u1CallPage : null });
         P.schedule();          // see the matching comment in u1-patch:accordion
       }
       return orig.apply(this, arguments);
@@ -1519,7 +3110,8 @@
   var currentU1 = function () {
     return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
   };
-  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  if (P.onFixers) P.onFixers(wrapOne);
+  else if (currentU1() && currentU1().fix) wrapOne(currentU1());
   else {
     var tries = 0;
     var poll = setInterval(function () {
@@ -1530,6 +3122,7 @@
 
   P.correct(function () {
     configs.forEach(function (cfg) {
+      if (!P.live(cfg)) return;
       u.qsa(cfg.form).forEach(function (form) {
         if (form.tagName !== 'FORM' && u.get(form, 'role') !== 'form') u.set(form, 'role', 'form');
         if (cfg.required) u.qsa(cfg.required, form).forEach(function (el) { u.set(el, 'aria-required', 'true'); });
@@ -1599,6 +3192,7 @@
           exclude: (sel && typeof sel.exclude === 'string') ? sel.exclude : null,
           disabled: (sel && typeof sel.disabled === 'string') ? sel.disabled : null,
           label: (sel && typeof sel.label === 'string') ? sel.label : null,
+          page: typeof window.__u1CallPage === 'string' ? window.__u1CallPage : null,
         });
         P.schedule();
       }
@@ -1610,7 +3204,8 @@
   var currentU1 = function () {
     return window.u1 !== undefined ? window.u1 : window.U1 !== undefined ? window.U1 : window.user1st;
   };
-  if (currentU1() && currentU1().fix) wrapOne(currentU1());
+  if (P.onFixers) P.onFixers(wrapOne);
+  else if (currentU1() && currentU1().fix) wrapOne(currentU1());
   else {
     var tries = 0;
     var poll = setInterval(function () {
@@ -1639,6 +3234,7 @@
 
   P.correct(function () {
     configs.forEach(function (cfg) {
+      if (!P.live(cfg)) return;
       var boxes = u.qsa(cfg.element);
       var labelEl = cfg.label ? u.qsa(cfg.label)[0] : null;
       var labelText = labelEl && (labelEl.textContent || '').trim();
@@ -1713,8 +3309,17 @@
     });
 
     // Any hidden element wrapping something focusable is wrong regardless of
-    // which fixer produced it.
+    // which fixer produced it — except a closed drawer the core hid itself
+    // (data-u1p-ghost-root): its controls are already out of the Tab order,
+    // and uncovering it put "Filter by:" and its checkboxes back under a
+    // screen reader's arrow keys between Search and Filter (molina blog).
     u.qsa('[aria-hidden="true"]').forEach(function (el) {
+      if (el.hasAttribute('data-u1p-ghost-root')) return;
+      // A panel that is not rendered at all (display:none — a closed mega
+      // menu) has nothing focusable in it; its aria-hidden is harmless, and
+      // taking it off started a fight with the library, which puts it back:
+      // 24 writes in 3 idle seconds on molinahealthcare.com (2026-10-08).
+      if (!el.getClientRects().length) return;
       if (el.querySelector(u.FOCUSABLE)) el.removeAttribute('aria-hidden');
     });
   });
@@ -2011,6 +3616,11 @@
     // without this line a field inside any collapsed region loses Space and
     // Enter entirely — see isTyping.
     if (u.isTyping(e.target)) return;
+    // A trigger the core's disclosure layer owns lands focus by ITS rule
+    // (Enter → the panel's top, arrows → the items). This handler's "first
+    // focusable" ran a frame later and pulled a VoiceOver user from the
+    // Medicaid panel's title to its first link (2026-10-06).
+    if (P.disclosureOwns && P.disclosureOwns(e.target)) return;
     var t = u.closest(e.target, '[aria-expanded]');
     var panel = null;
     if (t) {
@@ -2055,6 +3665,7 @@
   // order simply stops.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
+    if (P.disclosureOwns && P.disclosureOwns(e.target)) return;   // the core's, once
     var panel = u.closest(e.target, '[role="menu"], [role="menubar"]');
     // A menubar is the bar itself, not something to escape out of.
     if (!panel || u.get(panel, 'role') === 'menubar') return;
@@ -2512,6 +4123,103 @@
       radios.forEach(function (r, i) { u.setTabIndex(r, i === entry ? 0 : -1); });
     });
   });
+
+  // ── The mapping, kept by the mapping ───────────────────────────────────────
+  // The library's RadioFixer writes role="radio", aria-checked and a roving
+  // tabindex — when it runs. On molinahealthcare.com's glossary letter strip
+  // it never ran: not with the patch, not with the engine alone, not with
+  // <body> as the context (its wait-for-visible gate never opened; the same
+  // gate the heading and accordion regions already step around). The letters
+  // stayed plain buttons and a screen reader never heard which one was
+  // chosen (2026-10-08). So the mapping's own selectors are read here:
+  //   radioGroup  → role="radiogroup", named by the label before it
+  //   radioButton → role="radio", aria-checked from checkedState, one tab stop
+  //   keys        → arrows move AND select (APG radio), Home/End, Space.
+  // Everything is written only where the library did not already write it.
+  var groupsNow = function () {
+    var out = [];
+    (P.calls || []).forEach(function (c) {
+      if (c.type !== 'radio') return;
+      var sel = (c.props && c.props.selectors) || {};
+      var gSel = sel.radioGroup || c.selector, bSel = sel.radioButton;
+      if (!gSel || !bSel) return;
+      u.qsa(gSel).forEach(function (g) {
+        if (out.some(function (o) { return o.group === g; })) return;
+        out.push({ group: g, bSel: bSel, checked: sel.checkedState || '', exclude: sel.exclude || '' });
+      });
+    });
+    return out;
+  };
+  var radiosOf = function (o) {
+    var all = u.qsa(o.bSel, o.group);
+    if (!all.length) all = u.qsa(o.bSel).filter(function (r) { return o.group.contains(r); });
+    return all.filter(function (r) {
+      try { if (o.exclude && r.matches(o.exclude)) return false; } catch (e) {}
+      return u.visible(r);
+    });
+  };
+  var isChecked = function (o, r) {
+    if (!o.checked) return u.get(r, 'aria-checked') === 'true';
+    try { return r.matches(o.checked); } catch (e) {}
+    // A bare class/attribute fragment (".active") — test it on the element.
+    try { return r.matches(o.bSel + o.checked); } catch (e) { return false; }
+  };
+  var off = function (r) { return r.disabled || u.get(r, 'aria-disabled') === 'true'; };
+  P.correct(function () {
+    groupsNow().forEach(function (o) {
+      var g = o.group;
+      if (u.get(g, 'role') !== 'radiogroup') u.set(g, 'role', 'radiogroup');
+      if (!u.get(g, 'aria-label') && !u.get(g, 'aria-labelledby')) {
+        var lab = g.previousElementSibling;
+        if (lab && /^(LABEL|SPAN|DIV|P|H[1-6]|LEGEND)$/.test(lab.tagName) && (lab.textContent || '').trim() && (lab.textContent || '').trim().length < 60) {
+          if (!lab.id) lab.id = 'u1p-rg-' + Math.random().toString(36).slice(2, 8);
+          u.set(g, 'aria-labelledby', lab.id);
+        }
+      }
+      var rs = radiosOf(o);
+      if (!rs.length) return;
+      var entry = -1;
+      rs.forEach(function (r, i) {
+        if (u.get(r, 'role') !== 'radio') u.set(r, 'role', 'radio');
+        var on = isChecked(o, r);
+        u.set(r, 'aria-checked', on ? 'true' : 'false');
+        if (r.disabled) u.set(r, 'aria-disabled', 'true');
+        if (on && entry === -1) entry = i;
+      });
+      if (entry === -1) { for (var k = 0; k < rs.length; k++) if (!off(rs[k])) { entry = k; break; } }
+      rs.forEach(function (r, i) { u.setTabIndex(r, i === entry ? 0 : -1); });
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k !== 'ArrowRight' && k !== 'ArrowLeft' && k !== 'ArrowDown' && k !== 'ArrowUp' && k !== 'Home' && k !== 'End' && k !== ' ') return;
+    if (u.isTyping(e.target) || e.altKey || e.ctrlKey || e.metaKey) return;
+    var gs = groupsNow();
+    for (var gi = 0; gi < gs.length; gi++) {
+      var o = gs[gi];
+      if (!o.group.contains(e.target)) continue;
+      var rs = radiosOf(o).filter(function (r) { return !off(r); });
+      var here = rs.indexOf(e.target.closest ? (rs.filter(function (r) { return r === e.target || r.contains(e.target); })[0] || null) : null);
+      if (here === -1) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (k === ' ') { rs[here].click(); setTimeout(P.schedule, 60); return; }
+      var rtl = false; try { rtl = getComputedStyle(o.group).direction === 'rtl'; } catch (err) {}
+      var step = (k === 'ArrowRight' || k === 'ArrowDown') ? 1 : -1;
+      if (rtl && (k === 'ArrowRight' || k === 'ArrowLeft')) step = -step;
+      var to = k === 'Home' ? 0 : k === 'End' ? rs.length - 1 : (here + step + rs.length) % rs.length;
+      try { rs[to].focus(); } catch (err) {}
+      rs[to].click();              // APG: moving IS choosing
+      setTimeout(P.schedule, 60);  // the site re-renders the chosen class; follow it
+      return;
+    }
+  }, true);
+  // A click (mouse, Enter, a screen reader's activate) changes the chosen one
+  // through the page's own state; the class swap is not a mutation the core
+  // observer watches, so look again.
+  document.addEventListener('click', function (e) {
+    var gs = groupsNow();
+    for (var i = 0; i < gs.length; i++) if (gs[i].group.contains(e.target)) { setTimeout(P.schedule, 60); setTimeout(P.schedule, 400); return; }
+  }, true);
 })();
 //#endregion
 
@@ -2682,6 +4390,7 @@
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown') return;
     if (u.isTyping(e.target)) return;
+    if (P.disclosureOwns && P.disclosureOwns(e.target)) return;   // the core's, once
     var trigger = u.closest(e.target, TRIGGER);
     if (!trigger) return;
     var list = listFor(trigger);
@@ -2732,6 +4441,7 @@
   // "already shut", and this touches nothing.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
+    if (P.disclosureOwns && P.disclosureOwns(e.target)) return;   // the core's, once
     var list = u.closest(e.target, '[role="listbox"]');
     if (!list) return;
     var trigger = triggerFor(list);
@@ -3273,6 +4983,13 @@
 //      element's box instead (outline-offset −2px, as an inline !important,
 //      which is the only thing that outranks the stylesheet's !important).
 //      Re-evaluated after clicks, since the popup opens after focus lands.
+//
+//   3. An element that FILLS a box with overflow:hidden/clip has its ring
+//      cut away by that box: U1 draws 3px solid at offset 2px — entirely
+//      outside the element — and molinahealthcare.com's tile links sit
+//      edge-to-edge inside `.ButtonTile_buttonTile` (overflow:hidden,
+//      radius 8px), so a focused tile showed no ring at all (2026-10-08).
+//      The ring is drawn inside instead, offset by its own width.
 (function () {
   var P = window.__u1Patch; if (!P) return;
   var FIX = 'data-u1-focus-fix';
@@ -3301,18 +5018,111 @@
     try {
       el.removeAttribute(FIX);
       if (el.style.getPropertyPriority('outline-offset') === 'important') el.style.removeProperty('outline-offset');
+      if (el.hasAttribute('data-u1p-ring-in')) {
+        el.removeAttribute('data-u1p-ring-in');
+        el.style.removeProperty('box-shadow'); el.style.removeProperty('outline-width');
+      }
     } catch (e) {}
   };
+  // The ring drawn INSIDE, looking like the one outside. The engine's
+  // regular ring is an outline; its DOUBLE ring (visualFocus.doubleBorder)
+  // is a 2px outline in the primary colour at offset 0 plus a 4px box-shadow
+  // in the secondary colour around it — both outside the box, both clipped.
+  // Inside, the same two rings in the same order: secondary at the edge,
+  // primary within it (Orel, 2026-10-08: "the same border as the site").
+  var ringInside = function (el, w) {
+    var bs = document.body && getComputedStyle(document.body);
+    var outer = bs ? bs.getPropertyValue('--outer-border').trim() : '';
+    if (outer && outer !== 'none') {
+      var primary = bs.getPropertyValue('--outline-color').trim() || '#000';
+      var secondary = bs.getPropertyValue('--secondary-outline-color').trim() || '#fff';
+      el.setAttribute('data-u1p-ring-in', '1');
+      el.style.setProperty('outline-width', '0px', 'important');
+      el.style.setProperty('box-shadow', 'inset 0 0 0 4px ' + secondary + ', inset 0 0 0 6px ' + primary, 'important');
+      return;
+    }
+    el.style.setProperty('outline-offset', '-' + Math.ceil(w + 1) + 'px', 'important');
+  };
 
+  // Would a box that clips its content cut this element's ring away? The ring
+  // reaches (offset + width) beyond the element; any clipping ancestor whose
+  // edge is closer than that on some side eats it there.
+  var clippedRing = function (el) {
+    var cs, r;
+    try { cs = getComputedStyle(el); r = el.getBoundingClientRect(); } catch (e) { return 0; }
+    var w = parseFloat(cs.outlineWidth) || 3, off = parseFloat(cs.outlineOffset) || 0;
+    // The double ring's outer 4px box-shadow reaches further than the outline.
+    var shadowReach = 0;
+    try { var bsx = getComputedStyle(document.body).getPropertyValue('--outer-border').trim(); var m = /0 0 0 (\d+)px/.exec(bsx); if (m) shadowReach = +m[1]; } catch (e) {}
+    var reach = Math.max(1, w + Math.max(0, off), shadowReach);
+    for (var a = el.parentElement, i = 0; a && a !== document.body && i < 6; a = a.parentElement, i++) {
+      var as;
+      try { as = getComputedStyle(a); } catch (e) { continue; }
+      if (!/hidden|clip|auto|scroll/.test(as.overflow + ' ' + as.overflowX + ' ' + as.overflowY)) continue;
+      var ar = a.getBoundingClientRect();
+      if (r.left - ar.left < reach || ar.right - r.right < reach || r.top - ar.top < reach || ar.bottom - r.bottom < reach) return w;
+    }
+    return 0;
+  };
+  //   4. A control the site draws with SOMETHING ELSE — a checkbox that is
+  //      0×0 at opacity 0 behind a styled <span class="checkmark"> inside its
+  //      <label> (molinahealthcare.com's blog filter, 2026-10-08) — gets its
+  //      ring on what is seen: its label, else the nearest ancestor with a
+  //      box. Same colours as the engine's ring; undone on blur.
+  var PROXY = 'data-u1p-ring-proxy';
+  var noBox = function (el) {
+    var cs, r;
+    try { cs = getComputedStyle(el); r = el.getBoundingClientRect(); } catch (e) { return false; }
+    if (r.width < 2 || r.height < 2) return true;
+    if (parseFloat(cs.opacity) === 0 || cs.visibility === 'hidden') return true;
+    if (/rect\(0(px)?,? ?0(px)?,? ?0(px)?,? ?0(px)?\)/.test(cs.clip) || /inset\(50%\)/.test(cs.clipPath)) return true;
+    return false;
+  };
+  var proxyOf = function (el) {
+    var cands = [];
+    if (el.labels && el.labels.length) cands.push(el.labels[0]);
+    var lab = el.closest && el.closest('label'); if (lab) cands.push(lab);
+    for (var a = el.parentElement, i = 0; a && a !== document.body && i < 3; a = a.parentElement, i++) cands.push(a);
+    for (var k = 0; k < cands.length; k++) if (!noBox(cands[k])) return cands[k];
+    return null;
+  };
+  var ringOn = function (px) {
+    var bs = document.body && getComputedStyle(document.body);
+    var primary = (bs && bs.getPropertyValue('--outline-color').trim()) || '#1a73e8';
+    var outer = bs ? bs.getPropertyValue('--outer-border').trim() : '';
+    px.setAttribute(PROXY, JSON.stringify({ o: px.style.getPropertyValue('outline'), oo: px.style.getPropertyValue('outline-offset'), bs: px.style.getPropertyValue('box-shadow') }));
+    if (outer && outer !== 'none') {
+      px.style.setProperty('outline', '2px solid ' + primary, 'important');
+      px.style.setProperty('outline-offset', '0px', 'important');
+      px.style.setProperty('box-shadow', outer, 'important');
+    } else {
+      px.style.setProperty('outline', '3px solid ' + primary, 'important');
+      px.style.setProperty('outline-offset', '2px', 'important');
+    }
+  };
+  var ringOff = function () {
+    Array.prototype.forEach.call(document.querySelectorAll('[' + PROXY + ']'), function (px) {
+      var was = {}; try { was = JSON.parse(px.getAttribute(PROXY)) || {}; } catch (e) {}
+      px.removeAttribute(PROXY);
+      ['outline', 'outline-offset', 'box-shadow'].forEach(function (p, i) {
+        var v = [was.o, was.oo, was.bs][i];
+        if (v) px.style.setProperty(p, v); else px.style.removeProperty(p);
+      });
+    });
+  };
   var evaluate = function (el) {
     if (!isEl(el) || el === document.body || el === document.documentElement) return;
+    ringOff();
+    if (noBox(el)) { var px = proxyOf(el); if (px) { try { ringOn(px); } catch (e) {} } return; }
     if (ringIsWrong(el)) el.setAttribute(FIX, 'true');
-    if (el.getAttribute('aria-expanded') === 'true') inset(el);
-    else if (el.style.getPropertyPriority('outline-offset') === 'important') el.style.removeProperty('outline-offset');
+    if (el.getAttribute('aria-expanded') === 'true') { inset(el); return; }
+    var cw = clippedRing(el);
+    if (cw) { try { ringInside(el, cw); } catch (e) {} return; }
+    if (el.style.getPropertyPriority('outline-offset') === 'important') el.style.removeProperty('outline-offset');
   };
 
   document.addEventListener('focusin', function (e) { evaluate(e.target); }, true);
-  document.addEventListener('focusout', function (e) { if (isEl(e.target)) reset(e.target); }, true);
+  document.addEventListener('focusout', function (e) { if (isEl(e.target)) reset(e.target); ringOff(); }, true);
   // The popup opens AFTER the click that focused the trigger, and after its
   // animation. Look again then.
   document.addEventListener('click', function () {
@@ -3325,7 +5135,7 @@
     setTimeout(function () { evaluate(document.activeElement); }, 600);
   }, true);
 
-  P.focusRing = { evaluate: evaluate, ringIsWrong: ringIsWrong };
+  P.focusRing = { evaluate: evaluate, ringIsWrong: ringIsWrong, clippedRing: clippedRing, proxyOf: proxyOf };
 })();
 //#endregion
 
@@ -3450,6 +5260,90 @@
         }
         td.parentNode.replaceChild(th, td);
       });
+    });
+  });
+
+  // ── button-symbol-name ───────────────────────────────────────────────────
+  // molinahealthcare.com's text-size control (2026-10-05): two buttons named
+  // "-" and "+", an "AA" glyph between them, the "-" disabled by a CLASS
+  // only, and nothing said when the size changed. A screen reader hears
+  // "dash, button" and "plus, button", and the disabled one as usable.
+  // The symbols and their neighbours say what the controls are:
+  //   +/- beside an A/AA glyph, or in a container whose class says font or
+  //   text size → Increase / Decrease text size, grouped under "Text size",
+  //   a class-only disabled state mirrored as aria-disabled, and the new
+  //   size announced politely on each press.
+  //   ‹ › < > « » → Previous / Next.
+  // The visible glyph is untouched; only the name a screen reader hears.
+  var SYM = {
+    en: { inc: 'Increase text size', dec: 'Decrease text size', group: 'Text size', size: 'Text size now {n}', prev: 'Previous', next: 'Next' },
+    he: { inc: 'הגדלת גודל הטקסט', dec: 'הקטנת גודל הטקסט', group: 'גודל טקסט', size: 'גודל הטקסט כעת {n}', prev: 'הקודם', next: 'הבא' },
+    es: { inc: 'Aumentar el tamaño del texto', dec: 'Reducir el tamaño del texto', group: 'Tamaño del texto', size: 'Tamaño del texto ahora {n}', prev: 'Anterior', next: 'Siguiente' },
+    fr: { inc: 'Augmenter la taille du texte', dec: 'Réduire la taille du texte', group: 'Taille du texte', size: 'Taille du texte : {n}', prev: 'Précédent', next: 'Suivant' },
+    ar: { inc: 'تكبير حجم النص', dec: 'تصغير حجم النص', group: 'حجم النص', size: 'حجم النص الآن {n}', prev: 'السابق', next: 'التالي' },
+    ru: { inc: 'Увеличить размер текста', dec: 'Уменьшить размер текста', group: 'Размер текста', size: 'Размер текста: {n}', prev: 'Назад', next: 'Далее' },
+  };
+  var symWords = function () {
+    var lang = ((document.documentElement.getAttribute('lang') || 'en').slice(0, 2)).toLowerCase();
+    return SYM[lang] || SYM.en;
+  };
+  var symFace = function (el) {
+    return (u.get(el, 'aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  var isTextSizeContext = function (el) {
+    var box = el.parentElement;
+    if (!box) return false;
+    if (/font|text-?size|fontsize|textsize|zoom/i.test(String(box.className || '') + ' ' + (box.id || ''))) return true;
+    var kids = box.children;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i] !== el && /^[aA]{1,2}$/.test((kids[i].textContent || '').replace(/\s+/g, '').trim())) return true;
+    }
+    return false;
+  };
+  var symLive = null;
+  var announceSize = function () {
+    if (!symLive) {
+      symLive = document.createElement('div');
+      symLive.id = 'u1p-text-size-live';
+      symLive.setAttribute('role', 'status');
+      symLive.setAttribute('aria-live', 'polite');
+      symLive.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap';
+      document.body.appendChild(symLive);
+    }
+    setTimeout(function () {
+      var n = '';
+      try { n = getComputedStyle(document.body).fontSize; } catch (e) {}
+      var msg = symWords().size.replace('{n}', n);
+      symLive.textContent = '';
+      setTimeout(function () { symLive.textContent = msg; }, 30);
+    }, 120);
+  };
+  P.correct(function () {
+    if (!on('button-symbol-name')) return;
+    var w = symWords();
+    u.qsa('button,[role="button"],a[href]').forEach(function (el) {
+      var face = symFace(el);
+      var orig = u.get(el, 'data-u1p-symbol') || face;
+      if (!/^(\+|[-−–]|[<>«»‹›]{1,2})$/.test(orig)) return;
+      if (!u.get(el, 'data-u1p-symbol')) el.setAttribute('data-u1p-symbol', orig);
+      var name = null;
+      if (/^\+$/.test(orig) && isTextSizeContext(el)) name = w.inc;
+      else if (/^[-−–]$/.test(orig) && isTextSizeContext(el)) name = w.dec;
+      else if (/^[<‹«]{1,2}$/.test(orig)) name = w.prev;
+      else if (/^[>›»]{1,2}$/.test(orig)) name = w.next;
+      if (!name) return;
+      u.set(el, 'aria-label', name);
+      if (name === w.inc || name === w.dec) {
+        var box = el.parentElement;
+        if (box && !u.get(box, 'role')) { u.set(box, 'role', 'group'); if (!u.get(box, 'aria-label')) u.set(box, 'aria-label', w.group); }
+        // Disabled by a class alone: say so.
+        var off = /(^|\s)[\w-]*disabled[\w-]*(\s|$)/i.test(String(el.className || '')) || el.disabled;
+        u.set(el, 'aria-disabled', off ? 'true' : 'false');
+        if (!el.__u1pSizeWired) {
+          el.__u1pSizeWired = true;
+          el.addEventListener('click', announceSize);
+        }
+      }
     });
   });
 

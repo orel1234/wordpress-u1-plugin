@@ -302,6 +302,60 @@
     <div class="notice" id="ursNotice" style="display:none;"></div>
   </div>
 
+  <!-- 1.1c u1 MARKERS (old attribute technique) ─────────────────────────
+       Shown only when the page's own markup carries u1 markers (u1-menu,
+       u1-button, data-u1-…). One click turns each component on this page into
+       an ordinary Studio mapping (u1-markers.js). -->
+  <div class="section" id="markersSection" style="display:none;">
+    <div class="section-title">u1 markers in this page<span class="dot">.</span></div>
+    <div class="status-line">
+      <span class="status-dot active"></span>
+      <span id="markersStatusText">Markup uses the old u1 attribute technique</span>
+    </div>
+    <div class="detected-row">
+      <span class="label">Found</span>
+      <span class="value" id="markersFound"></span>
+    </div>
+    <div class="notice" style="display:block;">
+      Each component marked in this page's markup becomes a Studio mapping (menu, accordion,
+      dialog…), with selectors built on the markers themselves — so the markers stay in the
+      markup. Run it on every page type of the site; mappings already converted are replaced, not doubled.
+    </div>
+    <div class="btn-row">
+      <button class="btn-primary" id="markersConvertBtn">Convert markers on this page</button>
+    </div>
+    <div class="notice" id="markersNotice" style="display:none;"></div>
+  </div>
+
+  <!-- 1.1d IDE (uRemediate Studio / UFE) ─────────────────────────────────
+       Shown only when the IDE server has published scripts for this host.
+       Plain-data component calls become native mappings; the rest of each
+       script runs through the compatibility engine (ide-convert.js). -->
+  <div class="section" id="ideSection" style="display:none;">
+    <div class="section-title">IDE work for this site<span class="dot">.</span></div>
+    <div class="status-line">
+      <span class="status-dot active"></span>
+      <span>Published IDE scripts found</span>
+    </div>
+    <div class="detected-row">
+      <span class="label">Server</span>
+      <span class="value">ide.user1st.info</span>
+    </div>
+    <div class="detected-row" id="ideExistingRow" style="display:none;">
+      <span class="label">Converted</span>
+      <span class="value" id="ideExisting"></span>
+    </div>
+    <div class="notice" style="display:block;">
+      Every component call made with plain data (dialog, menu, form, heading…) becomes a regular
+      Studio mapping. The rest of each script — executeScript, descriptions, conditions — is kept
+      as an IDE script card and runs through the compatibility engine. Nothing in IDE is changed.
+    </div>
+    <div class="btn-row">
+      <button class="btn-primary" id="ideConvertBtn">Convert from IDE</button>
+    </div>
+    <div class="notice" id="ideNotice" style="display:none;"></div>
+  </div>
+
   <!-- 1.1a ANTHROPIC API KEY ──────────────────────────────────────────
        Moved out of a dialog in the Picker tab and into Setup, where the rest
        of "things this tool needs before it can work" already live. It was a
@@ -377,6 +431,10 @@
       <!-- What U1 already adds on this page (one per nav/main/footer), so the
            rows below are only for what is left. Filled by refreshSkipEngineNote(). -->
       <div id="skipEngineNote" style="display:none;"></div>
+      <label class="checkbox-row" id="hideEngineSkipRow" style="display:flex;gap:8px;align-items:center;margin:8px 0 12px;">
+        <input type="checkbox" id="hideEngineSkip">
+        <span>Hide the skip links U1 adds by itself — only the rows below stay</span>
+      </label>
 
       <div id="skipLinksContainer"></div>
 
@@ -503,7 +561,10 @@
        on screen at a time — the drawer under a live scan was a second screen
        of content to scroll past to reach the button that reads a section. -->
   <div class="picker-subtabs" role="tablist" aria-label="Picker view">
-    <button type="button" class="picker-subtab active" data-pane="scan" role="tab" aria-selected="true" aria-controls="pickerPaneScan">Scan</button>
+    <!-- "Build", not "Scan": this pane holds the manual builder as well as the
+         two AI routes, and the real accessibility Scan is the top-level tab
+         of that name (Orel, 2026-10-06). -->
+    <button type="button" class="picker-subtab active" data-pane="scan" role="tab" aria-selected="true" aria-controls="pickerPaneScan">Build</button>
     <button type="button" class="picker-subtab" data-pane="mappings" role="tab" aria-selected="false" aria-controls="pickerPaneMappings">Mappings <span class="picker-subtab-n" id="pickerMappingsCount"></span></button>
   </div>
 
@@ -554,6 +615,10 @@
            lives on the PAGE — behind the panel, often scrolled elsewhere — so
            "1 match" was a claim you had to go and verify. The crop is the
            element itself, where the question was asked. -->
+      <!-- How many elements the typed selector reaches, as you type — the
+           number that decides whether this is one component or a whole class
+           of them. -->
+      <div id="aiScopeCount" class="ai-scope-count" style="display:none;"></div>
       <div id="aiScopePreview" class="ai-scope-preview" style="display:none;"></div>
       <!-- Both hidden rather than deleted: "Scan it" already does exactly
            this when the container field is empty (collectRegion reads the
@@ -810,7 +875,11 @@
       <label for="primarySelectorInput" id="primaryLabel">CSS Selector</label>
       <div class="selector-test-row">
         <span class="sel-strength-wrap">
-          <input type="text" id="primarySelectorInput" class="primary-selector-input" placeholder="e.g. #login-modal">
+          <!-- A textarea, not an input: a selector is often longer than the
+               row, and an input shows a truncated tail with no way to read or
+               edit the middle (Orel, 2026-10-06). It wraps and grows; Enter
+               still generates. -->
+          <textarea id="primarySelectorInput" class="primary-selector-input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="e.g. #login-modal"></textarea>
           <span class="sel-strength" data-level="empty" aria-hidden="true"></span>
         </span>
         <button class="btn-outline btn-sm sel-test" title="Test selector on page">🔍</button>
@@ -927,6 +996,7 @@
     <div class="scan-choice-tabs" role="tablist" aria-label="Scan type">
       <button type="button" class="scan-choice-tab active" data-scanpane="content" role="tab" aria-selected="true" aria-controls="scanPaneContent">Static Scan</button>
       <button type="button" class="scan-choice-tab" data-scanpane="mappings" role="tab" aria-selected="false" aria-controls="scanPaneMappings">Dynamic Scan</button>
+      <button type="button" class="scan-choice-tab" data-scanpane="pages" role="tab" aria-selected="false" aria-controls="scanPanePages">Pages <span class="picker-subtab-n" id="pagesCount"></span></button>
     </div>
   </div>
 
@@ -954,6 +1024,23 @@
              does not vanish when you navigate away; come back and reopen it. -->
         <div class="scan-history" id="scanHistoryList"></div>
       </div>
+      <!-- The site's page inventory: every page that matters, what covers it,
+           and whether it was signed off. Orel (2026-10-08): "I put in all the
+           links, you tell me how many mappings each has, I approve each one". -->
+      <div class="scan-choice-card" id="scanPanePages" hidden>
+        <div class="scan-choice-title">Pages — the site's inventory</div>
+        <p class="scan-choice-sub">
+          Paste the pages that matter, one URL per line. Each row shows the
+          mappings that cover it and takes a sign-off once you have been over it.
+        </p>
+        <textarea id="pagesInput" class="primary-selector-input" rows="3" spellcheck="false" placeholder="https://www.example.com/&#10;https://www.example.com/about&#10;/contact"></textarea>
+        <div class="btn-row">
+          <button class="btn-primary btn-sm" id="pagesAddBtn" type="button">Add pages</button>
+          <button class="btn-outline btn-sm" id="pagesAddHereBtn" type="button">Add this page</button>
+        </div>
+        <div class="pages-summary" id="pagesSummary"></div>
+        <div class="pages-list" id="pagesList"></div>
+      </div>
       <div class="scan-choice-card" id="scanPaneMappings" hidden>
         <div class="scan-choice-title">Dynamic scan — driving each mapping</div>
         <p class="scan-choice-sub">
@@ -979,6 +1066,12 @@
   </div>
 
   <div class="section" id="scanResultsSection" style="display:none;">
+    <!-- Shown only while a scan reopened from "Scanned before" is on screen:
+         everything else in the tab is hidden, and this is the way back. -->
+    <div class="scan-history-back" id="scanHistoryBack" hidden>
+      <button type="button" class="btn-outline btn-sm" id="scanHistoryBackBtn">← Back to scan history</button>
+      <span class="scan-history-back-page" id="scanHistoryBackPage"></span>
+    </div>
     <div class="section-title">
       Found<span class="dot">.</span>
       <span class="hostname-badge" id="scanCount"></span>
@@ -991,6 +1084,9 @@
     <!-- Nothing on the scan finds this for you: it is a judgement about the
          page — a decorative widget, a duplicated nav, a third-party badge —
          that a person makes and the tool then enforces everywhere. -->
+    <!-- Hidden on request (Orel, 2026-10-08): the four purple tools below
+         stay in the DOM because panel.js wires them by id, but are not shown. -->
+    <div class="scan-static-tools" hidden>
     <details class="scan-exclude">
       <summary>Something here should not be reachable at all</summary>
       <p class="map-mode-hint">
@@ -1067,6 +1163,7 @@
       <div class="map-mode-hint" id="filterFound"></div>
       <div class="map-mode-hint" id="filterStatus"></div>
     </details>
+    </div>
     <div id="scanResults"></div>
   </div>
 
@@ -1160,7 +1257,7 @@
       <li class="file-row" data-file="patch"><span class="file-icon" aria-hidden="true">📜</span><span class="file-row-text"><strong>u1-patch.js</strong><span class="file-row-desc">the U1 runtime extensions the fixes depend on</span><span class="file-row-meta" data-filemeta="patch"></span></span><button type="button" class="file-dl" data-download="patch" title="Download u1-patch.js on its own" aria-label="Download u1-patch.js">⬇</button></li>
       <li class="file-row" data-file="fixes"><span class="file-icon" aria-hidden="true">📜</span><span class="file-row-text"><strong>u1-fixes.js</strong><span class="file-row-desc"><strong id="exportMappingsCount">0 mappings</strong> for this site</span><span class="file-row-meta" data-filemeta="fixes"></span></span><button type="button" class="file-dl" data-download="fixes" title="Download u1-fixes.js on its own" aria-label="Download u1-fixes.js">⬇</button></li>
       <li class="file-row" data-file="monitoring"><span class="file-icon" aria-hidden="true">📜</span><span class="file-row-text"><strong>u1-monitoring.js</strong><span class="file-row-desc">inert unless loaded with ?u1qa=1</span><span class="file-row-meta" data-filemeta="monitoring"></span></span><button type="button" class="file-dl" data-download="monitoring" title="Download u1-monitoring.js on its own" aria-label="Download u1-monitoring.js">⬇</button></li>
-      <li class="file-row" data-file="monitoringDoc"><span class="file-icon" aria-hidden="true">📄</span><span class="file-row-text"><strong>U1-Monitoring.docx</strong><span class="file-row-desc">installing the hook, the hook itself, and the three firewall addresses</span><span class="file-row-meta" data-filemeta="monitoringDoc"></span></span><button type="button" class="file-dl" data-download="monitoringDoc" title="Download U1-Monitoring.docx on its own" aria-label="Download U1-Monitoring.docx">⬇</button></li>
+      <li class="file-row" data-file="monitoringDoc"><span class="file-icon" aria-hidden="true">📄</span><span class="file-row-text"><strong>U1-Monitoring.docx</strong><span class="file-row-desc">installing the hook, the hook itself, and the four firewall addresses</span><span class="file-row-meta" data-filemeta="monitoringDoc"></span></span><button type="button" class="file-dl" data-download="monitoringDoc" title="Download U1-Monitoring.docx on its own" aria-label="Download U1-Monitoring.docx">⬇</button></li>
     </ul>
     <button class="btn-primary" id="exportBtn">⬇ Export package (.zip)</button>
     <!-- On its own, because the person who administers the firewall is usually
@@ -1185,6 +1282,20 @@
       then opens the folder. Nothing to fill in: the CRM owns the Drive identity
       and decides where client folders live.
     </p>
+    <!-- What goes in the zip handed to the client. The Drive folder still gets
+         every file loose, as before; only the zip is narrowed. Remembered per
+         site on this machine. -->
+    <fieldset class="handover-zip-pick" id="handoverZipPick">
+      <legend>In the zip for the client</legend>
+      <label><input type="checkbox" data-zipkind="guide" checked> Implementation guide (.docx)</label>
+      <label><input type="checkbox" data-zipkind="config" checked> u1-config.js</label>
+      <label><input type="checkbox" data-zipkind="patch" checked> u1-patch.js</label>
+      <label><input type="checkbox" data-zipkind="fixes" checked> u1-fixes.js</label>
+      <label><input type="checkbox" data-zipkind="monitoring" checked> u1-monitoring.js</label>
+      <label><input type="checkbox" data-zipkind="monitoringDoc" checked> Monitoring guide (.docx)</label>
+      <label><input type="checkbox" data-zipkind="report" checked> Close-out report (.pdf)</label>
+      <p class="hint" style="margin:6px 0 0;">Everything is still saved in the client’s folder on Drive — this only chooses what the zip carries.</p>
+    </fieldset>
     <button class="btn-primary" id="finishProjectBtn">🏁 Finish project</button>
     <button class="btn-outline" id="copyClientEmailBtn">📧 Copy client email</button>
     <div class="notice" id="finishStatus"></div>
@@ -1201,6 +1312,14 @@
       reaches the site until you publish, and every version can be put back.
     </p>
     <div id="cloudDomains"></div>
+    <!-- Preview: this tab only, nothing on the live site. The background swaps
+         the extension's own auto-apply for the exact bundle Publish would
+         serve (background.js injectPreview). -->
+    <div class="cloud-preview-row" id="cloudPreviewRow">
+      <button class="btn-outline" id="cloudPreviewBtn" title="Load what Publish would make live into this tab only. Visitors see nothing.">👁 Preview on this tab</button>
+      <button class="btn-outline" id="cloudPreviewStopBtn" hidden>✕ Stop preview</button>
+      <span class="cloud-preview-note" id="cloudPreviewNote"></span>
+    </div>
     <div id="cloudPublishBox">
       <div class="field-group">
         <label for="cloudNote">What changed <span style="color:var(--u1-text-muted);font-weight:400;">(optional, kept with the version)</span></label>
@@ -1266,6 +1385,9 @@
      in exactly one place -->
 <script src="sync.js"></script>
 <script src="urs-convert.js"></script>
+<script src="u1-markers.js"></script>
+<script src="vendor/acorn.js"></script>
+<script src="ide-convert.js"></script>
 <script src="docx-gen.js"></script>
 <script src="report-gen.js"></script>
 <script src="panel.js"></script>

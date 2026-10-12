@@ -992,7 +992,7 @@ let rulesEveryType = [], rulesUnknownFields = [], rulesShipped = false, rulesUse
   // hide-element and focus-order are manual-only: the model never builds
   // them, so component-rules.md has nothing to say about them. urs-compat is
   // never built at all — it arrives whole from the URS converter.
-  const SKIP = new Set(['aria-label', 'keyboard-grid', 'keyboard-clickable', 'keyboard-tabs', 'loading', 'hide-element', 'focus-order', 'urs-compat']);
+  const SKIP = new Set(['aria-label', 'keyboard-grid', 'keyboard-clickable', 'keyboard-tabs', 'loading', 'hide-element', 'focus-order', 'urs-compat', 'ide-compat']);
   // Sections that describe a PATTERN rather than a u1.fix.* type. They are
   // named here so a new one cannot be added without a decision — a section
   // matching no schema is otherwise checked by nothing.
@@ -1175,9 +1175,11 @@ let recRecords = false, recAllTypes = false, recHarmless = false, recConverts = 
   const perMatch = /var PER_MATCH = \[([^\]]*)\]/.exec(patch)[1];
   recAllTypes = !/'menu'/.test(perMatch) &&
                 /Object\.keys\(u1\.fix\)\.forEach/.test(patch) &&
-                /P\.calls\.push\(\{/.test(patch);
-  recRecords = /type: name,/.test(patch) && /selector: selector,/.test(patch) &&
-               /props: JSON\.parse\(JSON\.stringify\(props === undefined \? \{\} : props\)\)/.test(patch);
+                /P\._calls\.push\(\{/.test(patch);
+  // Recorded into P._calls (P.calls is the page-aware view of it), with the
+  // page a this-page-only call belongs to.
+  recRecords = /type: name, selector: selector, props: plain, page: page/.test(patch) &&
+               /var plain = JSON\.parse\(JSON\.stringify\(props === undefined \? \{\} : props\)\)/.test(patch);
   // It only observes: the original is called with `arguments` untouched, and a
   // throw in the recorder must never take the site's own fix down.
   recHarmless = /try \{[\s\S]{0,600}\} catch \(e\) \{\}\s*\n\s*return inner\.apply\(this, arguments\);/.test(patch);
@@ -1340,7 +1342,10 @@ let engineRefuses = false, engineChecksFields = false, engineAllowsGood = false;
     // The site's own selector is what the recorder keeps, not the stamp.
     translated = got.length === 1 && /^\[data-u1p-sel~="s[0-9a-z]+"\]$/.test(got[0]) &&
       lv.join() === ',3,' && w.__u1Patch.calls[0].selector === '.w strong:has(+br)' &&
-      w.__u1Patch.readable('.a>.b') === '.a>.b' && w.__u1Patch.readable('div[[[') === 'div[[[';
+      w.__u1Patch.readable('.a>.b') === '.a>.b' &&
+      // Not CSS at all: a short stand-in the engine rejects at once, never the
+      // raw string — the engine's gate backtracks exponentially on a long one.
+      w.__u1Patch.readable('div[[[') === ':u1p-invalid';
   } catch (e) { translated = false; }
   engineRefuses = parsesOnly && translated;
   engineChecksFields = /for \(const \[k, v\] of Object\.entries\(sels\)\)[\s\S]{0,200}!parses\(v\)/.test(body);

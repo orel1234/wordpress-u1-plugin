@@ -55,7 +55,11 @@
   // `.click-nav` in every test compound() applies.
   const U1_GENERATED = /^u1(st)?-/i;
 
-  const NOISE = /^(flex|grid|w-|h-|p-|m-|py-|px-|mt-|mb-|ml-|mr-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui|u1st-|u1-)|^e\d[a-z0-9]{4,}$|^ec-(rtl|ltr)-[0-9a-z]+$/i;
+  // `undefined`/`null`: React's `className={maybe}` leaking a literal word.
+  // molina's "More Sites" list is `<ul class=" undefined …_hide__6YjlW">`, and
+  // `ul.undefined` was the selector built for it (2026-10-04).
+  const NOISE = /^(flex|grid|w-|h-|p-|m-|py-|px-|mt-|mb-|ml-|mr-|text-|bg-|border|rounded|shadow|container|row|col|d-|justify|align|items-|gap-|hidden|visible|relative|absolute|fixed|sticky|block|inline|float|clearfix|sr-only|active|focus|hover|open|show|sc-|ng-|css-|emotion-|jsx-|mui|u1st-|u1-)|^e\d[a-z0-9]{4,}$|^ec-(rtl|ltr)-[0-9a-z]+$|^(undefined|null|true|false)$/i;
+
 
   // GENERATED ids (U1's own, Angular Material, framework uuids) — they change on
   // every reload, so a mapping built on one breaks silently.
@@ -205,6 +209,14 @@
       level = down(level);
       reasons.push('Utility or state class (e.g. active / flex / sc-) — likely to change.');
     }
+    // A build hash in a class name: right today, nothing after the next deploy.
+    if (classes.some(c => cssModuleStem(c))) {
+      level = 'weak';
+      reasons.push('Build-generated class name (CSS module) — the hash at the end changes on the next deploy, so this mapping breaks silently at the next release. Match the stable part instead: ' +
+        classes.filter(c => cssModuleStem(c)).map(classToken).join(', ') + '.');
+    } else if (/\[class\*=["'][^"']+__["']\]/.test(norm)) {
+      reasons.push('Matches the stable part of a build-generated (CSS module) class name — the hash after it is left out on purpose, so this survives a redeploy.');
+    }
 
     // Live match count.
     if (typeof opts.count === 'number') {
@@ -257,7 +269,37 @@
     // A hash suffix bolted onto a real name: btn_1a2b3, card-9f8e7d.
     || /[-_][0-9][a-z0-9]{3,}$/i.test(c)
     // All hash: ab1c2d3e4f.
-    || /^[a-z]{0,3}[0-9a-f]{6,}$/i.test(c);
+    || /^[a-z]{0,3}[0-9a-f]{6,}$/i.test(c)
+    // A CSS-module class whose hash happens to hold no digit
+    // (`PrimaryNavigationMenu_menu_more___eoCC`) — the shape tests above
+    // read it as hand-written, and it is not.
+    || !!cssModuleStem(c);
+
+  // A CSS-module class: `<File>_<name>__<hash>` as Next.js / CRA emit them
+  // (`Megamenu_menu__GnzK6`, `PrimaryNavigationMenu_menu_more___eoCC`). The
+  // hash is five characters of [A-Za-z0-9_-] and it changes on every build,
+  // so `.Megamenu_menu__GnzK6` works today and matches nothing after the next
+  // deploy — silently, like every selector failure. The part BEFORE the hash
+  // is the developer's own name and survives, and a substring match on it is
+  // a selector U1 can take. Returns that stable prefix (ending in `__`), or ''.
+  //
+  // The tail is required to carry an upper-case letter or a digit so that a
+  // BEM element (`card__title`) is not mistaken for one, and the stem must
+  // hold an underscore because the file-name prefix always brings one.
+  const cssModuleStem = (c) => {
+    if (typeof c !== 'string' || c.length < 8) return '';
+    if (c.slice(-7, -5) !== '__') return '';
+    const tail = c.slice(-5), stem = c.slice(0, -7);
+    if (!/^[A-Za-z0-9_-]{5}$/.test(tail) || !/[A-Z0-9]/.test(tail)) return '';
+    if (!/^[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_-]*$/.test(stem) || !/[A-Za-z]/.test(stem)) return '';
+    return stem + '__';
+  };
+  // The token to put in a selector for class `c`: `.c`, or for a CSS-module
+  // class the stable-prefix form `[class*="Stem__"]`.
+  const classToken = (c) => {
+    const stem = cssModuleStem(c);
+    return stem ? '[class*="' + stem + '"]' : '.' + c;
+  };
 
   function compound(node) {
     if (!node || node.nodeType !== 1) return '';
@@ -294,15 +336,20 @@
     }
 
     const al = node.getAttribute('aria-label');
-    if (al && al.length < 40 && !al.includes('"')) return `${tag}[aria-label="${al}"]`;
+    // A name, not a glyph: `button[aria-label="-"]` (molina's font-size
+    // minus) says nothing and breaks on the next icon.
+    if (al && al.length < 40 && !al.includes('"') && /\p{L}{2,}/u.test(al)) return `${tag}[aria-label="${al}"]`;
     const nm = node.getAttribute('name');
     if (nm && !nm.includes('"')) return `${tag}[name="${nm}"]`;
 
     if (classes.length) {
+      // A generated class is named by its stable prefix (classToken), so the
+      // uniqueness test has to be made on what will actually be emitted.
       for (const c of classes) {
-        try { if (document.getElementsByClassName(c).length === 1) return '.' + c; } catch {}
+        const tok = classToken(c);
+        try { if (countOf(tok) === 1) return tok; } catch {}
       }
-      return tag + '.' + classes[0];
+      return tag + classToken(classes[0]);
     }
     return tag;
   }
@@ -408,11 +455,12 @@
       .filter(([c, n]) => n === els.length && !NOISE.test(c))
       .map(([c]) => c)
       .sort((a, b) => b.length - a.length);
-    for (const c of shared) tokens.push('.' + c);
+    for (const c of shared) tokens.push(classToken(c));
 
     const tags = new Set(els.map(e => e.tagName.toLowerCase()));
     if (tags.size === 1) tokens.push([...tags][0]);
 
+    let loose = null;
     for (const t of tokens) {
       const r = covers(t);
       if (!r || r.missing) continue;
@@ -430,7 +478,11 @@
             return { selector: s, count: r.total, exact: true, why: whyFor(t, els) };
           }
         }
-        if (isU1Valid(bare)) return { selector: bare, count: countOf(bare), exact: false, why: whyFor(t, els) };
+        // Exact inside the container but wider on the page: keep it as a
+        // fallback and go on looking. Returning it here is what hid the
+        // container's own tag path from molina's mega bar — `button` is
+        // exact among the bar's rows and twenty-wide on the page.
+        if (isU1Valid(bare) && !loose) loose = { selector: bare, count: countOf(bare), exact: false, why: whyFor(t, els) };
       }
     }
 
@@ -466,7 +518,7 @@
         for (const p of raw.slice(1)) sharedCls = sharedCls.filter((c2) => p.classes.includes(c2));
         sharedCls.sort((a, b) => b.length - a.length);
         for (const c2 of sharedCls.slice(0, 4)) {
-          const path = ['.' + c2].concat(rel);
+          const path = [classToken(c2)].concat(rel);
           if (path.length < 2) continue;
           const sel = normalize(path.join('>'));
           const r = covers(sel);
@@ -496,13 +548,42 @@
     if (groups.size >= 2 && groups.size <= 4) {
       const covered = [...groups.values()].reduce((n, g) => n + g.length, 0);
       if (covered === els.length) {
-        const sel = normalize([...groups.keys()].map(c => '.' + c).join(','));
+        const sel = normalize([...groups.keys()].map(classToken).join(','));
         const r = covers(sel);
         if (isU1Valid(sel) && r && !r.missing && r.extra === 0) {
           return { selector: sel, count: countOf(sel), exact: true, why: whyFor(sel, els) };
         }
       }
     }
+
+    // The container's own tag path: `<bar>>li>button`. Nothing above fits a
+    // bar whose items share no class at all — molina's top bar (2026-10-04)
+    // has three buttons carrying `…_menu_items__hash` and a fourth, "More
+    // Sites", carrying `main_menu_item`, and the mega bar's four buttons
+    // carry nothing. The rows are the container's children and every
+    // element sits at the same tag path under it, and that path IS the
+    // selector, exact by construction when it covers nothing else.
+    if (containerSel && isU1Valid(containerSel)) {
+      const paths = els.map((e) => {
+        const tags = [];
+        let node = e;
+        for (let up = 0; up < 4 && node && node !== container; up++) {
+          tags.unshift(node.tagName.toLowerCase());
+          node = node.parentElement;
+        }
+        return node === container ? tags : null;
+      });
+      const rel = paths[0];
+      if (rel && paths.every((p) => p && p.length === rel.length && p.every((t, i2) => t === rel[i2]))) {
+        const sel = normalize([containerSel].concat(rel).join('>'));
+        const r = covers(sel);
+        if (isU1Valid(sel) && r && !r.missing && r.extra === 0 && countOf(sel) === r.total) {
+          return { selector: sel, count: r.total, exact: true, why: whyFor(sel, els) };
+        }
+      }
+    }
+
+    if (loose) return loose;
 
     // Last resort: a robust selector for the first element only — clearly flagged
     // as partial so the review panel asks rather than asserts.
@@ -1880,6 +1961,30 @@
         //   · gallery, when it is the ONLY carousel word, must show something
         //     that can cycle — arrows, a lib fingerprint, a [hidden] slide.
         if (name === 'carousel' && carouselClassVeto(el, cls)) continue;
+        // A "modal" that is showing, in the flow, with the page laid out
+        // around it is a section wearing the word — molina's card grid is
+        // `CardModalHC_maincontent_wrapper` and read "dialog?". An open
+        // dialog is positioned over the page; a closed one has no box and is
+        // not vetoed (it is collected as an edge target or in a scope).
+        if (name === 'dialog') {
+          try {
+            // The word found only by splitting a camelCase token
+            // (CardModalHC → "Card Modal HC") is weaker than the word standing
+            // on its own (cart-drawer, modal-dialog): such an element is a
+            // dialog only when it is positioned over the page, or hidden.
+            const literal = re.test(cls);
+            const box = el.getBoundingClientRect();
+            let flowing = box.width > 0 && box.height > 0 &&
+              !el.matches('dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"]');
+            // In the flow means nothing positioned from here up to <body>:
+            // a `.modal-dialog` box sits relative INSIDE its fixed `.modal`.
+            for (let p = el; flowing && p && p !== document.body; p = p.parentElement) {
+              const pos = getComputedStyle(p).position;
+              if (pos !== 'static' && pos !== 'relative') flowing = false;
+            }
+            if (flowing && (!literal || box.height >= 200)) continue;
+          } catch (e) {}
+        }
         return { name, sure: false };
       }
     }
@@ -2652,6 +2757,8 @@
     // same strip. A component inside a component OF THE SAME KIND is the same
     // component. Document order means the outermost is always recorded first.
     const hinted = new WeakMap();
+    // A menu-hinted wrapper → the item list it was resolved to (see nested).
+    const menuListOf = new WeakMap();
 
     let scope = document;
     if (within) {
@@ -2758,6 +2865,16 @@
       let nested = false;
       if (hint) {
         for (let p = el.parentElement; p; p = p.parentElement) {
+          // A menu WRAPPER is answered by the list menuItemsRoot found inside
+          // it (below), and a wrapper can hold two bars. molina's
+          // `HeaderHC_menu_container` holds the top bar AND the mega bar; it
+          // resolved to the top bar's <ul>, and the mega bar — the site's
+          // real navigation — was filed as a part of it and never shown. A
+          // menu outside the list its ancestor resolved to is its own menu.
+          if (hint.name === 'menu' && hinted.get(p) === 'menu' && menuListOf.has(p)) {
+            const own = menuListOf.get(p);
+            if (own && own !== el && !own.contains(el) && !el.contains(own)) continue;
+          }
           if (hinted.get(p) === hint.name) { nested = true; break; }
           // A button inside a segmented control is one of its OPTIONS — the
           // group row carries the widget; four loose "button" rows beside a
@@ -2785,7 +2902,10 @@
           const inner = menuItemsRoot(usableSel);
           // Only when it resolves to exactly one element and is still U1-valid
           // — menuItemsRoot already checks both, and returns null otherwise.
-          if (inner) usableSel = inner;
+          if (inner) {
+            usableSel = inner;
+            try { menuListOf.set(el, document.querySelector(inner)); } catch (e) {}
+          }
         } catch (e) {}
       }
 
@@ -4424,6 +4544,30 @@
     return hits.length === 1 ? hits[0] : null;
   }
 
+  /**
+   * Is this container a LIST — rows of one kind, one thing to activate in
+   * each — rather than a layout box that happens to hold two controls?
+   *
+   * Read off the shared parent of molina's header (2026-10-05), the first
+   * node with two children "holding an item" was the header's top section:
+   * a logo column, a column of three buttons and the language dropdown. It
+   * was named the listbox, its columns the options, and the font-size "−"
+   * button, first control before it, the trigger — a mapping that reads as
+   * complete and decorates the page header as a listbox.
+   */
+  function listShaped(node) {
+    var rows = Array.prototype.slice.call(node.children);
+    if (rows.length < 2) return false;
+    var tag = rows[0].tagName, itemish = 0;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].tagName !== tag) return false;
+      var acts = rows[i].matches(LB_ACTIVATES) ? 1 : rows[i].querySelectorAll(LB_ACTIVATES).length;
+      if (acts > 2) return false;                       // a column, not a row
+      if (rows[i].matches(LB_ITEM) || acts >= 1) itemish++;
+    }
+    return itemish >= Math.max(2, Math.ceil(rows.length * 0.8));
+  }
+
   function listboxShape(containerSel) {
     var box;
     try { box = document.querySelector(containerSel); } catch (e) { return null; }
@@ -4441,7 +4585,7 @@
       }
       // `node !== box` matters: the container itself holds the trigger AND the
       // list, so it always scores 2 and would win every time.
-      if (hits >= 2 && node !== box) { panel = node; break; }
+      if (hits >= 2 && node !== box && listShaped(node)) { panel = node; break; }
       for (var j = 0; j < kids.length; j++) queue.push(kids[j]);
     }
     if (!panel) return null;
@@ -4456,11 +4600,71 @@
     for (var p = 0; p < pool.length; p++) {
       var el = pool[p];
       if (panel.contains(el) || el === panel) continue;
+      // A drop-down FOLLOWS its trigger. The one thing that may stand after
+      // the list and still open it is a control that says so (aria-controls).
+      // molina's header (2026-10-04): the Language button's list is rendered
+      // client-side and is not in the markup; read off the shared parent, the
+      // font-size "A"/"A" pair before it was taken for the list and the
+      // Language button after it for the trigger.
+      var ctl = el.getAttribute('aria-controls');
+      var opens = ctl && panel.id && ctl === panel.id;
+      if (!opens && (el.compareDocumentPosition(panel) & 2)) continue;   // panel PRECEDES el
+      // …and it stands BESIDE the list: the list's own parent holds it (as the
+      // previous sibling, or inside one). A control two columns away in the
+      // same wrapper is some other widget's.
+      if (!opens) {
+        var pp = panel.parentElement, beside = false;
+        for (var a = el; a && a !== box.parentElement; a = a.parentElement) {
+          if (a.parentElement === pp) { beside = true; break; }
+        }
+        if (!beside) continue;
+      }
+      // A link that navigates somewhere is a link, not a disclosure — unless
+      // it declares a popup, or the recorder saw a handler on it.
+      var declares = el.hasAttribute('aria-haspopup') || el.hasAttribute('aria-expanded') || opens;
+      if (el.tagName === 'A' && !declares && !(rec && rec.has && rec.has(el))) {
+        var href = el.getAttribute('href') || '';
+        if (href && !/^#/.test(href) && !/^javascript:/i.test(href)) continue;
+      }
       if (el.tagName === 'BUTTON') { trigger = el; break; }
       if (!trigger) trigger = el;
       if (rec && rec.has && rec.has(el)) { trigger = el; break; }
     }
     if (!trigger) return null;
+    // The trigger is what is PRESSED. A wrapper that merely declares the
+    // popup (molina's Log In: div[aria-haspopup] around the one <a> whose
+    // click opens the list) is not pressable — a script click on it opens
+    // nothing, and the panel's auto-open gave up. The one control inside it
+    // is the trigger.
+    try {
+      if (!trigger.matches('a[href],button,input,select,summary,[tabindex],[role="button"]')) {
+        var inner = trigger.querySelectorAll('a[href],button,input,[role="button"],[tabindex]:not([tabindex="-1"])');
+        if (inner.length === 1 && !panel.contains(inner[0])) trigger = inner[0];
+      }
+    } catch (e) {}
+
+    // R0: a trigger that is ONE ITEM OF A BAR — its row is a real list (ul/ol,
+    // or a role that says so) and two or more of the rows hold a control of
+    // their own — opens that bar's SUBMENU, not a lone listbox. Read off
+    // molina's header wrapper (2026-10-05): the top bar's "More Sites" and
+    // its hidden list were the first list-shaped thing inside, and the whole
+    // bar came back a listbox. Clusters (a row holding three controls) are
+    // widgets of their own and do not count as items.
+    try {
+      var item = trigger.parentElement, row = item && item.parentElement;
+      var rowish = row && (/^(UL|OL)$/.test(row.tagName) ||
+        /^(menubar|menu|list|tablist)$/.test(row.getAttribute('role') || ''));
+      if (rowish && row !== panel && !row.contains(panel) === false) {
+        var members = 0;
+        for (var ri = 0; ri < row.children.length; ri++) {
+          var rc = row.children[ri];
+          if (rc.tagName !== item.tagName) continue;
+          var n = rc.querySelectorAll(LB_ACTIVATES).length;
+          if (n >= 1 && n <= 2) members++;
+        }
+        if (members >= 2) return null;
+      }
+    } catch (e) {}
 
     var lbSel = robustSelector(panel);
     var trSel = robustSelector(trigger);
@@ -4864,6 +5068,11 @@
       var press = null;
       try { press = row.matches(PRESS) ? row : row.querySelector(PRESS); } catch (e) {}
       if (press && sub && press.contains(sub)) sub = null;   // a link wrapping its list is not a trigger/panel pair
+      // A one-child list is not the drop-down. molina's mega panels wrap
+      // EVERY link in a <ul> of its own, so the first list a row holds has
+      // one item — and finding it stopped the DIV-panel search below from
+      // ever running, which read the whole bar as four plain buttons.
+      if (sub && sub.children.length < 2) sub = null;
       // A mega menu's panel is a DIV, not a list: any sibling-of-the-press
       // child of the row holding two or more links is the drop-down.
       if (!sub && press && press !== row) {
@@ -4874,7 +5083,11 @@
           }) || null;
         } catch (e) {}
       }
-      if (sub && sub.children.length >= 2) {
+      // A list is a drop-down by its rows; a DIV panel by what it holds —
+      // molina's mega panel has ONE child (a wrapper) around sixty links.
+      var subLinks = 0;
+      try { if (sub) subLinks = sub.querySelectorAll('a[href],button').length; } catch (e) {}
+      if (sub && (sub.children.length >= 2 || subLinks >= 2)) {
         if (press) { trigEls.push(press); subEls.push(sub); }
       } else if (press) plain.push(press);
     }
@@ -5222,13 +5435,41 @@
       }
     } catch (e) {}
 
+    // The same veto with no <nav> in sight: a drop-down that is one ROW of a
+    // list whose other rows are items too is that bar's submenu. molina's
+    // top bar (2026-10-04) is a bare <ul> — Medicare · Medicaid · Individual
+    // & Family · More Sites ▾ — and "More Sites" is one of four, not a lone
+    // listbox beside three buttons. Trigger count decides (R0).
+    try {
+      const ROW_PRESS = 'a[href],button,[role="button"],[role="menuitem"]';
+      const row = el.closest('li,[role="menuitem"],[role="none"],[role="presentation"]');
+      const bar = row && row.parentElement;
+      if (bar && bar.matches('ul,ol,[role="menubar"],[role="menu"]')) {
+        let others = 0;
+        for (const kid of Array.from(bar.children)) {
+          if (kid === row) continue;
+          if (kid.matches(ROW_PRESS) || kid.querySelector(ROW_PRESS)) others++;
+        }
+        if (others >= 1) return null;
+      }
+    } catch (e) {}
+
     // The survey names the component, which for this shape is as often the list
     // as the wrapper holding the list and its button. listboxShape needs the
-    // wrapper, so try both.
+    // wrapper, so try both — but a shape read off the PARENT only counts when
+    // the list it found is the element asked about. Otherwise the parent's
+    // other children are being described: molina's Language button has no
+    // list in the markup, and from its parent the font-size buttons beside
+    // it came back as "its" list (2026-10-04).
     let shape = listboxShape(containerSel);
     if (!shape && el.parentElement) {
       const up = robustSelector(el.parentElement);
-      if (up && isU1Valid(up)) shape = listboxShape(up);
+      if (up && isU1Valid(up)) {
+        shape = listboxShape(up);
+        let found = null;
+        try { found = shape && document.querySelector(shape.listbox); } catch (e) {}
+        if (found !== el) shape = null;
+      }
     }
     if (!shape || !shape.listbox || !shape.trigger) return null;
 
@@ -5239,7 +5480,12 @@
     } catch (e) { return null; }
     if (!panel || !trigger) return null;
 
-    // Flat: no row of this list contains a list of its own.
+    // Flat: no row of this list contains a list of its own — nor a panel of
+    // its own. A row of a flat list holds ONE thing to activate; a row
+    // holding three or more is a drop-down's whole content, and the "list"
+    // is a bar. molina's mega bar read as a listbox whose list was its
+    // first row (one button and a DIV of sixty links) and whose trigger was
+    // the second row's button (2026-10-04).
     for (const row of Array.from(panel.children)) {
       let nested = [];
       try { nested = Array.from(row.querySelectorAll('ul,ol,[role="menu"],[role="listbox"]')); } catch (e) {}
@@ -5248,6 +5494,9 @@
         for (const k of Array.from(n.children)) if (k.matches(LB_ITEM)) items++;
         if (items >= 2) return null;
       }
+      let acts = 0;
+      try { acts = row.querySelectorAll('a[href],button,[role="button"],[role="menuitem"],[role="option"]').length; } catch (e) {}
+      if (acts >= 3) return null;
     }
 
     const declares = trigger.hasAttribute('aria-haspopup') || trigger.hasAttribute('aria-expanded');

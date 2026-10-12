@@ -401,7 +401,7 @@ for (const c of comps) {
 const REGIONS = ['core', ...new Set(made.map((m) => m.type))];
 const patchSrc = readFileSync(join(ROOT, 'u1-patch.js'), 'utf8');
 let patch = "'use strict';\n";
-const re = /\/\/#region u1-patch:([a-z]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
+const re = /\/\/#region u1-patch:([a-z-]+)\r?\n([\s\S]*?)\r?\n\/\/#endregion/g;
 for (let g; (g = re.exec(patchSrc)); ) if (REGIONS.includes(g[1])) patch += g[2] + '\n';
 
 const js = (v) => JSON.stringify(v);
